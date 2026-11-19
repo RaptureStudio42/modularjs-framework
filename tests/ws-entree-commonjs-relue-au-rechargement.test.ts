@@ -1,4 +1,4 @@
-// `mjs ws` (et `mjs serveur`) relisent leur entrée à chaque modification, par un import dont l'adresse change (`?v=n`). Une entrée
+// `mjs ws` (et `mjs server`) relisent leur entrée à chaque modification, par un import dont l'adresse change (`?v=n`). Une entrée
 // CommonJS (`ws.js` sans `"type": "module"`, ou `.cjs`) passe par le chargeur CommonJS de Node, qui garde le module en cache
 // sous son nom de fichier, quelle que soit l'adresse : l'entrée modifiée n'était jamais relue. Elle l'est maintenant, comme une
 // entrée ES.

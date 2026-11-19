@@ -49,7 +49,7 @@ var _MJS_FX_ATTENTION = {
     var wait = s.delay;
     var plan = function() {};
     // un tour : un appel (ses `repeat` passages) et la pause `every`, de 100 ms au moins
-    var tour = function() { return Math.max(100, µ._mjs_fxMs(dur, 1000) * (rep || 1) + µ._mjs_fxEvery(el, s.every, 3000)); };
+    var turn = function() { return Math.max(100, µ._mjs_fxMs(dur, 1000) * (rep || 1) + µ._mjs_fxEvery(el, s.every, 3000)); };
     var stop;
     if (s.on === 'always' || (s.on === 'view' && s.every !== void 0)) {
       // sans fin (always), ou tant que la balise est à l'écran (view, `every` écrit) : le premier appel tout de suite, à la pose (always) ou
@@ -68,7 +68,7 @@ var _MJS_FX_ATTENTION = {
         play();
       };
       var next = function() {
-        beat = µ._mjs_fxBeat(tour, again, Math.max(0, at + (first ? µ._mjs_fxMs(wait, 0) : 0) + tour() - Date.now()));
+        beat = µ._mjs_fxBeat(turn, again, Math.max(0, at + (first ? µ._mjs_fxMs(wait, 0) : 0) + turn() - Date.now()));
       };
       var go = function() {
         // « réduire les animations » : un appel, sans série

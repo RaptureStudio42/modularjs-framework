@@ -196,8 +196,8 @@ export function pickStream(render: RenderConfig | undefined, page: ResolvedPage 
  * configuration (cf. bundler/config.ts) : une seule des deux garderait son fichier.
  */
 export function startupSlug(url: string): string {
-  const nu = url.replace(/^\/+/, '').replace(/\/+$/, '').toLowerCase()
-  return nu === '' ? 'index' : nu.replace(/[^a-z0-9]/g, '-')
+  const bare = url.replace(/^\/+/, '').replace(/\/+$/, '').toLowerCase()
+  return bare === '' ? 'index' : bare.replace(/[^a-z0-9]/g, '-')
 }
 
 /** Une route est-elle prérendable au build ? Non si paramétrée (`:x`/`*` : on ne

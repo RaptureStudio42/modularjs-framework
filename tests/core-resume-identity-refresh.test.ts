@@ -73,7 +73,7 @@ describe('reprise de session : identity/tokenExpiresAt rafraîchis', () => {
     await tick(400)
 
     assert.equal(s.state, 'open', 'pas de kick token-expired parasite : l\'échéance a bien été rafraîchie à la reprise')
-    assert.equal(app.stats().garde.expirationsJeton, 0)
+    assert.equal(app.stats().guard.tokenExpired, 0)
 
     s.destroy(); await app.stop()
   })

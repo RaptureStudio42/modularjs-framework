@@ -27,7 +27,7 @@ window.__cles = (html) => [...html.matchAll(/data-key="([^"]*)"/g)].map((m) => m
 window.__lis = (c) => [...__sf(c).querySelectorAll('ul[data-checklist] > li')]
 window.__propre = (li) => [...li.childNodes].filter((n) => !(n.nodeType === 1 && /^(ul|ol)$/i.test(n.localName))).map((n) => n.textContent).join('')
 window.__noms = (c) => __lis(c).map((li) => __propre(li) + ':' + (li.getAttribute('data-key') ?? '-')).join(' | ')
-window.__cle = (c, texte) => { const li = __lis(c).find((x) => __propre(x) === texte); return li ? li.getAttribute('data-key') : undefined }
+window.__key = (c, texte) => { const li = __lis(c).find((x) => __propre(x) === texte); return li ? li.getAttribute('data-key') : undefined }
 window.__valeur = (c) => __hid(c).value
 `
 
@@ -232,9 +232,9 @@ for (const build of BUILDS) for (const nom of MOTEURS) describe(`éditeur riche,
     await pause(250)
     const k = cles(await valeur('a1'))
     check('l\'auteur a cinq lignes, des noms de la bonne forme, tous différents', k.length === 5 && unique(k), (await valeur('a1')) + ' ' + (await noms('a1')))
-    check('Un, qui a du texte, garde son nom (Entrée au début d\'une ligne)', (await E(`__cle('a1', 'Un')`)) === 'aa11', await noms('a1'))
-    check('Deux, Deux-un et Trois gardent le leur', (await E(`[__cle('a1', 'Deux'), __cle('a1', 'Deux-un'), __cle('a1', 'Trois')].join()`)) === 'bb22,cc33,dd44', await noms('a1'))
-    check('Zéro reçoit un nom neuf', !!(await E(`__cle('a1', 'Zéro')`)) && !['aa11', 'bb22', 'cc33', 'dd44'].includes(await E(`__cle('a1', 'Zéro')`)), await noms('a1'))
+    check('Un, qui a du texte, garde son nom (Entrée au début d\'une ligne)', (await E(`__key('a1', 'Un')`)) === 'aa11', await noms('a1'))
+    check('Deux, Deux-un et Trois gardent le leur', (await E(`[__key('a1', 'Deux'), __key('a1', 'Deux-un'), __key('a1', 'Trois')].join()`)) === 'bb22,cc33,dd44', await noms('a1'))
+    check('Zéro reçoit un nom neuf', !!(await E(`__key('a1', 'Zéro')`)) && !['aa11', 'bb22', 'cc33', 'dd44'].includes(await E(`__key('a1', 'Zéro')`)), await noms('a1'))
     check('le mode « répondre » reçoit le texte : cinq cases, la coche est restée sur Deux (troisième ligne)', (await etats('r1')) === 'false,false,true,false,false', await etats('r1'))
     check('la variable des cases n\'a pas bougé', (await coches()) === '["bb22"]', await coches())
     check('un seul champ, le nom', JSON.stringify(await champs('r1')) === JSON.stringify(['reps[]=bb22']), JSON.stringify(await champs('r1')))
@@ -263,8 +263,8 @@ for (const build of BUILDS) for (const nom of MOTEURS) describe(`éditeur riche,
     await pause(250)
     const k = cles(await valeur('a1'))
     check('cinq lignes, des noms de la bonne forme, tous différents', k.length === 5 && unique(k), `${await valeur('a1')} ${await noms('a1')}`)
-    check('Tro garde dd44', (await E(`__cle('a1', 'Tro')`)) === 'dd44', await noms('a1'))
-    check('« is » reçoit un nom neuf', !!(await E(`__cle('a1', 'is')`)) && (await E(`__cle('a1', 'is')`)) !== 'dd44', await noms('a1'))
+    check('Tro garde dd44', (await E(`__key('a1', 'Tro')`)) === 'dd44', await noms('a1'))
+    check('« is » reçoit un nom neuf', !!(await E(`__key('a1', 'is')`)) && (await E(`__key('a1', 'is')`)) !== 'dd44', await noms('a1'))
     check('le champ du formulaire et la variable liée portent les mêmes noms', JSON.stringify(cles(await E(`__etat().texte`))) === JSON.stringify(k), await E(`__etat().texte`))
     await remettre()
     fin()
@@ -317,7 +317,7 @@ for (const build of BUILDS) for (const nom of MOTEURS) describe(`éditeur riche,
     const v = await valeur('a1')
     const k = cles(v)
     check('aucun doublon, tous de la bonne forme', unique(k), `${v} ${await noms('a1')}`)
-    check('Un, Deux et Deux-un gardent leur nom (la ligne du haut garde le sien)', (await E(`[__cle('a1', 'Un'), __cle('a1', 'Deux'), __cle('a1', 'Deux-un')].join()`)) === 'aa11,bb22,cc33', await noms('a1'))
+    check('Un, Deux et Deux-un gardent leur nom (la ligne du haut garde le sien)', (await E(`[__key('a1', 'Un'), __key('a1', 'Deux'), __key('a1', 'Deux-un')].join()`)) === 'aa11,bb22,cc33', await noms('a1'))
     check('le nom libre ee55 est gardé', k.includes('ee55'), v)
     check('la surface et le texte portent les mêmes noms', JSON.stringify(cles(await E(`__sf('a1').innerHTML`))) === JSON.stringify(k), await noms('a1'))
     await remettre()

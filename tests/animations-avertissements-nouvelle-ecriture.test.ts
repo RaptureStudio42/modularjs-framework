@@ -51,7 +51,7 @@ describe('animations : avertissements dans l\'écriture actuelle des effets', fu
     win.close()
   })
 
-  for (const [nom, repli] of [['bars', 'down'], ['volet', 'down'], ['turn', 'left'], ['reveal', 'up'], ['cube', 'left'], ['flip', 'left']]) {
+  for (const [nom, repli] of [['bars', 'down'], ['cover', 'down'], ['turn', 'left'], ['reveal', 'up'], ['cube', 'left'], ['flip', 'left']]) {
     it(`*${nom} : direction invalide — le message nomme *${nom}`, () => {
       const { µMock, warns } = makeµ()
       loadFactory(nom, µMock)({ dir: 'diagonal' })

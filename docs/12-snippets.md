@@ -123,6 +123,8 @@ Souvent on mélange les deux, comme dans l'exemple de la liste de couleurs : un 
 
 `<@include nom>` s'écrit toujours **nu** — pas de contenu, pas de balise fermante : toute tentative de la fermer soi-même fait échouer la compilation.
 
+Écrivez `@persist` dans le composant, jamais dans un partiel : à la racine d'un partiel, la directive s'affiche en texte.
+
 ```html
 <!-- _entete.mjs — le partial, préfixé d'un underscore -->
 <header class="entete">

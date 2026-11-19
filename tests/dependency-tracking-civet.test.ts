@@ -211,7 +211,7 @@ describe('suivi des dépendances (compilateur)', function () {
   // ==========================================================================
   // Avertissement de build quand TOUTES les tentatives échouent
   // ==========================================================================
-  describe('avertissement generator.deps-non-analysables', () => {
+  describe('avertissement generator.deps-not-analyzable', () => {
     it('expression volontairement incompilable contenant `$x` : avertit, ne lève rien, rend []', () => {
       const warnings: string[] = []
       const original = console.warn

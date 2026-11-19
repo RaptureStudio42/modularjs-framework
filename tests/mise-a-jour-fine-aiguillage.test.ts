@@ -51,7 +51,7 @@ const DERIVEE = [
   '<script lang="js">',
   '  $data = [{ id: 1, label: \'a\' }, { id: 2, label: \'b\' }];',
   '  $nb = $data.map((r) => r.label).join(\',\');',
-  '  µeffect(() => { globalThis.__lu = $data[0].label; });',
+  '  µeffect(() => { globalThis.__read = $data[0].label; });',
   '  @ecrire = function() { $data[0].label += \'!\'; };',
   '</script>',
   '<p class="nb">{$nb}</p>',
@@ -178,7 +178,7 @@ describe('mise à jour fine — l\'aiguillage à l\'écriture (runtime)', functi
     await tic()
     assert.equal(textes(el, 'p.nb')[0], 'a!,b')
     assert.deepEqual(textes(el, 'b'), ['a!', 'b'])
-    assert.equal(win.__lu, 'a!')
+    assert.equal(win.__read, 'a!')
   })
 
   it('un objet tenu deux fois dans la même variable : chaque endroit qui le montre suit', async () => {
@@ -197,7 +197,7 @@ describe('mise à jour fine — l\'aiguillage à l\'écriture (runtime)', functi
     const el = hote('surplace')
     if (typeof µ._mjs_sigDerived !== 'function') this.skip()
     // le compte de l'horloge des valeurs dérivées, appelé par le chemin fin, vit dans le même cœur
-    assert.equal(win.eval('typeof _mjsCompte'), 'function')
+    assert.equal(win.eval('typeof _mjsCount'), 'function')
     const n = µ._mjs_sigDerived(el, '__essai', () => {
       µ._mjs_sigRead(el, 'data')
       return µ._mjs_toRaw(el._state.data)[5].label

@@ -1,5 +1,5 @@
 // une ligne de `{for}` qui porte une directive lisant sa balise dans le document (`@attach`, `@this=!`) et livre des props à un composant
-// enfant marque ses composants avant leur insertion (`µ._mjs_waitRow`, bloc `<reveils-retenus>` de runtime/mjs_for.ts), bloc qui n'entre
+// enfant marque ses composants avant leur insertion (`µ._mjs_waitRow`, bloc `<retained-wakes>` de runtime/mjs_for.ts), bloc qui n'entre
 // au cœur que si le code compilé par la construction en a une. Un composant compilé à part (seul, hors de la construction, comme l'atelier
 // de thème) branché sur le cœur d'une appli qui n'en a pas : l'appel reste sans effet, ses composants se réveillent à leur insertion,
 // comme sans ce bloc — jamais d'exception

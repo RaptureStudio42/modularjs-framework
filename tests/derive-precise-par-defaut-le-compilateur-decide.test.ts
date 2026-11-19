@@ -8,7 +8,8 @@
 // règle de toujours : refaite à sa lecture après toute écriture du composant. Dans le doute à l'exécution (accesseur d'une
 // classe, Proxy de la page, conversion d'un objet gelé, objet tenu par un autre composant ou par `µ.state`, objet brut,
 // accesseur posé par la variable), la valeur repasse à cette règle, sans plantage : relue après une écriture sans rapport,
-// elle rend la valeur d'avant ; l'affichage, qui ne suit que ses sources, reste celui d'avant lui aussi. Un accesseur propre
+// elle rend la valeur d'avant ; l'affichage, qui ne suit que ses sources, reste celui d'avant lui aussi, sauf pour un objet
+// que tient aussi un autre composant : quand celui-ci l'écrit, le composant qui le garde se redessine et l'écran suit, comme sans l'option. Un accesseur propre
 // à l'objet (posé avant que la variable le reçoive) ne se regarde pas à la lecture : quand ce qu'il rend change (ici une
 // donnée de la page, changée hors de MJS), `µrefresh($sel)` juste après le changement rend la valeur de la règle de toujours,
 // et l'écran la suit. Développement et production ; happy-dom, Chromium, Firefox et WebKit.
@@ -199,8 +200,8 @@ const ATTENDU = {
   proxy: 'v1 → v5 | écran v1',
   proxyCles: 'v7 → v7 | écran v7',
   gele: 'cP1 → cP5 | écran v0',
-  autreComposant: 'v1 → v9 | écran v1',
-  tenuEnsuite: 'v1 → v9 | écran v1',
+  autreComposant: 'v1 → v9 | écran v9',
+  tenuEnsuite: 'v1 → v9 | écran v9',
   etat: 'v1 → v4 | écran v1',
   brut: 'v1 → v3 | écran v1',
   brutParUnAutre: 'v1 → v5 | écran v1',

@@ -285,7 +285,7 @@ export async function createRenderHandler(config: MjsConfig, configDir: string, 
   // shutdown. Le flag rend `close()` définitif.
   let closed = false
   async function getRenderer(): Promise<SSRRenderer> {
-    if (closed) throw new Error(t('server.render-handler-ferme'))
+    if (closed) throw new Error(t('server.render-handler-closed'))
     if (!rendererPromise) {
       // `env` : ce renderer recompile dans le VRAI `outputDir` à la 1re requête SSR — sans lui,
       // un serveur lancé en `--prod` verrait son build repassé en développement par cette passe
@@ -320,7 +320,7 @@ export async function createRenderHandler(config: MjsConfig, configDir: string, 
     })
   }
   async function getBrowserRenderer(): Promise<BrowserRenderer> {
-    if (closed) throw new Error(t('server.render-handler-ferme'))
+    if (closed) throw new Error(t('server.render-handler-closed'))
     if (!browserRendererPromise) {
       browserRendererPromise = createBrowserRenderer(config, { configDir, env })
       browserRendererPromise.catch(() => { browserRendererPromise = null })
@@ -359,7 +359,7 @@ export async function createRenderHandler(config: MjsConfig, configDir: string, 
     // (mode ssr réel seulement). Un chargeur qui jette ne doit jamais faire échouer le rendu —
     // même défense que le catch englobant `handle` (mêmes logs, `resProps` reste `undefined`).
     const resProps = (page && loadProps) ? await loadProps().catch((e: any) => {
-      recordServer?.({ message: e?.message ? e.message : String(e), pile: e?.stack, url: pathname })
+      recordServer?.({ message: e?.message ? e.message : String(e), stack: e?.stack, url: pathname })
       return undefined
     }) : undefined
 
@@ -436,16 +436,16 @@ export async function createRenderHandler(config: MjsConfig, configDir: string, 
       // (env: 'prod' OU NODE_ENV=production) ; en dev le détail échappé reste précieux à diagnostiquer.
       const rawMessage = String(e?.message || e)
       const detail = isProd
-        ? t('server.render-erreur-interne')
+        ? t('server.render-error-internal')
         : escapeHtml(rawMessage)
-      const bodyMsg = t('server.render-echec-html', { component: page.component, pathname: escapeHtml(pathname), detail })
+      const bodyMsg = t('server.render-failed-html', { component: page.component, pathname: escapeHtml(pathname), detail })
       // (point 3 de capture, trou réparé — auparavant, cet échec n'était JAMAIS journalisé
       // nulle part, ni console ni fichier) — même texte que le corps (les DEUX clés existantes,
-      // server.render-erreur-interne pour `detail` en prod ET server.render-echec-html pour ce
+      // server.render-error-internal pour `detail` en prod ET server.render-failed-html pour ce
       // message, cf. cartographie) ; le journal, lui, reçoit TOUJOURS le message RÉEL (jamais
       // redacté — sa propre protection d'accès, config.journal.viewer, joue ce rôle en prod).
       console.error(bodyMsg)
-      recordServer?.({ message: rawMessage, pile: e?.stack, url: pathname })
+      recordServer?.({ message: rawMessage, stack: e?.stack, url: pathname })
       return {
         kind: 'error', status: 500,
         body: bodyMsg,

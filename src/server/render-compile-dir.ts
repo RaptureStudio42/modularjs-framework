@@ -67,18 +67,18 @@ export function openRenderCompileDir(opts: RenderCompileDirOptions): RenderCompi
   if (opts.js !== 'bundle') {
     return { outputDir: opts.outputDir, manifestPath: opts.manifestPath, urlPrefix: opts.urlPrefix, assetsDir, cleanup() { /* rien à retirer */ } }
   }
-  const atelier = mkdtempSync(join(tmpdir(), 'mjs-render-'))
+  const workspace = mkdtempSync(join(tmpdir(), 'mjs-render-'))
   // amorce du cache de noms courts : best-effort (cache absent au tout premier build, illisible,
   // disque plein) — sans lui la compilation de service repart de zéro, jamais un échec de rendu
   try {
     const source = join(opts.outputDir, MANGLE_CACHE)
-    if (existsSync(source)) copyFileSync(source, join(atelier, MANGLE_CACHE))
+    if (existsSync(source)) copyFileSync(source, join(workspace, MANGLE_CACHE))
   } catch { /* best-effort */ }
   return {
-    outputDir: atelier,
-    manifestPath: join(atelier, 'bundle.js'),
+    outputDir: workspace,
+    manifestPath: join(workspace, 'bundle.js'),
     urlPrefix: opts.urlPrefix ?? deriveUrlPrefix(opts.outputDir),
     assetsDir,
-    cleanup() { try { rmSync(atelier, { recursive: true, force: true }) } catch { /* best-effort */ } },
+    cleanup() { try { rmSync(workspace, { recursive: true, force: true }) } catch { /* best-effort */ } },
   }
 }

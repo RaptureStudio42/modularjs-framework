@@ -15,7 +15,7 @@ La syntaxe de MJS n'est celle d'aucun autre framework : lisez les pages de « D�
 
 ## Langage
 
-- [Réactivité](03-reactivite.md): `$x`, valeurs dérivées, `µeffect`
+- [Réactivité](03-reactivite.md): `$x`, valeurs dérivées, valeurs qui attendent (`$x = await …`), `µeffect`
 - [µrefresh](41-refresh.md): signaler un changement fait hors de MJS — scène avant / après, ce que vérifie le développement, ce que la production ne vérifie plus, formes refusées, mauvais usages
 - [Props et attributs](04-props.md): passage du parent à l'enfant, valeurs par défaut
 - [Blocs logiques](05-blocs.md): `{if}`, `{for … by}`, `{key}`, `{await}`

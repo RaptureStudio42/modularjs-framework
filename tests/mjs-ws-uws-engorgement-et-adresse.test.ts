@@ -95,8 +95,8 @@ describe('mjs-ws — uWS : une trame abandonnée par uWS compte comme rejetée',
       for (let i = 0; i < 60; i++) app.send(cible, 'bloc', { i })
       await tick(10)
       const st = app.stats()
-      assert.ok(st.messages.rejetes >= 51, `trames abandonnées comptées rejetées (obtenu ${st.messages.rejetes})`)
-      assert.equal(st.garde.kicksEngorgement, 1, 'expulsion pour engorgement')
+      assert.ok(st.messages.dropped >= 51, `trames abandonnées comptées rejetées (obtenu ${st.messages.dropped})`)
+      assert.equal(st.guard.kicksBackpressure, 1, 'expulsion pour engorgement')
       assert.equal(ws.ferme, true, 'connexion fermée')
     }
     finally { await app.stop() }
@@ -115,8 +115,8 @@ describe('mjs-ws — uWS : une trame abandonnée par uWS compte comme rejetée',
       for (let i = 0; i < 60; i++) app.send(cible, 'bloc', { i })
       await tick(10)
       const st = app.stats()
-      assert.equal(st.messages.rejetes, 0)
-      assert.equal(st.garde.kicksEngorgement, 0)
+      assert.equal(st.messages.dropped, 0)
+      assert.equal(st.guard.kicksBackpressure, 0)
       assert.equal(ws.ferme, false)
     }
     finally { await app.stop() }
@@ -134,8 +134,8 @@ describe('mjs-ws — uWS : une trame abandonnée par uWS compte comme rejetée',
       for (let i = 0; i < 60; i++) app.broadcast('bloc', { i })
       await tick(10)
       const st = app.stats()
-      assert.ok(st.messages.rejetes >= 51, `obtenu ${st.messages.rejetes}`)
-      assert.equal(st.garde.kicksEngorgement, 1)
+      assert.ok(st.messages.dropped >= 51, `obtenu ${st.messages.dropped}`)
+      assert.equal(st.guard.kicksBackpressure, 1)
     }
     finally { await app.stop() }
   })

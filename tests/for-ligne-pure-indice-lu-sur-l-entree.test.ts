@@ -91,7 +91,7 @@ describe('{for} — ligne pure : élément et indice lus sur l\'entrée de la li
     const sans = await monter('lpe-code-a', SANS_INDICE)
     assert.ok(/_mjs_p: 2/.test(sans.code), 'drapeau 2')
     assert.ok(!/_mjs_nIdx/.test(sans.code), 'aucun indice posé par la mise à jour de la ligne')
-    assert.ok(/_mjs_en/.test(sans.code), 'le gestionnaire lit l\'entrée de la ligne')
+    assert.ok(/_mjs_ent/.test(sans.code), 'le gestionnaire lit l\'entrée de la ligne')
     assert.ok(!/data-mjs-idx-0/.test(sans.code), 'aucune lecture d\'attribut d\'indice')
     sans.win.close?.()
     const avec = await monter('lpe-code-b', AVEC_INDICE)
@@ -212,7 +212,7 @@ describe('{for} — ligne pure : élément et indice lus sur l\'entrée de la li
     ].join('\n')
     for (const templateLang of [undefined] as const) {
       const { output } = await transpile(src, { moduleName: 'lpe-gram-' + (templateLang ?? 'civet'), ...(templateLang ? { templateLang } : {}) })
-      assert.match(output, /_mjs_en/, 'entrée de la ligne lue (' + (templateLang ?? 'civet') + ')')
+      assert.match(output, /_mjs_ent/, 'entrée de la ligne lue (' + (templateLang ?? 'civet') + ')')
       assert.doesNotMatch(output, /data-mjs-idx-0|_mjs_nIdx/, 'aucun indice posé ni lu sur la balise (' + (templateLang ?? 'civet') + ')')
     }
   })

@@ -48,10 +48,10 @@ describe('minuteries : attache et reffet relancé', function () {
 
   it('@attach, minuterie hors de la dernière ligne : retrait puis remise du composant, une seule répétition', async () => {
     const { win, doc, el } = await monter('attacheretrait', ['<p :attach={attacher}>a</p>', '<script lang="coffee">', ...ATTACHE, '</script>'].join('\n'))
-    assert.equal(el._mjs_minuteries?.size, 1)
+    assert.equal(el._mjs_timers?.size, 1)
     el.remove(); await attendre(40)
     doc.body.appendChild(el); await attendre(40)
-    assert.equal(el._mjs_minuteries?.size, 1, 'la répétition de la première attache est arrêtée, la nouvelle attache pose la sienne')
+    assert.equal(el._mjs_timers?.size, 1, 'la répétition de la première attache est arrêtée, la nouvelle attache pose la sienne')
     const a = win.__att ?? 0
     await attendre(200)
     const tirs = (win.__att ?? 0) - a
@@ -61,14 +61,14 @@ describe('minuteries : attache et reffet relancé', function () {
 
   it('@attach, minuterie hors de la dernière ligne : la balise retirée par un {if} arrête la sienne', async () => {
     const { win, el } = await monter('attacheif', ['{if $vu}<p :attach={attacher}>a</p>{end}', '<script lang="coffee">', '$vu = true', 'window.__cacher = -> $vu = false', 'window.__montrer = -> $vu = true', ...ATTACHE.map(l => l.replace('__att', '__atti')), '</script>'].join('\n'))
-    assert.equal(el._mjs_minuteries?.size, 1)
+    assert.equal(el._mjs_timers?.size, 1)
     win.__cacher(); await attendre(40)
-    assert.equal(el._mjs_minuteries?.size, 0, 'détachée avec sa balise')
+    assert.equal(el._mjs_timers?.size, 0, 'détachée avec sa balise')
     const a = win.__atti ?? 0
     await attendre(100)
     assert.equal((win.__atti ?? 0) - a, 0, 'plus aucun tir')
     win.__montrer(); await attendre(40)
-    assert.equal(el._mjs_minuteries?.size, 1, 'la nouvelle attache pose la sienne')
+    assert.equal(el._mjs_timers?.size, 1, 'la nouvelle attache pose la sienne')
     el.remove()
   })
 
@@ -77,10 +77,10 @@ describe('minuteries : attache et reffet relancé', function () {
       const cle  = derniere ? '__e2' : '__e1'
       const fin  = derniere ? [] : ['  null']
       const { el, win } = await monter(derniere ? 'reffetder' : 'reffethors', S('$dep = 0', 'window.__changer = -> $dep++', 'µeffect ->', '  $dep', '  µevery 20, immediate: false, -> ' + UN(cle), ...fin))
-      assert.equal(el._mjs_minuteries?.size, 1)
+      assert.equal(el._mjs_timers?.size, 1)
       for (let i = 0; i < 3; i++) { win.__changer(); await attendre(30) }
       await attendre(40)
-      assert.equal(el._mjs_minuteries?.size, 1, 'la répétition du passage d\'avant est arrêtée par le passage suivant')
+      assert.equal(el._mjs_timers?.size, 1, 'la répétition du passage d\'avant est arrêtée par le passage suivant')
       el.remove()
     })
   }
@@ -106,15 +106,15 @@ describe('minuteries : attache et reffet relancé', function () {
     for (let i = 0; i < 3; i++) { win.__changer(); await attendre(30) }
     await attendre(40)
     assert.equal(win.__e5n ?? 0, 3, 'le nettoyage rendu joue à chaque passage suivant')
-    assert.equal(el._mjs_minuteries?.size, 1)
+    assert.equal(el._mjs_timers?.size, 1)
     el.remove()
   })
 
   it('µeffect retiré par sa main : la répétition de son dernier passage s\'arrête', async () => {
     const { el, win } = await monter('reffetretire', S('arret = µeffect ->', '  µevery 20, immediate: false, -> ' + UN('__e6'), '  null', 'window.__retirer = -> arret()'))
-    assert.equal(el._mjs_minuteries?.size, 1)
+    assert.equal(el._mjs_timers?.size, 1)
     win.__retirer(); await attendre(20)
-    assert.equal(el._mjs_minuteries?.size, 0, 'arrêtée avec son reffet')
+    assert.equal(el._mjs_timers?.size, 0, 'arrêtée avec son reffet')
     el.remove()
   })
 })

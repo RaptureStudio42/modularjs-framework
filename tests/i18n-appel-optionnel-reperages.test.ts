@@ -103,7 +103,7 @@ describe('i18n — appel optionnel de µt : repérages de la traduction', functi
     for (const forme of ['µt?.', 'µt?', 'µ?.t', 'µ.t?.']) {
       const v = await verdict(forme)
       assert.equal(v.pure, false, forme)
-      assert.match(v.raison ?? '', /^dérivée : /, forme)
+      assert.match(v.reason ?? '', /^dérivée : /, forme)
     }
   })
 

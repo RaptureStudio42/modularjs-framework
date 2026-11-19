@@ -37,6 +37,7 @@ import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { RUNTIME_LABELS } from '../src/runtime-labels.js'
 import { attendre, construire, charger, graves } from './helpers/liaison-navigateur.js'
 import type { Cible, Mode } from './helpers/liaison-navigateur.js'
+import { playTogether } from './helpers/engines-together.js'
 
 // un enfant : son script, sa ligne `.vu`, son bouton `.x`
 const enfant = (script: string, vu: string) => `<script>\n${script}\n</script>\n\n<p class="vu">${vu}</p>\n<button class="x" type="button" @click={agir()}>x</button>\n`
@@ -259,7 +260,7 @@ const SOURCES: Record<string, string> = {
   'c-nonlu-filtre.mjs': enfant("  agir = ->\n    $items = $items.filter((x) -> x.nom == 'a')\n    $items[0].nom = 'K'", "{$items ? $items.length + $items[0].nom : '-'}"),
   'c-nonlu-objet.mjs':  enfant("  agir = ->\n    $cfg = { ...$cfg }\n    $cfg.sous.n = 1", "{$cfg && $cfg.sous ? $cfg.sous.n : '-'}"),
 
-  // une fonction du parent que l'enfant appelle avec l'objet reçu l'écrit par l'enfant : c'est dit sous son nom, le parent n'est pas prévenu
+  // une fonction du parent que l'enfant appelle avec l'objet reçu l'écrit par l'enfant : c'est dit sous son nom, et le parent suit
   'rs-rappel.mjs': `<script>
   $t1 = [{ nom: 'a' }]
 
@@ -360,7 +361,7 @@ const SOURCES: Record<string, string> = {
   'c-perime.mjs': garde,
 
   // deux props sur le même objet, l'une liée à deux sens (`items=!{$items}`), l'autre simple (`sel={$items[0]}`) : écrit par la prop liée,
-  // rien n'est dit ; par la prop simple, c'est dit, et le parent n'est pas redessiné
+  // rien n'est dit ; par la prop simple, c'est dit, et le parent se redessine
   'rs-deux.mjs': "<script>\n  $items = [{ nom: 'a' }]\n</script>\n\n<@c-deux items=!{$items} sel={$items[0]}>\n<p class=\"etat\">{$items[0].nom}</p>\n",
   'c-deux.mjs':  gardien("  prendre = -> $sel.nom = $sel.nom + 'S'\n  agir    = -> $items[0].nom = $items[0].nom + 'Z'", "{$sel ? $sel.nom : '-'}-{$items ? $items[0].nom : '-'}"),
 
@@ -483,7 +484,7 @@ const SOURCES: Record<string, string> = {
   'c-feuillelie.mjs':  enfant("  agir = -> $items[0].nom = 'F'", "{$items && $items[0] ? $items[0].nom : '-'}"),
   'c-feuillejson.mjs': enfant("  agir = -> $items[0].nom = 'J'", "{$items && $items[0] ? $items[0].nom : '-'}"),
 
-  // une prop que le composant du milieu a reçue sans `!`, qu'il repasse à son enfant : la lier chez lui ne redessine pas la page, le message
+  // une prop que le composant du milieu a reçue sans `!`, qu'il repasse à son enfant : la lier chez lui ne la lie pas à la page (qui suit pourtant, comme tout composant qui tient l'objet), le message
   // propose la copie ; reçue par une prop liée (`items=!{$l8}` chez la page), la lier chez lui est proposé
   'rs-mid.mjs':  "<script>\n  $l7 = [{ nom: 'a' }]\n  $l8 = [{ nom: 'a' }]\n</script>\n\n<@c-mid items={$l7}>\n<@c-mid2 items=!{$l8}>\n<p class=\"etat\">{$l7[0].nom}|{$l8[0].nom}</p>\n",
   'c-mid.mjs':   "<p class=\"vu\">m</p>\n<@c-bas items={$items}>\n",
@@ -495,15 +496,19 @@ const BALISES = Object.keys(SOURCES).filter((f) => f.startsWith('rs-')).map((f) 
 
 type Langue = 'fr' | 'en'
 
-// le texte attendu dans la console (le harnais en garde 200 signes)
-const texte = (langue: Langue, cle: 'propMutated' | 'propMutatedBound' | 'propOneWay', vars: Record<string, string>) => {
+// le texte attendu dans la console, en entier (chaque page en garde `SIGNES` signes, cf. `charger`) : un objet reçu modifié dit que l'écran
+// suit quand l'écran du parent suit (`modif`, `modifL`), sinon que le parent n'en est pas prévenu (`modifN`) ; une scène compare
+// qui modifie, par quelle prop, sous quel parent, et ce que montre l'écran
+const SIGNES = 2000
+const texte  = (langue: Langue, cle: 'propMutated' | 'propMutatedUnseen' | 'propMutatedBound' | 'propMutatedBoundUnseen' | 'propOneWay', vars: Record<string, string>) => {
   const modele = (RUNTIME_LABELS as any)[langue].dev[cle] ?? `(libellé dev.${cle} absent en ${langue})`
-  return ('[ModularJS] ' + modele.replace(/\{(\w+)\}/g, (m: string, n: string) => (n in vars ? vars[n] : m))).slice(0, 200)
+  return '[ModularJS] ' + modele.replace(/\{(\w+)\}/g, (m: string, n: string) => (n in vars ? vars[n] : m))
 }
 // l'objet modifié par l'enfant, ou par un enfant lié (`par`) ; la prop écrite
-const modif  = (langue: Langue, tag: string, prop: string, parent: string) => texte(langue, 'propMutated', { tag, prop, parent })
-const modifL = (langue: Langue, tag: string, par: string, prop: string, parent: string) => texte(langue, 'propMutatedBound', { tag, by: par, prop, parent })
-const ecrit  = (langue: Langue, tag: string, prop: string) => texte(langue, 'propOneWay', { tag, prop })
+const modif   = (langue: Langue, tag: string, prop: string, parent: string) => texte(langue, 'propMutated', { tag, prop, parent })
+const modifN  = (langue: Langue, tag: string, prop: string, parent: string) => texte(langue, 'propMutatedUnseen', { tag, prop, parent })
+const modifL  = (langue: Langue, tag: string, par: string, prop: string, parent: string) => texte(langue, 'propMutatedBound', { tag, by: par, prop, parent })
+const ecrit   = (langue: Langue, tag: string, prop: string) => texte(langue, 'propOneWay', { tag, prop })
 
 // le bouton `bouton` du `n`-ième composant `enfant` de la page, dans l'ordre du document et à toute profondeur d'ombre, ou celui du parent
 // (`enfant` vide)
@@ -561,11 +566,11 @@ const SCENARIOS: Record<string, Scenario> = {
     },
     avis: (l) => [
       modif(l, '@c-pousse', 'items', '@rs-modifie'), modif(l, '@c-champ', 'items', '@rs-modifie'), modif(l, '@c-inverse', 'items', '@rs-modifie'),
-      modif(l, '@c-alias', 'items', '@rs-modifie'), modif(l, '@c-cle', 'cfg', '@rs-modifie'), modif(l, '@c-retire', 'cfg', '@rs-modifie'),
+      modifN(l, '@c-alias', 'items', '@rs-modifie'), modif(l, '@c-cle', 'cfg', '@rs-modifie'), modif(l, '@c-retire', 'cfg', '@rs-modifie'),
       modif(l, '@c-fonction', 'cfg', '@rs-modifie'), modif(l, '@c-date', 'jour', '@rs-modifie'),
     ],
-    // le parent n'est pas prévenu : son affichage garde l'état d'avant
-    vus: ['c-pousse=4', 'c-champ=Z', 'c-inverse=ba', 'c-alias=Y', 'c-cle=1', 'c-retire=a', 'c-fonction=5', 'c-date=2030', 'etat=2-a-0'],
+    // le parent suit, comme tout composant qui tient l'objet : son affichage montre la modification
+    vus: ['c-pousse=4', 'c-champ=Z', 'c-inverse=ba', 'c-alias=Y', 'c-cle=1', 'c-retire=a', 'c-fonction=5', 'c-date=2030', 'etat=4-Z-1'],
     piles: 8,
   },
   'mjs-rs-calme': {
@@ -575,7 +580,7 @@ const SCENARIOS: Record<string, Scenario> = {
       for (const c of ['lie', 'mien', 'reaffecte', 'brut', 'magasin']) await cliquer(p, b, 'mjs-c-' + c)
     },
     // la réaffectation, par l'avertissement « écrit sa prop » ; le magasin modifié par la prop
-    avis: (l) => [ecrit(l, '@c-reaffecte', 'items'), modif(l, '@c-magasin', 'liste', '@rs-calme')],
+    avis: (l) => [ecrit(l, '@c-reaffecte', 'items'), modifN(l, '@c-magasin', 'liste', '@rs-calme')],
     vus: ['c-lie=3', 'c-mien=1-3-9', 'c-reaffecte=2', 'c-brut=2', 'c-magasin=3', 'etat=3-3'],
   },
   'mjs-rs-liste': {
@@ -600,7 +605,7 @@ const SCENARIOS: Record<string, Scenario> = {
     enfants: 1,
     gestes: (p, b) => cliquer(p, b, 'mjs-c-copie'),
     avis: (l) => [modif(l, '@c-copie', 'items', '@rs-copie')],
-    vus: ['c-copie=1', 'etat=a'],
+    vus: ['c-copie=1', 'etat=K'],
   },
   'mjs-rs-milieu': {
     enfants: 1,
@@ -618,7 +623,7 @@ const SCENARIOS: Record<string, Scenario> = {
       await p.waitForTimeout(100)
     },
     avis: (l) => [modif(l, '@c-pousse-emet', 'items', '@rs-emet')],
-    vus: ['c-emet=2', 'c-pousse-emet=2', 'c-emet-tard=2', 'etat=1-1-1-1'],
+    vus: ['c-emet=2', 'c-pousse-emet=2', 'c-emet-tard=2', 'etat=2-2-2-1'],
   },
   'mjs-rs-attend': {
     enfants: 1,
@@ -627,7 +632,7 @@ const SCENARIOS: Record<string, Scenario> = {
       await p.waitForTimeout(100)
     },
     avis: () => [],
-    vus: ['c-attend=T', 'etat=a'],
+    vus: ['c-attend=T', 'etat=T'],
   },
   'mjs-rs-rendu': {
     enfants: 1,
@@ -643,7 +648,7 @@ const SCENARIOS: Record<string, Scenario> = {
       await cliquer(p, b, '', '.p')
       for (const c of gardiens) await cliquer(p, b, 'mjs-c-' + c)
     },
-    avis: (l) => ['garde', 'garde-copie', 'garde-lu', 'garde-sans', 'garde-pile'].map((c) => modif(l, '@c-' + c, 'items', '@rs-lache')),
+    avis: (l) => ['garde', 'garde-copie', 'garde-lu', 'garde-sans', 'garde-pile'].map((c) => (c === 'garde-lu' ? modif : modifN)(l, '@c-' + c, 'items', '@rs-lache')),
     vus: ['c-garde=Z-b', 'c-garde-copie=Z-b', 'c-garde-lu=Z-b', 'c-garde-sans=Z-Z', 'c-garde-pile=Z-b', 'etat=1|1|b|1|1|1'],
   },
   'mjs-rs-nonlu': {
@@ -653,8 +658,8 @@ const SCENARIOS: Record<string, Scenario> = {
     },
     // la liste filtrée et l'objet copié, rangés dans la prop, sont aussi dits par l'avertissement « écrit sa prop »
     avis: (l) => [
-      modif(l, '@c-nonlu-mien', 'items', '@rs-nonlu'), modif(l, '@c-nonlu-prop', 'items', '@rs-nonlu'), modif(l, '@c-nonlu-filtre', 'items', '@rs-nonlu'),
-      ecrit(l, '@c-nonlu-filtre', 'items'), modif(l, '@c-nonlu-objet', 'cfg', '@rs-nonlu'), ecrit(l, '@c-nonlu-objet', 'cfg'),
+      modifN(l, '@c-nonlu-mien', 'items', '@rs-nonlu'), modifN(l, '@c-nonlu-prop', 'items', '@rs-nonlu'), modifN(l, '@c-nonlu-filtre', 'items', '@rs-nonlu'),
+      ecrit(l, '@c-nonlu-filtre', 'items'), modifN(l, '@c-nonlu-objet', 'cfg', '@rs-nonlu'), ecrit(l, '@c-nonlu-objet', 'cfg'),
     ],
     vus: ['c-nonlu-mien=1-K', 'c-nonlu-prop=K', 'c-nonlu-filtre=1K', 'c-nonlu-objet=1', 'etat=1|1|2|o'],
   },
@@ -662,7 +667,7 @@ const SCENARIOS: Record<string, Scenario> = {
     enfants: 1,
     gestes: (p, b) => cliquer(p, b, 'mjs-c-rappel'),
     avis: (l) => [modif(l, '@c-rappel', 'items', '@rs-rappel')],
-    vus: ['c-rappel=2', 'etat=1'],
+    vus: ['c-rappel=2', 'etat=2'],
   },
   'mjs-rs-lache-simple': {
     enfants: 3,
@@ -682,8 +687,8 @@ const SCENARIOS: Record<string, Scenario> = {
       await cliquer(p, b, 'mjs-c-garde-un', '.y')
       for (const c of ['retire-un', 'garde-un', 'ajoute-un', 'dernier', 'emet-ajout', 'dernier-emis']) await cliquer(p, b, 'mjs-c-' + c)
     },
-    avis: (l) => ['retire-un', 'garde-un', 'ajoute-un', 'dernier', 'dernier-emis'].map((c) => modif(l, '@c-' + c, 'items', '@rs-freres')),
-    vus: ['c-retire-un=1', 'c-garde-un=Z-b', 'c-ajoute-un=2', 'c-dernier=Q', 'c-emet-ajout=2', 'c-dernier-emis=Q', 'etat=2|1|1'],
+    avis: (l) => ['retire-un', 'garde-un', 'ajoute-un', 'dernier', 'dernier-emis'].map((c) => (c === 'retire-un' || c === 'ajoute-un' ? modif : modifN)(l, '@c-' + c, 'items', '@rs-freres')),
+    vus: ['c-retire-un=1', 'c-garde-un=Z-b', 'c-ajoute-un=2', 'c-dernier=Q', 'c-emet-ajout=2', 'c-dernier-emis=Q', 'etat=1|2|2'],
   },
   'mjs-rs-derive': {
     enfants: 4,
@@ -694,8 +699,8 @@ const SCENARIOS: Record<string, Scenario> = {
       await cliquer(p, b, 'mjs-c-garde-derive')
     },
     avis: (l) => [
-      modif(l, '@c-cle-derive', 'cfg', '@rs-derive'), modif(l, '@c-champ-derive', 'items', '@rs-derive'), modif(l, '@c-brut-ligne', 'item', '@rs-derive'),
-      modif(l, '@c-garde-derive', 'cfg', '@rs-derive'),
+      modifN(l, '@c-cle-derive', 'cfg', '@rs-derive'), modifN(l, '@c-champ-derive', 'items', '@rs-derive'), modifN(l, '@c-brut-ligne', 'item', '@rs-derive'),
+      modifN(l, '@c-garde-derive', 'cfg', '@rs-derive'),
     ],
     vus: ['c-cle-derive=2', 'c-champ-derive=V', 'c-brut-ligne=R', 'c-garde-derive=9-2', 'etat=1|-|a|r|2'],
   },
@@ -738,7 +743,7 @@ const SCENARIOS: Record<string, Scenario> = {
       await cliquer(p, b, 'mjs-c-deux', '.y')
     },
     avis: (l) => [modif(l, '@c-deux', 'sel', '@rs-deux')],
-    vus: ['c-deux=aZS-aZS', 'etat=aZ'],
+    vus: ['c-deux=aZS-aZS', 'etat=aZS'],
   },
   'mjs-rs-partage': {
     enfants: 4,
@@ -747,8 +752,10 @@ const SCENARIOS: Record<string, Scenario> = {
       for (const n of [0, 1]) await cliquer(p, b, 'mjs-c-stock-ligne', '.x', n)
       await cliquer(p, b, 'mjs-c-etat')
     },
-    avis: (l) => [modif(l, '@c-stock-el', 'item', '@rs-partage'), modif(l, '@c-stock-ligne', 'item', '@rs-partage'), modif(l, '@c-etat', 'item', '@rs-partage')],
-    vus: ['c-stock-el=1', 'c-stock-ligne=2', 'c-stock-ligne=1', 'c-etat=1', 'etat=0|0'],
+    // les lignes du magasin `$$` : le parent n'en est pas prévenu ; l'objet de `<@c-etat>`, que le parent lit par un `µ.state` qui le tient :
+    // l'écran suit
+    avis: (l) => [modifN(l, '@c-stock-el', 'item', '@rs-partage'), modifN(l, '@c-stock-ligne', 'item', '@rs-partage'), modif(l, '@c-etat', 'item', '@rs-partage')],
+    vus: ['c-stock-el=2', 'c-stock-ligne=2', 'c-stock-ligne=1', 'c-etat=1', 'etat=2|1'],
   },
   'mjs-rs-parents': {
     enfants: 2,
@@ -756,7 +763,7 @@ const SCENARIOS: Record<string, Scenario> = {
       for (const n of [0, 1]) await cliquer(p, b, 'mjs-c-pousse', '.x', n)
     },
     avis: (l) => [modif(l, '@c-pousse', 'items', '@c-parent-a')],
-    vus: ['c-parent-a=1', 'c-parent-b=1'],
+    vus: ['c-parent-a=2', 'c-parent-b=2'],
   },
   'mjs-rs-neuf': {
     enfants: 4,
@@ -767,15 +774,15 @@ const SCENARIOS: Record<string, Scenario> = {
       }
     },
     avis: (l) => [modif(l, '@c-neuf', 'items', '@rs-neuf'), modif(l, '@c-retour', 'sel', '@rs-neuf'), modif(l, '@c-brouillon', 'cfg', '@rs-neuf')],
-    // le parent n'est pas prévenu : son affichage garde la copie telle qu'il l'a reçue
-    vus: ['c-neuf=a,m', 'c-retour=1-1', 'c-brouillon=6-6', 'c-envoie-copie=6-5', 'etat=a,n|0|5|5'],
+    // le parent suit : son affichage montre ce que l'enfant a écrit
+    vus: ['c-neuf=a,m', 'c-retour=1-1', 'c-brouillon=6-6', 'c-envoie-copie=6-5', 'etat=a,m|1|6|5'],
     piles: 3,
   },
   'mjs-rs-define': {
     enfants: 1,
     gestes: (p, b) => cliquer(p, b, 'mjs-c-define'),
     avis: (l) => [modif(l, '@c-define', 'cfg', '@rs-define')],
-    vus: ['c-define=1', 'etat=0'],
+    vus: ['c-define=1', 'etat=1'],
     piles: 1,
   },
   'mjs-rs-chaine': {
@@ -784,8 +791,8 @@ const SCENARIOS: Record<string, Scenario> = {
       for (const c of ['lie', 'alias', 'nb', 'tout', 'ecoute']) await cliquer(p, b, 'mjs-c-petit-' + c)
     },
     avis: (l) => ['lie', 'alias', 'nb', 'ecoute'].map((c) => modifL(l, '@c-milieu-' + c, '@c-petit-' + c, 'items', '@rs-chaine')),
-    // l'enfant suit l'écho de la liaison quand la liste elle-même a changé ; le parent, qui passe par une prop simple, n'est pas prévenu
-    vus: ['c-milieu-lie=2', 'c-milieu-alias=1', 'c-milieu-nb=2', 'c-milieu-tout=2', 'c-milieu-ecoute=2', 'etat=1|a|1|2|1'],
+    // l'enfant suit l'écho de la liaison quand la liste elle-même a changé ; le parent, qui passe par une prop simple, suit aussi
+    vus: ['c-milieu-lie=2', 'c-milieu-alias=1', 'c-milieu-nb=2', 'c-milieu-tout=2', 'c-milieu-ecoute=2', 'etat=2|Y|2|2|2'],
     piles: 4,
   },
   'mjs-rs-lie': {
@@ -803,7 +810,7 @@ const SCENARIOS: Record<string, Scenario> = {
       await cliquer(p, b, 'mjs-c-st-prop')
       await cliquer(p, b, 'mjs-c-st-ecrit')
     },
-    avis: (l) => [modif(l, '@c-st-prop', 'liste', '@rs-magasin')],
+    avis: (l) => [modifN(l, '@c-st-prop', 'liste', '@rs-magasin')],
     vus: ['c-st-prop=2', 'c-st-ecrit=2', 'etat=1|2'],
   },
   'mjs-rs-voisins': {
@@ -822,10 +829,10 @@ const SCENARIOS: Record<string, Scenario> = {
       for (const c of ['m3', 'pb', 'm3a', 'row-lie']) await cliquer(p, b, 'mjs-c-' + c)
     },
     avis: (l) => [['m1', 'm3'], ['mb', 'pb'], ['m1a', 'm3a'], ['mfor', 'row-lie']].map(([c, par]) => modifL(l, '@c-' + c, '@c-' + par, 'items', '@rs-chaines')),
-    // le parent, qui passe par une prop simple, n'est pas prévenu ; l'enfant suit l'écho de la liaison quand la liste elle-même a changé,
+    // le parent, qui passe par une prop simple, suit aussi ; l'enfant suit l'écho de la liaison quand la liste elle-même a changé,
     // et quand le petit-enfant lié écrit un objet de la liste par une autre variable (`t = $items[0]; t.nom = 'Y'`), comme sous l'écriture
     // directe `$items[0].nom = 'Y'` : c-m1a montre Y
-    vus: ['c-m1=2a', 'c-mb=3a', 'c-m1a=1Y', 'c-mfor=1a', 'etat=1|1|a|a'],
+    vus: ['c-m1=2a', 'c-mb=3a', 'c-m1a=1Y', 'c-mfor=1R', 'etat=2|3|Y|R'],
     piles: 4,
   },
   'mjs-rs-justes': {
@@ -834,7 +841,7 @@ const SCENARIOS: Record<string, Scenario> = {
       for (const c of ['mapalias', 'mapeach', 'seteach', 'mapdel', 'setclear', 'defs', 'defprof', 'assignprof']) await cliquer(p, b, 'mjs-c-' + c)
     },
     avis: (l) => [['mapalias', 'm'], ['mapeach', 'm'], ['seteach', 's'], ['mapdel', 'm'], ['setclear', 's'], ['defs', 'cfg'], ['defprof', 'items'], ['assignprof', 'items']].map(([c, prop]) => modif(l, '@c-' + c, prop, '@rs-justes')),
-    vus: ['c-mapalias=1', 'c-mapeach=2', 'c-seteach=3', 'c-mapdel=0', 'c-setclear=0', 'c-defs=1', 'c-defprof=1D', 'c-assignprof=1A', 'etat=0|0|0|1|2|0|a|a'],
+    vus: ['c-mapalias=1', 'c-mapeach=2', 'c-seteach=3', 'c-mapdel=0', 'c-setclear=0', 'c-defs=1', 'c-defprof=1D', 'c-assignprof=1A', 'etat=1|2|3|0|0|1|D|A'],
   },
   'mjs-rs-sous': {
     enfants: 3,
@@ -843,9 +850,9 @@ const SCENARIOS: Record<string, Scenario> = {
       await cliquer(p, b, 'mjs-c-st-sous2')
       for (const n of ['.y', '.z', '.x']) await cliquer(p, b, 'mjs-c-reprise', n)
     },
-    avis: (l) => [modif(l, '@c-st-sous', 'item', '@rs-sous'), modif(l, '@c-st-sous2', 'item', '@rs-sous'), modif(l, '@c-reprise', 'cfg', '@rs-sous')],
+    avis: (l) => [modifN(l, '@c-st-sous', 'item', '@rs-sous'), modifN(l, '@c-st-sous2', 'item', '@rs-sous'), modif(l, '@c-reprise', 'cfg', '@rs-sous')],
     // le même objet du magasin, modifié par les deux enfants : ni le magasin ni l'autre enfant ne sont prévenus
-    vus: ['c-st-sous=1', 'c-st-sous2=11', 'c-reprise=6-100', 'etat=0|100'],
+    vus: ['c-st-sous=11', 'c-st-sous2=11', 'c-reprise=6-100', 'etat=0|100'],
   },
   'mjs-rs-rangs': {
     enfants: 2,
@@ -854,8 +861,8 @@ const SCENARIOS: Record<string, Scenario> = {
       await cliquer(p, b, 'mjs-c-row-lie2')
     },
     avis: (l) => [modif(l, '@c-row-simple', 'item', '@rs-rangs')],
-    // la ligne liée par son rang ne redessine pas le parent : l'objet de la liste est le même
-    vus: ['c-row-lie2=L', 'c-row-simple=S', 'etat=a|a'],
+    // la ligne liée par son rang redessine le parent : l'objet de la liste est le même, et ceux qui le tiennent suivent
+    vus: ['c-row-lie2=L', 'c-row-simple=S', 'etat=L|S'],
   },
   'mjs-rs-copieliee': {
     enfants: 2,
@@ -865,7 +872,7 @@ const SCENARIOS: Record<string, Scenario> = {
     },
     avis: (l) => [modifL(l, '@c-copieliee', '@c-feuillelie', 'items', '@rs-copieliee')],
     // l'objet de la page change sans qu'elle soit redessinée ; la copie profonde laisse le sien intact
-    vus: ['c-copieliee=c', 'c-copiejson=c', 'etat=a|a'],
+    vus: ['c-copieliee=c', 'c-copiejson=c', 'etat=F|a'],
     piles: 1,
   },
   'mjs-rs-mid': {
@@ -874,8 +881,8 @@ const SCENARIOS: Record<string, Scenario> = {
       await cliquer(p, b, 'mjs-c-bas')
       await cliquer(p, b, 'mjs-c-bas2')
     },
-    avis: (l) => [modif(l, '@c-bas', 'items', '@c-mid'), modif(l, '@c-bas2', 'items', '@c-mid2')],
-    vus: ['c-mid=m', 'c-mid2=m', 'etat=a|a'],
+    avis: (l) => [modifN(l, '@c-bas', 'items', '@c-mid'), modifN(l, '@c-bas2', 'items', '@c-mid2')],
+    vus: ['c-mid=m', 'c-mid2=m', 'etat=B|B'],
   },
 }
 
@@ -897,12 +904,12 @@ const cible  = (mode: Mode) => {
 // la même page, annoncée en anglais
 const enAnglais = (c: Cible): Cible => ({ ...c, document: (b, v) => c.document(b, v).replace('<html lang="fr">', '<html lang="en">') })
 
-// ce que la console a dit d'une prop reçue : un objet venu d'elle modifié (son texte seul, sans la pile d'appels qui le suit quand il tient
-// dans les 200 signes gardés), ou la prop écrite
+// ce que la console a dit d'une prop reçue : un objet venu d'elle modifié (son texte entier, sans la pile d'appels qui le suit), ou la prop
+// écrite
 const nosAvis = (avis: string[]) => avis.filter((a) => / par sa prop « | through its prop "|écrit sa prop|writes its prop/.test(a)).map((a) => a.replace(/(\(04-props\.md\)\.)[\s\S]*$/, '$1')).sort()
 
 const jouerScenario = async (browser: any, c: Cible, mode: Mode, balise: string, langue: Langue) => {
-  const o = await charger(browser, c, balise)
+  const o = await charger(browser, c, balise, '', SIGNES)
   try {
     const s = SCENARIOS[balise]
     await o.page.evaluate(ECOUTER_PILES)
@@ -918,7 +925,7 @@ const jouerScenario = async (browser: any, c: Cible, mode: Mode, balise: string,
   }
 }
 
-for (const nav of NAVIGATEURS) for (const mode of MODES_JOUES[nav]) describe(`avertissement du développement : objet reçu par une prop à sens unique, modifié par l'enfant (${mode}, ${nav} réel)`, function () {
+for (const nav of NAVIGATEURS) for (const mode of MODES_JOUES[nav]) playTogether(describe(`avertissement du développement : objet reçu par une prop à sens unique, modifié par l'enfant (${mode}, ${nav} réel)`, function () {
   this.timeout(180000)
   let browser: any = null
   let present = false
@@ -944,7 +951,7 @@ for (const nav of NAVIGATEURS) for (const mode of MODES_JOUES[nav]) describe(`av
     if (!present) { this.skip(); return }
     await jouerScenario(browser, enAnglais(await cible(mode)), mode, 'mjs-rs-modifie', 'en')
   })
-})
+}))
 
 // le coût : 1 000 lignes, chacune un enfant qui modifie l'objet reçu — tenu par le parent (`item={r}`) ou fait pour la ligne (`item={neuf(r)}`)
 const SOURCES_MILLE: Record<string, string> = {
@@ -997,7 +1004,7 @@ describe('avertissement du développement, objet reçu modifié : le coût d\'un
 
   for (const [balise, parent] of [['mjs-rs-mille', '@rs-mille'], ['mjs-rs-frais', '@rs-frais']]) it(`${balise.slice(7)} : 1 000 modifications, 1 000 composants, un avertissement, ni le registre des composants ni l'état du parent parcourus`, async function () {
     if (!present) { this.skip(); return }
-    const o = await charger(browser, await (mille ??= construire('dev-parents-avant', SOURCES_MILLE, BALISES_MILLE)), balise)
+    const o = await charger(browser, await (mille ??= construire('dev-parents-avant', SOURCES_MILLE, BALISES_MILLE)), balise, '', SIGNES)
     try {
       await o.page.waitForFunction(MONTES(balise, 'mjs-c-mille'), null, { timeout: 30000 })
       await o.page.evaluate(COMPTER_PARCOURS(balise))
@@ -1006,7 +1013,8 @@ describe('avertissement du développement, objet reçu modifié : le coût d\'un
       assert.equal(fin, '999-1', 'la dernière ligne a reçu sa modification')
       assert.equal(await o.page.evaluate('window.__parcours'), 0, 'parcours du registre des composants pendant les 1 000 modifications')
       assert.equal(await o.page.evaluate('window.__etat'), 0, 'parcours de l\'état du parent pendant les 1 000 modifications')
-      assert.deepEqual(nosAvis(o.avis), [modif('fr', '@c-mille', 'item', parent)], 'les avertissements dits')
+      // `<@rs-frais>` fabrique l'objet pour l'enfant (`neuf(r)`) : il ne le tient pas, il n'en est pas prévenu
+      assert.deepEqual(nosAvis(o.avis), [(parent === '@rs-frais' ? modifN : modif)('fr', '@c-mille', 'item', parent)], 'les avertissements dits')
       assert.deepEqual(graves(o), [], 'aucune erreur')
     } finally {
       await o.fermer()
@@ -1018,7 +1026,7 @@ describe('avertissement du développement, objet reçu modifié : le coût d\'un
     const balise = 'mjs-rs-pire'
     const enf    = `document.querySelector('${balise}')._shadow.querySelector('mjs-c-pire')`
     const tour   = `const p = document.querySelector('${balise}')._shadow.querySelector('.p'), x = ${enf}._shadow.querySelector('.x')`
-    const o      = await charger(browser, await (mille ??= construire('dev-parents-avant', SOURCES_MILLE, BALISES_MILLE)), balise)
+    const o      = await charger(browser, await (mille ??= construire('dev-parents-avant', SOURCES_MILLE, BALISES_MILLE)), balise, '', SIGNES)
     try {
       await o.page.waitForFunction(`!!(${enf} && ${enf}._shadow && ${enf}._shadow.querySelector('.vu'))`, null, { timeout: 30000 })
       await o.page.evaluate(`${enf}._shadow.querySelector('.y').click()`)
@@ -1065,7 +1073,7 @@ const COMPTER_LECTURES = `(async () => {
   }
 })()`
 
-for (const nav of ['chromium', 'firefox'] as const) describe(`avertissement du développement, objet reçu modifié : lire une liste reçue ne coûte pas plus qu'en production (${nav} réel)`, function () {
+for (const nav of ['chromium', 'firefox'] as const) playTogether(describe(`avertissement du développement, objet reçu modifié : lire une liste reçue ne coûte pas plus qu'en production (${nav} réel)`, function () {
   this.timeout(120000)
   let browser: any = null
   let present = false
@@ -1100,7 +1108,7 @@ for (const nav of ['chromium', 'firefox'] as const) describe(`avertissement du d
     assert.equal(compte.bundle.somme, 499500, 'la production lit toute la liste')
     assert.deepEqual(compte['dev-parents-avant'], compte.bundle, 'recherches dans les tables faibles : développement contre production')
   })
-})
+}))
 
 // les fichiers d'une sortie, lus en texte
 const lireTout = (dossier: string): string[] => readdirSync(dossier, { recursive: true }).map(String).filter((f) => /\.(js|json|html)$/.test(f)).map((f) => readFileSync(join(dossier, f), 'utf-8'))
@@ -1128,26 +1136,29 @@ describe('avertissement du développement, objet reçu modifié : absent de la p
 
 describe('avertissement du développement, objet reçu modifié : le libellé', () => {
   const dev = (langue: Langue) => (RUNTIME_LABELS as any)[langue].dev
-  // ce que dit chaque libellé ; seule la liaison d'une variable de l'état du parent redessine le parent, les deux autres ne la proposent pas
-  // le fait, au vouvoiement, et le renvoi à la documentation : aucun remède au cas par cas
+  // ce que dit chaque libellé : le composant, la prop et le parent, puis le fait, au vouvoiement, et le renvoi à la documentation. Avec
+  // l'enveloppe, l'écran suit : le libellé dit seulement la manière à préférer (un événement, une méthode du parent), jamais que le parent
+  // n'est pas prévenu ; sans elle (`proxy: false`), il dit que le parent n'est pas prévenu et comment faire suivre son écran (µrefresh)
   const DOC = { fr: 'Lisez « Modifier un objet reçu » dans la documentation des props (04-props.md).', en: 'See the section on modifying a received object in the props documentation (04-props.md).' }
+  const SUIT = { fr: ['l\'écran suit', 'par un événement ou par une de ses méthodes', DOC.fr], en: ['the screen follows', 'through an event or one of its methods', DOC.en] }
+  const SANS = { fr: ['<{parent}> n\'en est pas prévenu', 'par un événement', 'µrefresh', DOC.fr], en: ['<{parent}> is not notified', 'through an event', 'µrefresh', DOC.en] }
+  const SEUL = { fr: '<{tag}> modifie un objet que <{parent}> lui a passé par sa prop « {prop} »', en: '<{tag}> modifies an object that <{parent}> passed to it through its prop "{prop}"' }
+  const LIE  = { fr: '<{by}>, lié à <{tag}>, modifie un objet que <{parent}> a passé à <{tag}> par sa prop « {prop} »', en: '<{by}>, bound to <{tag}>, modifies an object that <{parent}> passed to <{tag}> through its prop "{prop}"' }
   const ATTENDU: Record<string, Record<Langue, string[]>> = {
-    propMutated: {
-      fr: ['<{tag}> modifie un objet que <{parent}> lui a passé par sa prop « {prop} »', '<{parent}> n\'en est pas prévenu', DOC.fr],
-      en: ['<{tag}> modifies an object that <{parent}> passed to it through its prop "{prop}"', '<{parent}> is not notified', DOC.en],
-    },
-    propMutatedBound: {
-      fr: ['<{by}>, lié à <{tag}>, modifie un objet que <{parent}> a passé à <{tag}> par sa prop « {prop} »', '<{parent}> n\'en est pas prévenu', DOC.fr],
-      en: ['<{by}>, bound to <{tag}>, modifies an object that <{parent}> passed to <{tag}> through its prop "{prop}"', '<{parent}> is not notified', DOC.en],
-    },
+    propMutated:             { fr: [SEUL.fr, ...SUIT.fr], en: [SEUL.en, ...SUIT.en] },
+    propMutatedBound:        { fr: [LIE.fr, ...SUIT.fr], en: [LIE.en, ...SUIT.en] },
+    propMutatedNoProxy:      { fr: [SEUL.fr, ...SANS.fr], en: [SEUL.en, ...SANS.en] },
+    propMutatedBoundNoProxy: { fr: [LIE.fr, ...SANS.fr], en: [LIE.en, ...SANS.en] },
+    propMutatedUnseen:       { fr: [SEUL.fr, '<{parent}> n\'en est pas prévenu', DOC.fr], en: [SEUL.en, '<{parent}> is not notified', DOC.en] },
+    propMutatedBoundUnseen:  { fr: [LIE.fr, '<{parent}> n\'en est pas prévenu', DOC.fr], en: [LIE.en, '<{parent}> is not notified', DOC.en] },
   }
 
-  for (const cle of Object.keys(ATTENDU)) it(`${cle} : nomme le composant, la prop et le parent, dit que le parent n'est pas prévenu et renvoie à la documentation, sans remède (français et anglais)`, () => {
+  for (const cle of Object.keys(ATTENDU)) it(`${cle} : nomme le composant, la prop et le parent, dit ce que fait l'écran et la manière à préférer, et renvoie à la documentation (français et anglais)`, () => {
     for (const langue of ['fr', 'en'] as const) {
       const t = dev(langue)[cle]
       assert.ok(typeof t === 'string', `${langue} : libellé dev.${cle} absent`)
       for (const v of ATTENDU[cle][langue]) assert.ok(t.includes(v), `${langue} : « ${v} » attendu dans « ${t} »`)
-      for (const r of ['!{', 'JSON', 'copie', 'copy', 'événement', 'event']) assert.ok(!t.includes(r), `${langue} : dev.${cle} ne propose pas de remède (« ${r} »)`)
+      if (!/NoProxy$|Unseen$/.test(cle)) for (const r of ['n\'en est pas prévenu', 'is not notified', 'µrefresh']) assert.ok(!t.includes(r), `${langue} : dev.${cle} ne dit pas que le parent n'est pas prévenu (« ${r} »)`)
     }
     assert.match(dev('fr')[cle], /\bvous\b|\bvotre\b|\bvos\b|Lisez/, 'fr : au vouvoiement')
   })
@@ -1181,7 +1192,7 @@ const ECRANS = (balise: string) => `(() => {
 })()`
 let exemples: Promise<Cible> | null = null
 
-for (const nav of NAVIGATEURS) describe(`avertissement du développement, objet reçu modifié : les exemples de la documentation, joués, montrent la modification partout et ne font rien dire (dev-parents-avant, ${nav} réel)`, function () {
+for (const nav of NAVIGATEURS) playTogether(describe(`avertissement du développement, objet reçu modifié : les exemples de la documentation, joués, montrent la modification partout et ne font rien dire (dev-parents-avant, ${nav} réel)`, function () {
   this.timeout(180000)
   let browser: any = null
   let present = false
@@ -1213,4 +1224,4 @@ for (const nav of NAVIGATEURS) describe(`avertissement du développement, objet 
       await o.fermer()
     }
   })
-})
+}))

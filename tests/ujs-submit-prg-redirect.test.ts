@@ -127,7 +127,7 @@ describe("mjs_ajax — response.url transmis au callback success (2e argument)",
 
     let receivedNav: any
     await new Promise<void>((resolve) => {
-      µ.ajax.post('https://x/posts', new FormData(), (_body: any, _url: any, _schemaNom: any, nav: any) => { receivedNav = nav; resolve() })
+      µ.ajax.post('https://x/posts', new FormData(), (_body: any, _url: any, _schemaKey: any, nav: any) => { receivedNav = nav; resolve() })
     })
     assert.deepEqual(receivedNav, { version: 'v7', target: null, method: null, cache: null, reload: null, type: 'text/html', csrf: null }, 'target/method/cache/reload/csrf à null : aucun en-tête X-MJS-Target/X-MJS-Method/X-MJS-Cache/X-MJS-Reload/X-CSRF-Token sur cette réponse ; type = Content-Type reçu')
   })
@@ -141,7 +141,7 @@ describe("mjs_ajax — response.url transmis au callback success (2e argument)",
 
     let receivedNav: any = 'INITIAL'
     await new Promise<void>((resolve) => {
-      µ.ajax.post('https://x/posts', new FormData(), (_body: any, _url: any, _schemaNom: any, nav: any) => { receivedNav = nav; resolve() })
+      µ.ajax.post('https://x/posts', new FormData(), (_body: any, _url: any, _schemaKey: any, nav: any) => { receivedNav = nav; resolve() })
     })
     assert.deepEqual(receivedNav, { version: null, target: null, method: null, cache: null, reload: null, type: 'text/html', csrf: null })
   })

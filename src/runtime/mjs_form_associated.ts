@@ -39,9 +39,9 @@
   // <precision>
   P._set = function(k, v, code) {
   // </precision>
-  // <horloge>
+  // <clock>
   // P._set = function(k, v) {
-  // </horloge>
+  // </clock>
     var r;
     if (k === 'readonly' && this.localName.indexOf('mjs-core-') === 0 && !(this._mjs_var_bits && k in this._mjs_var_bits)) {
       // la valeur que la lecture des attributs tire de l'attribut lui-même, quand c'est son texte, ne l'ôte pas : `readonly="null"` reste porté,
@@ -56,9 +56,9 @@
     // <precision>
     r = set.call(this, k, v, code);
     // </precision>
-    // <horloge>
+    // <clock>
     // r = set.call(this, k, v);
-    // </horloge>
+    // </clock>
     if (k === 'label' && this._mjs_n) _mjsFormName(this);
     return r;
   };
@@ -209,18 +209,40 @@ function _mjsFormName(el) {
     refs = Array.prototype.slice.call(el.internals.labels);
     if (refs.length) refs = refs.concat(Array.prototype.slice.call(input.labels || []));
   }
-  if (wait !== !!el._mjs_w) _mjsFormWait(el, wait);
+  if (wait ? el._mjs_w !== el.getRootNode() : el._mjs_w) _mjsFormWait(el, wait);
   if (refs || el._mjs_l) input.ariaLabelledByElements = el._mjs_l = refs && refs.length ? refs : null;
 }
 
-// un élément cité par `aria-labelledby` qui manque encore (affiché plus tard, dans un {if}) : la racine de la balise est guettée le temps qu'il
-// paraisse, comme le fait la liste — tant qu'aucun ne manque, rien n'est guetté ; la balise partie de la page, le guet cesse
+// un élément cité par `aria-labelledby` qui manque encore (affiché plus tard, dans un {if}) : la racine de la balise (la page ou une ombre)
+// est guettée le temps qu'il paraisse, comme le fait la liste — tant qu'aucun ne manque, rien n'est guetté ; la balise partie de la page, le
+// guet cesse ; passée dans une autre racine en attendant encore, elle y est guettée, et plus dans l'ancienne. Un seul guetteur par racine, quel que soit le nombre de balises qui attendent : à chaque changement, seule relit son nom la
+// balise dont un élément cité a paru, est parti ou a changé, ou qui a quitté sa racine. `_mjs_w` : la racine guettée pour la balise
 function _mjsFormWait(el, on) {
-  if (el._mjs_w) el._mjs_w.disconnect();
+  var r = el._mjs_w, s = r && r._mjs_fw;
+  if (s && s.delete(el) && !s.size) {
+    s.mo.disconnect();
+    r._mjs_fw = null;
+  }
   el._mjs_w = null;
   if (!on) return;
-  el._mjs_w = new MutationObserver(function() { _mjsFormName(el); });
-  el._mjs_w.observe(el.getRootNode(), { childList: true, subtree: true });
+  r = el._mjs_w = el.getRootNode();
+  if (!(s = r._mjs_fw)) {
+    s = r._mjs_fw = new Set();
+    s.mo = new MutationObserver(function() {
+      s.forEach(function(x) { if (_mjsFormStale(x, r)) _mjsFormName(x); });
+    });
+    s.mo.observe(r, { childList: true, subtree: true });
+  }
+  s.add(el);
+}
+
+// vrai quand la balise qui attend doit relire son nom : partie de sa racine, ou les éléments cités ne sont plus ceux qu'elle cite
+function _mjsFormStale(el, r) {
+  var l = el._mjs_l || [], n = 0;
+  return !el.isConnected || el.getRootNode() !== r || (el.getAttribute('aria-labelledby') || '').split(/\s+/).some(function(id) {
+    var x = id && r.getElementById(id);
+    return x && l[n++] !== x;
+  }) || n !== l.length;
 }
 
 // le champ caché d'un module part avec le formulaire de sa balise : `form="id"`, quand la balise le porte, lui est recopié (un champ natif

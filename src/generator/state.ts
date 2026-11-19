@@ -23,7 +23,7 @@
 //     avec le bitmask.
 
 import { tokenize } from '../lexer/index.js'
-import { codeEmisDesDependances, convertCoffeeInterpolations, formeDeJavaScript, jsDesDependances } from './utils.js'
+import { emittedDepCode, convertCoffeeInterpolations, javaScriptShape, dependenciesJs, templateLocalsInScope } from './utils.js'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { analyzeSnippetOrNull } from '../analyzer/index.js'
 import { t } from '../messages/index.js'
@@ -43,6 +43,8 @@ export interface ResetOpts {
   handlerScope?: Set<string> | null
   // les constantes du <script> et du <script module> (cf. CompilerState.handlerConsts)
   handlerConsts?: string[]
+  // la langue du <script> du composant (cf. CompilerState.scriptLang)
+  scriptLang?: string
   /** Nom du module compilé — best-effort, utilisé UNIQUEMENT pour enrichir les
    * messages d'erreur (ex. échec de compilation Civet d'une expression de
    * template, cf. generator/utils.ts:cleanJsExpr). Absent en dehors du
@@ -59,6 +61,9 @@ export interface ResetOpts {
   /** build de développement : le code émis dit en plus, par mjs_debug.ts, une attache qui rend autre chose qu'une fonction et
    *  une prop à sens unique que l'enfant écrit lui-même ; absent ou `false` (production) : rien de plus n'est émis */
   devWarnings?: boolean
+  /** construction qui peut rendre côté serveur : la route de la liaison d'un champ porte la marque 4 (cf. registerEventRoute,
+   *  attributes/index.ts) ; absent ou `false`, le code émis est le même */
+  serverRendered?: boolean
   /** valeurs calculées précises (option d'appli `derived: "precise"`) : l'écho d'une liaison `!{}` s'écrit `µ._set(…, 0)`, que le cœur
    *  ne prend pas pour une écriture du composant ; absent ou `false` (défaut) : l'affectation ordinaire */
   derivedPrecise?: boolean
@@ -89,14 +94,14 @@ export interface FineList {
  * élément de tableau JS valide une fois isolé dans `[${candidate}]`.
  * Aucun effet de bord : un candidat invalide n'est qu'une hypothèse rejetée. */
 function canParseAsArrayElement(candidate: string, externalVars: string[]): boolean {
-  return formeDeJavaScript(tokenize(`[${candidate}]`, { externalVars }))
+  return javaScriptShape(tokenize(`[${candidate}]`, { externalVars }))
 }
 
 export class CompilerState {
   counter: number = 0
   events: Record<string, Record<string, EventRoute>> = {}
   /** Combien de LIAISONS occupent déjà un couple (événement, nœud) — clé
-   * `evt\0id`. Sert au seul point d'insertion des routes : une liaison
+   * `evt id` (l'événement et l'id du nœud, séparés par une espace). Sert au seul point d'insertion des routes : une liaison
    * s'insère derrière la dernière liaison, une directive s'ajoute à la fin.
    * Interne au compilateur, jamais sérialisé. */
   eventBindCount: Record<string, number> = {}
@@ -117,14 +122,20 @@ export class CompilerState {
   inlineLines: Array<number | undefined> = []
   // le texte écrit de chaque gestionnaire (valeur de son attribut), même rang : une faute de Civet y est située
   inlineSources: string[] = []
+  // les champs liés (`value=!{$r}`, `:group=!{$r}`, `files=!{$r}`) : l'attribut et sa variable tels qu'écrits, la ligne de la balise ;
+  // lus par le refus d'une valeur qui attend liée à un champ (transpiler/await-derived.ts)
+  boundFields: Array<{ field: string, written: string, line?: number }> = []
+  // la tête de chaque bloc {await} : son id dans le code, son expression telle qu'écrite, effet compris (`$fiche *skeleton`), son option
+  // `.keep` ; lue par le refus d'un bloc sur une valeur qui attend (transpiler/await-derived.ts), qui cite la tête telle qu'écrite
+  awaitBlocks: Array<{ id: string, expr: string, keep: boolean }> = []
   // la faute de syntaxe de chaque gestionnaire écrit que Civet ne lit pas, même rang (null : aucune) : dite avant le lot (transpileur)
-  inlineFautes: Array<Error | null> = []
+  inlineFaults: Array<Error | null> = []
   /** réglage `proxy: false` : élément d'une boucle `{for}` sur une liste CALCULÉE (`$l.filter(f)`) écrit par un gestionnaire (`inline` :
    *  son rang dans `inlines`) — écriture que le compilateur ne voit pas, signalée par le transpileur à la ligne de la balise */
-  avisBoucles: { inline: number, nom: string, racine: string }[] = []
+  loopNotice: { inline: number, name: string, root: string }[] = []
   /** réglage `proxy: false` : écriture que le compilateur ne voit pas dans un rappel de transition (`@introstart`, `@introend`,
    *  `@outrostart`, `@outroend`), à la ligne de la balise qui le porte (cf. AvisInvisible ; élément d'une boucle `{for}` : forme 1) */
-  avisRappels: { ligne?: number, forme: number, nom: string, racine: string }[] = []
+  callbackNotice: { line?: number, shape: number, name: string, root: string }[] = []
   // références de gestionnaire faites d'un nom seul (`@click=nom`, `@click={nom}`, `@click=@nom`), vérifiées par le transpileur
   handlerRefs: HandlerReference[] = []
   // les noms que le <script>, le <script module> et les imports fournissent aux gestionnaires, null hors du transpileur : un
@@ -132,7 +143,13 @@ export class CompilerState {
   handlerScope: Set<string> | null = null
   // les constantes du <script> et du <script module> (`n := …`) : un rappel de transition ne les réaffecte pas, comme un gestionnaire
   handlerConsts: string[] = []
+  // la langue du <script> du composant (`civet`, `coffee`, `js`, `ts` ; sans <script>, celle du projet, `defaultScriptLang`, Civet par
+  // défaut), absente hors du transpileur : dans un composant en JavaScript ou en TypeScript, un gestionnaire ou un rappel de transition
+  // garde sa lecture de `µafter (d), 1`, sans refus (cf. cleanJsHandler)
+  scriptLang: string | undefined = undefined
   analyzer: any | null = null
+  // avertissements d'un nom du `<script>` que la construction ne sait pas lire, déjà dits (expression et nom, cf. getEffectVars)
+  toldUnreadableFunctions: Set<string> = new Set()
   externalVars: string[] = []
   isPrePass: boolean = false
   snippetRegistry: string[] = []
@@ -140,6 +157,8 @@ export class CompilerState {
   /** les tailles réservées des balises `@offscreen` du composant (`'24px'`, `'3rem'`) : une règle `content-visibility` par taille,
    * ajoutée au style de base (transpiler/index.ts) ; vide sans `@offscreen`, et le style ne change pas */
   offscreen: Set<string> = new Set()
+  /** Attributs `on…` à `$x` sans accolades déjà signalés dans cette construction (`ligne\0nom`) : un avertissement par attribut. */
+  warnedAttrs: Set<string> = new Set()
   /** les places gardées des balises `@size` du composant (`'320x48'`, `'x48'`) : une règle par valeur, ajoutée au style de base
    * (transpiler/index.ts, cf. sizeCss) ; vide sans `@size`, et le style ne change pas */
   sizes: Set<string> = new Set()
@@ -223,6 +242,10 @@ export class CompilerState {
    * à chaque changement de variable) et ne les calcule pas une seconde fois */
   effectTwins: Set<string> = new Set()
   usedAnimations: Set<string> = new Set()
+  /** transitions hors bibliothèque écrites avec un réglage sans nom (`*nom(down)`) : la construction juge leur nom (inconnu, ou créé par µanim.create) */
+  unnamedSettingAnimations: Set<string> = new Set()
+  /** cf. TranspileOpts.deferUnnamedSettings, posé par transpile() pour tout l'appel : un réglage sans nom est relevé pour la construction ; sinon, refusé */
+  deferUnnamedSettings = false
   transitionsProcessed: Set<string> = new Set()
   /** le composant pose un effet de l'appli (fichier *.effects.mjs) */
   usesProjectEffects = false
@@ -230,10 +253,12 @@ export class CompilerState {
   instanceProps: Set<string> = new Set()
   /** cf. ResetOpts.devWarnings */
   devWarnings = false
+  /** cf. ResetOpts.serverRendered */
+  serverRendered = false
   /** cf. ResetOpts.derivedPrecise */
   derivedPrecise = false
   /** cf. ResetOpts.proxy : `proxy: false`, objets de l'état sans enveloppe */
-  sansProxy = false
+  withoutProxy = false
   /** Refs DOM `@this=!{nom}` au top-level avec une variable NUE (sans `$`,
    * donc non réactive). Le compilateur AUTO-DÉCLARE ces variables (`let nom`)
    * en tête de `init` si le script ne les déclare pas — sinon `nom = node`
@@ -260,54 +285,59 @@ export class CompilerState {
   colorsEnabled = false
 
   reset(opts: ResetOpts = {}): void {
-    this.counter = 0
-    this.events = {}
-    this.eventBindCount = {}
-    this.eventsWithPrevent = new Set()
-    this.inlines = []
-    this.inlineLocals = []
-    this.inlineLines = []
-    this.inlineSources = []
-    this.inlineFautes = []
-    this.avisBoucles = []
-    this.avisRappels = []
-    this.handlerRefs = []
-    this.handlerScope = opts.handlerScope ?? null
-    this.handlerConsts = opts.handlerConsts ?? []
-    this.analyzer = opts.analyzer ?? null
-    this.externalVars = opts.externalVars ?? []
-    this.moduleName = opts.moduleName
-    this.lint = opts.lint
-    this.colorsEnabled = opts.colorsEnabled ?? false
-    this.isPrePass = false
-    this.snippetRegistry = []
-    this.hasFlip = false
-    this.offscreen = new Set()
-    this.sizes = new Set()
-    this.hasDynamicSlots = false
-    this.effectsByVar = new Map()
-    this.effectsSeen = new WeakMap()
-    this.mountOnlyEffects = []
-    this.mountOnlyEffectsSet = new Set()
-    this.initialPropBinds = []
-    this.kidBinds = []
-    this.structVars = new Set()
-    this.fineLists = []
-    this.propVars = new Set()
-    this.templateLocals = new Set()
-    this.effectGuardStack = []
-    this.effectTwins = new Set()
-    this.usedAnimations = new Set()
-    this.transitionsProcessed = new Set()
-    this.usesProjectEffects = false
-    this.instanceProps = new Set(opts.instanceProps ?? [])
-    this.devWarnings = opts.devWarnings === true
-    this.derivedPrecise = opts.derivedPrecise === true
-    this.sansProxy      = opts.proxy === false
-    this.refVars = new Set()
-    this.hasDestroyHooks = false
-    this.hasNestedFor = false
-    this.idxCopied = false
+    this.counter                  = 0
+    this.events                   = {}
+    this.eventBindCount           = {}
+    this.eventsWithPrevent        = new Set()
+    this.inlines                  = []
+    this.inlineLocals             = []
+    this.inlineLines              = []
+    this.inlineSources            = []
+    this.boundFields              = []
+    this.awaitBlocks              = []
+    this.inlineFaults             = []
+    this.loopNotice               = []
+    this.callbackNotice           = []
+    this.handlerRefs              = []
+    this.handlerScope             = opts.handlerScope ?? null
+    this.handlerConsts            = opts.handlerConsts ?? []
+    this.scriptLang               = opts.scriptLang
+    this.analyzer                 = opts.analyzer ?? null
+    this.externalVars             = opts.externalVars ?? []
+    this.moduleName               = opts.moduleName
+    this.lint                     = opts.lint
+    this.colorsEnabled            = opts.colorsEnabled ?? false
+    this.isPrePass                = false
+    this.snippetRegistry          = []
+    this.hasFlip                  = false
+    this.offscreen                = new Set()
+    this.sizes                    = new Set()
+    this.hasDynamicSlots          = false
+    this.effectsByVar             = new Map()
+    this.effectsSeen              = new WeakMap()
+    this.mountOnlyEffects         = []
+    this.mountOnlyEffectsSet      = new Set()
+    this.initialPropBinds         = []
+    this.kidBinds                 = []
+    this.structVars               = new Set()
+    this.fineLists                = []
+    this.propVars                 = new Set()
+    this.templateLocals           = new Set()
+    this.effectGuardStack         = []
+    this.effectTwins              = new Set()
+    this.usedAnimations           = new Set()
+    this.unnamedSettingAnimations = new Set()
+    this.transitionsProcessed     = new Set()
+    this.usesProjectEffects       = false
+    this.instanceProps            = new Set(opts.instanceProps ?? [])
+    this.devWarnings              = opts.devWarnings === true
+    this.derivedPrecise           = opts.derivedPrecise === true
+    this.serverRendered           = opts.serverRendered === true
+    this.withoutProxy             = opts.proxy === false
+    this.refVars                  = new Set()
+    this.hasDestroyHooks          = false
+    this.hasNestedFor             = false
+    this.idxCopied                = false
   }
 
   genId(prefix: string): string {
@@ -325,7 +355,8 @@ export class CompilerState {
    * `{...}`) : un `$var` mentionné dans un commentaire Civet `#…` ou une chaîne littérale
    * ('texte #$exemple') y est neutralisé (maskNonCode) avant extraction — sinon fausse
    * dépendance silencieuse (effet réabonné à une var jamais lue). */
-  getEffectVars(expr: string | null | undefined, isRawText = false): string[] {
+  // `withoutScriptFunctions` : les fonctions du <script> qu'appelle l'expression n'y comptent pas (une attache, cf. Analyzer.getEffectVars)
+  getEffectVars(expr: string | null | undefined, isRawText = false, withoutScriptFunctions = false): string[] {
     const raw = (expr ?? '').toString().trim()
     if (raw === '') return []
     // même conversion Coffee `"...#{X}..."` →
@@ -342,7 +373,7 @@ export class CompilerState {
     let codeToAnalyze: string
     // les expressions que le tableau `codeToAnalyze` énumère, telles qu'écrites : le code qu'elles émettent est celui qu'on analyse
     // quand le texte n'est pas du JavaScript
-    let morceaux: string[]
+    let pieces: string[]
     // ce que lit le repli Civet, et le texte où chercher une plage (`[1..$n]`) : l'expression entière pour du
     // code ; pour un texte d'attribut (`isRawText`), son code seul — l'intérieur des accolades —, jamais le
     // texte autour (les `..` d'un « $min..$max » n'y font pas une plage, l'apostrophe de « l'exemple » n'y
@@ -366,7 +397,7 @@ export class CompilerState {
       && (str.match(/\}/g) ?? []).length === 1
     if (isUnambiguousSingleBlock) {
       codeToAnalyze = `[${pureMatch![1]}]`
-      morceaux      = [pureMatch![1]]
+      pieces        = [pureMatch![1]]
       if (isRawText) {
         sourceCivet   = pureMatch![1]
         codeForRange = pureMatch![1]
@@ -387,12 +418,12 @@ export class CompilerState {
       // AU NIVEAU RACINE d'une interpolation vivait ce bug ; À L'INTÉRIEUR
       // d'un `{for}` c'était masqué (le corps de boucle re-tourne
       // structurellement de toute façon).
-      // un test de forme, JavaScript seul (formeDeJavaScript) : Civet lirait presque tout en une expression
-      const whole = formeDeJavaScript(tokenize(`[${str}]`, { externalVars: this.externalVars })) ? `[${str}]` : null
+      // un test de forme, JavaScript seul (javaScriptShape) : Civet lirait presque tout en une expression
+      const whole = javaScriptShape(tokenize(`[${str}]`, { externalVars: this.externalVars })) ? `[${str}]` : null
 
       if (whole !== null) {
         codeToAnalyze = whole
-        morceaux      = [str]
+        pieces        = [str]
       } else {
         // Scan ÉQUILIBRÉ (accolades imbriquées + quotes) : l'ancienne regex
         // `{[^}]+}` s'arrêtait au PREMIER `}` — un effet `doX({k: $b})` perdait
@@ -455,7 +486,7 @@ export class CompilerState {
         const matches = isRawText ? leftover.match(SHORTCUT_TEXT_RE) : maskNonCode(leftover).match(/(?<![\w.\$])\$[a-zA-Z0-9_$]+/g)
         if (matches) blocks.push(...matches)
         codeToAnalyze = `[${blocks.join(', ')}]`
-        morceaux      = blocks
+        pieces        = blocks
         if (isRawText) {
           sourceCivet   = `[${blocks.join(', ')}]`
           codeForRange = blocks.join('\n')
@@ -464,30 +495,30 @@ export class CompilerState {
     } else if (isRawText) {
       // texte d'attribut sans accolades : seul le raccourci `$var` y lit quelque chose, tout le reste est du
       // texte — un `#`, une apostrophe, les `..` d'un « $min..$max », les `...` d'un « Chargement...$n »
-      morceaux      = str.match(SHORTCUT_TEXT_RE) ?? []
-      codeToAnalyze = `[${morceaux.join(', ')}]`
+      pieces        = str.match(SHORTCUT_TEXT_RE) ?? []
+      codeToAnalyze = `[${pieces.join(', ')}]`
       codeForRange  = ''
     } else {
       // un `#` HORS chaîne ouvre un commentaire (`$x > 0 # note sur $y`) : seul le code qui le précède
       // compte, par le chemin commun. Un `#` DANS une chaîne (couleur `'#333'`, texte `' #'`) n'en est pas
       // un : l'ancien repli, déclenché par tout `#`, ne gardait que les `$x` écrits en toutes lettres et
       // perdait les lectures d'une méthode (`@fmt($n)`), de `µlang`, d'un contexte
-      const debutCommentaire = hashCommentStart(str)
-      morceaux      = [debutCommentaire === -1 ? str : str.slice(0, debutCommentaire)]
-      codeToAnalyze = `[${morceaux[0]}]`
+      const commentStart = hashCommentStart(str)
+      pieces             = [commentStart === -1 ? str : str.slice(0, commentStart)]
+      codeToAnalyze      = `[${pieces[0]}]`
     }
 
     // `tokenize` seul ne couvre que les sigils ($x → $.x). Pour que `acorn.parse`
     // ne plante pas silencieusement sur les snippets Coffee/Civet (`or`, `and`,
     // `not`, `is`...) — auquel cas analyzeSnippet retourne `[]` et l'effect
     // finit en `mountOnly` au lieu d'être re-fired sur mutation de sa dep —
-    // un texte qui n'est pas du JavaScript est lu sur le code que ses morceaux émettent (jsDesDependances) : une dépendance y est
+    // un texte qui n'est pas du JavaScript est lu sur le code que ses morceaux émettent (dependenciesJs) : une dépendance y est
     // une lecture du code exécuté
-    const tokenise  = tokenize(codeToAnalyze, { externalVars: this.externalVars })
-    const cleanCode = jsDesDependances(tokenise, morceaux, this.externalVars, this.moduleName) ?? tokenise
+    const tokenise      = tokenize(codeToAnalyze, { externalVars: this.externalVars })
+    const cleanCode     = dependenciesJs(tokenise, pieces, this.externalVars, this.moduleName) ?? tokenise
     let cleanCodeForAst = cleanCode.replace(/===/g, '==').replace(/!==/g, '!=')
 
-    // REPLI CIVET — un morceau qui ne se compile pas seul (jsDesDependances,
+    // REPLI CIVET — un morceau qui ne se compile pas seul (dependenciesJs,
     // ligne au-dessus, rend null) laisse le texte du lexeur, que acorn peut refuser
     // alors que l'expression ENTIÈRE, elle, compile très bien (cleanJsExpr passe par le
     // VRAI compilateur Civet, generator/utils.ts). Sans repli, `analyzeSnippetOrNull`
@@ -504,18 +535,18 @@ export class CompilerState {
     // `$xxx` textuel laisse deviner une dépendance qu'on ne pourra jamais suivre.
     // une plage de Civet (`[1..$n]`) PARSE aussi en JS — `1..$` : le nombre `1.`, puis une
     // propriété —, sans aucune dépendance : elle passe d'office par le vrai Civet
-    const plage = /(?<!\.)\.\.(?!\.)/.test(maskNonCode(codeForRange))
-    if (plage || analyzeSnippetOrNull(cleanCodeForAst) === null) {
+    const range = /(?<!\.)\.\.(?!\.)/.test(maskNonCode(codeForRange))
+    if (range || analyzeSnippetOrNull(cleanCodeForAst) === null) {
       let civetOk = false
       // expression réellement incompilable (même par le vrai Civet) : null, repli conservé tel quel, cf. avertissement plus bas
-      const civetCandidate = codeEmisDesDependances([sourceCivet], this.externalVars, this.moduleName)
+      const civetCandidate = emittedDepCode([sourceCivet], this.externalVars, this.moduleName)
       if (civetCandidate !== null && analyzeSnippetOrNull(civetCandidate) !== null) {
         cleanCodeForAst = civetCandidate
         civetOk = true
       }
       if (!civetOk && !this.isPrePass && /\$[A-Za-z_]\w*/.test(raw)) {
-        const moduleHint = this.moduleName ? t('generator.hint-dans-module', { moduleName: this.moduleName }) : ''
-        const line = typedLine('reactivity', t('generator.deps-non-analysables', { expr: raw, moduleHint }), this.lint)
+        const moduleHint = this.moduleName ? t('generator.hint-in-module', { moduleName: this.moduleName }) : ''
+        const line = typedLine('reactivity', t('generator.deps-not-analyzable', { expr: raw, moduleHint }), this.lint)
         if (line !== null) printDiagnostic(line, this.colorsEnabled)
       }
     }
@@ -525,7 +556,19 @@ export class CompilerState {
       return []
     }
 
-    return this.analyzer?.getEffectVars?.(cleanCodeForAst) ?? []
+    // noms que le gabarit met en portée ici (`{for}`, `{const}`, branche) : une fonction du `<script>` homonyme n'est pas celle
+    // qu'appelle l'expression (Analyzer.getEffectVars)
+    const masks = templateLocalsInScope()
+    // une expression qui appelle un nom du `<script>` que la construction ne sait pas lire (valeur rendue par un appel, fonction
+    // affectée deux fois au premier niveau) ne suit pas ce qu'il lit : dit une fois par expression et par nom, comme une dépendance non analysable
+    for (const name of this.analyzer?.unreadableFunctions?.(cleanCodeForAst, masks, withoutScriptFunctions) ?? []) {
+      if (this.toldUnreadableFunctions.has(`${raw}\u0000${name}`)) continue
+      this.toldUnreadableFunctions.add(`${raw}\u0000${name}`)
+      const moduleHint = this.moduleName ? t('generator.hint-in-module', { moduleName: this.moduleName }) : ''
+      const line = typedLine('reactivity', t('generator.script-function-unreadable', { expr: raw, name: name, moduleHint }), this.lint)
+      if (line !== null) printDiagnostic(line, this.colorsEnabled)
+    }
+    return this.analyzer?.getEffectVars?.(cleanCodeForAst, masks, withoutScriptFunctions) ?? []
   }
 
   /** Enregistre un code d'update pour chaque var de la liste `vars`.
@@ -623,8 +666,8 @@ export function genId(prefix: string): string {
 }
 
 /** Récupère la closure des state vars dont dépend une expression (V2). */
-export function getEffectVars(expr: string | null | undefined, isRawText = false): string[] {
-  return currentState().getEffectVars(expr, isRawText)
+export function getEffectVars(expr: string | null | undefined, isRawText = false, withoutScriptFunctions = false): string[] {
+  return currentState().getEffectVars(expr, isRawText, withoutScriptFunctions)
 }
 
 /** Enregistre un code dans le dispatch direct (V2). */

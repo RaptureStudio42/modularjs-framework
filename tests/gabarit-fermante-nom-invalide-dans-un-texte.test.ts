@@ -8,7 +8,7 @@ import { strict as assert } from 'node:assert'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parse, type Node } from '../src/parser/index.js'
-import { lireFichier } from '../src/reader/index.js'
+import { readFile } from '../src/reader/index.js'
 import { transpile } from '../src/transpiler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 
@@ -85,9 +85,9 @@ describe('gabarit — une fermante dont le nom ne commence pas par une lettre, a
   }
 
   it('le lecteur ne relève aucune faute, dans le gabarit seul comme dans le fichier entier', () => {
-    assert.deepEqual(lireFichier('<p>a </3> b</p>', { gabarit: true }).diagnostics, [])
-    assert.deepEqual(lireFichier('<p>a</-a>b</p>', { gabarit: true }).diagnostics, [])
-    assert.deepEqual(lireFichier('<script>\n$x = 1\n</script>\n<p>a </3> b</p>\n<div> </-a><img src="a.png" alt="a"></div>\n').diagnostics, [])
+    assert.deepEqual(readFile('<p>a </3> b</p>', { template: true }).diagnostics, [])
+    assert.deepEqual(readFile('<p>a</-a>b</p>', { template: true }).diagnostics, [])
+    assert.deepEqual(readFile('<script>\n$x = 1\n</script>\n<p>a </3> b</p>\n<div> </-a><img src="a.png" alt="a"></div>\n').diagnostics, [])
   })
 
   it('l\'arbre est celui du même texte écrit sans `<` : seul le caractère change', () => {

@@ -151,29 +151,29 @@ export function emitAssign(ms: MagicString, js: string, node: any, ancestors: an
 
 // `cible++` / `--cible` : l'opérateur de JavaScript lui-même, posé sur une variable `_mjs_n` qui reçoit la valeur lue — il la convertit
 // comme le langage (`'5'` donne 6, un `BigInt` reste un `BigInt` ; `+x` levait sur un `BigInt`). `enBloc` : l'écriture est toute
-// l'instruction (cf. instructionSeule), `_mjs_n` est déclarée par le bloc posé autour d'elle (cf. poserBloc) — ni fermeture ni coût
+// l'instruction (cf. loneStatement), `_mjs_n` est déclarée par le bloc posé autour d'elle (cf. poserBloc) — ni fermeture ni coût
 // pour un nombre ; ailleurs, `_mjs_n` est le paramètre d'une fonction fléchée appelée sur place. Valeur non lue hors d'un bloc : forme
 // qui commence par `µ` — une forme qui commence par `(` posée après une autre ligne était lue comme l'appel de cette ligne (Civet
 // n'écrit pas de point-virgule). Valeur lue : préfixe → la nouvelle valeur (rendue par l'appel s'il la rend, relue sinon), postfixe →
 // l'ancienne, convertie (`_mjs_n++` la rend), même forme pour toute cible ; une cible liée passe entière dans sa fonction (cf. bound),
 // le point-virgule protecteur devant elle
-export function emitUpdate(ms: MagicString, node: any, ancestors: any[], t: WriteTarget, enBloc = false): void {
+export function emitUpdate(ms: MagicString, node: any, ancestors: any[], t: WriteTarget, inBlock = false): void {
   const op              = node.operator
   const set             = (v: string) => `${t.set}${v}${t.tail ?? ')'}`
-  const pas             = `((_mjs_n) => ${op}_mjs_n)(${t.read})`
+  const step            = `((_mjs_n) => ${op}_mjs_n)(${t.read})`
   const { open, close } = bound(t, ancestors)
   const asi             = t.bind ? '' : asiGuard(ancestors)
   let out: string
-  if (enBloc) out = `(_mjs_n = ${t.read}, ${set(op + '_mjs_n')})`
-  else if (writeValueUnused(ancestors) || (node.prefix && t.returnsValue)) out = set(pas)
-  else if (node.prefix) out = `${asi}(${set(pas)}, ${t.read})`
+  if (inBlock) out = `(_mjs_n = ${t.read}, ${set(op + '_mjs_n')})`
+  else if (writeValueUnused(ancestors) || (node.prefix && t.returnsValue)) out = set(step)
+  else if (node.prefix) out = `${asi}(${set(step)}, ${t.read})`
   else out = `${asi}((_mjs_n, _mjs_v = _mjs_n${op}) => (${set('_mjs_n')}, _mjs_v))(${t.read})`
   ms.overwrite(node.start, node.end, open + out + close)
 }
 
 // instruction qui n'est que cette écriture : `$x++;`, ou le retour d'un gestionnaire en ligne (`@click={$x++}`, cf.
 // isInlineHandlerReturn) — un bloc posé autour d'elle peut déclarer la variable de l'écriture (cf. emitUpdate) ; sinon null
-export function instructionSeule(ancestors: any[]): any {
+export function loneStatement(ancestors: any[]): any {
   const node = ancestors[ancestors.length - 1]
   const p    = ancestors[ancestors.length - 2]
   if (p?.type === 'ExpressionStatement' && p.expression === node) return p
@@ -183,7 +183,7 @@ export function instructionSeule(ancestors: any[]): any {
 
 // le bloc qui déclare `_mjs_n` (cf. emitUpdate) : posé APRÈS les autres réécritures de l'instruction (la garde d'un élément de liste,
 // path-tracker.ts), il les entoure ; un bloc se pose partout où va une instruction et n'est jamais lu comme la suite de la ligne d'avant
-export function poserBloc(ms: MagicString, stmt: any): void {
+export function setBlock(ms: MagicString, stmt: any): void {
   ms.prependLeft(stmt.start, '{let _mjs_n;')
   ms.appendLeft(stmt.end, '}')
 }
@@ -193,13 +193,13 @@ export function poserBloc(ms: MagicString, stmt: any): void {
 // reste en place. Valeur non lue : `void` coupe l'ASI (mot-clé, pas une parenthèse) et reste valide comme corps
 // d'un `if` sans accolades ; lue : la fonction rend la valeur. Les parenthèses autour du motif sont obligatoires :
 // `{a: x} = r` nu en tête d'instruction serait lu comme un BLOC
-export function emitPattern(ms: MagicString, js: string, node: any, ancestors: any[], targets: any[], sets: string[], vars: string, valeur: string, tails: string[] = []): void {
+export function emitPattern(ms: MagicString, js: string, node: any, ancestors: any[], targets: any[], sets: string[], vars: string, value: string, tails: string[] = []): void {
   for (let i = 0; i < targets.length; i++) ms.overwrite(targets[i].start, targets[i].end, `${vars}${i}`)
   const unused = writeValueUnused(ancestors)
   const decls  = targets.map((_t: any, i: number) => `${vars}${i}`).join(', ')
-  const corps  = sets.map((s, i) => `${s}${vars}${i}${tails[i] ?? ')'}`).join('; ')
+  const body   = sets.map((s, i) => `${s}${vars}${i}${tails[i] ?? ')'}`).join('; ')
   const start  = rhsStart(js, node)
-  ms.prependLeft(node.start, `${unused ? 'void ' : asiGuard(ancestors)}((${valeur}) => { let ${decls}; (`)
-  ms.overwrite(node.left.end, start, ` = ${valeur}); ${corps}${unused ? '' : `; return ${valeur}`} })(`)
+  ms.prependLeft(node.start, `${unused ? 'void ' : asiGuard(ancestors)}((${value}) => { let ${decls}; (`)
+  ms.overwrite(node.left.end, start, ` = ${value}); ${body}${unused ? '' : `; return ${value}`} })(`)
   closeRhs(ms, node, start, ')')
 }

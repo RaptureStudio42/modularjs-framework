@@ -1,6 +1,6 @@
-// core.ts — app.use() sur un paquet dont installer() est asynchrone doit rester idempotent MÊME
+// core.ts — app.use() sur un paquet dont install() est asynchrone doit rester idempotent MÊME
 // pendant la fenêtre d'installation (deux app.use(pkg) rapprochés, avant résolution) : un état
-// « installation en cours » empêche un second installer() de démarrer en double.
+// « installation en cours » empêche un second install() de démarrer en double.
 import assert from 'node:assert/strict'
 import { mjsWs } from '../src/mjs-ws/index.js'
 import { MemoryTransport } from '../src/mjs-ws/transport.js'
@@ -16,17 +16,17 @@ async function startApp(opts: MjsWsOptions = {}): Promise<{ transport: MemoryTra
   return { transport, app }
 }
 
-describe('MJS-WS — core.ts, app.use() d\'un paquet à installer() asynchrone', () => {
-  it('deux app.use(pkg) immédiats (sans await entre) : installer() ne tourne qu\'une fois', async () => {
+describe('MJS-WS — core.ts, app.use() d\'un paquet à install() asynchrone', () => {
+  it('deux app.use(pkg) immédiats (sans await entre) : install() ne tourne qu\'une fois', async () => {
     let installCount = 0
     let resolveInstall!: () => void
     const gate = new Promise<void>(r => { resolveInstall = r })
-    const pkg: MjsPackage = { nom: 'demo-async', installer: (async () => { installCount++; await gate }) as any }
+    const pkg: MjsPackage = { name: 'demo-async', install: (async () => { installCount++; await gate }) as any }
     const { app } = await startApp({ onLog: () => {} })
 
     app.use(pkg)
     app.use(pkg)   // AUCUN await entre les deux — la fenêtre d'installation est encore ouverte
-    assert.equal(installCount, 1, 'installer() a tourné UNE SEULE fois — la 2e installation, en vol, est ignorée')
+    assert.equal(installCount, 1, 'install() a tourné UNE SEULE fois — la 2e installation, en vol, est ignorée')
 
     resolveInstall()
     await tick(10)

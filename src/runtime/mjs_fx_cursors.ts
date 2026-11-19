@@ -36,91 +36,91 @@
       return function() {};
     }
     var zone   = el === document.documentElement ? document.body : el;
-    var nom    = µ._mjs_fxRoomName(s);
+    var name   = µ._mjs_fxRoomName(s);
     var sock   = null;
-    var salon  = null;
-    var gens   = {};
-    var moi    = null;
+    var room   = null;
+    var peers   = {};
+    var me     = null;
     var cursor = s.cursor === void 0 ? 'pulse' : s.cursor;
     var select = s.selection !== false;
     var active = s.focus !== false;
     // ce qu'on fait et ce qu'on montre des autres : regroupé, dans la part du débit des effets en direct
     // (4 fois par seconde par défaut) ; quand ce qu'on montre change, la trousse reste (les curseurs des
     // autres restent à l'écran), seuls ses réglages changent ; rien n'est posé si rien n'est montré
-    var kit   = null;
-    var envoi = function(st) { if (sock) sock.send('cursors:move', { room: nom, p: st.p, t: st.t, f: st.f, c: st.c }, { coalesce: 50, volatile: true, key: nom }); };
-    var arme  = function() {
+    var kit  = null;
+    var send = function(st) { if (sock) sock.send('cursors:move', { room: name, p: st.p, t: st.t, f: st.f, c: st.c }, { coalesce: 50, volatile: true, key: name }); };
+    var arm  = function() {
       var want = { pointer: cursor === 'normal' || cursor === 'pulse', pulse: cursor === 'pulse', text: select, focus: active };
-      if (kit) kit.retune(want, envoi);
-      else if (want.pointer || want.text || want.focus) kit = µ._mjs_fxCursorKit(zone, want, envoi);
+      if (kit) kit.retune(want, send);
+      else if (want.pointer || want.text || want.focus) kit = µ._mjs_fxCursorKit(zone, want, send);
     };
-    arme();
+    arm();
     // au plus `max` curseurs à l'écran : ceux qui ont bougé le plus récemment — un nouveau prend la
     // place de celui qui a bougé le moins récemment
     var max     = typeof s.max === 'number' && s.max >= 1 ? s.max : 20;
     // par identité, sans prototype : une identité `__proto__` ou `constructor` y reste une clé comme une autre
-    var recents = Object.create(null);
-    var borne   = function(garde) {
+    var recent = Object.create(null);
+    var clamp   = function(guard) {
       if (!kit) return;
       var ids = kit.ids();
-      while (ids.length > max || (garde && ids.length >= max && ids.indexOf(garde) < 0)) { // eslint-disable-line no-unmodified-loop-condition -- le paramètre garde (l'id à épargner) est invariant par construction : la sortie se fait par ids, relu à chaque tour
-        var vieux = null;
+      while (ids.length > max || (guard && ids.length >= max && ids.indexOf(guard) < 0)) { // eslint-disable-line no-unmodified-loop-condition -- le paramètre garde (l'id à épargner) est invariant par construction : la sortie se fait par ids, relu à chaque tour
+        var old = null;
         for (var i = 0; i < ids.length; i++) {
-          if (ids[i] !== garde && (vieux === null || (recents[ids[i]] || 0) < (recents[vieux] || 0))) vieux = ids[i];
+          if (ids[i] !== guard && (old === null || (recent[ids[i]] || 0) < (recent[old] || 0))) old = ids[i];
         }
-        if (vieux === null) break;
-        kit.drop(vieux);
-        delete recents[vieux];
+        if (old === null) break;
+        kit.drop(old);
+        delete recent[old];
         ids = kit.ids();
       }
     };
     // un visiteur absent de la présence du salon (elle refuse `__proto__`, `constructor`, `prototype`) n'est pas dessiné : le
     // balayage l'ôterait chaque seconde, il clignoterait
     var onMove = function(m) {
-      if (!kit || !m || m.room !== nom || !m.from || typeof m.from.id !== 'string' || m.from.id === moi || !Object.prototype.hasOwnProperty.call(gens, m.from.id)) return;
-      borne(m.from.id);
-      recents[m.from.id] = Date.now();
+      if (!kit || !m || m.room !== name || !m.from || typeof m.from.id !== 'string' || m.from.id === me || !Object.prototype.hasOwnProperty.call(peers, m.from.id)) return;
+      clamp(m.from.id);
+      recent[m.from.id] = Date.now();
       kit.paint(m.from.id, m.from, m.p, m.t, m.f, m.c);
     };
     // dans un salon de beaucoup de visiteurs, le serveur regroupe les positions : une trame par quart
     // de seconde, nos `max` plus récentes (la plus récente en tête)
     var onMoves = function(m) {
-      if (!m || m.room !== nom || !Array.isArray(m.list)) return;
+      if (!m || m.room !== name || !Array.isArray(m.list)) return;
       for (var i = m.list.length - 1; i >= 0; i--) onMove(m.list[i]);
     };
     // la connexion de sa variable (ou celle de `server`) : le salon, soi (ne pas se montrer — redemandé
     // à chaque reconnexion et à chaque changement de route), les autres ; la route change : le salon quitté,
     // celui de la nouvelle page rejoint, la trousse reste (sans les curseurs de l'ancien salon)
     var unlink = µ._mjs_fxSock(s.sock, s.server, _mjsCursorsNoSock(), function(k) {
-      sock  = k;
-      nom   = µ._mjs_fxRoomName(s);
+      sock = k;
+      name = µ._mjs_fxRoomName(s);
       µ._mjs_fxPackage(sock, 'cursors:', '*cursors', 'cursorsPackage');
-      salon = µ._mjs_fxRoom(sock, 'cursors:' + nom);
-      gens  = salon.presence();
-      var soi      = function() { sock.request('cursors:me', { max: max }, { waitForOpen: true }).then(function(r) { moi = r && r.id; }, function() {}); };
+      room         = µ._mjs_fxRoom(sock, 'cursors:' + name);
+      peers         = room.presence();
+      var itself   = function() { sock.request('cursors:me', { max: max }, { waitForOpen: true }).then(function(r) { me = r && r.id; }, function() {}); };
       var offMove  = sock.on('cursors:move', onMove);
       var offMoves = sock.on('cursors:moves', onMoves);
-      var offHi    = sock.on('welcome', soi);
+      var offHi    = sock.on('welcome', itself);
       // une connexion qui s'ouvre : son `welcome` demande déjà — une seule demande à la première ouverture
-      if (k.state !== 'connecting' && k.state !== 'reconnecting') soi();
+      if (k.state !== 'connecting' && k.state !== 'reconnecting') itself();
       return function() {
         offMove();
         offMoves();
         offHi();
-        salon.leave();
+        room.leave();
         sock    = null;
-        salon   = null;
-        gens    = {};
-        recents = Object.create(null);
+        room    = null;
+        peers    = {};
+        recent = Object.create(null);
         if (kit) kit.ids().forEach(function(id) { kit.drop(id); });
       };
     }, { read: µ._mjs_fxVar(el, 'cursors', comp), room: s.room ? null : function() { return µ._mjs_fxRoomName(s); } });
     // un visiteur parti (la présence du salon) : son curseur aussi
     var sweep = setInterval(function() {
       if (sock && kit) kit.ids().forEach(function(id) {
-        if (Object.prototype.hasOwnProperty.call(gens, id)) return;
+        if (Object.prototype.hasOwnProperty.call(peers, id)) return;
         kit.drop(id);
-        delete recents[id];
+        delete recent[id];
       });
     }, 1000);
     var stop = function() {
@@ -134,7 +134,7 @@
     stop.set = function(k, v) {
       if (k === 'max') {
         max = typeof v === 'number' && v >= 1 ? v : 20;
-        borne(null);
+        clamp(null);
         if (sock) sock.request('cursors:me', { max: max }, { waitForOpen: true }).then(function() {}, function() {});
         return;
       }
@@ -142,7 +142,7 @@
       else if (k === 'selection') select = v !== false;
       else if (k === 'focus') active = v !== false;
       else return false;
-      arme();
+      arm();
     };
     return stop;
   }
@@ -180,9 +180,9 @@ function _mjsCursorsReach(el) {
 // des clics), text (la sélection, t), focus (la balise active, f). `retune(want, envoi)` : ce qu'on
 // montre ou le rôle change — les curseurs des autres restent à l'écran, le compte des clics aussi, et ce
 // qu'on cesse de partager repart « à vide » (p, t, f nuls) pour ne rien laisser de figé chez eux
-µ._mjs_fxCursorKit = function(zone, want, envoi) {
+µ._mjs_fxCursorKit = function(zone, want, sendFn) {
   µ._mjs_fxAdopt(document, 'cursors');
-  var sender = envoi;
+  var sender = sendFn;
   // les autres, par identité, sans prototype : une identité `__proto__` ou `constructor` (un pseudo choisi par le visiteur) y est
   // une clé comme une autre, elle ne touche ni aux objets de la page ni à la fonction Object
   var peers  = Object.create(null);
@@ -283,7 +283,7 @@ function _mjsCursorsReach(el) {
   // sien, et on redemande (un niveau par tour)
   var composed = function(sel) {
     var roots = [];
-    for (var tour = 0; tour < 8; tour++) {
+    for (var turn = 0; turn < 8; turn++) {
       var r = null;
       try {
         r = sel.getComposedRanges({ shadowRoots: roots })[0];
@@ -543,9 +543,9 @@ function _mjsCursorsReach(el) {
     if (pr && pr.dom) pr.dom.wrap.remove();
     delete peers[id];
   };
-  var capture = { capture: true, passive: true };
-  var textes  = ['input', 'keyup', 'pointerup', 'focusin', 'focusout'];
-  var actifs  = ['focusin', 'focusout'];
+  var capture     = { capture: true, passive: true };
+  var texts       = ['input', 'keyup', 'pointerup', 'focusin', 'focusout'];
+  var focusEvents = ['focusin', 'focusout'];
   // les écouteurs de qui partage : posés tant qu'il y a un envoi
   var listening = false;
   var attach    = function() {
@@ -555,8 +555,8 @@ function _mjsCursorsReach(el) {
     document.addEventListener('pointerdown', onDown, capture);
     document.addEventListener('mouseout', onOut, capture);
     document.addEventListener('selectionchange', onText);
-    textes.forEach(function(ev) { document.addEventListener(ev, onText, capture); });
-    actifs.forEach(function(ev) { document.addEventListener(ev, onFocus, capture); });
+    texts.forEach(function(ev) { document.addEventListener(ev, onText, capture); });
+    focusEvents.forEach(function(ev) { document.addEventListener(ev, onFocus, capture); });
   };
   var detach = function() {
     if (!listening) return;
@@ -565,8 +565,8 @@ function _mjsCursorsReach(el) {
     document.removeEventListener('pointerdown', onDown, capture);
     document.removeEventListener('mouseout', onOut, capture);
     document.removeEventListener('selectionchange', onText);
-    textes.forEach(function(ev) { document.removeEventListener(ev, onText, capture); });
-    actifs.forEach(function(ev) { document.removeEventListener(ev, onFocus, capture); });
+    texts.forEach(function(ev) { document.removeEventListener(ev, onText, capture); });
+    focusEvents.forEach(function(ev) { document.removeEventListener(ev, onFocus, capture); });
   };
   attach();
   roots.forEach(function(r) { µ._mjs_dom.addEventListener(r, 'scroll', onScroll, capture); });

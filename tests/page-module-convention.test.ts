@@ -69,7 +69,7 @@ describe('convention .page.mjs — bloc <routes>, directive @routes, balise <@vi
     assert.ok(stats.errors.length > 0, 'accueil.mjs doit échouer : bloc <routes> hors fichier .page.mjs')
     const msg = stats.errors.map(e => e.message).join('\n')
     assert.match(msg, /accueil\.mjs/, `le fichier fautif doit être nommé : ${msg}`)
-    assert.ok(msg.includes(t('transpiler.page-forme-bloc-routes')), `la forme trouvée (bloc <routes>) doit être citée : ${msg}`)
+    assert.ok(msg.includes(t('transpiler.page-shape-block-routes')), `la forme trouvée (bloc <routes>) doit être citée : ${msg}`)
     assert.ok(msg.includes('accueil.page.mjs'), `le remède (renommage) doit être cité : ${msg}`)
 
     await bundler.close()
@@ -118,7 +118,7 @@ describe('convention .page.mjs — bloc <routes>, directive @routes, balise <@vi
     assert.ok(stats.errors.length > 0, 'y.mjs doit échouer : directive @routes hors fichier .page.mjs')
     const msg = stats.errors.map(e => e.message).join('\n')
     assert.match(msg, /y\.mjs/)
-    assert.ok(msg.includes(t('transpiler.page-forme-directive-routes')), `forme directive @routes attendue : ${msg}`)
+    assert.ok(msg.includes(t('transpiler.page-shape-directive-routes')), `forme directive @routes attendue : ${msg}`)
 
     await bundler.close()
   })
@@ -132,7 +132,7 @@ describe('convention .page.mjs — bloc <routes>, directive @routes, balise <@vi
     assert.ok(stats.errors.length > 0, 'z.mjs doit échouer : <@view> hors fichier .page.mjs')
     const msg = stats.errors.map(e => e.message).join('\n')
     assert.match(msg, /z\.mjs/)
-    assert.ok(msg.includes(t('transpiler.page-forme-vue')), `forme <@view> attendue : ${msg}`)
+    assert.ok(msg.includes(t('transpiler.page-shape-view')), `forme <@view> attendue : ${msg}`)
 
     await bundler.close()
   })
@@ -161,7 +161,7 @@ describe('convention .page.mjs — bloc <routes>, directive @routes, balise <@vi
     const msg = stats.errors.map(e => e.message).join('\n')
     assert.match(msg, /accueil\.mjs/, `l'hôte doit être nommé, jamais le partial : ${msg}`)
     assert.ok(!msg.includes('_main.mjs'), `le partial ne doit jamais être cité : ${msg}`)
-    assert.ok(msg.includes(t('transpiler.page-forme-vue')))
+    assert.ok(msg.includes(t('transpiler.page-shape-view')))
 
     await bundler.close()
   })
@@ -223,7 +223,7 @@ describe('convention .page.mjs — bloc <routes>, directive @routes, balise <@vi
   // DÉFAUT 1 — un fichier nommé JUSTE `.page.mjs`
   // (rien avant le marqueur) fait rendre `pageAwareBaseName` une chaîne VIDE : tag
   // `customElements.define("mjs-", …)` et clé de manifeste vide, sans un mot. Refusé désormais,
-  // même famille de garde que `bundler.theme-nom-fichier` (bundler/themes.ts) pour `.theme.mjs` seul.
+  // même famille de garde que `bundler.theme-name-file` (bundler/themes.ts) pour `.theme.mjs` seul.
   it('.page.mjs seul (rien avant le marqueur) : refus, nom de page vide cité', async function () {
     const { srcDir, outDir, manifest } = makeProject()
     writeFileSync(join(srcDir, '.page.mjs'), '<p>vide</p>')

@@ -6,10 +6,10 @@
 import assert from 'node:assert/strict'
 import { applyMjsSugarToScript, transpile } from '../src/transpiler/index.js'
 import { tokenize } from '../src/lexer/index.js'
-import { compteursLectureDuScript, tokenizeDuScript } from '../src/reader/script.js'
+import { scriptReadCounters, tokenizeScript } from '../src/reader/script.js'
 
 // le texte donné au langage, raccourcis posés par l'arbre
-const texte  = (src: string, opts: Record<string, unknown> = {}): string => tokenizeDuScript(applyMjsSugarToScript(src, 'civet'), opts)
+const texte  = (src: string, opts: Record<string, unknown> = {}): string => tokenizeScript(applyMjsSugarToScript(src, 'civet'), opts)
 // le même texte, raccourcis posés par le lexeur seul
 const lexeur = (src: string, opts: Record<string, unknown> = {}): string => tokenize(applyMjsSugarToScript(src, 'civet'), opts)
 
@@ -38,18 +38,18 @@ describe('lecture du script par l\'arbre — raccourcis $x, &x, =:', () => {
   })
 
   it('pose les raccourcis par l\'arbre, sans relecture', () => {
-    const avant = { ...compteursLectureDuScript }
+    const avant = { ...scriptReadCounters }
     const out   = texte('$n = &id\n$f =: $n')
     assert.equal(out, '$.n = µ.url.params.id\n$.f = µ.snap $.n')
-    assert.equal(compteursLectureDuScript.relus, avant.relus)
-    assert.ok(compteursLectureDuScript.arbre >= avant.arbre + 2)
+    assert.equal(scriptReadCounters.reread, avant.reread)
+    assert.ok(scriptReadCounters.tree >= avant.tree + 2)
   })
 
   it('reprend le lexeur seul pour un script que l\'arbre ne lit pas, avec sa raison', () => {
     const src   = '$o.a =: 2'
-    const avant = compteursLectureDuScript.relus
+    const avant = scriptReadCounters.reread
     assert.equal(texte(src), lexeur(src))
-    assert.ok(compteursLectureDuScript.relus > avant)
+    assert.ok(scriptReadCounters.reread > avant)
   })
 
   it('laisse en texte un $x d\'une chaîne sur plusieurs lignes', () => {
@@ -73,21 +73,20 @@ describe('lecture du script par l\'arbre — raccourcis $x, &x, =:', () => {
 
   it('reprend le lexeur seul pour une heregex, interpolée ou non, ou une déclaration de type', () => {
     for (const src of ['r = ///a#{$x}b///', 'r = ///a$xb///\ny = $n', 'type T = typeof $n\nx = $n']) {
-      const avant = compteursLectureDuScript.relus
+      const avant = scriptReadCounters.reread
       assert.equal(texte(src), lexeur(src), src)
-      assert.ok(compteursLectureDuScript.relus > avant, src)
+      assert.ok(scriptReadCounters.reread > avant, src)
     }
   })
 
   it('compile le script lu par l\'arbre, sans réglage : un $x d\'une chaîne sur plusieurs lignes reste du texte', async () => {
-    const avant  = { ...compteursLectureDuScript }
+    const avant  = { ...scriptReadCounters }
     const out    = (await transpile("<script>\nmsg = 'prix\n$n euros'\nx = $n\n</script>\n<p>{msg}</p>\n", { moduleName: 'prix', devWarnings: false })).output
     const lignes = out.split('\n').map((l) => l.trim())
-    // la chaîne gardée en texte et le `$n` du code posé en membre (le lexeur seul écrit `$.n euros` dans la chaîne)
+    // la chaîne gardée en texte et le `$n` du code posé en membre : le lexeur lit la chaîne entière, aucune reprise
     for (const l of ["let msg = 'prix\\n$n euros'", 'let x = $.n']) assert.ok(lignes.includes(l), `${l}\n${out}`)
-    // le raccourci que le lexeur écrit dans la chaîne, refusé par l'arbre de la compilation : script repris, lu par l'arbre
-    assert.equal(compteursLectureDuScript.reprises, avant.reprises + 1)
-    assert.ok(compteursLectureDuScript.arbre > avant.arbre)
-    assert.equal(compteursLectureDuScript.relus, avant.relus)
+    assert.equal(scriptReadCounters.retries, avant.retries)
+    assert.ok(scriptReadCounters.tree > avant.tree)
+    assert.equal(scriptReadCounters.reread, avant.reread)
   })
 })

@@ -1,9 +1,10 @@
 // Un objet écrit par un composant qui ne l'a pas rangé lui-même dans une variable `$` (atteint par une valeur dérivée, ou pris par
 // `µwrite`) fait suivre celui qui le tient, pendant qu'un AUTRE objet de la page est tenu par deux composants.
 // La forme courante : une liste à lignes-composants, la ligne choisie par `$sel = $rows.find(…)` puis écrite par `$sel.label = v` —
-// la ligne se refait aussitôt. La même ligne tenue par un autre composant : il voit l'écriture quand elle lui est redonnée.
+// la ligne se refait aussitôt. La même ligne tenue par un autre composant : il voit l'écriture aussitôt, comme tout composant qui
+// tient le même objet (avec l'enveloppe, le défaut), et la garde quand la ligne lui est redonnée.
 // La forme rare : un objet pris par `µwrite` par un second composant, appli sans valeur dérivée — celui qui l'a rangé d'abord voit
-// l'écriture du second quand l'objet lui est redonné, en développement comme en production.
+// l'écriture du second aussitôt, et la garde quand l'objet lui est redonné, en développement comme en production.
 
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs'
@@ -44,12 +45,12 @@ const SCENES: Scene[] = [
     ${AUTRE('mjs-z-tient')}
     a.ecrire('frais'); await __pause(300);
     return { choisi: __ecran(a), lignes: [0, 1, 2].map((i) => __ligne(a, i)), brut: data[1].label }` },
-  { nom: 'b tient la ligne, a l\'atteint par une valeur dérivée et l\'écrit ; la ligne redonnée à b', sources: 'choix', tag: 'mjs-z-tient', attendu: { aussitot: ['frais', 'x1'], redonne: 'frais', brut: 'frais' }, code: `
+  { nom: 'b tient la ligne, a l\'atteint par une valeur dérivée et l\'écrit : b suit aussitôt ; la ligne redonnée à b', sources: 'choix', tag: 'mjs-z-tient', attendu: { aussitot: ['frais', 'frais'], redonne: 'frais', brut: 'frais' }, code: `
     const data = __data, b = __pose('mjs-z-tient'), a = __pose('mjs-z-choix'); await __pause(200); b.poser(data[1]); a.poser(data); await __pause(200); a.choisir(1); await __pause(200);
     ${AUTRE('mjs-z-tient')}
     a.ecrire('frais'); await __pause(200); const aussitot = [__ecran(a), __ecran(b)]; b.poser(data[1]); await __pause(200);
     return { aussitot, redonne: __ecran(b), brut: data[1].label }` },
-  { nom: 'a range o, w le prend par µwrite et l\'écrit ; o redonné à a', sources: 'brut', tag: 'mjs-z-brut', attendu: { aussitot: ['a', 'frais'], redonne: 'frais', brut: 'frais' }, code: `
+  { nom: 'a range o, w le prend par µwrite et l\'écrit : a suit aussitôt ; o redonné à a', sources: 'brut', tag: 'mjs-z-brut', attendu: { aussitot: ['frais', 'frais'], redonne: 'frais', brut: 'frais' }, code: `
     const o = __objet(), a = __pose('mjs-z-brut'), w = __pose('mjs-z-brut'); await __pause(200); a.poser(o); await __pause(200); w.prendre(o); await __pause(200);
     ${AUTRE('mjs-z-brut')}
     w.ecrire('frais'); await __pause(200); const aussitot = [__ecran(a), __ecran(w)]; a.poser(o); await __pause(200);

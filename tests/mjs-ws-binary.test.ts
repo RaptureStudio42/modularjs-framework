@@ -29,7 +29,7 @@ async function connectAuthenticated(transport: MemoryTransport, url: string): Pr
 }
 
 describe('MJS-WS — trames binaires (socle du futur µschema)', () => {
-  it('a. binaire sous limits.maxPayload, SANS accroche posée → connexion vivante, binaireRecues+binaireIgnorees comptés', async () => {
+  it('a. binaire sous limits.maxPayload, SANS accroche posée → connexion vivante, binaryReceived+binaryIgnored comptés', async () => {
     const { transport, app } = await startApp()
     const ws = await connectAuthenticated(transport, 'memory://bin-a')
     let closed = false
@@ -38,8 +38,8 @@ describe('MJS-WS — trames binaires (socle du futur µschema)', () => {
     await tick()
     assert.equal(closed, false, 'aucune accroche posée : ignorée, jamais fermée')
     const snap = app.stats()
-    assert.equal(snap.messages.binaireRecues, 1)
-    assert.equal(snap.messages.binaireIgnorees, 1, 'sans accroche interne, la trame authentifiée reste ignorée')
+    assert.equal(snap.messages.binaryReceived, 1)
+    assert.equal(snap.messages.binaryIgnored, 1, 'sans accroche interne, la trame authentifiée reste ignorée')
     await app.stop()
   })
 
@@ -52,8 +52,8 @@ describe('MJS-WS — trames binaires (socle du futur µschema)', () => {
     await tick()
     assert.equal(closedCode, 1009, 'même code que le kick « payload trop volumineux » côté texte')
     const snap = app.stats()
-    assert.equal(snap.garde.kicksChargeUtile, 1, 'même compteur de garde que pour un texte trop gros')
-    assert.equal(snap.messages.binaireRecues, 1, 'comptée même kickée — même politique que messages.recus côté texte')
+    assert.equal(snap.guard.kicksPayload, 1, 'même compteur de garde que pour un texte trop gros')
+    assert.equal(snap.messages.binaryReceived, 1, 'comptée même kickée — même politique que messages.received côté texte')
     await app.stop()
   })
 
@@ -69,7 +69,7 @@ describe('MJS-WS — trames binaires (socle du futur µschema)', () => {
     const client = Array.from(app.clients)[0] as MjsWsClient
     assert.equal(received[0].clientId, client.id, 'routée vers le BON client')
     assert.deepEqual(Array.from(received[0].bytes), Array.from(expected), 'octets intacts, byte à byte')
-    assert.equal(app.stats().messages.binaireIgnorees, 0, 'routée avec succès : jamais comptée « ignorée »')
+    assert.equal(app.stats().messages.binaryIgnored, 0, 'routée avec succès : jamais comptée « ignorée »')
     await app.stop()
   })
 
@@ -82,8 +82,8 @@ describe('MJS-WS — trames binaires (socle du futur µschema)', () => {
     ws.send(new Uint8Array([1, 2, 3]))
     await tick()
     assert.equal(closed, false, 'aucun crash ni fermeture — juste ignorée')
-    assert.equal(app.stats().messages.binaireIgnorees, 1)
-    assert.equal(app.stats().connexions.actives, 0, 'jamais authentifiée par une trame binaire — le hello reste JSON obligatoire')
+    assert.equal(app.stats().messages.binaryIgnored, 1)
+    assert.equal(app.stats().connections.active, 0, 'jamais authentifiée par une trame binaire — le hello reste JSON obligatoire')
 
     const recu: any[] = []
     ws.onmessage = (ev: any) => recu.push(JSON.parse(ev.data))
@@ -93,7 +93,7 @@ describe('MJS-WS — trames binaires (socle du futur µschema)', () => {
     await app.stop()
   })
 
-  it('e. rafale binaire > burst → kick débit (garde.kicksDebit), le videur n\'est PAS contourné par un flot binaire', async () => {
+  it('e. rafale binaire > burst → kick débit (guard.kicksRate), le videur n\'est PAS contourné par un flot binaire', async () => {
     const { transport, app } = await startApp({ limits: { rate: 5, burst: 5, kickAfter: 3 }, onLog: () => {} })   // kick INTENTIONNEL
     const ws = await connectAuthenticated(transport, 'memory://bin-e')
     let closedCode: number | null = null
@@ -101,7 +101,7 @@ describe('MJS-WS — trames binaires (socle du futur µschema)', () => {
     for (let i = 0; i < 30; i++) ws.send(new Uint8Array([i]))
     await tick(60)
     assert.equal(closedCode, 1008, 'même code que le kick « débit dépassé » côté texte')
-    assert.ok(app.stats().garde.kicksDebit >= 1)
+    assert.ok(app.stats().guard.kicksRate >= 1)
     await app.stop()
   })
 })

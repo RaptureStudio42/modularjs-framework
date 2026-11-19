@@ -128,10 +128,10 @@ describe('mjs_modal — µ.modal.notify, habillage visuel enrichi (icônes + tit
     assert.equal(orphelin.querySelectorAll('.mjs-toast').length, 1, 'le toast doit atterrir dans le conteneur déjà présent')
   })
 
-  it('la barre de vie (.mjs-toast-barre) est ancrée en HAUT du toast (top:0), pas en bas', function () {
+  it('la barre de vie (.mjs-toast-bar) est ancrée en HAUT du toast (top:0), pas en bas', function () {
     const { window, document, µ } = loadModal()
     µ.modal.notify('x', { duration: 1000 })
-    const barre = toast(document).querySelector('.mjs-toast-barre')
+    const barre = toast(document).querySelector('.mjs-toast-bar')
     assert.ok(barre, 'barre de vie attendue (duration > 0)')
     assert.equal(window.getComputedStyle(barre).top, '0px', 'la barre de vie doit être collée au bord HAUT du toast')
   })

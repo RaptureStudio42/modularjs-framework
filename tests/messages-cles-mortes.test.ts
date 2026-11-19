@@ -30,7 +30,7 @@ describe('messages : aucune clé morte', function () {
   const mortes = (cles: string[], texte: string) => cles.filter(k => !cites.has(k) && !texte.includes(`'${k}'`) && !texte.includes(`"${k}"`) && !texte.includes('`' + k + '`'))
 
   it('la garde voit une clé jamais citée', () => {
-    assert.deepEqual(mortes(['effets.cle-jamais-citee', 'effets.inconnu'], code), ['effets.cle-jamais-citee'])
+    assert.deepEqual(mortes(['effets.cle-jamais-citee', 'effects.unknown'], code), ['effets.cle-jamais-citee'])
   })
 
   it('chaque clé de fr est citée par le code', () => {

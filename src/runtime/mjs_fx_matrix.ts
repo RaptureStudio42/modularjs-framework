@@ -40,16 +40,16 @@
     var raw = { color: s.color, head: s.head };
     var col = '#00ff66';
     var hd  = '#e9fff1';
-    var lis = function(v) {
+    var readColor = function(v) {
       cv.style.color = '';
       cv.style.color = v;
       var out = cv.style.color && typeof getComputedStyle === 'function' ? getComputedStyle(cv).color : '';
       cv.style.color = '';
       return out || v;
     };
-    var relit = function() {
-      col = lis(raw.color || µ._mjs_fxCss(el, '--mjs-matrix-color') || '#00ff66');
-      hd  = lis(raw.head || µ._mjs_fxCss(el, '--mjs-matrix-head') || '#e9fff1');
+    var reread = function() {
+      col = readColor(raw.color || µ._mjs_fxCss(el, '--mjs-matrix-color') || '#00ff66');
+      hd  = readColor(raw.head || µ._mjs_fxCss(el, '--mjs-matrix-head') || '#e9fff1');
     };
     var W = 0, H = 0, dpr = 1, lanes = 0, len = 0, heads = [], live = [];
     var raf = 0, seen = true, hot = s.on !== 'hover', acc = 0, last = 0, since = 0, strip = 0, nstep = 0;
@@ -112,7 +112,7 @@
     // notification de même taille (la première du ResizeObserver, toujours envoyée) ne refait rien ; un redimensionnement
     // garde la pluie déjà tombée (la toile recopiée, chaque colonne à son rang) au lieu de refaire son avance — des
     // dizaines de pas sur le fil principal, à chaque image tant qu'on étire la fenêtre
-    var mesure = function() {
+    var measure = function() {
       if (!ctx) return;
       var w = cv.clientWidth || el.clientWidth || 0;
       var h = cv.clientHeight || el.clientHeight || 0;
@@ -147,7 +147,7 @@
         // les colonnes actives se répartissent en suivant le nombre d'or : jamais en paquet
         live.push((i * 0.6180339) % 1 < share);
       }
-      relit();
+      reread();
       if (old) {
         // la pluie déjà tombée, collée au bord d'où elle part (en bas pour up, à droite pour left)
         ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -169,7 +169,7 @@
       var n  = 0;
       if (now - since > 1500) {
         since = now;
-        relit();
+        reread();
       }
       while (acc >= dt && n < 4) {
         acc -= dt;
@@ -188,8 +188,8 @@
       µ._mjs_dom.addEventListener(target, ev, f);
       undo.push(function() { µ._mjs_dom.removeEventListener(target, ev, f); });
     };
-    mesure();
-    var ro = typeof ResizeObserver === 'function' ? new ResizeObserver(mesure) : null;
+    measure();
+    var ro = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null;
     if (ro) ro.observe(cv);
     var io = typeof IntersectionObserver === 'function' ? new IntersectionObserver(function(e) {
       seen = e[e.length - 1].isIntersecting;
@@ -230,7 +230,7 @@
     off.set = function(k, v) {
       if (k === 'color' || k === 'head') {
         raw[k] = v;
-        relit();
+        reread();
         return;
       }
       if (k === 'background' || k === 'opacity') return;

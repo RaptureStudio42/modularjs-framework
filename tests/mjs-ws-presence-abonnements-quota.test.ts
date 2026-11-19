@@ -21,7 +21,7 @@ describe('MJS-WS — rooms.ts, plafond d\'abonnements de présence par client', 
     const errs = sent.filter(x => x.f?.t === 'µ:error')
     assert.equal(errs.length, 1, 'le 2e abonnement est refusé — même plafond que maxRoomsPerClient par défaut')
     const stats = engine.statsSnapshot()
-    assert.equal(stats.abonnesPresence, 1, 'un seul abonnement de présence effectif, pas 100')
+    assert.equal(stats.presenceSubscribers, 1, 'un seul abonnement de présence effectif, pas 100')
   })
 
   it('ré-abonnement au MÊME salon : jamais compté deux fois, jamais refusé', async () => {
@@ -30,7 +30,7 @@ describe('MJS-WS — rooms.ts, plafond d\'abonnements de présence par client', 
     await engine.handleSubPresence(c1, 'salon-1')
     await engine.handleSubPresence(c1, 'salon-1')   // même salon — idempotent
     const stats = engine.statsSnapshot()
-    assert.equal(stats.abonnesPresence, 1)
+    assert.equal(stats.presenceSubscribers, 1)
   })
 
   it('option dédiée maxPresencePerClient : plafond INDÉPENDANT de maxRoomsPerClient quand fourni', async () => {
@@ -39,23 +39,23 @@ describe('MJS-WS — rooms.ts, plafond d\'abonnements de présence par client', 
     await engine.handleSubPresence(c1, 's1')
     await engine.handleSubPresence(c1, 's2')
     await engine.handleSubPresence(c1, 's3')
-    assert.equal(engine.statsSnapshot().abonnesPresence, 3, 'les 3 premiers passent — plafond dédié, pas celui des salons (1)')
+    assert.equal(engine.statsSnapshot().presenceSubscribers, 3, 'les 3 premiers passent — plafond dédié, pas celui des salons (1)')
     await engine.handleSubPresence(c1, 's4')
-    assert.equal(engine.statsSnapshot().abonnesPresence, 3, 'le 4e est refusé')
+    assert.equal(engine.statsSnapshot().presenceSubscribers, 3, 'le 4e est refusé')
   })
 
   it('maxPresencePerClient: null EXPLICITE → illimité, même si maxRoomsPerClient est borné', async () => {
     const engine = createRoomsEngine({ canSeePresence: () => true, maxRoomsPerClient: 1, maxPresencePerClient: null } as any, () => {}, () => {})
     const c1 = fakeClient('c1')
     for (let i = 0; i < 20; i++) await engine.handleSubPresence(c1, 'salon-' + i)
-    assert.equal(engine.statsSnapshot().abonnesPresence, 20, 'illimité explicite — aucun refus')
+    assert.equal(engine.statsSnapshot().presenceSubscribers, 20, 'illimité explicite — aucun refus')
   })
 
   it('présence GLOBALE (room absent) : jamais concernée par ce plafond', async () => {
-    const engine = createRoomsEngine({ canSeePresence: () => true, maxRoomsPerClient: 0, presenceGlobale: 'public' } as any, () => {}, () => {})   // présence globale ouverte (fermée par défaut)
+    const engine = createRoomsEngine({ canSeePresence: () => true, maxRoomsPerClient: 0, globalPresence: 'public' } as any, () => {}, () => {})   // présence globale ouverte (fermée par défaut)
     const c1 = fakeClient('c1')
     await engine.handleSubPresence(c1, undefined)
-    assert.equal(engine.statsSnapshot().abonnesPresence, 1, 'présence globale jamais bloquée par le plafond de salons')
+    assert.equal(engine.statsSnapshot().presenceSubscribers, 1, 'présence globale jamais bloquée par le plafond de salons')
   })
 
   it('maxPresencePerClient: 0 refuse dès le TOUT PREMIER abonnement de salon, comme le plafond frère', async () => {
@@ -65,6 +65,6 @@ describe('MJS-WS — rooms.ts, plafond d\'abonnements de présence par client', 
     await engine.handleSubPresence(c1, 'salon-1')
     const errs = sent.filter(x => x.f?.t === 'µ:error')
     assert.equal(errs.length, 1, '0 doit refuser même quand aucun abonnement n\'existe encore (dejaSuivis undefined)')
-    assert.equal(engine.statsSnapshot().abonnesPresence, 0)
+    assert.equal(engine.statsSnapshot().presenceSubscribers, 0)
   })
 })

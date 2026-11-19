@@ -73,7 +73,7 @@
   slotRef  = null
   hostRef  = null
   rows     = []
-  deco     = new Map()
+  decor     = new Map()
   swallow  = null
   sayTimer = null
   me       = null
@@ -132,14 +132,14 @@
     css.display isnt 'none' and not el.inert and (css.visibility is 'visible' or getComputedStyle(hostRef).visibility isnt 'visible')
 
   # une ligne peut porter l'arrêt de tabulation si elle se voit et que son tabindex est le nôtre, ou celui, positif ou nul, de l'auteur
-  canStop = (el)-> shown(el) and (deco.get(el)?.includes('tabindex') or el.tabIndex >= 0)
+  canStop = (el)-> shown(el) and (decor.get(el)?.includes('tabindex') or el.tabIndex >= 0)
 
   # une seule ligne dans l'ordre de tabulation, la dernière qui a eu le focus si elle peut encore le porter, sinon la première qui le peut
   # (aucune, aucun arrêt) : Tab traverse la liste d'un coup, les flèches vont de ligne en ligne ; une ligne dont l'auteur a écrit le
   # tabindex garde le sien
   rove = ->
     roving = rows.find(canStop) unless rows.includes(roving) and canStop(roving)
-    deco.forEach (rec, el)->
+    decor.forEach (rec, el)->
       tab = if el is roving then '0' else '-1'
       el.setAttribute('tabindex', tab) if rec.includes('tabindex') and el.getAttribute('tabindex') isnt tab
     return
@@ -147,22 +147,22 @@
   # une ligne que la page cache ou montre après coup (un filtre qui pose hidden, une classe, un style, inert) : l'arrêt est recalculé ;
   # pas pendant un geste, qui anime le style des lignes et recalcule tout à sa fin
   onRowAttr = (records)->
-    rove() if not g and records.some((r)-> deco.has(r.target))
+    rove() if not g and records.some((r)-> decor.has(r.target))
     return
 
   refresh = ->
     return unless slotRef
     rows = listRows()
     for el in rows
-      continue if deco.has(el)
+      continue if decor.has(el)
       rec = ROW_ATTRS.filter((a)-> not el.hasAttribute(a))
-      deco.set(el, rec)
+      decor.set(el, rec)
       el.setAttribute('role', 'listitem') if rec.includes('role')
       retext(el, rec)
-    deco.forEach (rec, el)->
+    decor.forEach (rec, el)->
       return if rows.includes(el)
       undeco(el, rec)
-      deco.delete(el)
+      decor.delete(el)
     rove()
     remeasure() if g?.started
     return
@@ -905,7 +905,7 @@
   # une bascule de langue réécrit les textes des lignes
   µeffect ->
     $rowTexts
-    deco.forEach (rec, el)-> retext(el, rec)
+    decor.forEach (rec, el)-> retext(el, rec)
 
   # @@ dev group
   # aucune page n'écrit `group` : la construction a ôté les groupes, une liste qui le reçoit d'un script ne les a pas. Écrit en commentaire, réveillé
@@ -948,8 +948,8 @@
     hostRef.removeEventListener('focusin', onFocusIn)
     hostRef.removeEventListener('touchmove', onTouchMove)
     watch.disconnect()
-    deco.forEach (rec, el)-> undeco(el, rec)
-    deco.clear()
+    decor.forEach (rec, el)-> undeco(el, rec)
+    decor.clear()
 </script>
 
 <div class="list" part="list" role="list" :class{$handle}="handled">

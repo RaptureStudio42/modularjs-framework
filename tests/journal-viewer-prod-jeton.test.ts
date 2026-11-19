@@ -55,7 +55,7 @@ async function servir(js: 'split' | 'bundle', prod = true, minify?: boolean): Pr
     child.on('exit', (code) => ko(new Error('serveur sorti (' + code + ') :\n' + sortie.slice(-800))))
   })
   const base = `http://127.0.0.1:${port}`
-  const r    = await fetch(`${base}/__mjs/errors`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'boum', pile: 'Error: boum', url: base + '/', version: '1' }) })
+  const r    = await fetch(`${base}/__mjs/errors`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'boum', stack: 'Error: boum', url: base + '/', version: '1' }) })
   assert.equal(r.status, 204, 'erreur reçue par le journal')
   return { base, child }
 }
@@ -83,22 +83,22 @@ async function visiter(serveur: Serveur, nom: Moteur): Promise<void> {
     })
     const rep = await page.goto(`${serveur.base}/__mjs/errors?token=${JETON}`, { waitUntil: 'load' })
     assert.equal(rep.status(), 200)
-    await attendre(page, `(${OMBRE}?.querySelectorAll('.entree').length ?? 0) > 0`, 'une entrée du journal affichée').catch((e) => {
+    await attendre(page, `(${OMBRE}?.querySelectorAll('.entry').length ?? 0) > 0`, 'une entrée du journal affichée').catch((e) => {
       throw new Error(e.message + ' ; erreurs : ' + JSON.stringify(erreurs))
     })
     assert.deepEqual(erreurs, [], 'aucune erreur à l\'ouverture')
-    assert.equal(await compter(page, '.entree'), 1, 'l\'entrée envoyée')
+    assert.equal(await compter(page, '.entry'), 1, 'l\'entrée envoyée')
     assert.ok(!page.url().includes('token='), 'le jeton a quitté la barre d\'adresse : ' + page.url())
     // filtre « serveur » : l'entrée du navigateur disparaît, le message du journal vide s'affiche
-    await page.evaluate(`${OMBRE}.querySelectorAll('.filtres button')[1].click()`)
-    await attendre(page, `(${OMBRE}.querySelectorAll('.entree').length === 0) && ${OMBRE}.querySelector('p.vide') !== null`, 'liste vide sous le filtre serveur')
+    await page.evaluate(`${OMBRE}.querySelectorAll('.filters button')[1].click()`)
+    await attendre(page, `(${OMBRE}.querySelectorAll('.entry').length === 0) && ${OMBRE}.querySelector('p.empty') !== null`, 'liste vide sous le filtre serveur')
     // filtre « client » : elle revient
-    await page.evaluate(`${OMBRE}.querySelectorAll('.filtres button')[2].click()`)
-    await attendre(page, `${OMBRE}.querySelectorAll('.entree').length === 1`, 'l\'entrée sous le filtre client')
-    assert.equal(await page.evaluate(`${OMBRE}.querySelectorAll('.filtres button.actif').length`), 1, 'un seul filtre actif')
+    await page.evaluate(`${OMBRE}.querySelectorAll('.filters button')[2].click()`)
+    await attendre(page, `${OMBRE}.querySelectorAll('.entry').length === 1`, 'l\'entrée sous le filtre client')
+    assert.equal(await page.evaluate(`${OMBRE}.querySelectorAll('.filters button.active').length`), 1, 'un seul filtre actif')
     // un clic sur l'entrée déplie sa pile
-    await page.evaluate(`${OMBRE}.querySelector('.entree').click()`)
-    await attendre(page, `${OMBRE}.querySelector('.pile')?.textContent.includes('Error: boum') === true`, 'la pile dépliée')
+    await page.evaluate(`${OMBRE}.querySelector('.entry').click()`)
+    await attendre(page, `${OMBRE}.querySelector('.stack')?.textContent.includes('Error: boum') === true`, 'la pile dépliée')
     assert.deepEqual(erreurs, [], 'aucune erreur en travaillant')
   }
   finally {
@@ -163,7 +163,7 @@ describe('journal d\'erreurs ouvert par jeton sous `mjs serve --prod`', function
         })
         const rep = await page.goto(`${serveur!.base}/__mjs/theme`, { waitUntil: 'load' })
         assert.equal(rep.status(), 200)
-        await attendre(page, `(${ATELIER}?.querySelectorAll('.atelier h1').length ?? 0) === 1 && ${ATELIER}.querySelectorAll('.stat').length > 0`, 'l\'atelier affiché').catch((e) => {
+        await attendre(page, `(${ATELIER}?.querySelectorAll('.workshop h1').length ?? 0) === 1 && ${ATELIER}.querySelectorAll('.stat').length > 0`, 'l\'atelier affiché').catch((e) => {
           throw new Error(e.message + ' ; erreurs : ' + JSON.stringify(erreurs))
         })
         assert.deepEqual(erreurs, [], 'aucune erreur à l\'ouverture')

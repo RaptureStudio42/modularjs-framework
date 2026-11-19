@@ -1,5 +1,5 @@
 // mjs-ws/chat — paquet CHAT v1. MÊME patron que packages.ts::
-// paquetEcho (definirPaquet + installer composé SUR l'API PUBLIQUE app.serve/on/room — jamais par
+// echoPackage (definePackage + install composé SUR l'API PUBLIQUE app.serve/on/room — jamais par
 // accès à l'interne de core.ts/rooms.ts) : chatPackage(opts) déclare une FAMILLE de salons de
 // discussion, préfixés `opts.prefix` (défaut 'chat:'), chacun adossé à `app.room(prefix+room)`
 // pour la diffusion, la présence ET le rejeu d'historique (room().history, cf. rooms.ts + docs/
@@ -130,8 +130,8 @@ export function chatPackage(opts: MjsWsChatOptions = {}): MjsPackage {
 
   // débit — 1 seau PAR (salon, identité), PARTAGÉ entre connexions d'une même identité (2 onglets
   // = même quota — compatible sessionExclusive/anti-triche sans rien faire de spécial)
-  const seaux   = perRoomBuckets(burst, rate)
-  const buckets = seaux.buckets
+  const roomBuckets = perRoomBuckets(burst, rate)
+  const buckets     = roomBuckets.buckets
   // frappe — throttle ~3s PAR (salon, identité) — SÉPARÉ du débit ci-dessus, jamais journalisé
   const lastTypingAt = new Map<string, Map<string, number>>()
   // mute — échéance ms epoch PAR (salon, identité), mémoire PROCESS v1 (cf. tête de fichier —
@@ -144,7 +144,7 @@ export function chatPackage(opts: MjsWsChatOptions = {}): MjsPackage {
 
   function fullNameOf(room: string): string { return prefix + room }
 
-  const bucketOf = seaux.bucketOf
+  const bucketOf = roomBuckets.bucketOf
 
   function isMuted(fullName: string, identityId: string): boolean {
     const perRoom = mutedUntil.get(fullName)
@@ -189,23 +189,24 @@ export function chatPackage(opts: MjsWsChatOptions = {}): MjsPackage {
     if (perRoom.size === 0) duplicates.delete(fullName)
   }
 
-  // mémoire bornée (durcissement — contrairement au
-  // journal `room().history()` qui se purge tout seul quand un salon se vide (rooms.ts::leaveRoom),
-  // `buckets`/`lastTypingAt`/`mutedUntil` ci-dessus ne l'ont jamais fait — croissance sans borne
-  // sur un serveur à salons éphémères). AUCUN hook « salon vidé » n'est accessible depuis un paquet (`MjsWsApp`/
-  // `MjsWsRoomHandle` n'exposent ni événement ni callback d'adhésion, cf. rooms.ts) — un paquet reste
-  // SUR l'API publique (cf. tête de fichier) : purge OPPORTUNISTE ci-dessous, armée à chaque action
-  // chat référençant un salon (opportunisticSweep plus bas), coût O(1) amorti sur SWEEP_EVERY_N_ACTIONS.
+  // mémoire bornée — contrairement au journal `room().history()`, purgé quand un salon se vide (rooms.ts::leaveRoom),
+  // `buckets`/`lastTypingAt`/`mutedUntil` ci-dessus ne se vident pas d'eux-mêmes. Le paquet reste SUR l'API publique (cf. tête de
+  // fichier), sans l'accroche interne de départ du moteur (`_onRoomLeave`, lue par lobby.ts seul) : purge OPPORTUNISTE ci-dessous,
+  // armée à chaque action chat référençant un salon (opportunisticSweep plus bas), coût O(1) amorti sur SWEEP_EVERY_N_ACTIONS.
   let actionsSinceSweep = 0
 
-  // seaux de débit ET throttle de frappe — purgés dès qu'un salon n'a PLUS AUCUN membre
-  // (`app.room(fullName).size`, la même primitive publique que isAllowed plus bas) : repartir de
-  // zéro au prochain arrivant est sans enjeu pour un seau, et un timestamp de throttle n'a AUCUNE
-  // valeur à survivre au vidage (fenêtre de ~3 s, cf. TYPING_THROTTLE_MS) — même sous-arbre par
-  // salon, même sort, la sous-map entière part avec la clé, jamais un registre conservé pour un salon mort.
-  function sweepBucketsOfEmptyRooms(estVide: (fullName: string) => boolean): void {
-    seaux.sweep(estVide)
-    for (const fullName of lastTypingAt.keys()) if (estVide(fullName)) lastTypingAt.delete(fullName)
+  // seaux de débit ET throttle de frappe — la sous-map entière d'un salon part dès qu'il n'a PLUS AUCUN membre
+  // (`app.room(fullName).size`, la même primitive publique que isAllowed plus bas) ; dans un salon habité (la page d'accueil ne se
+  // vide jamais), un seau redevenu plein et une frappe vieille de TYPING_THROTTLE_MS partent aussi : un seau neuf, créé plein au
+  // retour, donne le même droit qu'un seau gardé plein, et un timestamp de throttle n'a aucune valeur passé sa fenêtre.
+  function sweepBucketsOfEmptyRooms(isEmpty: (fullName: string) => boolean): void {
+    roomBuckets.sweep(isEmpty)
+    const now = Date.now()
+    for (const [fullName, perRoom] of lastTypingAt) {
+      if (isEmpty(fullName)) { lastTypingAt.delete(fullName); continue }
+      for (const [identityId, at] of perRoom) if (now - at >= TYPING_THROTTLE_MS) perRoom.delete(identityId)
+      if (perRoom.size === 0) lastTypingAt.delete(fullName)
+    }
   }
 
   // mutes — AUCUN rapport avec le vidage d'un salon (on ne démute pas quelqu'un parce que le salon
@@ -223,10 +224,10 @@ export function chatPackage(opts: MjsWsChatOptions = {}): MjsPackage {
   // anti-doublon — sous-map d'un salon SANS MEMBRE entièrement réclamée (même sort que
   // buckets/lastTypingAt ci-dessus, aucun enjeu à survivre au vidage) ; ENTRÉES EXPIRÉES balayées
   // PARTOUT, salon vide ou pas (même esprit que sweepExpiredMutes) — sous-maps devenues vides réclamées.
-  function sweepDuplicates(estVide: (fullName: string) => boolean): void {
+  function sweepDuplicates(isEmpty: (fullName: string) => boolean): void {
     const now = Date.now()
     for (const [fullName, perRoom] of duplicates) {
-      const emptyRoom = estVide(fullName)
+      const emptyRoom = isEmpty(fullName)
       for (const [identityId, perText] of perRoom) {
         if (emptyRoom) { perRoom.delete(identityId); continue }
         for (const [text, ts] of perText) if (now - ts >= duplicatesWithin) perText.delete(text)
@@ -243,15 +244,15 @@ export function chatPackage(opts: MjsWsChatOptions = {}): MjsPackage {
     if (actionsSinceSweep < SWEEP_EVERY_N_ACTIONS) return
     actionsSinceSweep = 0
     // chaque salon lu une seule fois par balayage (un `app.room()` crée ses poignées à chaque appel)
-    const vides = new Map<string, boolean>()
-    const estVide = (fullName: string): boolean => {
-      let vide = vides.get(fullName)
-      if (vide === undefined) { vide = app.room(fullName).size === 0; vides.set(fullName, vide) }
-      return vide
+    const emptyRooms = new Map<string, boolean>()
+    const isEmpty = (fullName: string): boolean => {
+      let empty = emptyRooms.get(fullName)
+      if (empty === undefined) { empty = app.room(fullName).size === 0; emptyRooms.set(fullName, empty) }
+      return empty
     }
-    sweepBucketsOfEmptyRooms(estVide)
+    sweepBucketsOfEmptyRooms(isEmpty)
     sweepExpiredMutes()
-    sweepDuplicates(estVide)
+    sweepDuplicates(isEmpty)
   }
 
   // garde composite — membre du salon (µ:join bas niveau déjà accepté) ET canJoin (si fourni,
@@ -265,7 +266,7 @@ export function chatPackage(opts: MjsWsChatOptions = {}): MjsPackage {
     if (opts.canJoin) {
       let ok: unknown
       try { ok = await opts.canJoin(fullName, client) }
-      catch (err) { onLog('error', t('ws.chat.canjoin-a-leve'), { err: err instanceof Error ? err.message : String(err) }); return false }
+      catch (err) { onLog('error', t('ws.chat.canjoin-threw'), { err: err instanceof Error ? err.message : String(err) }); return false }
       if (ok === false) return false
     }
     return true
@@ -277,7 +278,7 @@ export function chatPackage(opts: MjsWsChatOptions = {}): MjsPackage {
   async function isModerator(client: MjsWsClient): Promise<boolean> {
     if (!opts.moderators) return false
     try { return await opts.moderators(client.identity) }
-    catch (err) { onLog('error', t('ws.chat.moderators-a-leve'), { err: err instanceof Error ? err.message : String(err) }); return false }
+    catch (err) { onLog('error', t('ws.chat.moderators-threw'), { err: err instanceof Error ? err.message : String(err) }); return false }
   }
 
   const pkg = definePackage('chat', app => {

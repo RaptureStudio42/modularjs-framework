@@ -20,10 +20,10 @@ function scriptDeLaPage(html: string): string {
 
 describe('MJS-WS — page /state : libellés traduits avec apostrophe', () => {
   it('le script reste valide et affiche les libellés tels quels', () => {
-    const catalogue = fr as Record<string, unknown>
-    const avant     = { titre: catalogue['ws.stats.titre-connexions'], sub: catalogue['ws.stats.sub-process'], lang: getMessagesLang() }
-    catalogue['ws.stats.titre-connexions'] = TITRE
-    catalogue['ws.stats.sub-process']      = SUB
+    const catalogue                         = fr as Record<string, unknown>
+    const avant                             = { titre: catalogue['ws.stats.title-connections'], sub: catalogue['ws.stats.sub-process'], lang: getMessagesLang() }
+    catalogue['ws.stats.title-connections'] = TITRE
+    catalogue['ws.stats.sub-process']       = SUB
     setMessagesLang('fr')
     try {
       const html = renderStatsPage({ processId: 'p-test', uptime: 3, horodatage: Date.now(), connexions: { actives: 2 }, latences: {}, memoire: { rss: 0 } } as any)
@@ -36,8 +36,8 @@ describe('MJS-WS — page /state : libellés traduits avec apostrophe', () => {
       assert.ok(elements.grid.innerHTML.includes('<h2>'+ TITRE +'</h2>'), elements.grid.innerHTML.slice(0, 200))
       assert.ok(elements.sub.textContent.startsWith(SUB +'p-test'), elements.sub.textContent)
     } finally {
-      catalogue['ws.stats.titre-connexions'] = avant.titre
-      catalogue['ws.stats.sub-process']      = avant.sub
+      catalogue['ws.stats.title-connections'] = avant.titre
+      catalogue['ws.stats.sub-process']       = avant.sub
       setMessagesLang(avant.lang)
     }
   })

@@ -58,9 +58,9 @@ C'est **tout** ce qu'il faut pour un serveur `µsocket` complet et protégé, co
 | Option | Défaut | Rôle |
 |---|---|---|
 | `transport` | `'ws'` (bibliothèque `ws`) sur `port`/`host` | `'ws'` ou `'uws'` (uWebSockets.js intégré), ou une **instance** `MjsWsTransport` déjà construite (`MemoryTransport` en test, un transport maison). Cf. §12 « La façade transport » pour tout brancher soi-même. |
-| `port` / `host` | `8080` / — | Ignorés si `transport` est une instance déjà construite. |
+| `port` / `host` | `8080` / — | Sans `host`, `mjsWs()` écoute sur toutes les adresses de la machine ; `mjs ws` écoute sur 127.0.0.1 (§6). Ignorés si `transport` est une instance déjà construite. |
 | `auth(hello, meta)` | — (aucune auth : `identity` vaut `undefined`) | `hello` = charge du `µ:hello` (`{ auth, protocol, resub, rooms }`), `meta` = `{ origin?, headers? }`. Le retour alimente `client.identity`. `false` ou `throw` → `µ:denied { message }` (fermeture définitive côté client). Accepte aussi un objet-proxy `{ url, secret, timeout?, cache? }` qui délègue la décision à un back HTTP signé — cf. §7.11 « Proxy de décisions ». |
-| `welcome(client)` | `() => ({})` | Construit la charge du `µ:welcome`, envoyée **immédiatement** après l'auth — rien d'autre ne s'intercale (piège client documenté en [20 · Temps réel](20-temps-reel.md)). |
+| `welcome(client)` | `() => ({})` | Construit la charge du `µ:welcome`, envoyée **immédiatement** après l'auth : aucune trame du client n'est traitée entre les deux (piège client documenté en [20 · Temps réel](20-temps-reel.md)). Pendant un `welcome` asynchrone, la connexion reçoit déjà les diffusions : elles peuvent précéder le `µ:welcome`. |
 | `parse` / `serialize` | `JSON.parse` / `JSON.stringify` | (Dé)sérialisation personnalisée des trames. |
 | `heartbeat` | `15000` ms | Période **attendue** des `µ:ping` client. `0` = watchdog serveur désactivé. |
 | `limits` | cf. §3 | Quotas anti-abus par connexion. |
@@ -71,14 +71,14 @@ C'est **tout** ce qu'il faut pour un serveur `µsocket` complet et protégé, co
 | `rooms.canSeePresence(room, client)` | — (membres seuls) | Qui voit la présence d'un salon. Sans elle, seuls les membres du salon la voient ; avec elle, elle seule décide, membre ou non. `false` ou `throw` → refus (`µ:error { message, code: 'presence-denied', room }`, throttlé). Async autorisée. Cf. §4. |
 | `presence` | — (fermée) | Présence **globale** (qui est connecté au serveur, `µ:sub-presence` sans salon) : `'public'` l'ouvre à tous les clients. Fermée, la demander vaut `µ:error { message, code: 'presence-denied' }` (throttlé), jamais la liste. Cf. §4. |
 | `guardProcess` | `false` | Si `true`, pose des filets `uncaughtException`/`unhandledRejection` qui **loggent sans tuer** le process. |
-| `onLog(niveau, message, meta?)` | `console` (format sobre) | `niveau` : `'debug' \| 'info' \| 'warn' \| 'error'`. |
+| `onLog(level, message, meta?)` | `console` (format sobre) | `level` : `'debug' \| 'info' \| 'warn' \| 'error'`. |
 | `resume` | désactivé | Reprise de session après micro-coupure — `true` (défauts : grâce 30 s, 500 trames, 256 Ko) ou `{ grace?, maxBuffered?, maxBytes? }`. Cf. §8. |
 | `sessionExclusive` | `false` | Session exclusive par identité, **deux** modes — `true`/`'replace'` : un 2e `µ:hello` **frais** de la **même** identité éjecte proprement l'ancienne connexion (`µ:bye {reason:'replace'}` + fermeture code **4003**). `'refuse'` (inverse) : ce 2e `µ:hello` est **refusé** si une connexion vivante existe déjà (`µ:denied` + fermeture code **4004**). Cf. §8.5. |
 | `ban` | active : 3 expulsions pour abus en 1 min → 5 min de refus du fautif : son compte, ou sans compte son IP | Mise au banc — `false` la désactive, un objet `{ after?, within?, duration?, by? }` la règle (`by` : `'account'` \| `'ip'` \| `'both'`). Cf. §3.4 « Qui compte pour qui ». |
 | `onDisconnect(client, reason?)` | — | Rappelée à la déconnexion **définitive** d'un client (immédiate sans `resume`, différée à la fin de la grâce sinon) — **toujours** disponible, sans `opts.bridge`. Une erreur qu'elle lève, ou une promesse qu'elle rejette, est journalisée et n'interrompt pas la purge de la connexion. Cf. §8.2 point 5. |
 | `stats` | désactivé | Expose GET /stats, /metrics, /state sur le pont (`bridge` requis pour les servir en HTTP). Le registre de compteurs (`app.stats()`) tourne **toujours**, quelle que soit cette valeur. Cf. §10. |
 | `codec` | `'auto'` | `'auto'` (type schématisé → binaire, reste JSON) / `'binary'` (**strict**, refuse tout texte applicatif sans schéma) / `'json'` (coupe-circuit débogage, tout en JSON). Cf. §3.1 « µschema ». |
-| `schemas` | — | Déclaration EN **masse** de schémas `{ nom: champs, ... }`, équivalent à autant de `app.schema(nom, champs)` avant `.listen()`. Cf. §3.1. |
+| `schemas` | — | Déclaration EN **masse** de schémas `{ name: fields, ... }`, équivalent à autant de `app.schema(name, fields)` avant `.listen()`. Cf. §3.1. |
 
 <a id="app-api"></a>
 ## 2. `app` — API
@@ -91,16 +91,16 @@ C'est **tout** ce qu'il faut pour un serveur `µsocket` complet et protégé, co
 | `.sendUser(id, type, p)` | Envoi à **toutes** les connexions d'un utilisateur (`identity.id` ; un visiteur sans compte : `anon:` suivi de son id de connexion) — même résolution que le pont universel (`POST /send { user }`, §7), cluster-aware. |
 | `.broadcast(type, p, { except? })` | Diffusion à tous les clients authentifiés (`except` : un client ou un tableau de clients — seules ces connexions sont exclues ; avec plusieurs processus, les autres onglets du même compte reçoivent, où qu'ils soient servis). |
 | `.error(client, message)` | Émet un `µ:error { message }` (non fatal côté client). |
-| `.use(pkg)` | Installe un paquet activable (`app.use(a).use(b)`, chaînable — retourne toujours `app`) : enregistre les handlers/conventions du paquet sur cette app. Double installation du même nom de paquet : ignorée. Exemples : [26 · Chat](26-chat.md), [27 · Comptes](27-accounts.md), [28 · Lobby](28-lobby.md). |
-| `.room(nom, { presence? })` | Poignée de salon — diffusion aux membres, présence, expulsion. `presence: 'public'` ouvre à tous la présence de ce salon, réservée à ses membres sinon. Cf. §4. |
-| `.stream(nom, { public?, room?, canSubscribe?, guardTimeout?, journal? })` | Flux à journal borné — état + deltas numérotés + rattrapage. **Fermé par défaut** : `public: true` l'ouvre à tous, `room` ou `canSubscribe` le réservent (`guardTimeout` : délai d'une garde asynchrone, 5 000 ms par défaut). Cf. §5. |
-| `.stats()` | Instantané JSON de l'état du serveur (connexions, messages, salons, flux, garde, pont, sessions, intervalles entre deux pings…) — **toujours** disponible, cf. §10. |
-| `.schema(nom, champs)` | Déclare (ou ré-affirme à l'identique) un schéma binaire nommé — `champs` = objet **ordonné** `{ nom: type, ... }`. Cf. §3.1 « µschema ». |
+| `.use(pkg)` | Installe un paquet activable (`app.use(a).use(b)`, chaînable — retourne toujours `app`) : enregistre les handlers/conventions du paquet sur cette app. Double installation du même nom de paquet : ignorée. Un paquet sans `name` (un texte non vide) ou sans `install` (une fonction) est refusé avant toute installation : `app.use` lève une `TypeError` qui dit ce qui manque. Exemples : [26 · Chat](26-chat.md), [27 · Comptes](27-accounts.md), [28 · Lobby](28-lobby.md). |
+| `.room(name, { presence? })` | Poignée de salon — diffusion aux membres, présence, expulsion. `presence: 'public'` ouvre à tous la présence de ce salon, réservée à ses membres sinon. Cf. §4. |
+| `.stream(name, { public?, room?, canSubscribe?, guardTimeout?, journal? })` | Flux à journal borné — état + deltas numérotés + rattrapage. **Fermé par défaut** : `public: true` l'ouvre à tous, `room` ou `canSubscribe` le réservent (`guardTimeout` : délai d'une garde asynchrone, 5 000 ms par défaut). Cf. §5. |
+| `.stats()` | Instantané JSON de l'état du serveur (`connections`, `messages`, `rooms`, `streams`, `guard`, `bridge`, `sessions`, `pingIntervals`…) — **toujours** disponible, cf. §10. |
+| `.schema(name, fields)` | Déclare (ou ré-affirme à l'identique) un schéma binaire nommé — `fields` = objet **ordonné** `{ name: type, ... }`. Cf. §3.1 « µschema ». |
 | `.clients` | Itérable des clients **authentifiés** (le handshake en cours n'y figure pas). |
 | `.listen()` | Démarre le transport. Promesse résolue une fois prêt. |
 | `.stop()` | `µ:bye` à tous les clients, fermeture propre des connexions, puis du transport. |
 
-`client` : `.id` (identifiant interne), `.identity` (retour de `auth`), `.latency` (dernier écart entre deux `µ:ping` reçus, ms ; un `µ:ping` marqué `early: true`, hors battement, n'en donne aucun, l'écart suivant se mesure à partir de lui — [25 §1.1](25-protocole-mjs-ws.md)), `.meta` (`{origin?, headers?}`), `.send(type, p)`, `.close(reason?)` (envoie `µ:bye` puis ferme — départ **définitif**, le client ne reconnecte pas).
+`client` : `.id` (identifiant interne), `.identity` (retour de `auth`), `.latency` (dernier écart entre deux `µ:ping` reçus, ms ; un `µ:ping` marqué `early: true`, hors battement, n'en donne aucun, l'écart suivant se mesure à partir de lui — [25 §1.1](25-protocole-mjs-ws.md)), `.meta` (`{origin?, headers?}`), `.send(type, p)`, `.close(reason?)` (envoie `µ:bye` puis ferme — départ **définitif**, le client ne reconnecte pas ; une raison de plus de 123 octets est coupée à 123 octets, entre deux caractères).
 
 **Refus et erreurs d'un `serve()` / `on()`.** Pour refuser volontairement, levez un code en `Error` nue — `throw new Error('commande-refusee')`, que le client traduit — ou une phrase faite pour le client en `MjsWsError` : `throw new MjsWsError('ce n’est pas votre tour')` (`import { MjsWsError } from 'modularjs-framework/ws'`, reconnue aussi par une appli [MJS-Server](24-mjs-server.md)). Leur message part tel quel au client (`µ:ack { e: true, p: … }`, ou `µ:error { message }` pour un `on()`). Toute autre exception — une phrase en `Error` nue, que des bibliothèques et du code d'appli lèvent aussi avec des détails internes (`connect ECONNREFUSED 10.0.3.4:5432 … user=app_prod`), une exception **interne** levée par le moteur JavaScript, une bibliothèque ou le système (`TypeError`, classe d'erreur d'un pilote de base, erreur système…) — est journalisée en erreur (`onLog('error', …)`, avec l'exception et sa pile) — un refus en `MjsWsError`, lui, en avertissement (`onLog('warn', …)`), sa phrase sans pile ; en développement, son message part aussi au client pour déboguer ; en production (`NODE_ENV=production`), le client ne reçoit que « erreur interne du serveur », jamais un détail interne (hôte d'une base, nom d'utilisateur, chemin d'un fichier…). Une erreur de bibliothèque que vous voulez montrer au client : attrapez-la et levez votre propre `MjsWsError`. Les parties [MJS-Server](24-mjs-server.md) gardent leur règle : le refus d'un coup, une `Error` nue de votre code de jeu comprise, est la réponse du joueur, en production aussi. Un code de la famille du message (`lobby:block` → `lobby-denied`, `commande:passer` → `commande-refusee`), la convention des paquets, est du trafic attendu : jamais journalisé en erreur ; toute autre exception l'est.
 
@@ -120,7 +120,7 @@ Actives par défaut, aucune configuration requise :
 | `limits.maxBuffered` | 1048576 octets | Contre-pression à l'émission : un envoi est jeté si le buffer du transport déborde déjà ; expulsion après 50 rejets **consécutifs**. |
 | `limits.kickAfter` | 50 | Aussi réutilisé pour le JSON invalide (1 `warn` + compteur dédié par connexion). |
 | `limits.maxConnections` | `null` (illimité, opt-in) | Plafond GLOBAL de connexions simultanées. Une connexion entrante au-delà est refusée avant authentification : fermeture immédiate, code **1013**. |
-| `limits.maxConnectionsPerIp` | 100 | Plafond de connexions simultanées PAR IP. Même refus (code **1013**) ; une IP inconnue (transport sans `remoteInfo.address`) n'est jamais comptée par ce plafond. Derrière un proxy inverse, toutes les IP sont celle du proxy tant que `trustProxy` n'est pas réglé : cf. §3.5. |
+| `limits.maxConnectionsPerIp` | 100 | Plafond de connexions simultanées PAR IP. Il borne aussi les sessions en reprise (§8) d'une même IP. Même refus (code **1013**) ; une IP inconnue (transport sans `remoteInfo.address`) n'est jamais comptée par ce plafond. Derrière un proxy inverse, toutes les IP sont celle du proxy tant que `trustProxy` n'est pas réglé : cf. §3.5. |
 | `limits.maxRoomsPerClient` | 50 | Plafond de salons qu'un même client a rejoints en même temps. Au-delà, `µ:join` est refusé (`µ:error`, throttlé) — la connexion, elle, reste ouverte. |
 | `limits.maxPresencePerClient` | = `limits.maxRoomsPerClient` | Plafond d'abonnements de présence DE SALON (`µ:sub-presence`) qu'un même client a actifs en même temps — distinct de `maxRoomsPerClient` (celui-ci ne borne que les adhésions, `µ:join`). Au-delà, refusé (`µ:error`, throttlé). `null` explicite = illimité. |
 | `heartbeat × 2.5` | 37,5 s par défaut | Watchdog serveur : une connexion muette (aucune trame reçue, `µ:ping` compris) au-delà de ce délai est expulsée. `heartbeat: 0` le désactive. |
@@ -130,14 +130,14 @@ Actives par défaut, aucune configuration requise :
 
 Ces réglages sont **vérifiés à la construction** de `mjsWs()`, comme `ban` et `limits.rateBy` : une valeur `NaN` (par exemple `Number(process.env.RATE)` quand la variable manque), négative, infinie ou d'un autre type que le nombre lève tout de suite une erreur claire, au lieu de couper la protection en silence. Une clé laissée à `undefined` garde son défaut. `limits.maxPayload` et `limits.maxBuffered` sont des entiers ≥ 1 (le transport `ws` lirait `0` comme « illimité ») ; les plafonds de connexions, de salons, de présence et de file acceptent aussi `null` (illimité) ; les autres réglages sont des nombres finis ≥ 0. Même contrôle pour `heartbeat` (`0` le désactive), `token` (`sweep` entier ≥ 1, `slack` ≥ 0), `resume` (`grace`, `maxBuffered`, `maxBytes` ≥ 0) et `antiEntropy` (entier ≥ 1, ou `false`).
 
-Nuance importante : une expulsion de **protection** (débit, taille, contre-pression, watchdog) ferme la connexion **sans `µ:bye`** — le client peut reconnecter normalement, utile si la coupure était transitoire. Seuls `.stop()` et `client.close()` sont des départs **définitifs et annoncés** (`µ:bye`, aucune reconnexion cliente).
+Nuance importante : une expulsion de **protection** (débit, taille, contre-pression, watchdog) ferme la connexion **sans `µ:bye`** — le client peut reconnecter normalement, utile si la coupure était transitoire. Seuls `.stop()` et `client.close()` sont des départs **définitifs et annoncés** (`µ:bye`, aucune reconnexion cliente). Dès la décision (expulsion, jeton expiré, `client.close()`), plus rien de ce client n'est traité ni diffusé et il quitte `app.clients`, même si sa connexion se ferme plus tard : un client qui ignore la trame de fermeture la garde jusqu'à 30 s.
 
 <a id="µschema"></a>
 ### 3.1 µschema — le binaire à schéma
 
 Une trame WebSocket **binaire** (par opposition au texte JSON du protocole `µ:`) passe sous le **même videur** qu'un message texte — rien ne contourne la garde de débit (`limits.rate`/`limits.burst`) ni la garde de taille (`limits.maxPayload`, même coupure au dépassement : **1009** avec `ws`, **1006** côté client avec `'uws'`, cf. §3). `µschema` est la couche qui donne un **sens** à ces octets : un **registre de schémas** déclaré par votre code, une enveloppe fil `[u8 idSchéma][charge]`, et un encodage/décodage **transparent** — `app.on`/`app.serve` reçoivent le message décodé comme s'il était arrivé en JSON, sans rien savoir de la façon dont il a voyagé.
 
-#### Déclarer un schéma — `app.schema(nom, champs)`
+#### Déclarer un schéma — `app.schema(name, fields)`
 
 ```js
 import { mjsWs, list, bits } from 'modularjs-framework/ws'
@@ -171,7 +171,7 @@ export default {
 }
 ```
 
-`champs` est un objet **ordonné** `{ nom: type, ... }` — l'**ordre** des clés fait foi sur le fil (jamais recalculé). Types scalaires : `u8`/`i8`/`u16`/`i16`/`u32`/`i32`/`f32`/`f64` (numériques), `bool` (1 octet), `str8`/`str16` (chaîne UTF-8, préfixe de longueur u8/u16). `list(type)` (compteur u16 puis `type` répété — v1 : scalaire/chaîne **seulement**, pas de sous-schéma imbriqué) et `bits([noms])` (≤ 8 booléens, décodés en `{ nom: bool, ... }`) complètent la liste. Un id **u8** est attribué à chaque schéma **dans l'ordre de déclaration** (0, 1, 2…) — c'est cet id qui ouvre chaque trame binaire.
+`fields` est un objet **ordonné** `{ name: type, ... }` — l'**ordre** des clés fait foi sur le fil (jamais recalculé). Types scalaires : `u8`/`i8`/`u16`/`i16`/`u32`/`i32`/`f32`/`f64` (numériques), `bool` (1 octet), `str8`/`str16` (chaîne UTF-8, préfixe de longueur u8/u16). `list(type)` (compteur u16 puis `type` répété — v1 : scalaire/chaîne **seulement**, pas de sous-schéma imbriqué) et `bits([names])` (≤ 8 booléens, décodés en `{ name: bool, ... }`) complètent la liste. Un id **u8** est attribué à chaque schéma **dans l'ordre de déclaration** (0, 1, 2…) — c'est cet id qui ouvre chaque trame binaire.
 
 **Valeurs hors plage.** Un entier hors de la plage de son type (`u8` : 0 à 255, `i8` : -128 à 127, `u16` : 0 à 65 535, `i16` : -32 768 à 32 767, `u32` : 0 à 4 294 967 295, `i32` : -2 147 483 648 à 2 147 483 647) lève une erreur claire à l'encodage, qui nomme le schéma, le champ et la plage : il n'arrive jamais replié (300 en `u8` arrivait 44, -1 en `u32` arrivait 4 294 967 295, et la même donnée en `codec: 'auto'` dépendait du transport). Côté serveur, l'erreur remonte à l'appel (`app.send`, `broadcast`…), comme une chaîne trop longue pour son préfixe ; côté navigateur, le message part en JSON avec sa valeur exacte, et l'erreur s'affiche dans la console. Une fraction est tronquée vers zéro (3,9 → 3) ; `Infinity`, `-Infinity` et `NaN` lèvent la même erreur qu'une valeur hors plage ; dans un champ flottant (`f32`, `f64`), ils passent tels quels, le format IEEE 754 les écrit ; une valeur absente ou qui n'est pas un nombre vaut 0. Ce qu'`Object.prototype` prête à tout objet n'est jamais lu comme une valeur : un champ nommé `constructor` ou `toString`, absent de l'objet, vaut 0, faux ou une chaîne vide. Les noms de `bits([…])` suivent la règle des noms de champs : `__proto__` est refusé à la déclaration.
 
@@ -182,7 +182,7 @@ export default {
 | `codec` | Comportement |
 |---|---|
 | `'auto'` (défaut) | Un type applicatif **avec** schéma déclaré part en binaire ; le reste (types non déclarés) part en JSON, comme avant `µschema`. |
-| `'binary'` | **strict** — envoyer un type applicatif **sans** schéma déclaré **lève** immédiatement (`app.send`/`sendUser`/`broadcast`/`room().send`, erreur de dev claire, **avant** même de chercher un destinataire) ; recevoir une trame **texte** applicative (hors préfixe `µ:`) est **rejeté** (compté `app.stats().messages.texteRejete`, `µ:error` throttlé). |
+| `'binary'` | **strict** — envoyer un type applicatif **sans** schéma déclaré **lève** immédiatement (`app.send`/`sendUser`/`broadcast`/`room().send`, erreur de dev claire, **avant** même de chercher un destinataire) ; recevoir une trame **texte** applicative (hors préfixe `µ:`) est **rejeté** (compté `app.stats().messages.textRejected`, `µ:error` throttlé). |
 | `'json'` | Coupe-circuit débogage — **tout** part en JSON, même un type schématisé (utile pour inspecter le trafic en clair pendant qu'on développe). |
 
 Les trames de **contrôle** `µ:` (`µ:hello`, `µ:welcome`, `µ:ping`…) restent **toujours** en JSON, quel que soit `codec` — le bootstrap du hello ne peut pas dépendre d'un schéma pas encore synchronisé. Sans **aucun** schéma déclaré, la voie JSON reste **byte-identique** à avant `µschema` — activer `codec` ne change rien tant que rien n'est schématisé.
@@ -193,11 +193,11 @@ Chaque `µ:welcome` porte un `schemaHash` (dès qu'au moins un schéma est décl
 
 #### Ce qui n'encode **jamais** en binaire
 
-Les deltas de `app.stream()` (§5) restent inchangés — un flux n'est jamais schématisable (sa forme `{ t, seq, p }` porte un numéro de séquence que `µschema` ne connaît pas). Un `app.room(nom).send(type, p)` encode en binaire exactement comme `app.send`/`app.broadcast` dès que `type` a un schéma — c'est le **même** choix, au **même** endroit (`sendRaw`), pour tous les chemins d'envoi.
+Les deltas de `app.stream()` (§5) restent inchangés — un flux n'est jamais schématisable (sa forme `{ t, seq, p }` porte un numéro de séquence que `µschema` ne connaît pas). Un `app.room(name).send(type, p)` encode en binaire exactement comme `app.send`/`app.broadcast` dès que `type` a un schéma — c'est le **même** choix, au **même** endroit (`sendRaw`), pour tous les chemins d'envoi.
 
 #### Id de schéma inconnu à la réception
 
-Une trame binaire dont l'octet d'id ne correspond à **aucun** schéma connu (registre local en retard) est comptée `app.stats().messages.binaireIgnorees` ; en mode `'binary'`, elle déclenche en plus un `µ:error` throttlé (1/s) — en `'auto'`/`'json'`, silence volontaire (pas de canal de reconnaissance gratuit pour qui sonderait le protocole avant le hello).
+Une trame binaire dont l'octet d'id ne correspond à **aucun** schéma connu (registre local en retard) est comptée `app.stats().messages.binaryIgnored` ; en mode `'binary'`, elle déclenche en plus un `µ:error` throttlé (1/s) — en `'auto'`/`'json'`, silence volontaire (pas de canal de reconnaissance gratuit pour qui sonderait le protocole avant le hello).
 
 #### Le codec du navigateur, chargé seul
 
@@ -251,14 +251,14 @@ Forme choisie plutôt qu'un paramètre de plus sur `µ.ajax.get/post/put/patch/d
 [8 octets ASCII — hash hex du registre][u8 idSchéma][charge µschema, cf. §3.1]
 ```
 
-Les 8 premiers octets sont `hashRegistre()` (FNV-1a, **toujours** 8 caractères hexadécimaux, cf. §3.1) écrits **tels quels** en ASCII — pas un entier packé : lisible dans un dump hexa, relisible dans n'importe quel langage sans le moindre calcul bit à bit (`bytes[0,8]` suffit). Le reste de la trame est **exactement** `[u8 idSchéma][charge]`, le même format que le binaire WebSocket (§3.1) — la version est un préfixe **additionnel**, jamais une réécriture.
+Les 8 premiers octets sont `hashRegistry()` (FNV-1a, **toujours** 8 caractères hexadécimaux, cf. §3.1) écrits **tels quels** en ASCII — pas un entier packé : lisible dans un dump hexa, relisible dans n'importe quel langage sans le moindre calcul bit à bit (`bytes[0,8]` suffit). Le reste de la trame est **exactement** `[u8 idSchéma][charge]`, le même format que le binaire WebSocket (§3.1) — la version est un préfixe **additionnel**, jamais une réécriture.
 
 #### Mise à jour à chaud
 
 La **réponse** porte la version du registre **serveur**. Si elle diffère de celle du registre **client** :
 
 1. la requête d'origine **n'échoue pas** — elle patiente ;
-2. un `GET` est lancé en arrière-plan sur l'endpoint schéma (`options.schemaUrl`, ou par défaut la même URL + `schema=1` en paramètre) — réponse JSON attendue = **exactement** la forme de `serialiserDefinitions()` (§3.1, `{ hash, schemas: [...] }`, la **même** que la trame `µ:schema` du WebSocket) ;
+2. un `GET` est lancé en arrière-plan sur l'endpoint schéma (`options.schemaUrl`, ou par défaut la même URL + `schema=1` en paramètre) — réponse JSON attendue = **exactement** la forme de `serializeDefinitions()` (§3.1, `{ hash, schemas: [{ name, fields: [[champ, type], ...] }, ...] }`, la **même** que la trame `µ:schema` du WebSocket) ;
 3. le registre client est rechargé (remplace le singleton du module `'schema'` en place si `options.codec` n'a pas été fourni) ;
 4. la charge **déjà reçue** est re-décodée avec le registre frais — un seul aller-retour de rafraîchissement, jamais de boucle : un second désaccord après rafraîchissement est une vraie erreur, routée vers `options.error`.
 
@@ -285,7 +285,7 @@ module MjSchemaHttp
 
   def self.decrire_type(t)
     return t if t.is_a?(String)
-    t[:kind] == 'list' ? "list(#{t[:of]})" : "bits(#{JSON.generate(t[:noms])})"
+    t[:kind] == 'list' ? "list(#{t[:of]})" : "bits(#{JSON.generate(t[:names])})"
   end
 
   def self.fnv1a(chaine)
@@ -331,7 +331,7 @@ module MjSchemaHttp
     offset = 9
     objet  = {}
     champs.each { |c, t| valeur, offset = lire_champ(bytes, offset, t); objet[c] = valeur }
-    { version: version, nom: nom, objet: objet }
+    { version: version, name: nom, object: objet }
   end
 
   def self.ecrire_champ(valeur, type)
@@ -351,16 +351,16 @@ module MjSchemaHttp
     end
   end
 
-  def self.encoder(nom, objet, schemas = SCHEMAS, version = VERSION)
-    id = schemas.index { |n, _| n == nom }
-    raise "[MjSchemaHttp] schéma inconnu '#{nom}'" if id.nil?
+  def self.encoder(name, object, schemas = SCHEMAS, version = VERSION)
+    id = schemas.index { |n, _| n == name }
+    raise "[MjSchemaHttp] schéma inconnu '#{name}'" if id.nil?
     _, champs = schemas[id]
-    corps = champs.map { |c, t| ecrire_champ(objet[c], t) }.join
+    corps = champs.map { |c, t| ecrire_champ(object[c], t) }.join
     [version].pack('a8') + [id].pack('C') + corps
   end
 
   def self.definitions_json(schemas = SCHEMAS, version = VERSION)
-    { hash: version, schemas: schemas.map { |nom, champs| { nom: nom, champs: champs.to_a } } }
+    { hash: version, schemas: schemas.map { |nom, champs| { name: nom, fields: champs.to_a } } }
   end
 end
 ```
@@ -383,16 +383,16 @@ class ProfilsController < ApplicationController
 end
 ```
 
-**Honnête** : c'est nettement plus lourd qu'un `render json: ...`. La recette ci-dessus exige de garder les déclarations Ruby/JS en accord manuel, sans le filet des gardes **ajout-seul** de `defSchema` (§3.1) côté Ruby — une déclaration qui diverge silencieusement (ordre, type) produit un hash différent, jamais une erreur explicite côté Rails. Réservez µschema-HTTP à de vrais points chauds (payload répété à haute fréquence, ex. polling serré) où le gain d'octets/CPU JSON justifie l'entretien — le JSON classique (`µ.ajax.get/post`) reste le choix par défaut recommandé pour tout le reste.
+**Honnête** : c'est nettement plus lourd qu'un `render json: ...`. La recette ci-dessus exige de garder les déclarations Ruby/JS en accord manuel, sans le filet des gardes **ajout-seul** de `defineSchema` (§3.1) côté Ruby — une déclaration qui diverge silencieusement (ordre, type) produit un hash différent, jamais une erreur explicite côté Rails. Réservez µschema-HTTP à de vrais points chauds (payload répété à haute fréquence, ex. polling serré) où le gain d'octets/CPU JSON justifie l'entretien — le JSON classique (`µ.ajax.get/post`) reste le choix par défaut recommandé pour tout le reste.
 
 ### 3.3 Vérification d'origine
 
-Absente (défaut), aucune connexion n'est refusée pour son origine — comportement historique **strict**, opt-in. Posée, `verifyOrigin` contrôle **chaque connexion entrante à l'admission**, **avant** le `µ:hello` (pas de `µ:denied`, une connexion refusée n'a même pas eu l'occasion de dire bonjour) :
+Absente (défaut), l'origine n'est **pas contrôlée** : une page d'un autre site peut ouvrir une connexion, et le navigateur y joint les cookies du visiteur ; si votre `auth` lit un cookie, cette page est accueillie au nom du visiteur. Un avertissement le rappelle au démarrage dès que `auth` est posée sans `verifyOrigin`. Posez `verifyOrigin` avec les origines de vos pages. Toute autre valeur qu'une liste ou une fonction (`null`, une chaîne seule) est refusée dès la construction, avec un message qui donne les deux formes. Posée, `verifyOrigin` contrôle **chaque connexion entrante à l'admission**, **avant** le `µ:hello` (pas de `µ:denied`, une connexion refusée n'a même pas eu l'occasion de dire bonjour) :
 
 - **Forme tableau** — allowlist stricte d'origines exactes (schéma+hôte+port, ex. `'https://exemple.com'`), comparaison **insensible à la casse** (compilée en `Set` minuscule une seule fois, jamais recalculée par connexion). Un `Origin` absent ou non listé est refusé.
 - **Forme fonction** — contrôle total : `(origin, remote) => boolean`, reçoit l'`Origin` brut (`string | undefined`) et le `MjsWsRemoteInfo` de la connexion (`{origin?, headers?, address?}`), retourne `true` pour admettre. Une exception levée = refus (**fail-closed**).
 
-Refus = fermeture immédiate, code **1008** (« Policy Violation », définitif — contrairement au **1013** des plafonds de connexions §3, ce n'est pas transitoire : réessayer avec la même origine échouera toujours). Compteur dédié `stats.connexions.refuseesOrigine` (cf. §10), qui compte chaque refus ; le journal, lui, est regroupé : une ligne `warn` au plus par minute (l'`Origin`, écrite par le visiteur, y est tronquée à 200 caractères), la suivante annonce combien de refus semblables ont été tus entre-temps. Même regroupement pour les refus des plafonds de connexions (§3).
+Refus = fermeture immédiate, code **1008** (« Policy Violation », définitif — contrairement au **1013** des plafonds de connexions §3, ce n'est pas transitoire : réessayer avec la même origine échouera toujours). Compteur dédié `stats.connections.refusedOrigin` (cf. §10), qui compte chaque refus ; le journal, lui, est regroupé : une ligne `warn` au plus par minute (l'`Origin`, écrite par le visiteur, y est tronquée à 200 caractères), la suivante annonce combien de refus semblables ont été tus entre-temps. Même regroupement pour les refus des plafonds de connexions (§3).
 
 ```js
 const app = mjsWs({
@@ -445,7 +445,7 @@ mjsWs({ ban: false })                                                          /
 - La reprise de session (§8) ne contourne pas le banc : le refus passe avant elle.
 - Le client µ.socket refusé à l'arrivée réessaie à son rythme habituel (environ 5 s entre deux essais) et revient seul à la fin du banc ; refusé au hello (`µ:denied`), il s'arrête, comme pour tout `µ:denied` : l'application le reconnecte (`connect()`) quand elle le souhaite.
 - Plusieurs processus (§9) : chaque processus compte ses expulsions ; un refus prononcé est publié aux autres.
-- Compteurs (§10) : `garde.misesAuBanc` (refus prononcés), `connexions.refuseesBan` (connexions refusées) ; chaque mise au banc est aussi journalisée (`warn`).
+- Compteurs (§10) : `guard.bans` (refus prononcés), `connections.refusedBan` (connexions refusées) ; chaque mise au banc est aussi journalisée (`warn`).
 
 Dans `mjs.config.json` : `ws.ban` et `ws.limits.rateBy` (§6.3).
 
@@ -536,12 +536,12 @@ app.sendTo('partie-42', 'coup', { case: 12 })          // sucre : équivaut à l
 app.room('hall', { presence: 'public' })               // la présence du hall : visible de tous, membres ou non
 ```
 
-| `app.room(nom)` | Rôle |
+| `app.room(name)` | Rôle |
 |---|---|
 | `.send(type, p, { except? })` | Diffuse `{t: type, p}` aux membres (`except` : seules ces connexions sont exclues, comme pour `broadcast`). `type` est envoyé **tel quel** — pour viser les écouteurs scopés du client (`salon.on('coup')`), préfixez vous-même (`'partie-42/coup'`) : le préfixe de salon est une convention **cliente**, le serveur n'ajoute rien. |
 | `.clients` / `.size` | Les connexions membres / leur nombre. |
 | `.has(client)` | Appartenance d'une connexion. |
-| `.kick(clientOuId, raison?)` | Expulse du salon : le visé reçoit **un unique** `µ:left { room, reason }` (→ son callback `onLeft(raison)`, purge locale du salon), les abonnés-présence reçoivent le delta `leave`. La **connexion reste ouverte** — c'est une expulsion de salon, pas un `µ:bye`. Par chaîne : l'id d'une personne — `identity.id` (expulse alors tous ses onglets du salon), ou `anon:` suivi de l'id de connexion d'un visiteur sans compte ; pour une seule connexion, passez l'objet client. |
+| `.kick(clientOrId, reason?)` | Expulse du salon : le visé reçoit **un unique** `µ:left { room, reason }` (→ son callback `onLeft(reason)`, purge locale du salon), les abonnés-présence reçoivent le delta `leave`. La **connexion reste ouverte** — c'est une expulsion de salon, pas un `µ:bye`. Par chaîne : l'id d'une personne — `identity.id` (expulse alors tous ses onglets du salon), ou `anon:` suivi de l'id de connexion d'un visiteur sans compte ; pour une seule connexion, passez l'objet client. |
 
 **Raccourci `app.sendTo(salon, type, p)`** — sucre pour `app.room(salon).send(salon + '/' + type, p)` : évite la double mention du nom de salon pour un envoi ponctuel où vous n'avez pas besoin de garder la référence (pas d'`except`, pas de `.size`/`.kick`/`.has` ensuite — pour ça, gardez `app.room(salon)`).
 
@@ -549,12 +549,12 @@ Ce qui est géré sans que vous vous en occupiez :
 
 - **Adhésions** : `µ:join` en double = silencieux (déjà membre) ; `µ:leave` d'un non-membre = silencieux ; une déconnexion quitte tous ses salons proprement.
 - **Refus** : garde `join` qui rend `false` ou lève → le client n'entre pas et reçoit un `µ:error` (throttlé à un par seconde — une boucle de re-tentatives ne se fait pas mitrailler en retour).
-- **Noms bornés** : un nom de salon reçu d'un client (`µ:join`, `µ:sub-presence`) fait 200 caractères au plus. Au-delà, le client reçoit un `µ:error` « nom de salon trop long » (throttlé de même) et rien n'est retenu. Les noms que **votre** code passe à `app.room(nom)` ne sont pas bornés.
+- **Noms bornés** : un nom de salon reçu d'un client (`µ:join`, `µ:sub-presence`) fait 200 caractères au plus. Au-delà, le client reçoit un `µ:error` « nom de salon trop long » (throttlé de même) et rien n'est retenu. Les noms que **votre** code passe à `app.room(name)` ne sont pas bornés.
 - **Présence globale** (qui est connecté au serveur, demandée par un `µ:sub-presence` sans salon) : **fermée par défaut**, comme celle d'un salon l'est à ses non-membres — la demander vaut `µ:error { message, code: 'presence-denied' }` (sans `room`, throttlé de même), jamais la liste. Ouvrez-la à tous les clients d'une ligne : `mjsWs({ presence: 'public' })`. Ouverte, un client authentifié « apparaît » aux abonnés dès son `µ:welcome` et « disparaît » à sa déconnexion — indépendamment de tout salon. Votre back la lit toujours, ouverte ou non, par le pont (`GET /presence`, §7).
 - **Agrégation multi-onglets** : la clé d'un pair de présence est `client.identity.id` (visiteur sans compte : `anon:` suivi de son id de connexion). Un même utilisateur ouvert dans **deux onglets = un seul pair** — le delta `join` ne part qu'à l'ouverture du **premier**, le delta `leave` qu'à la fermeture du **dernier**, et sa méta est celle de la connexion la plus récente. Personne ne « clignote » parce qu'il ouvre un deuxième onglet.
 - **Id de connexion** (`client.id` ; la clé de pair d'un visiteur sans compte est `anon:` suivi de cet id) : `c` suivi d'un nombre amorcé à l'heure du démarrage du serveur (en millisecondes), puis +1 par connexion — jamais l'id d'une connexion d'un démarrage précédent (un siège anonyme d'une partie restaurée n'est pas repris par une autre connexion). Avec le pont ou plusieurs processus, il est préfixé de l'identifiant du processus (`<processus>.c<nombre>`). Ne lisez rien d'autre dans ce nombre.
 - **Visiteur sans compte, compte : deux espaces de noms** — un visiteur sans compte est toujours `anon:` suivi de son id de connexion, un compte toujours son `identity.id`, partout où MJS-WS désigne une personne : présence, `sendUser`, `kick`, pont (`user`, `except`), webhooks, discussion, hall, réactions, suivi d'écran. Un id de connexion nu ne désigne jamais une personne : un compte peut porter le même (une appli où l'on choisit son pseudo). Un compte dont l'id commence par `anon:` est refusé dès le hello (`µ:denied` « identifiant de compte refusé : « anon: » est réservé aux visiteurs sans compte », et un `warn` au journal du serveur) : donnez à vos comptes des id sans ce préfixe.
-- **Présence réservée aux membres** : par défaut, la présence d'un salon (qui est dedans, avec sa méta) n'est servie qu'à ses membres. Le `µ:sub-presence` d'un non-membre reçoit `µ:error { message, code: 'presence-denied', room }` (throttlé de même), jamais la liste ; et qui quitte le salon (`µ:leave`, `kick`, déconnexion) cesse de la recevoir. Côté client, rejoignez le salon avant de demander sa présence (`sock.room(nom)`, puis `salon.presence()`).
+- **Présence réservée aux membres** : par défaut, la présence d'un salon (qui est dedans, avec sa méta) n'est servie qu'à ses membres. Le `µ:sub-presence` d'un non-membre reçoit `µ:error { message, code: 'presence-denied', room }` (throttlé de même), jamais la liste ; et qui quitte le salon (`µ:leave`, `kick`, déconnexion) cesse de la recevoir. Côté client, rejoignez le salon avant de demander sa présence (`sock.room(name)`, puis `salon.presence()`).
 - **Ouvrir la présence d'un salon** : pour afficher « qui joue » sans jouer, ouvrez-la, salon par salon, d'une ligne — `app.room('partie-42', { presence: 'public' })` : tous les clients la voient, membres ou non, sans entrer (`presence: 'members'` la referme). Ou décidez au cas par cas avec la garde `rooms.canSeePresence(room, client)` : elle seule décide alors, membre ou non (`false` ou `throw` → le même refus) :
 
 ```js
@@ -577,7 +577,7 @@ app.on 'chat', (p, client)->
 
 Dès cet appel, chaque `salon.send(type, p)` qui suit est **aussi** journalisé (anneau : au-delà de `n`, les plus vieux tombent). Un **nouvel arrivant** (`µ:join` accepté) reçoit automatiquement les `n` derniers messages, **avant** tout trafic live — rien à coder côté client, `sock.room('chat-42').on('message', cb)` les reçoit exactement comme un message live.
 
-| `room(nom).history(n)` | Effet |
+| `room(name).history(n)` | Effet |
 |---|---|
 | `n > 0` | Active (ou redimensionne) le journal à `n` entrées. Rétrécir retaille tout de suite (les plus vieilles tombent) ; agrandir garde le contenu existant. |
 | `n === 0` (ou tout `n` ≤ 0) | Purge et désactive — retour au comportement sans historique. |
@@ -661,9 +661,9 @@ app.use(heatmapPackage({ origins: ['https://monsite.fr'], maxAge: 30, unit: 'day
 
 - **La page d'admin** : `GET /heatmap` sur le pont (§7) — chaque page vue (son adresse, en direct dans un cadre), la chaleur par-dessus, et un choix de zone et d'événement : la page entière ou un composant, les clics ou les mouvements. Mêmes règles d'accès que `/state` (§10.2) : libre quand le pont écoute en local, signée sinon. `GET /heatmap.json` : les mêmes données ; `app.heatmap()` : dans votre code.
 - **`origins` (obligatoire)** : les origines de vos pages (`https://monsite.fr`, sans chemin). Une trame dont l'en-tête Origin n'est pas dans la liste est écartée, et une connexion sans en-tête Origin (un script, pas un navigateur) ne compte pas : personne ne remplit votre carte avec d'autres adresses. Sans `origins`, le paquet refuse de démarrer, avec un message qui donne l'exemple. La page d'admin charge l'adresse gardée dans un cadre : une page dont un segment est devenu `_SECRET_ID_` s'y affiche sans son contenu.
-- **Les points partent par lots.** Un point part tout de suite quand la connexion est ouverte et que la part des effets en direct le permet (`effects.rate`, 4 trames par seconde pour tous les effets de la page) ; sinon il attend, et ceux qui le suivent le rejoignent dans une même trame (20 points au plus attendent, les plus anciens s'oublient au-delà ; le serveur en prend 50 par trame, un jeton de débit par point). La connexion étant paresseuse, le premier point qui attend la fait ouvrir, sauf si l'appli l'a fermée, et part quand elle est ouverte.
+- **Les points partent par lots.** Un point part tout de suite quand la connexion est ouverte et que la part des effets en direct le permet (`effects.rate`, 4 trames par seconde pour tous les effets de la page) ; sinon il attend, et ceux qui le suivent le rejoignent dans une même trame (20 points au plus attendent, les plus anciens s'oublient au-delà ; le serveur en prend 50 par trame, un jeton de débit par point, même pour un point écarté). La connexion étant paresseuse, le premier point qui attend la fait ouvrir, sauf si l'appli l'a fermée, et part quand elle est ouverte.
 - **Où c'est gardé** : dans la mémoire du processus du serveur temps réel. `file: 'heatmap.json'` la garde d'un redémarrage à l'autre : le fichier est relu au démarrage, écrit chaque minute s'il y a du nouveau, et à l'arrêt (`app.stop()`, fin du processus, `systemctl stop`) — rien à installer. Écrit d'un coup (jamais à moitié) ; un fichier illisible est mis de côté (`heatmap.json.bad-<date>`), jamais écrasé, et la carte repart de zéro. Les fichiers temporaires d'une écriture interrompue sont purgés au démarrage, et une page dont l'adresse n'est pas http(s), d'une origine absente de `origins`, au-delà de `maxPages` ou dont les zones dépassent `maxZones` est écartée à la relecture, seule (le journal le dit) : la relecture suit les mêmes bornes que la réception. Un seul processus par fichier : avec plusieurs serveurs, `onPoint` range chaque point dans une base.
-- **La mémoire** grandit avec le trafic, jusqu'à l'âge limite et sous trois plafonds de sécurité : `maxPoints` (1 000 000 points en tout, de 85 à 190 octets chacun selon la variété des adresses et des zones — jusqu'à environ 190 Mo : au-delà, les plus anciens partent), `maxPages` (1 000 adresses) et `maxZones` (64 zones par page) — au-delà, la page (ou la zone de la page) la moins récente, celle dont le dernier point est le plus ancien, part pour faire place à la nouvelle : un script qui remplirait la carte d'adresses inventées ne fige pas vos vraies pages, elles reviennent dès qu'on les visite. Sur un site très fréquenté, un `maxAge` court (quelques heures pour `mousemove`), ou `onPoint` qui garde aussi les points dans une base.
+- **La mémoire** grandit avec le trafic, jusqu'à l'âge limite et sous trois plafonds de sécurité : `maxPoints` (1 000 000 points en tout, de 85 à 190 octets chacun selon la variété des adresses et des zones — jusqu'à environ 190 Mo : au-delà, les plus anciens partent), `maxPages` (1 000 adresses) et `maxZones` (64 zones par page) — au-delà, la page (ou la zone de la page) la moins récente, celle dont le dernier point est le plus ancien, part pour faire place à la nouvelle : un script qui remplirait la carte d'adresses inventées ne fige pas vos vraies pages, elles reviennent dès qu'on les visite. Au plafond, les points de la page la moins récente sont perdus : gardez-les aussi par `onPoint`. Sur un site très fréquenté, un `maxAge` court (quelques heures pour `mousemove`), ou `onPoint` qui garde aussi les points dans une base.
 - **Ne pas se compter soi-même** : `exclude: { ips: ['…'], accounts: ['…'] }` écarte les points de ces IP (celle de la connexion, ou la première de `X-Forwarded-For` derrière un proxy) et de ces comptes (l'`id` de l'identité rendue par `auth`), **à la capture** : ils n'entrent jamais dans la carte. Une fonction `exclude: (client) => …` décide au cas par cas.
 - **La page d'admin** a un curseur « les plus récents » : de tous les points au seul dernier, avec la date du plus ancien affiché. Chaque point garde son heure (`ts` dans `GET /heatmap.json`).
 
@@ -711,7 +711,7 @@ ennemis.snapshot()                       // photo { clé → valeur } de l'état
 ennemis.destroy()                        // retire le flux du registre — plus JAMAIS itéré (cf. note ci-dessous)
 ```
 
-**`destroy()` — flux dynamiques (un par partie, par salon, par session…) :** un `app.stream(nom)` déclaré et jamais détruit reste en mémoire pour toujours (journal, abonnés, compteur `seq`) — pour un nom de flux **fixe** ce n'est jamais un problème, mais pour un flux créé **à la volée par identifiant** (`app.stream('partie-' + id)`), sans `destroy()` à la fin de sa vie utile, le registre grossit sans borne. Détruit, un flux redevient **exactement** comme s'il n'avait jamais existé : un `µ:sub-stream`/`µ:resync` ultérieur sur ce nom retombe sur le repli honnête (`reset` vide + `warn`). `destroy()` n'envoie rien aux abonnés courants — prévenez-les vous-même avant si besoin (dernier message applicatif) — et ils ne reçoivent plus rien ensuite. Une garde `canSubscribe` encore sans réponse n'y abonne plus personne : sa réponse est ignorée, et rien de ce flux ne reste en mémoire (ni abonnement, ni garde repassée qui attendait son tour). La poignée gardée n'agit plus : ses écritures (`add`, `update`, `remove`, `reset`) sont sans effet, sans exception (un avertissement dans `onLog`, une fois), et un second `destroy()` ne touche pas au flux recréé entre-temps sous le même nom ; pour servir ce nom de nouveau, déclarez-le (`app.stream(nom, { public: true })`, ou avec sa garde) et écrivez avec cette nouvelle poignée. Sans `adapter`, un flux déclaré après un `destroy()` numérote ses changements au-delà du plus grand numéro des flux détruits : un client resté sur l'ancien flux qui demande un rejeu (`µ:resync`) reçoit l'état complet du nouveau, jamais rien ni un rejeu mêlé à l'ancien état. Purement **local** : en cluster (§9), les autres process gardent leur propre état pour ce nom tant qu'ils ne le détruisent pas eux-mêmes chacun de leur côté. Détruit sur chaque process puis redéclaré, le flux reprend la numérotation là où l'ancien s'est arrêté (le compteur partagé de l'adaptateur continue d'un flux à l'autre) : le premier changement de la partie suivante passe sans attendre, et un client resté sur l'ancien flux qui demande un rejeu reçoit l'état complet du nouveau. Chaque process s'en souvient pour les 10 000 derniers flux détruits ; au-delà, le flux redéclaré repart comme un flux neuf : son premier changement peut attendre jusqu'à 2 secondes dans le tampon de réordonnancement (§9.3), avec un avertissement dans `onLog`, et un client resté sur l'ancien flux n'est pas recalé.
+**`destroy()` — flux dynamiques (un par partie, par salon, par session…) :** un `app.stream(name)` déclaré et jamais détruit reste en mémoire pour toujours (journal, abonnés, compteur `seq`) — pour un nom de flux **fixe** ce n'est jamais un problème, mais pour un flux créé **à la volée par identifiant** (`app.stream('partie-' + id)`), sans `destroy()` à la fin de sa vie utile, le registre grossit sans borne. Détruit, un flux redevient **exactement** comme s'il n'avait jamais existé : un `µ:sub-stream`/`µ:resync` ultérieur sur ce nom retombe sur le repli honnête (`reset` vide + `warn`). `destroy()` n'envoie rien aux abonnés courants — prévenez-les vous-même avant si besoin (dernier message applicatif) — et ils ne reçoivent plus rien ensuite. Une garde `canSubscribe` encore sans réponse n'y abonne plus personne : sa réponse est ignorée, et rien de ce flux ne reste en mémoire (ni abonnement, ni garde repassée qui attendait son tour). La poignée gardée n'agit plus : ses écritures (`add`, `update`, `remove`, `reset`) sont sans effet, sans exception (un avertissement dans `onLog`, une fois), et un second `destroy()` ne touche pas au flux recréé entre-temps sous le même nom ; pour servir ce nom de nouveau, déclarez-le (`app.stream(name, { public: true })`, ou avec sa garde) et écrivez avec cette nouvelle poignée. Sans `adapter`, un flux déclaré après un `destroy()` numérote ses changements au-delà du plus grand numéro des flux détruits : un client resté sur l'ancien flux qui demande un rejeu (`µ:resync`) reçoit l'état complet du nouveau, jamais rien ni un rejeu mêlé à l'ancien état. Purement **local** : en cluster (§9), les autres process gardent leur propre état pour ce nom tant qu'ils ne le détruisent pas eux-mêmes chacun de leur côté. Détruit sur chaque process puis redéclaré, le flux reprend la numérotation là où l'ancien s'est arrêté (le compteur partagé de l'adaptateur continue d'un flux à l'autre) : le premier changement de la partie suivante passe sans attendre, et un client resté sur l'ancien flux qui demande un rejeu reçoit l'état complet du nouveau. Chaque process s'en souvient pour les 10 000 derniers flux détruits ; au-delà, le flux redéclaré repart comme un flux neuf : son premier changement peut attendre jusqu'à 2 secondes dans le tampon de réordonnancement (§9.3), avec un avertissement dans `onLog`, et un client resté sur l'ancien flux n'est pas recalé.
 
 **Le principe, simplement :** le serveur numérote chaque changement (1, 2, 3…) et garde les `journal` derniers dans un carnet. Un client qui s'abonne (`µ:sub-stream`) reçoit d'abord une **photo complète** (`reset` au `seq` courant). Un client qui **décroche puis revient** annonce le dernier numéro qu'il a vu (`µ:resync { from }`) : si tout ce qu'il a raté est encore dans le carnet, le serveur **rejoue juste ces deltas-là**, dans l'ordre, **avec leurs numéros d'origine** — quelques dizaines d'octets au lieu d'une photo. S'il a raté plus que le carnet n'en garde, photo complète. S'il n'a rien raté, **rien** — pas un octet.
 
@@ -726,10 +726,10 @@ ennemis.destroy()                        // retire le flux du registre — plus 
 
 À savoir :
 
-- Le rattrapage est **entièrement automatique** : le client détecte les trous en cours de flux et redemande, et après une reconnexion il envoie `µ:resync { from: dernierSeq }` de lui-même pour tout flux déjà entamé. Rien à coder, d'aucun côté.
+- Le rattrapage est **entièrement automatique** : le client détecte les trous en cours de flux et redemande, et après une reconnexion il envoie `µ:resync { from: lastSeq }` de lui-même pour tout flux déjà entamé. Rien à coder, d'aucun côté.
 - Les abonnements sont nettoyés à la déconnexion — pas de fantômes qui gonflent la diffusion.
-- Un client qui ne veut plus d'un flux s'en désabonne sans quitter la connexion ni le salon (`µ:unsub-stream`, `sock.unstream(nom)` côté client, [20 · Temps réel §4](20-temps-reel.md)) : plus aucun delta, et rien ne le lui rend de lui-même — ni la réponse tardive d'une garde, ni son retour dans un salon quitté ; il le retrouve en le redemandant (`µ:sub-stream`). Désabonner un flux qu'il ne suit pas ne fait rien ; un flux inconnu (jamais déclaré, ou détruit) reçoit un `µ:error`. Une session reprise (§8) garde ses abonnements : quitté pendant la coupure, le flux est désabonné juste après le `µ:welcome` repris, le client du framework s'en charge.
-- Un `µ:sub-stream` vers un flux **jamais déclaré** par l'application répond honnêtement un `reset` vide (`seq: 0`) + un `warn` dans `onLog`, sans créer d'abonnement : déclarez vos flux côté serveur (`app.stream(nom)`), c'est lui la source. Un nom inconnu de plus de 200 caractères (la borne des noms de salon) reçoit à la place un `µ:error` court (« nom de flux trop long »), sans son nom : la réponse ne renvoie jamais au client les 60 Ko qu'il a envoyés.
+- Un client qui ne veut plus d'un flux s'en désabonne sans quitter la connexion ni le salon (`µ:unsub-stream`, `sock.unstream(name)` côté client, [20 · Temps réel §4](20-temps-reel.md)) : plus aucun delta, et rien ne le lui rend de lui-même — ni la réponse tardive d'une garde, ni son retour dans un salon quitté ; il le retrouve en le redemandant (`µ:sub-stream`). Désabonner un flux qu'il ne suit pas ne fait rien ; un flux inconnu (jamais déclaré, ou détruit) reçoit un `µ:error`. Une session reprise (§8) garde ses abonnements : quitté pendant la coupure, le flux est désabonné juste après le `µ:welcome` repris, le client du framework s'en charge.
+- Un `µ:sub-stream` vers un flux **jamais déclaré** par l'application répond honnêtement un `reset` vide (`seq: 0`) + un `warn` dans `onLog`, sans créer d'abonnement : déclarez vos flux côté serveur (`app.stream(name)`), c'est lui la source. Un nom inconnu de plus de 200 caractères (la borne des noms de salon) reçoit à la place un `µ:error` court (« nom de flux trop long »), sans son nom : la réponse ne renvoie jamais au client les 60 Ko qu'il a envoyés.
 - Ces avertissements (flux inconnu, accès refusé, flux du pont non déclaré) sont regroupés : une ligne au plus par minute et par motif, le nom envoyé par le client tronqué à 200 caractères ; la ligne suivante dit combien de demandes semblables ont été tues. Une rafale de demandes ne remplit donc pas votre journal.
 - `journal` se règle par flux : gros trafic + clients qui décrochent souvent → carnet plus grand ; flux paisible → 200 par défaut suffit largement.
 
@@ -742,7 +742,7 @@ const index = new Map(Object.entries(snap))             // ou une Map
 if (Object.hasOwn(snap, id)) afficher(snap[id])         // ou la clé lue chez elle, jamais un nom hérité
 ```
 
-**Un flux est fermé par défaut** : déclaré sans accès (`app.stream('partie-42')`), il n'est servi à **personne** — chaque `µ:sub-stream`/`µ:resync` reçoit un `µ:error` (accès refusé), et `onLog` dit pourquoi. Tout refus d'un flux nomme le flux : `µ:error { message, code: 'stream-denied', stream }`, comme le refus d'un salon nomme le sien ; le client du framework oublie alors ce flux seul, sans le redemander de lui-même ([20 · Temps réel §9](20-temps-reel.md)). Pendant le développement (hors `NODE_ENV=production`), la déclaration d'un flux fermé l'annonce aussi dans `onLog`, une fois, avec la ligne à écrire. Ouvrez-le à tous avec `public: true`, ou réservez-le avec l'une des deux gardes, combinables (§4) : le sucre `room: 'nom'` (exige l'appartenance au salon du même nom) ou `canSubscribe(client, name)` (fonction sync ou async, refus sur `false`/throw, MÊME contrat que `rooms.join`). Une garde reste maîtresse : `public: true` n'ouvre qu'un flux sans garde. L'ouverture peut suivre une première poignée prise sans option (`app.stream(nom)` pour écrire, `app.stream(nom, { public: true })` ensuite) : le flux est ouvert dès qu'une déclaration l'ouvre.
+**Un flux est fermé par défaut** : déclaré sans accès (`app.stream('partie-42')`), il n'est servi à **personne** — chaque `µ:sub-stream`/`µ:resync` reçoit un `µ:error` (accès refusé), et `onLog` dit pourquoi. Tout refus d'un flux nomme le flux : `µ:error { message, code: 'stream-denied', stream }`, comme le refus d'un salon nomme le sien ; le client du framework oublie alors ce flux seul, sans le redemander de lui-même ([20 · Temps réel §9](20-temps-reel.md)). Pendant le développement (hors `NODE_ENV=production`), la déclaration d'un flux fermé l'annonce aussi dans `onLog`, une fois, avec la ligne à écrire. Ouvrez-le à tous avec `public: true`, ou réservez-le avec l'une des deux gardes, combinables (§4) : le sucre `room: 'nom'` (exige l'appartenance au salon du même nom) ou `canSubscribe(client, name)` (fonction sync ou async, refus sur `false`/throw, MÊME contrat que `rooms.join`). Une garde reste maîtresse : `public: true` n'ouvre qu'un flux sans garde. L'ouverture peut suivre une première poignée prise sans option (`app.stream(name)` pour écrire, `app.stream(name, { public: true })` ensuite) : le flux est ouvert dès qu'une déclaration l'ouvre.
 
 ```js
 app.stream('scores', { public: true })                                                     // ouvert à tous les clients
@@ -750,9 +750,9 @@ app.stream('partie-42', { room: 'partie-42' })                                  
 app.stream('partie-42', { canSubscribe: (client) => app.room('partie-42').has(client) })   // même effet, en plus long
 ```
 
-`canSubscribe` est lue à l'abonnement, puis repassée quand une appartenance qu'elle a lue à sa dernière réponse (`app.room(nom).has(client)`) change : la connexion quitte un salon qu'elle y a lu dedans, ou entre dans un salon qu'elle y a lu dehors (une garde « spectateurs seulement », `app.room('tribune').has(c) && !app.room('joueurs').has(c)`, est repassée quand la connexion entre dans « joueurs »). Elle l'est aussi quand un `µ:refresh` change l'identité de la connexion (§7.9). Jusqu'à sa réponse, rien du flux ne part vers la connexion (voir « Retenue » ci-dessous) ; refusée, elle ne reçoit plus rien du flux. Le départ d'un autre salon, ou l'entrée dans un salon qu'elle n'a pas lu, ne la rappelle pas : une garde qui interroge votre base ou votre back n'est pas sollicitée à chaque `µ:join` ou `µ:leave`. Une connexion qui sort et rentre sans cesse du salon lu ne la fait pas appeler à chaque départ non plus : une seule vérification en vol par connexion et par flux (un départ pendant qu'elle attend sa réponse compte aussi, et sera vérifié après elle), deux d'avance puis une par seconde.
+`canSubscribe` est lue à l'abonnement, puis repassée quand une appartenance qu'elle a lue à sa dernière réponse (`app.room(name).has(client)`) change : la connexion quitte un salon qu'elle y a lu dedans, ou entre dans un salon qu'elle y a lu dehors (une garde « spectateurs seulement », `app.room('tribune').has(c) && !app.room('joueurs').has(c)`, est repassée quand la connexion entre dans « joueurs »). Elle l'est aussi quand un `µ:refresh` change l'identité de la connexion (§7.9). Jusqu'à sa réponse, rien du flux ne part vers la connexion (voir « Retenue » ci-dessous) ; refusée, elle ne reçoit plus rien du flux. Le départ d'un autre salon, ou l'entrée dans un salon qu'elle n'a pas lu, ne la rappelle pas : une garde qui interroge votre base ou votre back n'est pas sollicitée à chaque `µ:join` ou `µ:leave`. Une connexion qui sort et rentre sans cesse du salon lu ne la fait pas appeler à chaque départ non plus : une seule vérification en vol par connexion et par flux (un départ pendant qu'elle attend sa réponse compte aussi, et sera vérifié après elle), deux d'avance puis une par seconde.
 
-**Une seule règle pour toutes les réponses de la garde** — abonnement (`µ:sub-stream`, `µ:resync`), flux rendu au retour, garde posée après coup, vérification au départ ou au retour. Une réponse ne s'applique que si chaque salon qu'elle a lu est encore, à son arrivée, tel qu'elle l'a lu (la connexion toujours dedans, ou toujours dehors), et si elle vient de la dernière évaluation de la garde lancée pour cette connexion et ce flux ; un « oui » ne couvre pas non plus le départ d'un salon qu'il a lu, survenu avant son arrivée, même suivi d'un retour. Sinon la garde est repassée, au même rythme, et rien du flux ne part vers la connexion en attendant — un refus comme un « oui » : une garde asynchrone qui a lu un salon avant que la connexion n'y entre, et qui répond après son entrée, est repassée, et ce refus ne l'écarte pas. Une demande que `room` ou une garde synchrone traite avant le `µ:join` est, elle, refusée sur-le-champ (`µ:error`) : le client du framework entre donc dans ses salons avant de demander leurs flux, à la première connexion comme à chaque reconnexion ; une fois connecté, appelez `sock.room(nom)` avant `sock.stream(…)`. Une réponse dépassée par une évaluation plus récente (demande, redemande, garde posée après coup, vérification) est ignorée, quel que soit l'ordre d'arrivée des réponses, « oui » comme « non » : ni `µ:error`, ni état, ni delta. Ce qu'elle devait servir n'est pas perdu pour autant : la réponse qui s'applique sert toutes les demandes encore en attente, l'état complet pour un `µ:sub-stream`, le rejeu pour un `µ:resync`, même quand c'est la vérification d'un départ qui la donne. Une demande refusée reçoit un `µ:error` ; une connexion qui suivait déjà le flux et dont la redemande est refusée le perd : le `µ:error`, puis plus aucun delta ni rejeu.
+**Une seule règle pour toutes les réponses de la garde** — abonnement (`µ:sub-stream`, `µ:resync`), flux rendu au retour, garde posée après coup, vérification au départ ou au retour. Une réponse ne s'applique que si chaque salon qu'elle a lu est encore, à son arrivée, tel qu'elle l'a lu (la connexion toujours dedans, ou toujours dehors), et si elle vient de la dernière évaluation de la garde lancée pour cette connexion et ce flux ; un « oui » ne couvre pas non plus le départ d'un salon qu'il a lu, survenu avant son arrivée, même suivi d'un retour. Sinon la garde est repassée, au même rythme, et rien du flux ne part vers la connexion en attendant — un refus comme un « oui » : une garde asynchrone qui a lu un salon avant que la connexion n'y entre, et qui répond après son entrée, est repassée, et ce refus ne l'écarte pas. Une demande que `room` ou une garde synchrone traite avant le `µ:join` est, elle, refusée sur-le-champ (`µ:error`) : le client du framework entre donc dans ses salons avant de demander leurs flux, à la première connexion comme à chaque reconnexion ; une fois connecté, appelez `sock.room(name)` avant `sock.stream(…)`. Une réponse dépassée par une évaluation plus récente (demande, redemande, garde posée après coup, vérification) est ignorée, quel que soit l'ordre d'arrivée des réponses, « oui » comme « non » : ni `µ:error`, ni état, ni delta. Ce qu'elle devait servir n'est pas perdu pour autant : la réponse qui s'applique sert toutes les demandes encore en attente, l'état complet pour un `µ:sub-stream`, le rejeu pour un `µ:resync`, même quand c'est la vérification d'un départ qui la donne. Une demande refusée reçoit un `µ:error` ; une connexion qui suivait déjà le flux et dont la redemande est refusée le perd : le `µ:error`, puis plus aucun delta ni rejeu.
 
 **Retenue.** Quand une évaluation part alors que la précédente attend encore sa réponse, la connexion qui suivait le flux n'en reçoit plus rien jusqu'à la réponse de la dernière ; un « oui » lui rend ce qu'elle a manqué. Une garde qui ne répond pas la retient ainsi jusqu'à son délai (`guardTimeout`, ci-dessous), puis la refuse. De même, au départ d'un salon que la garde a lu, à l'entrée dans un salon qu'elle a lu en l'absence de la connexion, et après un `µ:refresh` qui change son identité, la connexion est retenue jusqu'à la réponse de la vérification, même d'une garde asynchrone, même différée faute de jeton : un « oui » lui rend ce qu'elle a manqué. Retenue après un départ ou une entrée, la connexion reçoit de nouveau si elle revient dans chaque salon que la réponse qui l'a abonnée a lu dedans, et reste hors de ceux qu'elle a lus dehors, avant qu'aucun delta ne lui ait été retenu : revenir dans un seul de ces salons ne suffit pas. Sinon, ce qu'elle a manqué lui est rejoué si la garde l'accepte. Refusée au départ alors qu'elle est hors du salon quitté, elle est écartée en silence : elle retrouve le flux à son retour dans ce salon, ou en entrant dans un autre salon que ce refus a lu en son absence (la garde est repassée au même rythme, un refus reçoit alors un `µ:error`) ; revenue dans le salon quitté avant le refus, elle reçoit le `µ:error`. Refusée par la vérification d'une entrée ou d'un changement d'identité, elle reçoit aussi un `µ:error`. Revenue dans le salon juste après un refus, elle peut attendre jusqu'à une seconde son état complet. `room` est en plus contrôlé à chaque envoi. Une garde qui lit l'appartenance autrement (votre propre registre de joueurs…) n'est pas repassée au départ : pour un flux réservé à un salon, préférez `room`.
 
@@ -762,7 +762,7 @@ app.stream('partie-42', { canSubscribe: (client) => app.room('partie-42').has(cl
 app.stream('partie-42', { canSubscribe: async (client) => back.peutVoir(client, 'partie-42'), guardTimeout: 3000 })   // refusée si le back n'a pas répondu en 3 s
 ```
 
-**La garde tient quel que soit l'ordre.** Un flux peut exister avant que votre code le déclare avec sa garde : créé par `POST /stream` du pont (§7), par un premier `app.stream(nom)` sans garde, ou par le delta d'un autre process (§9.3). `app.stream(nom, { canSubscribe | room })` pose alors la garde sur ce flux, et les connexions déjà abonnées la repassent : jusqu'à sa réponse, elles ne reçoivent plus rien du flux ; un refusé reçoit un `µ:error` et plus aucun delta, un accepté ce qu'il a manqué. Comme pour un abonnement, le « oui » d'une garde asynchrone qui a lu un salon que la connexion quitte avant sa réponse ne compte pas : la garde est repassée, au même rythme, et la connexion ne reçoit plus rien du flux en attendant ; sur un « oui », l'état complet (`reset`) puis les deltas. Une règle déjà posée reste celle de la première déclaration (comme `journal`). Un flux créé par le pont n'est servi à **personne** tant que votre code ne l'a pas déclaré (`app.stream(nom, { public: true })` s'il est public, avec sa garde sinon) : chaque demande reçoit un `µ:error`, et `onLog` vous dit quelle déclaration manque.
+**La garde tient quel que soit l'ordre.** Un flux peut exister avant que votre code le déclare avec sa garde : créé par `POST /stream` du pont (§7), par un premier `app.stream(name)` sans garde, ou par le delta d'un autre process (§9.3). `app.stream(name, { canSubscribe | room })` pose alors la garde sur ce flux, et les connexions déjà abonnées la repassent : jusqu'à sa réponse, elles ne reçoivent plus rien du flux ; un refusé reçoit un `µ:error` et plus aucun delta, un accepté ce qu'il a manqué. Comme pour un abonnement, le « oui » d'une garde asynchrone qui a lu un salon que la connexion quitte avant sa réponse ne compte pas : la garde est repassée, au même rythme, et la connexion ne reçoit plus rien du flux en attendant ; sur un « oui », l'état complet (`reset`) puis les deltas. Une règle déjà posée reste celle de la première déclaration (comme `journal`). Un flux créé par le pont n'est servi à **personne** tant que votre code ne l'a pas déclaré (`app.stream(name, { public: true })` s'il est public, avec sa garde sinon) : chaque demande reçoit un `µ:error`, et `onLog` vous dit quelle déclaration manque.
 
 **Quitter un salon, y revenir.** Une connexion qui quitte le salon (`µ:leave`, `kick`, déconnexion) est désabonnée sur-le-champ des flux réservés à ce salon (`room`), comme de ceux dont la garde `canSubscribe` la refuse désormais ; chaque envoi d'un flux `room` contrôle encore l'appartenance. Revenue dans le salon (`µ:join` accepté), elle retrouve ces flux sans rien redemander : l'état complet (`reset`), puis les deltas — la garde est repassée au même rythme qu'au départ (deux d'avance puis une par seconde, par connexion et par flux, quel que soit leur nombre), un refus reçoit un `µ:error`. Une connexion qui sort et rentre sans cesse peut donc attendre jusqu'à une seconde son état complet ; repartie avant, elle le retrouve à son retour suivant. Deux exceptions. Un flux dont le nom commence par celui du salon suivi d'une barre (`partie-42/main`, le nom que donne `sock.room('partie-42').stream('main')`) n'est pas rendu par le serveur : le client du framework l'oublie en quittant le salon et le redemande lui-même s'il en a besoin (un seul état complet au retour, rien pour une vue qui ne le rouvre pas). La connexion en est donc désabonnée en quittant le salon, même s'il est public : plus aucun delta ne lui part. Un flux détruit (`destroy()`) pendant l'absence n'est pas rendu non plus : rien n'est envoyé ni journalisé, comme pour un flux qui n'a jamais existé. Et une connexion ne garde ces reprises que pour les 50 derniers salons quittés : revenue dans un salon plus ancien, elle redemande le flux (`µ:sub-stream`). Enfin, un flux dont elle s'est désabonnée (`µ:unsub-stream`) ne lui est pas rendu.
 
@@ -820,7 +820,7 @@ export default {
 
 > **Pourquoi un format dédié — les 3 pièges du Civet brut.** Un `.civet` ordinaire (§13) est compilé par le compilateur Civet **seul**, sans les pré-passes que le framework applique au `<script>` de vos composants — trois habitudes prises en composant y deviennent des pièges **silencieux** :
 > 1. **Assignation nue** — `compteur = 0` ne déclare rien en Civet natif (seul `compteur := 0` déclare) → `ReferenceError: compteur is not defined` au chargement, à toute profondeur (top-level ou imbriquée dans une fonction).
-> 2. **Interpolation Coffee** — `"salut-#{nom}"` reste un **littéral** : la chaîne envoyée contient `#{nom}` mot pour mot, jamais la valeur de `nom`.
+> 2. **Interpolation Coffee** — `"salut-#{name}"` reste un **littéral** : la chaîne envoyée contient `#{name}` mot pour mot, jamais la valeur de `name`.
 > 3. **`isnt`** — Civet ne le connaît pas nativement : `a isnt b` se lit comme l'appel `a(isnt(b))` → crash.
 >
 > `ws.server.mjs` applique exactement les mêmes pré-passes que vos composants (assignations auto-déclarées, interpolation traduite en template literal, `isnt` traduit en `!==`…) — le code s'y comporte comme dans un `<script>`, sans surprise.
@@ -863,7 +863,7 @@ Les chemins se lisent depuis le dossier de `mjs.config.json` (à défaut `--root
 | `entry` | chaîne | cf. §6.2 |
 | `transport` | `'ws'` \| `'uws'` | cf. §12 « La façade transport » — une **instance** maison ne se met **que** dans l'entry (pas représentable en JSON), qui prime alors sur cette clé (cf. §6.4) |
 | `port` | entier 1-65535 | port du serveur — priorité `--port` > `ws.port` > `4000` |
-| `host` | chaîne | host du transport `ws` — défaut `127.0.0.1` (loopback, MÊME défaut que le pont §7) ; `--host ::` (ou `ws.host: "::"`) pour exposer sur toutes les interfaces |
+| `host` | chaîne | host du transport `ws` — défaut `127.0.0.1` (loopback, MÊME défaut que le pont §7) ; `--host ::` (ou `ws.host: "::"`) pour exposer sur toutes les interfaces ; vide ou fait de blancs, il est refusé à la lecture de `mjs.config.json`, comme `dev.host` |
 | `codec` | `'auto'` \| `'binary'` \| `'json'` | cf. §3.1 « µschema » — définissable **ici** **ou** dans l'entry (cf. §6.4). **Pas** de pendant pour `schemas` : `list()`/`bits()` ne sont pas représentables en JSON, réservé à l'entry. |
 | `heartbeat` | entier > 0 (ms) | cf. §1 — définissable **ici** **ou** dans l'entry (cf. §6.4) |
 | `limits` | objet `{ rate?, burst?, kickAfter?, maxPayload?, maxBuffered?, … }` (entiers > 0 ; `rateBy` : `'connection'` \| `'account'` \| `'ip'` \| `'both'`) | cf. §3 — définissable **ici** **ou** dans l'entry (cf. §6.4) |
@@ -884,7 +884,7 @@ Validation stricte, comme le reste de `mjs.config.json` : une clé inconnue (dan
 
 Dès qu'un fichier `.js`/`.mjs`/`.cjs`/`.json` change dans le **dossier** de l'entry, le serveur se recharge tout seul — pas besoin de le relancer à la main pendant que vous développez.
 
-**Le principe, simplement :** à chaque changement détecté (fenêtre de 150 ms — plusieurs sauvegardes rapprochées ne déclenchent qu'UN seul rechargement), `mjs ws` réimporte l'entry **avant** de toucher au serveur en cours. Si le nouveau code a une erreur de syntaxe (ou lève à l'import), l'erreur est affichée et l'**ancien** serveur continue de tourner exactement comme avant — zéro coupure, aucune connexion perdue. C'est seulement si le nouveau code s'importe sans problème que l'ancien serveur s'arrête proprement (`µ:bye` à ses clients, cf. §2) et que le nouveau prend sa place, sur le même port.
+**Le principe, simplement :** à chaque changement détecté (fenêtre de 150 ms — plusieurs sauvegardes rapprochées ne déclenchent qu'UN seul rechargement), `mjs ws` réimporte l'entry **avant** de toucher au serveur en cours. Si le nouveau code a une erreur de syntaxe (ou lève à l'import), l'erreur est affichée et l'**ancien** serveur continue de tourner exactement comme avant — zéro coupure, aucune connexion perdue. C'est seulement si le nouveau code s'importe sans problème que l'ancien serveur s'arrête proprement (`µ:bye` à ses clients, cf. §2) et que le nouveau prend sa place, sur le même port. Si le nouveau serveur ne peut pas écouter (port pris entre-temps par un autre programme…), l'ancien étant déjà arrêté, `mjs ws` le dit et s'arrête (code 1) : relancez-le une fois la cause corrigée.
 
 À savoir :
 
@@ -904,11 +904,11 @@ Dès qu'un fichier `.js`/`.mjs`/`.cjs`/`.json` change dans le **dossier** de l'e
 | `--port <n>` | force le port (prioritaire sur `ws.port`, cf. §6.4) |
 | `--root <dir>` | dossier de départ (défaut : répertoire courant) : `mjs.config.json` y est cherché, puis dans les dossiers parents ; `ws.entry` et les noms par défaut se lisent depuis le dossier de ce fichier (à défaut, depuis `--root`), `--entry` depuis `--root` (cf. §6.2) |
 
-Un entry qui déclare `app.game(...)` (salle de partie) veut la commande **sœur** `mjs serveur` — **même** contrat, résolution d'entry et rechargement à chaud, mais construite via `mjsServer()` : cf. [24 · MJS-Server §2](24-mjs-server.md#demarrer).
+Un entry qui déclare `app.game(...)` (salle de partie) veut la commande **sœur** `mjs server` — **même** contrat, résolution d'entry et rechargement à chaud, mais construite via `mjsServer()` : cf. [24 · MJS-Server §2](24-mjs-server.md#demarrer).
 
 ### 6.8 En service systemd — le chien de garde
 
-`Restart=always` relance un serveur qui s'est arrêté, pas un serveur gelé : une boucle d'événements bloquée par un calcul sans fin ne s'arrête jamais d'elle-même. Pour ce cas, systemd a son chien de garde, et `app.listen()` le sert sans réglage (`mjs ws` et `mjs serveur` aussi) : quand l'unité porte `WatchdogSec`, le serveur bat depuis sa boucle d'événements à la **moitié de la fenêtre** (`WatchdogSec=30` : un battement toutes les 15 s). Si la boucle gèle, les battements cessent, et systemd relance le service au bout de la fenêtre. Sans `WatchdogSec`, rien n'est armé.
+`Restart=always` relance un serveur qui s'est arrêté, pas un serveur gelé : une boucle d'événements bloquée par un calcul sans fin ne s'arrête jamais d'elle-même. Pour ce cas, systemd a son chien de garde, et `app.listen()` le sert sans réglage (`mjs ws` et `mjs server` aussi) : quand l'unité porte `WatchdogSec`, le serveur bat depuis sa boucle d'événements à la **moitié de la fenêtre** (`WatchdogSec=30` : un battement toutes les 15 s). Si la boucle gèle, les battements cessent, et systemd relance le service au bout de la fenêtre. Sans `WatchdogSec`, rien n'est armé.
 
 ```ini
 [Service]
@@ -987,24 +987,24 @@ Chaque requête (**sauf** `GET /health`) doit porter trois en-têtes :
 > **Diffère** de la concaténation simple `'.'`-jointe des versions précédentes de cette page. Deux durcissements :
 > **séparation de domaine** (un `direction` dédié empêche de rejouer la signature d'une commande admin entrante
 > comme un webhook sortant, ou l'inverse, **même** secret partagé) et **injectivité** (l'ancien format permettait,
-> en théorie, deux découpages `{chemin}`/`{corps}` distincts de produire la **même** chaîne s'il y avait un `.` au
+> en théorie, deux découpages `{path}`/`{body}` distincts de produire la **même** chaîne s'il y avait un `.` au
 > bon endroit — plus possible). Aucun back en production ne suivait encore l'ancienne recette au moment de ce
 > changement — si le vôtre la suit déjà, adaptez-le à la recette ci-dessous (§7.3/§7.5/§7.7/§7.10).
 
-La chaîne canonique est la concaténation de **champs encodés en longueur-préfixée** (`{longueur}:{champ}`,
+La chaîne canonique est la concaténation de **champs encodés en longueur-préfixée** (`{length}:{field}`,
 comme un netstring — rend la concaténation **sans ambiguïté**, impossible à re-découper autrement) :
 
 ```
-{longueur(direction)}:{direction}{longueur(ts)}:{ts}{longueur(MÉTHODE)}:{MÉTHODE}{longueur(chemin)}:{chemin}{longueur(corps)}:{corps}{longueur(nonce)}:{nonce}
+{longueur(direction)}:{direction}{longueur(ts)}:{ts}{longueur(MÉTHODE)}:{METHOD}{longueur(chemin)}:{path}{longueur(corps)}:{body}{longueur(nonce)}:{nonce}
 ```
 
 - `{direction}` — `'in'` pour une commande admin **entrante** (votre back → le pont, §7.3), `'out'` pour un webhook
   **Sortant** (le pont → votre back, §7.5) ; **toujours** le **premier** champ — c'est lui qui sépare les deux domaines de
   signature ;
 - `{ts}` — l'horodatage UNIX en secondes, tel qu'envoyé dans `x-mjs-ws-timestamp` ;
-- `{MÉTHODE}` en **majuscules** (`POST`, `GET`) ;
-- `{chemin}` avec la query string, tel qu'il apparaît dans l'URL (`/broadcast`, `/presence?room=zone-42`) — jamais le domaine, jamais le port ;
-- `{corps}` = le JSON envoyé, **texte pour texte**, tel qu'il part sur le réseau (pas une re-sérialisation — l'ordre des clés compte) ; **chaîne vide** pour une requête `GET` (jamais de corps) ;
+- `{METHOD}` en **majuscules** (`POST`, `GET`) ;
+- `{path}` avec la query string, tel qu'il apparaît dans l'URL (`/broadcast`, `/presence?room=zone-42`) — jamais le domaine, jamais le port ;
+- `{body}` = le JSON envoyé, **texte pour texte**, tel qu'il part sur le réseau (pas une re-sérialisation — l'ordre des clés compte) ; **chaîne vide** pour une requête `GET` (jamais de corps) ;
 - `{nonce}` — la valeur de `x-mjs-ws-nonce`, en **dernier** champ, encodée de la même façon (§7.10 ; ce champ et l'en-tête disparaissent seulement avec `nonce: false`).
 
 **Les longueurs se comptent en unités UTF-16**, comme `String.length` en JavaScript — ni en octets, ni en caractères : `é` compte 1 (2 octets en UTF-8), un émoji comme `🎉` compte 2 (4 octets). Tant qu'un champ reste en ASCII, les trois comptes coïncident ; dès qu'un corps porte un accent ou un émoji, une longueur en octets fait refuser la requête (`401 signature invalide`). La ligne équivalente en Ruby : `champ.encode('UTF-16LE').bytesize / 2` (jamais `champ.bytesize`) ; en bash : `printf '%s' "$champ" | iconv -f UTF-8 -t UTF-16LE | wc -c`, divisé par 2 (recette du §7.3).
@@ -1065,7 +1065,7 @@ signer_et_envoyer POST /send '{"user":"42","type":"notif","p":{"texte":"commande
 # → {"ok":true,"sent":2}   (2 connexions de l'utilisateur 42 — ex. 2 onglets ouverts)
 ```
 
-**`POST /room/send`** — diffuse aux membres d'un salon **seulement**. `type` part **tel quel** (le préfixe `salon/type` est une convention côté client, le pont n'y touche pas — **même** règle que `app.room(nom).send()`, §4).
+**`POST /room/send`** — diffuse aux membres d'un salon **seulement**. `type` part **tel quel** (le préfixe `salon/type` est une convention côté client, le pont n'y touche pas — **même** règle que `app.room(name).send()`, §4).
 
 ```bash
 signer_et_envoyer POST /room/send '{"room":"partie-42","type":"partie-42/coup","p":{"case":12}}'
@@ -1079,7 +1079,7 @@ signer_et_envoyer POST /room/kick '{"room":"partie-42","user":"7","reason":"tric
 # → {"ok":true,"kicked":1}
 ```
 
-**`POST /stream`** — pilote un flux à journal borné (§5) depuis le back : `op` vaut `'add'`, `'update'`, `'remove'` ou `'reset'`. Le flux est créé à la volée s'il n'existait pas encore (une écriture refusée en 400 — `id` manquant, valeur absente ou non sérialisable — ne crée rien), mais il n'est servi à **aucun** client tant que votre code ne l'a pas déclaré sur ce process : `app.stream('ennemis', { public: true })` pour un flux public, `app.stream(nom, { canSubscribe | room })` pour un flux privé (§5). Sans déclaration, chaque `µ:sub-stream` reçoit un `µ:error` (accès refusé) et `onLog` vous dit pourquoi : un flux écrit par le pont n'est jamais public par défaut.
+**`POST /stream`** — pilote un flux à journal borné (§5) depuis le back : `op` vaut `'add'`, `'update'`, `'remove'` ou `'reset'`. Le flux est créé à la volée s'il n'existait pas encore (une écriture refusée en 400 — `id` manquant, valeur absente ou non sérialisable — ne crée rien), mais il n'est servi à **aucun** client tant que votre code ne l'a pas déclaré sur ce process : `app.stream('ennemis', { public: true })` pour un flux public, `app.stream(name, { canSubscribe | room })` pour un flux privé (§5). Sans déclaration, chaque `µ:sub-stream` reçoit un `µ:error` (accès refusé) et `onLog` vous dit pourquoi : un flux écrit par le pont n'est jamais public par défaut.
 
 | `op` | Champs requis | Effet |
 |---|---|---|
@@ -1129,7 +1129,7 @@ Quand `webhooks` est configuré, `mjsWs` POST vers `webhooks.url` à chaque év�
 
 **Les en-têtes du visiteur** — le `meta` de `connect`/`disconnect` est celui de la connexion (`origin`, `address`, `headers`), mais `headers` n'y garde qu'une courte liste d'en-têtes utiles et sans secret : `host`, `origin`, `user-agent`, `accept-language`, `x-request-id`, `x-forwarded-proto` et `sec-websocket-version`. Tous les autres ne partent jamais dans un webhook, quelle que soit leur casse : `cookie`, `authorization`, `sec-websocket-protocol` (le seul en-tête qu'un navigateur peut poser sur un WebSocket, où l'on met souvent un jeton), les jetons et l'identité qu'un proxy d'authentification pose devant votre appli (`x-forwarded-user`, `remote-user`, `x-forwarded-groups`, `x-userinfo`, `x-forwarded-client-cert`…), comme `x-forwarded-for` (l'adresse retenue est dans `address`). Pour en recevoir d'autres, nommez-les dans `webhooks.forwardHeaders` (§7.1) : ils partent tels quels. Côté serveur, `client.meta.headers` reste entier : `opts.auth` lit toujours le cookie.
 
-**Livraison** — bornée et jamais bloquante : file d'attente de 1000 événements maximum (au-delà, l'événement en trop est abandonné, jamais une pile qui grossit sans fin : un avertissement dans `onLog` à la première perte, puis au plus un par minute avec le nombre d'événements perdus depuis, et le reste du compte à l'arrêt), 4 livraisons en vol au maximum en parallèle, 3 tentatives par événement (immédiate, puis +2 s, puis +10 s) avant abandon définitif (avec un avertissement). `app.stop()` coupe les retentatives en attente et interrompt les envois en cours : le processus peut sortir tout de suite. Un événement dont la charge ne s'écrit pas en JSON (un `BigInt`, comme les colonnes BigInt que rend Prisma, ou un objet cyclique dans l'identité ou la méta) est abandonné avec une erreur dans `onLog` et compté dans `webhooksAbandonnes` (§10) ; le serveur continue. Un événement absent de `events` n'est **jamais** calculé ni envoyé — configurez exactement ce dont votre back a besoin.
+**Livraison** — bornée et jamais bloquante : file d'attente de 1000 événements maximum (au-delà, l'événement en trop est abandonné, jamais une pile qui grossit sans fin : un avertissement dans `onLog` à la première perte, puis au plus un par minute avec le nombre d'événements perdus depuis, et le reste du compte à l'arrêt), 4 livraisons en vol au maximum en parallèle, 3 tentatives par événement (immédiate, puis +2 s, puis +10 s) avant abandon définitif (avec un avertissement). `app.stop()` coupe les retentatives en attente et interrompt les envois en cours : le processus peut sortir tout de suite. Un événement dont la charge ne s'écrit pas en JSON (un `BigInt`, comme les colonnes BigInt que rend Prisma, ou un objet cyclique dans l'identité ou la méta) est abandonné avec une erreur dans `onLog` et compté dans `webhooksAbandoned` (§10) ; le serveur continue. Un événement absent de `events` n'est **jamais** calculé ni envoyé — configurez exactement ce dont votre back a besoin.
 
 **Une retentative ne garde pas sa place.** Un événement qui attend sa retentative (2 s, puis 10 s) libère sa place parmi les 4 livraisons en vol : un back tombé une seconde ne retient pas les événements suivants, qui partent dès qu'il répond de nouveau. Les événements qui attendent leur retentative comptent dans les 1000 de la file.
 
@@ -1142,7 +1142,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
 const SECRET = process.env.MJS_WS_BRIDGE_SECRET
 
 // encodage longueur-préfixée d'UN champ (§7.2)
-const lp = (champ) => `${champ.length}:${champ}`
+const lp = (champ) => `${champ.length}:${field}`
 
 createServer((req, res) => {
   const chunks = []
@@ -1183,7 +1183,7 @@ const app = mjsWs({
 
 `jwtAuth` pose `client.identity = payload` (les clés du jeton), avec `identity.id = payload.id ?? payload.sub` — compatible des jetons émis par une lib tierce qui n'utilise que `sub` (convention JWT standard). Un jeton absent, mal signé, expiré ou pas encore valable → refus (`µ:denied`), comme n'importe quelle fonction `auth` qui retourne `false`.
 
-**Le secret est obligatoire.** `jwtAuth`, `signToken` et `verifyToken` lèvent une erreur claire quand il est absent, vide ou n'est pas une chaîne : `jwtAuth(process.env.JWT_SECRET)` avec une variable oubliée s'arrête **dès le démarrage**, au lieu d'accepter tout jeton signé avec la clé vide. Un secret de moins de 32 caractères passe, avec un avertissement unique au journal : préférez un secret long et aléatoire (`openssl rand -hex 32`).
+**Le secret est obligatoire.** `jwtAuth`, `signToken` et `verifyToken` lèvent une erreur claire quand il est absent, vide ou n'est pas une chaîne : `jwtAuth(process.env.JWT_SECRET)` avec une variable oubliée s'arrête **dès le démarrage**, au lieu d'accepter tout jeton signé avec la clé vide. Un secret de moins de 32 octets est refusé en production (`NODE_ENV=production`), avec une erreur claire ; en développement, il passe, et le même message s'affiche en avertissement, une seule fois : préférez un secret long et aléatoire (`openssl rand -hex 32`).
 
 **L'en-tête et les dates.** `alg` doit valoir `HS256` (jamais `none`). `typ` est facultatif (la gem `jwt` de Ruby ne l'écrit pas) ; s'il est là, il vaut `JWT`, sans tenir compte de la casse. Un `exp` présent mais qui n'est pas un nombre refuse le jeton : il serait sinon éternel. `nbf` (« pas valable avant ») est respecté de la même façon, sans aucune option : un jeton dont le `nbf` est encore à venir est refusé, un `nbf` qui n'est pas un nombre aussi.
 
@@ -1205,13 +1205,13 @@ const app = mjsWs({
 const jeton = signToken({ id: utilisateur.id, aud: 'boutique', iss: 'https://boutique.fr' }, process.env.JWT_SECRET, { ttl: 3600 })
 ```
 
-Un jeton signé avec le même secret mais fait pour un autre site (`aud: 'blog'`), ou émis par un autre service, est refusé (`µ:denied`), exactement comme un jeton mal signé. Les comparaisons tiennent compte de la casse : `'Boutique'` n'est pas `'boutique'`. Une option invalide (une liste vide, une chaîne vide, un nombre négatif, un type inattendu) lève une erreur claire **dès le démarrage**, une clé inconnue aussi, avec la plus proche en suggestion (`audiance` → « vouliez-vous dire 'audience' ? »). `verifyToken(jeton, secret, options)` prend les mêmes options, pour vérifier un jeton hors de `mjsWs` (une route HTTP, par exemple).
+Un jeton signé avec le même secret mais fait pour un autre site (`aud: 'blog'`), ou émis par un autre service, est refusé (`µ:denied`), exactement comme un jeton mal signé. Les comparaisons tiennent compte de la casse : `'Boutique'` n'est pas `'boutique'`. Une option invalide (une liste vide, une chaîne vide, un nombre négatif, un type inattendu) lève une erreur claire **dès le démarrage**, une clé inconnue aussi, avec la plus proche en suggestion (`audiance` → « vouliez-vous dire 'audience' ? »). `verifyToken(token, secret, opts)` prend les mêmes options, pour vérifier un jeton hors de `mjsWs` (une route HTTP, par exemple).
 
 > ⚠️ **La tolérance vaut à la vérification** : au `µ:hello` et à chaque `µ:refresh`. Le suivi continu de l'échéance ([§7.9](#79-expiration-et-rafraîchissement-du-jeton)) garde la sienne, `token.slack` (5 s par défaut) : donnez-lui au moins la même valeur (`token: { slack: 30000 }` pour `clockTolerance: 30`), sinon un jeton accepté de justesse est fermé au balayage suivant.
 
 > ⚠️ **Activer `audience` ou `issuer` sur un service déjà en route** : un jeton sans `aud` (ou sans `iss`) est refusé dès que l'option est posée — tous ceux déjà distribués, donc. Au redémarrage, chaque client qui se reconnecte avec l'un d'eux reçoit `µ:denied`, jusqu'à ce que votre émetteur lui en donne un neuf (avec `accountsAuth`, il revient en invité : cf. [27 · Comptes §6](27-accounts.md#securite)). Pour passer sans coupure : faites d'abord émettre les jetons avec `aud` (et `iss`) — `jwtAuth` sans option les accepte déjà —, attendez que ceux émis avant aient expiré (leur `ttl`), puis posez `audience` (et `issuer`) sur `jwtAuth`.
 
-Émettre ce jeton peut se faire dans **n'importe quel** langage — le format est standard (`base64url(entête).base64url(corps).base64url(signature)`, HMAC-SHA256, sans padding). Quatre recettes :
+Émettre ce jeton peut se faire dans **n'importe quel** langage — le format est standard (`base64url(header).base64url(payload).base64url(signature)`, HMAC-SHA256, sans padding). Quatre recettes :
 
 **Ruby — sans gem (stdlib `openssl`/`base64`/`json`)**
 
@@ -1308,7 +1308,7 @@ module Realtime
 
   # encodage longueur-préfixée d'UN champ (§7.2) — longueur en unités UTF-16, comme String.length en JavaScript : bytesize compterait les octets, et un accent ferait refuser la signature
   def self.lp(champ)
-    "#{champ.encode('UTF-16LE').bytesize / 2}:#{champ}"
+    "#{champ.encode('UTF-16LE').bytesize / 2}:#{field}"
   end
 
   def self.poster(chemin, corps_hash)
@@ -1432,7 +1432,7 @@ Le pont retient chaque nonce vu pendant ± 300 s (store borné, éviction automa
 |---|---|
 | en-tête `x-mjs-ws-nonce` absent | `401` — le message dit quoi ajouter : l'en-tête, et le nonce en dernier champ de la chaîne signée |
 | nonce hors format (moins de 8 ou plus de 64 caractères) | `401` |
-| nonce déjà vu dans la fenêtre ± 300 s (rejeu) | `401 {"ok":false,"error":"nonce-rejoué"}` |
+| nonce déjà vu dans la fenêtre ± 300 s (rejeu) | `401 {"ok":false,"error":"nonce-replayed"}` |
 
 Ces refus **créditent** le seau-échecs de la limite de débit (§7.8) — exactement comme une signature invalide, un flot de rejeux se fait donc aussi verrouiller en `429` au-delà du budget configuré.
 
@@ -1454,8 +1454,8 @@ bridge: {
 `opts.auth` et `opts.rooms.join` sont des callbacks — rien n'empêchait déjà d'y appeler votre back à la main (`fetch`/`net/http`/…). Le **proxy de décisions** retire ce dernier bout de code : pointez une URL, `mjsWs` fait l'appel HTTP **signé** à votre place, avec timeout et cache courts intégrés. Façon Centrifugo « proxy ».
 
 > ℹ️ **Format de signature — différent du pont admin/webhooks.** Le proxy de décisions garde volontairement la
-> chaîne canonique **historique**, `'.'`-jointe **sans** le préfixe `direction` (§7.2) : `{ts}.POST.{chemin}.{corps}`,
-> et, pour `verifyResponse`, `{ts}.RESPONSE.{chemin}.{signature de la requête}` suivi d'un saut de ligne et du corps
+> chaîne canonique **historique**, `'.'`-jointe **sans** le préfixe `direction` (§7.2) : `{ts}.POST.{path}.{body}`,
+> et, pour `verifyResponse`, `{ts}.RESPONSE.{path}.{requestSignature}` suivi d'un saut de ligne et du corps
 > de la réponse (le champ **méthode** joue déjà ce rôle de séparation ici). Ce n'est **pas** le même canal ni le même secret que `bridge.secret`/`webhooks.secret` — les recettes
 > ci-dessous restent telles quelles, rien à changer côté back existant pour cette section.
 
@@ -1487,11 +1487,11 @@ const app = mjsWs({
 
 **Un refus de panne ne se garde pas.** Avec `cache.ttl`, seule une réponse de votre back se garde : un refus dû à une panne (délai dépassé, back injoignable, statut non 2xx, réponse illisible ou mal signée) n'est jamais réutilisé, et le visiteur entre dès que votre back répond de nouveau, sans attendre la fin du `ttl`. Pendant la panne, chaque connexion ou entrée en salon refait donc l'appel.
 
-**Le contrat HTTP** — un POST signé, **mêmes** en-têtes que le pont (`x-mjs-ws-timestamp` / `x-mjs-ws-signature`), mais chaîne canonique **historique** (cf. note ci-dessus — **pas** celle, longueur-préfixée + dirigée, du pont admin/webhooks §7.2) : `{ts}.POST.{chemin}.{corps}`, où `{chemin}` est le chemin de l'`url` **avec** sa query string (`/mjs-ws/connect?site=2`) — `request.fullpath` côté Rails, pas `request.path`, qui la retire.
+**Le contrat HTTP** — un POST signé, **mêmes** en-têtes que le pont (`x-mjs-ws-timestamp` / `x-mjs-ws-signature`), mais chaîne canonique **historique** (cf. note ci-dessus — **pas** celle, longueur-préfixée + dirigée, du pont admin/webhooks §7.2) : `{ts}.POST.{path}.{body}`, où `{path}` est le chemin de l'`url` **avec** sa query string (`/mjs-ws/connect?site=2`) — `request.fullpath` côté Rails, pas `request.path`, qui la retire.
 
 | Événement | Corps envoyé | Réponse attendue |
 |---|---|---|
-| `connect` (`opts.auth`) | `{event:'connect', hello, cookie?}` — `hello` = charge **exacte** du `µ:hello` reçu ; `cookie` = en-tête `Cookie` **brut** de la requête d'upgrade, **clé absente** s'il n'y en a pas | `{ok:true, identity}` → `client.identity`, `µ:welcome` ; `{ok:false, raison?}` → `µ:denied {message: raison}` |
+| `connect` (`opts.auth`) | `{event:'connect', hello, cookie?}` — `hello` = charge **exacte** du `µ:hello` reçu ; `cookie` = en-tête `Cookie` **brut** de la requête d'upgrade, **clé absente** s'il n'y en a pas | `{ok:true, identity}` → `client.identity`, `µ:welcome` ; `{ok:false, reason?}` → `µ:denied {message: reason}` |
 | `subscribe` (`rooms.join`) | `{event:'subscribe', room, identity}` | `{ok:true}` → adhésion ; tout le reste (`{ok:false}`, statut non-2xx, JSON invalide, timeout) → refus (`µ:error`, throttlé comme d'habitude, §4) |
 
 Un statut non-2xx, une réponse JSON invalide, ou le délai `timeout` dépassé sont **tous** traités comme `{ok:false}` — jamais un `throw` qui ferait pendre le handshake, toujours une décision (de refus).
@@ -1510,12 +1510,12 @@ Un statut non-2xx, une réponse JSON invalide, ou le délai `timeout` dépassé 
 ```ruby
 ts, sig  = request.headers['x-mjs-ws-timestamp'], request.headers['x-mjs-ws-signature']
 corps    = request.raw_post
-attendue = OpenSSL::HMAC.hexdigest('SHA256', ENV.fetch('MJS_WS_PROXY_SECRET'), "#{ts}.POST.#{request.fullpath}.#{corps}")   # fullpath : query string comprise
+attendue = OpenSSL::HMAC.hexdigest('SHA256', ENV.fetch('MJS_WS_PROXY_SECRET'), "#{ts}.POST.#{request.fullpath}.#{body}")   # fullpath : query string comprise
 head :unauthorized and return unless ActiveSupport::SecurityUtils.secure_compare(attendue, sig.to_s)
 
 evt = JSON.parse(corps)
 case evt['event']
-when 'connect'   then render json: autoriser_connexion(evt['hello'])   # { ok:true, identity: {...} } ou { ok:false, raison: '...' }
+when 'connect'   then render json: autoriser_connexion(evt['hello'])   # { ok:true, identity: {...} } ou { ok:false, reason: '...' }
 when 'subscribe' then render json: { ok: peut_rejoindre?(evt['room'], evt['identity']) }
 end
 ```
@@ -1547,9 +1547,9 @@ auth: {
 Côté Rails — calculer `ts`/`sig` sur le corps de la **réponse** (pas celui de la requête) et poser les deux en-têtes **avant** `render` — la chaîne signée doit être **exactement** le corps envoyé, jamais reconstruite après coup :
 
 ```ruby
-corps = autoriser_connexion(evt['hello']).to_json   # { ok:true, identity: {...} } ou { ok:false, raison: '...' }
+corps = autoriser_connexion(evt['hello']).to_json   # { ok:true, identity: {...} } ou { ok:false, reason: '...' }
 ts    = Time.now.to_i
-sig   = OpenSSL::HMAC.hexdigest('SHA256', ENV.fetch('MJS_WS_PROXY_SECRET'), "#{ts}.RESPONSE.#{request.fullpath}.#{request.headers['x-mjs-ws-signature']}\n#{corps}")
+sig   = OpenSSL::HMAC.hexdigest('SHA256', ENV.fetch('MJS_WS_PROXY_SECRET'), "#{ts}.RESPONSE.#{request.fullpath}.#{request.headers['x-mjs-ws-signature']}\n#{body}")
 response.set_header('x-mjs-ws-timestamp', ts.to_s)
 response.set_header('x-mjs-ws-signature', sig)
 render plain: corps, content_type: 'application/json; charset=utf-8'
@@ -1590,12 +1590,13 @@ end
 post '/mjs-ws/token', to: 'mjs_ws_tokens#create'
 ```
 
-Côté client, un `fetch` ordinaire **avant** d'ouvrir la socket (le cookie part tout seul, même origine) :
+Côté client, un `fetch` ordinaire **avant** d'ouvrir la socket (le cookie part tout seul, même origine), dans une fonction du composant — un `await` n'est permis au premier niveau du script que dans une valeur qui attend (cf. [3](03-reactivite.md)) :
 
 ```civet
-reponse       = await fetch('/mjs-ws/token', { method: 'POST' })
-{ token }     = await reponse.json()
-@sock         = µsocket "wss://jeu/play", { auth: { token } }
+µmount ->
+  reponse   = await fetch('/mjs-ws/token', { method: 'POST' })
+  { token } = await reponse.json()
+  @sock     = µsocket "wss://jeu/play", { auth: { token } }
 ```
 
 Côté serveur `mjsWs`, **rien** de plus que §7.6 : `auth: jwtAuth(process.env.JWT_SECRET)`.
@@ -1648,7 +1649,7 @@ const app = mjsWs({
 evt = JSON.parse(request.raw_post)
 if evt['event'] == 'connect'
   user = User.from_session_cookie(evt['cookie'])   # votre propre lecture de session, à partir du Cookie brut
-  return render(json: { ok: false, raison: 'session inconnue' }) unless user
+  return render(json: { ok: false, reason: 'session inconnue' }) unless user
 
   render json: { ok: true, identity: { id: user.id, pseudo: user.pseudo } }
 end
@@ -1731,7 +1732,7 @@ const app = mjsWs({
 ### 8.2 Comment ça marche, simplement
 
 1. **Au `µ:welcome`**, le serveur glisse une carte de visite : `session: { id, key }` (aléatoire crypto). Le client `µ.socket` la range — **rien à coder côté client**.
-2. **À la coupure** (peu importe la cause, sauf un `µ:bye`), le client n'est pas purgé : il est **parqué**. Ses salons, sa présence et ses abonnements aux flux sont **conservés** — pour tout le monde, il est encore là (`app.clients`, `GET /presence` du pont et les webhooks `join`/`leave` le comptent toujours). Une minuterie de grâce démarre.
+2. **À la coupure** (peu importe la cause, sauf un `µ:bye`), le client n'est pas purgé : il est **parqué** (au plus `limits.maxConnectionsPerIp` sessions parquées par IP, §3 : au-delà, la coupure est définitive et le client revient avec une session neuve). Ses salons, sa présence et ses abonnements aux flux sont **conservés** — pour tout le monde, il est encore là (`app.clients`, `GET /presence` du pont et les webhooks `join`/`leave` le comptent toujours). Une minuterie de grâce démarre.
 3. **Pendant la grâce**, tout ce qui lui est destiné (`app.send`, `room().send`, `broadcast`, et même le `µ:left` d'un kick de salon) est **tamponné** au lieu d'être envoyé.
 4. **À son retour**, le client rejoue `{ id, key }` dans son `µ:hello`. L'auth normale tourne **d'abord** (une reprise n'est jamais un contournement — le jeton est re-vérifié comme toujours), puis la clé est comparée à temps constant et l'identité doit être la même. Tout est bon ? Le **même** client est recyclé : `µ:welcome` avec `resumed: true`, le même `session.id`, une **clé neuve** (la clé tourne à chaque welcome — une clé volée hier ne vaut rien aujourd'hui), puis le tampon est rejoué **dans l'ordre**, juste après le welcome. Aucun delta de présence n'est émis, aucun webhook `connect`/`disconnect` : il n'est jamais parti.
 5. **Sans retour à temps** : à l'expiration de la grâce seulement, la purge historique complète a lieu — leave de présence (agrégé : si l'utilisateur a un autre onglet vivant, rien ne part), purge des salons, et webhook `disconnect` du pont, **différé à ce moment-là**. `opts.onDisconnect` (§1) tire **au même instant** — c'est le seul signal générique d'une déconnexion vraiment définitive.
@@ -1832,10 +1833,10 @@ Avec `mjs ws` (§6), ça se configure aussi dans `mjs.config.json` (`ws.adapter`
 | Action | Comportement multi-processus |
 |---|---|
 | `app.broadcast(type, p)` | Chaque process diffuse à **ses** clients authentifiés. |
-| `app.room(nom).send(...)` | Chaque process diffuse à **ses** membres **locaux** de ce salon. |
-| `app.room(nom).kick(...)` | Le membre visé est expulsé sur **quel que** process il se trouve. |
+| `app.room(name).send(...)` | Chaque process diffuse à **ses** membres **locaux** de ce salon. |
+| `app.room(name).kick(...)` | Le membre visé est expulsé sur **quel que** process il se trouve. |
 | `POST /send` (pont, `user`) | Toutes les connexions de cet utilisateur reçoivent, sur **tous** les process. |
-| `app.stream(nom).add/update/remove/reset(...)` | Numéroté **globalement** (§9.3), appliqué et diffusé sur **chaque** process. |
+| `app.stream(name).add/update/remove/reset(...)` | Numéroté **globalement** (§9.3), appliqué et diffusé sur **chaque** process. |
 | Présence (`µ:presence`, `GET /presence`) | **Fusionnée** — montre les pairs de **tous** les process (§9.4). |
 | Sessions (reprise, §8) | Restent **locales** — jamais partagées entre process (§9.5). |
 
@@ -1849,13 +1850,13 @@ Un flux (§5) numérote chaque mutation (`seq`, strictement croissant). Avec un 
 
 Conséquence pratique : `add()`/`update()`/`remove()`/`reset()` restent des méthodes qu'on appelle sans `await`, mais avec l'adaptateur actif, leur effet n'est plus instantané — il attend l'aller-retour Redis (quelques millisecondes). Sans adaptateur, rien ne change (compteur local, toujours instantané).
 
-**Et si deux messages arrivent dans le désordre ?** Le réseau ne garantit pas l'ordre d'arrivée entre deux publications de **deux** process différents. Chaque process garde donc un petit **tampon de réordonnancement** (100 deltas en attente au maximum, par flux) : un delta qui arrive « trop tôt » (un trou avant lui) est mis de côté jusqu'à ce que le trou se comble. Si le trou ne se comble pas sous 2 secondes (ou si le tampon déborde), le process applique quand même ce qu'il a, dans l'ordre, en sautant le trou — avec un avertissement dans `onLog`. Le client qui détecte un saut de numéro (`seq` en avance sur ce qu'il attendait) redemande automatiquement un rattrapage (`µ:resync`, §5) — le système s'auto-corrige. Un flux détruit sur chaque process puis redéclaré (§5) reprend la numérotation de l'ancien : son premier delta n'attend pas dans ce tampon.
+**Et si deux messages arrivent dans le désordre ?** Le réseau ne garantit pas l'ordre d'arrivée entre deux publications de **deux** process différents. Chaque process garde donc un petit **tampon de réordonnancement** (100 deltas en attente au maximum, par flux) : un delta qui arrive « trop tôt » (un trou avant lui) est mis de côté jusqu'à ce que le trou se comble. Si le trou ne se comble pas sous 2 secondes (ou si le tampon déborde), le process applique quand même ce qu'il a, dans l'ordre, en sautant le trou — avec un avertissement dans `onLog`. Le client qui détecte un saut de numéro (`seq` en avance sur ce qu'il attendait) redemande automatiquement un rattrapage (`µ:resync`, §5) — le système s'auto-corrige. Un flux détruit sur chaque process puis redéclaré (§5) reprend la numérotation de l'ancien : son premier delta n'attend pas dans ce tampon. Ce compteur vit dans Redis sous la clé `<prefix>:seq:<flux>` (`mjs-ws:seq:<flux>` par défaut), que `destroy()` ne retire pas : c'est lui qui fait reprendre la numérotation. En grappe, supprimez vous-même la clé d'un flux détruit qui ne reviendra pas.
 
 Un `µ:resync` couvre aussi bien les deltas produits localement que ceux venus d'un **autre** process : une fois appliqué, un delta distant rejoint le **même** journal que les deltas locaux.
 
 **Un flux gardé le reste sur toute la flotte.** Chaque delta publié annonce la garde de son flux : le salon exigé (`room`, que chaque process contrôle sur **ses** membres) et l'existence d'une fonction `canSubscribe` (une fonction ne voyage pas). Un process qui reçoit les deltas d'un flux gardé par `canSubscribe` sans l'avoir déclaré refuse donc tout abonnement, tant que son code ne déclare pas ce flux avec sa propre `canSubscribe` : déclarez vos flux gardés de la même façon sur chaque process, délai compris (`guardTimeout` ne voyage pas non plus : chaque process applique celui de sa déclaration). Abonnement et désabonnement (`µ:unsub-stream`) vivent sur le process de la connexion, le seul qui lui pousse les deltas, ceux des autres process compris. L'ouverture voyage de même : un flux ouvert (`public: true`) est servi par tous les process, déclaré ou non ; un flux fermé (déclaré sans accès) ne l'est par aucun. Exception : un flux écrit par le pont sur un process qui ne l'a pas déclaré (§7) est annoncé comme tel avec ses deltas, et tout process qui ne le déclare pas lui-même le refuse — déclarez sur chaque process les flux que votre back écrit par le pont.
 
-**Pendant une mise à jour progressive.** Quand vous remplacez vos processus un à un, d'anciens et de nouveaux tournent un temps sur le même Redis. Un processus d'une version antérieure à la 3.0.0 ne lit pas cette annonce (`declared: false`) : il sert un flux écrit par le pont à tous ses clients, comme un flux public, si son propre code ne le déclare pas avec sa garde. Et un flux qu'un ancien processus écrit (par le pont ou par son code) part sans annonce : les nouveaux ne le servent à personne tant que leur code ne le déclare pas, ouvert ou avec sa garde. Avant de commencer, déclarez donc au démarrage de chaque processus, dans l'ancienne version comme dans la nouvelle, tous les flux que votre back écrit par le pont : `app.stream(nom, { room | canSubscribe })` pour un flux privé, `app.stream(nom, { public: true })` pour un flux public (une version antérieure à la 3.0.0 ignore l'option : un flux sans garde y est public) — chaque processus applique alors sa propre garde, sans dépendre de l'annonce. Si l'ancienne version ne peut plus changer, n'écrivez aucun flux privé par le pont tant qu'un ancien processus tourne, ou arrêtez-les tous avant de démarrer les nouveaux.
+**Pendant une mise à jour progressive.** Quand vous remplacez vos processus un à un, d'anciens et de nouveaux tournent un temps sur le même Redis. Un processus d'une version antérieure à la 3.0.0 ne lit pas cette annonce (`declared: false`) : il sert un flux écrit par le pont à tous ses clients, comme un flux public, si son propre code ne le déclare pas avec sa garde. Et un flux qu'un ancien processus écrit (par le pont ou par son code) part sans annonce : les nouveaux ne le servent à personne tant que leur code ne le déclare pas, ouvert ou avec sa garde. Avant de commencer, déclarez donc au démarrage de chaque processus, dans l'ancienne version comme dans la nouvelle, tous les flux que votre back écrit par le pont : `app.stream(name, { room | canSubscribe })` pour un flux privé, `app.stream(name, { public: true })` pour un flux public (une version antérieure à la 3.0.0 ignore l'option : un flux sans garde y est public) — chaque processus applique alors sa propre garde, sans dépendre de l'annonce. Si l'ancienne version ne peut plus changer, n'écrivez aucun flux privé par le pont tant qu'un ancien processus tourne, ou arrêtez-les tous avant de démarrer les nouveaux.
 
 ### 9.4 La présence fusionnée — qui est là, sur **toute** la flotte
 
@@ -1879,11 +1880,11 @@ La reprise de session (§8) vit **en mémoire, par process** — l'adaptateur ne
 
 ### 9.6 Coupure Redis — la limite honnête
 
-L'adaptateur reconnecte tout seul en cas de coupure Redis (backoff 1 s, 2 s, 5 s, 10 s — puis reste à 10 s). Pendant la coupure :
+L'adaptateur reconnecte tout seul en cas de coupure Redis, ou quand Redis refuse le mot de passe (backoff 1 s, 2 s, 5 s, 10 s — puis reste à 10 s). Pendant la coupure :
 
 - Les **publications** (broadcast, salon, présence…) échouent silencieusement côté émetteur — un avertissement dans `onLog`, jamais un crash ni un blocage. Les clients **locaux** du process ne sont pas affectés (l'application locale a déjà eu lieu **avant** la publication, §9.2).
 - Les **deltas de flux** produits par un **autre** process **pendant** la coupure ne sont jamais reçus — à la reconnexion, rien ne les rattrape automatiquement (Redis pub/sub n'a pas de mémoire : un message publié pendant que vous n'écoutiez pas est perdu pour toujours, contrairement au journal **local** d'un flux, §5, qui lui ne connaît pas Redis). **Conséquence honnête : une divergence est possible** entre les process pendant/après une coupure Redis.
-- **Le remède pratique :** un `stream.reset(valeurs)` (n'importe quel process, une fois Redis revenu) republie l'état complet et fait repartir tout le monde de la **même** photo — la façon la plus simple de refermer une divergence.
+- **Le remède pratique :** un `stream.reset(values)` (n'importe quel process, une fois Redis revenu) republie l'état complet et fait repartir tout le monde de la **même** photo — la façon la plus simple de refermer une divergence.
 - **La solution complète** (aucune perte, même pendant une coupure) demanderait un journal **persistant** côté Redis (Redis Streams, avec relecture depuis le dernier point vu) — hors périmètre de cette étape, notée comme piste pour plus tard.
 
 ### 9.7 Zéro dépendance — le mini-client Redis maison
@@ -1912,7 +1913,7 @@ Comme l'adaptateur Redis, `MemoryAdapter` rattrape un rappel d'abonnement qui l�
 <a id="etat-serveur"></a>
 ## 10. L'état du serveur
 
-Un registre de compteurs **léger** — connexions, messages, salons, flux, garde, pont, adaptateur, sessions, intervalles entre deux pings, erreurs/avertissements — tourne **en permanence** dans `mjsWs`, sans configuration : `app.stats()` renvoie un instantané JSON à tout moment (uptime, id de processus, mémoire, et toutes les familles ci-dessus). Le coût est négligeable (des `++` sur des compteurs déjà là), donc ce registre n'a **pas d'interrupteur** — seule son **exposition en HTTP** (sur le pont, §7) est une option.
+Un registre de compteurs **léger** — `connections` (connexions), `messages`, `rooms` (salons), `streams` (flux), `guard` (garde), `bridge` (pont), `adapter` (adaptateur), `sessions`, `pingIntervals` (intervalles entre deux pings), `errors` (erreurs et avertissements) — tourne **en permanence** dans `mjsWs`, sans configuration : `app.stats()` renvoie un instantané JSON à tout moment (`uptime`, `processId`, `timestamp`, `memory`, et toutes les familles ci-dessus). Le coût est négligeable (des `++` sur des compteurs déjà là), donc ce registre n'a **pas d'interrupteur** — seule son **exposition en HTTP** (sur le pont, §7) est une option.
 
 ### 10.1 Activer — `opts.stats`
 
@@ -1931,7 +1932,7 @@ const app = mjsWs({
 | `GET /metrics` | Le même instantané, au format texte **Prometheus** (`# TYPE mjs_ws_x gauge` puis `mjs_ws_x 3`, tous les noms préfixés `mjs_ws_`, intervalle entre deux pings en `mjs_ws_ping_interval_p50_ms`/`mjs_ws_ping_interval_p95_ms`). |
 | `GET /state` | Une page HTML **sombre**, autonome (aucune ressource externe), qui affiche une grille de cartes par famille et se rafraîchit toute seule toutes les 2 s (`fetch('/stats')`, même origine). Pratique pour un coup d'œil en dev, sans outil externe. |
 
-La famille `intervallesPing` (`p50`, `p95`, `echantillon`, en ms) mesure l'**intervalle entre deux `µ:ping`** reçus d'une même connexion, c'est-à-dire à peu près la période du battement du client (15 000 ms par défaut) ; un `µ:ping` marqué `early: true` (hors battement, la preuve du départ d'un salon) n'en donne aucun — **pas** un aller-retour : le serveur seul ne peut pas mesurer l'aller-retour, le client ne répondant pas à un ping du serveur. L'aller-retour se lit côté client (`sock.latency`, [20 · Temps réel](20-temps-reel.md)).
+La famille `pingIntervals` (`p50`, `p95`, `samples`, en ms) mesure l'**intervalle entre deux `µ:ping`** reçus d'une même connexion, c'est-à-dire à peu près la période du battement du client (15 000 ms par défaut) ; un `µ:ping` marqué `early: true` (hors battement, la preuve du départ d'un salon) n'en donne aucun — **pas** un aller-retour : le serveur seul ne peut pas mesurer l'aller-retour, le client ne répondant pas à un ping du serveur. L'aller-retour se lit côté client (`sock.latency`, [20 · Temps réel](20-temps-reel.md)).
 
 Sans `opts.bridge`, `stats: true` n'a **aucun effet observable** : il n'y a pas de serveur HTTP pour servir ces trois routes. Sans `opts.stats` (défaut), ces trois routes répondent **404** (même pont, mêmes autres endpoints) — mais `app.stats()` fonctionne quand même, tout le temps.
 
@@ -1947,7 +1948,7 @@ Dès que le pont écoute ailleurs (`host` configuré à autre chose que loopback
 
 ### 10.3 Stats par processus — la limite honnête avec l'adaptateur
 
-Le registre est **local à chaque processus** — il ne connaît que ce que CE process a vu passer. Avec l'adaptateur multi-processus (§9), chaque process `mjsWs` a le **sien**, jamais fusionné automatiquement : `app.stats()` (ou `GET /stats`) sur le process A ne montre **que** l'activité de A, pas celle de B ou C. Pour une vue de toute la flotte, votre back interroge `GET /stats` sur **chaque** process (round-robin derrière le répartiteur, ou une adresse directe par process) et additionne côté back — exactement comme `GET /presence` (§9.4) le ferait s'il n'était pas, lui, fusionné en interne. Deux compteurs de la famille `adaptateur` (`ignoresOrigin`, `reconnexions`) restent à `0` avec l'adaptateur Redis à ce stade (câblés pour `MemoryAdapter`, dont le bus en mémoire les expose directement ; l'instrumentation du mini-client Redis pour ces deux-là reste à faire) — `publies`, `recus` (pub/sub cross-process) et `reordonnances` (tampon de réordonnancement des flux, §9.3) sont, eux, exacts avec les deux adaptateurs.
+Le registre est **local à chaque processus** — il ne connaît que ce que CE process a vu passer. Avec l'adaptateur multi-processus (§9), chaque process `mjsWs` a le **sien**, jamais fusionné automatiquement : `app.stats()` (ou `GET /stats`) sur le process A ne montre **que** l'activité de A, pas celle de B ou C. Pour une vue de toute la flotte, votre back interroge `GET /stats` sur **chaque** process (round-robin derrière le répartiteur, ou une adresse directe par process) et additionne côté back — exactement comme `GET /presence` (§9.4) le ferait s'il n'était pas, lui, fusionné en interne. Deux compteurs de la famille `adapter` (`ignoredOrigin`, `reconnects`) viennent de l'adaptateur lui-même : `RedisAdapter` les compte (ses propres publications revenues par Redis et ignorées, reconnexions réussies de ses deux connexions), `MemoryAdapter` ne les porte pas et ils y restent à `0` ; un adaptateur maison qui expose ces deux nombres les voit recopiés — `published`, `received` (pub/sub cross-process) et `reordered` (tampon de réordonnancement des flux, §9.3) sont, eux, exacts avec les deux adaptateurs.
 
 <a id="contrat-type"></a>
 ## 11. Contrat typé (optionnel) — auto-complétion + erreurs de compilation
@@ -2158,7 +2159,7 @@ class MonTransportMaison implements MjsWsTransport {
     }
     this.handler?.(conn)
     // ... et quand une trame arrive vraiment : conn.onMessage?.(texteRecu) ...
-    // ... et quand ça se ferme vraiment (peu importe qui a fermé) : conn.onClose?.(code, raison) ...
+    // ... et quand ça se ferme vraiment (peu importe qui a fermé) : conn.onClose?.(code, reason) ...
   }
 
   async stop(): Promise<void> {
@@ -2217,11 +2218,11 @@ Le fichier compilé vit dans le dossier de **cache** ci-dessus, pas à côté de
 
 Un commentaire (`#…`, `###…###`, `//…`, `/*…*/`, même placé dans une `interface`, un `type` ou un type littéral), une chaîne (multi-lignes comprise, `'…'`/`"…"`/`'''…'''`/`"""…"""`/`` `…` ``) ou une regex (`/…/`, regex étendue `///…///`) qui contiendrait du texte ressemblant à une directive (`@param`, `@foo`…) n'est **jamais** lu comme telle, et le guillemet, le `###` ou l'accent grave d'une regex (`s.replace /"/g, '-'`) n'ouvre ni chaîne ni commentaire quand Civet lit votre fichier sûrement (voir plus bas) : une directive écrite plus bas est alors refusée. Le refus cite sa ligne (`'…/ws.server.mjs:12' : la directive @css …`), fins de ligne `\r\n` ou `\r` seules comprises — seul du code réel déclenche la détection, en colonne 0 comme en retrait (un `@css 'a.css'` dans le corps d'une fonction est refusé aussi). Votre fichier est lu pour cela par Civet, dans la langue de son compilateur, puis à ses guillemets et à ses commentaires ; les dièses s'y lisent comme à sa compilation, sorte de fichier par sorte de fichier :
 
-- **`.server.mjs`, `.civet.mjs`** (le dialecte) : `#` ouvre un commentaire de ligne ; `###` ouvre un bloc que le `###` suivant referme, même en milieu de ligne (`### aide = 1` ou `foo ### x = 1` referme le bloc ouvert plus haut, et la suite de la ligne est du code) ; jamais refermé, il court jusqu'à la fin du fichier ; les dièses d'une ligne se lisent trois par trois depuis la gauche. Une ligne de 3, 4, 5, 9, 10 ou 11 dièses, ou `#### titre`, ouvre donc un bloc : une directive placée dessous n'est pas refusée, jusqu'au `###` qui le referme. Une ligne de 6, 7, 8 ou 12 dièses, ou `#### titre ###`, ouvre et referme le sien : la directive écrite dessous est refusée.
+- **`.server.mjs`, `.civet.mjs`** (le dialecte) : `#` ouvre un commentaire de ligne ; `###` suivi d'autre chose qu'un dièse ouvre un bloc que le `###` suivant referme, même en milieu de ligne (`### aide = 1` ou `foo ### x = 1` referme le bloc ouvert plus haut, et la suite de la ligne est du code) ; jamais refermé, il court jusqu'à la fin du fichier. Quatre dièses ou plus (`####`, `#### titre`, une bannière, `x = 1 #### note`) ne font qu'un commentaire de ligne, comme en CoffeeScript : une directive écrite dessous est refusée ; écrite à leur suite, sur la même ligne (`###### @css 'a.css'`), elle n'est qu'un commentaire.
 - **`.coffee.mjs`, `.coffee`** (CoffeeScript, lu par le mode CoffeeScript de Civet) : `###` suivi d'autre chose qu'un dièse ouvre un bloc que le `###` suivant referme, même en milieu de ligne, comme dans le dialecte ; quatre dièses ou plus (`####`, `#### titre`, une bannière) ne font qu'un commentaire de ligne : la directive écrite dessous est refusée. Un fichier aux fins de ligne `\r` seules n'est, pour CoffeeScript, qu'une seule ligne : un commentaire `#` y court jusqu'à la fin du fichier, et une directive écrite plus bas n'y est que du texte.
 - **`.civet`** (Civet nu, §13.3) : `#` est du code (il vaut `this.length`) ; seul un `###` suivi d'autre chose qu'un dièse ouvre un commentaire, que referme un `###` plus loin sur sa ligne (`x = 1 ### c ###` est un commentaire) ou plus bas ; un `###` suivi de code sur sa ligne ne referme rien (`### aide = 1` laisse le bloc ouvert). Trois dièses de suite ou plus qui n'ouvrent pas un tel bloc (une ligne de dièses, `#### titre`, un `###` jamais refermé) sont du code : une directive écrite à leur suite ou dessous est refusée. Un ou deux dièses restent lus par le contrôle comme un commentaire de leur ligne : une directive écrite à leur suite, sur la même ligne (`# @import x './x.civet'`, un exemple), n'est pas refusée, bien que Civet nu la compile en appel (`this.length(this.import(…))`, qui casse au chargement).
 
-Quand la lecture par Civet échoue, ou n'est pas sûre, votre fichier n'est lu qu'à ses guillemets et à ses commentaires, quelle que soit sa sorte (`#` y ouvre un commentaire de ligne, `###` un bloc) : le guillemet, le `###` ou l'accent grave d'une regex y ouvre encore une chaîne ou un commentaire, qui peut cacher une directive écrite plus bas. Elle échoue sur une faute de syntaxe, que la compilation vous signale ensuite ; elle échoue aussi, sans aucun signal, sur une écriture de CoffeeScript que Civet ne lit pas mais que CoffeeScript compile (`@x = …` dans le corps d'une classe), sur une expression trop longue pour elle (des milliers de termes ou de membres enchaînés) et, dans un `.civet`, sur un dièse collé à un nom hors d'une classe (`####titre`) ; elle n'est pas sûre, dans un `.server.mjs` ou un `.civet.mjs`, sur une chaîne `"…"` qui porte `#{` et passe à la ligne, ni, dans un `.coffee.mjs` ou un `.coffee`, sur une regex que CoffeeScript lit comme une division (il divise par `/` après un nombre, une chaîne, `true`, `null`, `}` ou une regex : `x = 2 /b; c = "/ + "`), ni sur une regex de CoffeeScript que Civet ne lit pas, ni, hors d'un `.civet`, sur un `###` que Civet laisse au code faute de le lire comme le compilateur du fichier : un `###` suivi de code qui referme le bloc ouvert plus haut (`### aide = 1`, que Civet ne referme pas), un bloc `###` placé dans une `interface` ou un `type` (Civet l'efface avec lui), un `###` jamais refermé. Ainsi, dans un `.server.mjs` ou un `.civet.mjs`, une regex `x = /###/` écrite au-dessus d'un `###` jamais refermé cache encore la directive écrite entre les deux (en CoffeeScript, ce fichier est une erreur de compilation). Deux écritures cachent encore une directive écrite plus bas : dans un `.server.mjs` ou un `.civet.mjs`, une interpolation `#{…}` qui passe à la ligne, que leur compilation ne lit pas comme Civet ; dans un `.server.mjs`, un `.civet.mjs` ou un `.civet` aux fins de ligne `\r` seules, un commentaire `#` que seule la lecture à ses guillemets et à ses commentaires voit (fichier que Civet ne lit pas, un ou deux dièses d'un `.civet` ou, dans le dialecte, dièses qui restent après les `###` d'une ligne qui ouvre et referme son bloc : 7, 8, 13 ou 14 dièses, `#### titre ####`), qui court alors jusqu'à la fin du fichier.
+Quand la lecture par Civet échoue, ou n'est pas sûre, votre fichier n'est lu qu'à ses guillemets et à ses commentaires, quelle que soit sa sorte (`#` y ouvre un commentaire de ligne, `###` suivi d'autre chose qu'un dièse un bloc) : le guillemet, le `###` ou l'accent grave d'une regex y ouvre encore une chaîne ou un commentaire, qui peut cacher une directive écrite plus bas. Elle échoue sur une faute de syntaxe, que la compilation vous signale ensuite ; elle échoue aussi, sans aucun signal, sur une écriture de CoffeeScript que Civet ne lit pas mais que CoffeeScript compile (`@x = …` dans le corps d'une classe), sur une expression trop longue pour elle (des milliers de termes ou de membres enchaînés) et, dans un `.civet`, sur un dièse collé à un nom hors d'une classe (`####titre`) ; elle n'est pas sûre, dans un `.server.mjs` ou un `.civet.mjs`, sur une chaîne `"…"` qui porte `#{` et passe à la ligne, ni, dans un `.coffee.mjs` ou un `.coffee`, sur une regex que CoffeeScript lit comme une division (il divise par `/` après un nombre, une chaîne, `true`, `null`, `}` ou une regex : `x = 2 /b; c = "/ + "`), ni sur une regex de CoffeeScript que Civet ne lit pas, ni, hors d'un `.civet`, sur un `###` que Civet laisse au code faute de le lire comme le compilateur du fichier : un `###` suivi de code qui referme le bloc ouvert plus haut (`### aide = 1`, que Civet ne referme pas), un bloc `###` placé dans une `interface` ou un `type` (Civet l'efface avec lui), un `###` jamais refermé. Ainsi, dans un `.server.mjs` ou un `.civet.mjs`, une regex `x = /###/` écrite au-dessus d'un `###` jamais refermé cache encore la directive écrite entre les deux (en CoffeeScript, ce fichier est une erreur de compilation). Deux écritures cachent encore une directive écrite plus bas : dans un `.server.mjs` ou un `.civet.mjs`, une interpolation `#{…}` qui passe à la ligne, que leur compilation ne lit pas comme Civet ; dans un `.server.mjs`, un `.civet.mjs` ou un `.civet` aux fins de ligne `\r` seules, un commentaire `#` que seule la lecture à ses guillemets et à ses commentaires voit (fichier que Civet ne lit pas, ou un ou deux dièses d'un `.civet`), qui court alors jusqu'à la fin du fichier.
 
 **En pratique :** un besoin de paquet npm dans l'entry marche directement dès que `npm install` a été lancé dans le projet ou dans un dossier parent (`node_modules` présent) — plus besoin d'un entry `.js`/`.mjs` à part ni d'une URL `file://` absolue à la main.
 

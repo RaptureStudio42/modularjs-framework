@@ -74,7 +74,7 @@ function _mjpredictEq(a, b) {
 
 // clone (numéroté) DU payload envoyé au serveur — `p` intact dans la file locale (cf. tête de
 // fichier : `appliquer` doit voir EXACTEMENT ce que def.intents verra, jamais pollué par `_n`).
-function _mjpredictConNumero(p, n) {
+function _mjpredictConnNum(p, n) {
   var out, k;
   if (p && typeof p === 'object' && !Array.isArray(p)) {
     out = {};
@@ -92,8 +92,8 @@ function _mjpredictServerSnapshot(st) {
 }
 
 // republie le fragment prédit sur le miroir — réassignation COMPLÈTE par champ (même stratégie que
-// mjs_interp.ts::_mjinterpPublier, cf. son commentaire), sautée si inchangé.
-function _mjpredictPublier(st) {
+// mjs_interp.ts::_mjinterpPublish, cf. son commentaire), sautée si inchangé.
+function _mjpredictPublish(st) {
   var i, c;
   for (i = 0; i < st.fields.length; i++) {
     c = st.fields[i];
@@ -103,27 +103,27 @@ function _mjpredictPublier(st) {
 
 // recalcule le fragment ENTIER depuis l'état serveur connu + rejeu de TOUTE la file restante —
 // SOURCE pour une réconciliation SERVEUR (`st.server` vient de changer, cf. onServer plus bas) :
-// aucune divergence possible avec le chemin local (_mjpredictRejouerUn juste en dessous), les deux
+// aucune divergence possible avec le chemin local (_mjpredictReplayOne juste en dessous), les deux
 // partent du MÊME `st.apply`.
-function _mjpredictRejouer(st) {
+function _mjpredictReplay(st) {
   var fragment = _mjpredictDeepClone(st.server), i, e;
   for (i = 0; i < st.pending.length; i++) { e = st.pending[i]; st.apply(fragment, e.name, e.p); }
   st.fragment = fragment;
-  _mjpredictPublier(st);
+  _mjpredictPublish(st);
 }
 
 // application LOCALE d'un SEUL coup, PAR-DESSUS le fragment déjà à jour (`st.server` inchangé) —
 // évite de recloner `st.server` et de rejouer TOUTE la file à chaque move() (coût qui grandissait
 // avec le nombre de coups non confirmés, cf. tête de fichier) : le fragment courant contient déjà
 // l'effet des entrées précédentes, il ne manque QUE la nouvelle. Clone quand même `st.fragment`
-// (jamais une mutation en place) : `_mjpredictPublier` compare par CONTENU une référence FRAÎCHE à
+// (jamais une mutation en place) : `_mjpredictPublish` compare par CONTENU une référence FRAÎCHE à
 // chaque appel — muter en place réutiliserait la MÊME référence déjà posée sur `st.mirror` et
 // court-circuiterait sa réassignation réactive (`_mjpredictEq` sort tout de suite sur `a === b`).
-function _mjpredictRejouerUn(st, entry) {
+function _mjpredictReplayOne(st, entry) {
   var fragment = _mjpredictDeepClone(st.fragment);
   st.apply(fragment, entry.name, entry.p);
   st.fragment = fragment;
-  _mjpredictPublier(st);
+  _mjpredictPublish(st);
 }
 
 // --- entrée publique -----------------------------------------------------------------------------
@@ -137,20 +137,20 @@ function _mjpredictRejouerUn(st, entry) {
   var i;
   for (i = 0; i < fields.length; i++) { st.mirror[fields[i]] = {}; }
   st.server = _mjpredictServerSnapshot(st);
-  _mjpredictRejouer(st);
+  _mjpredictReplay(st);
 
   game.move = function(name, p) {
     var n = ++st.n;
     var entry = { name: name, p: p, n: n };
     st.pending.push(entry);
-    _mjpredictRejouerUn(st, entry);   // (b) application locale IMMÉDIATE, avant tout aller-retour réseau
-    var r = moveOriginal.call(game, name, _mjpredictConNumero(p, n));
+    _mjpredictReplayOne(st, entry);   // (b) application locale IMMÉDIATE, avant tout aller-retour réseau
+    var r = moveOriginal.call(game, name, _mjpredictConnNum(p, n));
     if (!r || typeof r.then !== 'function') { return r; }
     // refusé (hors ligne, coupure, refus du jeu) : le serveur ne l'appliquera jamais — la prédiction le retire et
     // repart de l'état serveur ; l'appelant reçoit le refus tel quel
     return r.then(null, function(err) {
       var i = st.pending.indexOf(entry);
-      if (i !== -1) { st.pending.splice(i, 1); _mjpredictRejouer(st); }
+      if (i !== -1) { st.pending.splice(i, 1); _mjpredictReplay(st); }
       throw err;
     });
   };
@@ -163,7 +163,7 @@ function _mjpredictRejouerUn(st, entry) {
     } else if (!st.ackSeen) {
       st.pending = [];   // filet v1 « jeu sans _n » — cf. PIÈGE en tête de fichier
     }
-    _mjpredictRejouer(st);
+    _mjpredictReplay(st);
   }
   var offState = game.on('state', onServer);
   var offStart = game.on('start', onServer);

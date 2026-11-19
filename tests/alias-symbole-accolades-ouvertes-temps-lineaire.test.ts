@@ -8,15 +8,15 @@ import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { transformSync } from 'esbuild'
-import { finExpression } from '../src/sigils.js'
+import { expressionEnd } from '../src/sigils.js'
 import { sigilAliasCode } from '../src/transpiler/index.js'
 
 const ICI    = dirname(fileURLToPath(import.meta.url))
 const SOURCE = readFileSync(join(ICI, '../src/transpiler/index.ts'), 'utf-8')
 const debut  = SOURCE.indexOf('function sigilAliasHtml(')
 const corps  = transformSync(SOURCE.slice(debut, SOURCE.indexOf('\n}\n', debut) + 3), { loader: 'ts' }).code
-const alias  = new Function('finExpression', 'sigilAliasCode', 'SIGIL_ALIASES', 'ALIAS_APPEL_EN_CLAIR_RE', corps + '\nreturn sigilAliasHtml')(
-  finExpression, sigilAliasCode, { mjs: /(?<![\w$])mjs(?=[.$])/g }, /(?<![\w$])mjs(?=\.(?:asset|image)\s*\()/g
+const alias  = new Function('expressionEnd', 'sigilAliasCode', 'SIGIL_ALIASES', 'ALIAS_PLAIN_CALL_RE', corps + '\nreturn sigilAliasHtml')(
+  expressionEnd, sigilAliasCode, { mjs: /(?<![\w$])mjs(?=[.$])/g }, /(?<![\w$])mjs(?=\.(?:asset|image)\s*\()/g
 ) as (html: string, sigil: string, directives: Set<number>, decalage: number) => string
 // ses deux derniers arguments (positions des directives @import du fichier, place du gabarit dans le fichier) : aucune directive
 // dans ces gabarits, ensemble vide et décalage nul

@@ -42,7 +42,7 @@ const MODULE_FN       = 'µ._updModule = function'
 const MODULE_AIDES    = ['µ._mjs_modTag = ', 'µ._mjs_modProps = ', 'µ._mjs_modSame = ', 'µ._mjs_modSet = ', 'µ._mjs_modGlob = ', 'µ._mjs_modAttrs = ']
 const COMMUNES        = ['µ._mjs_swap = ', 'µ._mjs_dynTagsRefuses = ', 'µ._mjs_dynAcceptList = ', 'µ._mjs_dynMask = ', 'µ._mjs_dynUnmask = ']
 const ELEMENT_JALONS  = ['nn._mjs_spk = cur._mjs_spk;', 'var onceMap = component._mjs_once_fired;', 'µ._mjs_swap(cur, nn);', 'curs[j] = nn;', 'if (component._mjs_nodes) {']
-const MODULE_JALONS   = ['µ._mjs_modAttrs(nn, attrs);', 'µ._mjs_modProps(nn, props);', 'var onceMap = component._mjs_once_fired;', 'µ._mjs_swap(cur, nn);', 'nn._mjs_modOrig   = tete;', 'if (component._mjs_nodes) {']
+const MODULE_JALONS   = ['µ._mjs_modAttrs(nn, attrs);', 'µ._mjs_modProps(nn, props);', 'var onceMap = component._mjs_once_fired;', 'µ._mjs_swap(cur, nn);', 'nn._mjs_modOrig   = head;', 'if (component._mjs_nodes) {']
 const ELEMENT_PROPRES = ['curs[j] = nn;', 'var tagStr = ', 'document.createElement(tagStr)']
 const ELEMENT_CLASSE  = '_mjs_clsBases.set(nn, _mjs_clsBases.get(cur));'
 const MODULE_CLASSE   = 'if (_mjs_spCk.has(cur)) _mjs_spCk.set(nn, _mjs_spCk.get(cur));'
@@ -78,7 +78,7 @@ describe('mjs_dynamic.ts en production : la partie de <@element> et celle de <@m
     dansLOrdre(fe, ELEMENT_JALONS, 'µ._updDynEl')
     aucun(fe, [ELEMENT_CLASSE, '_mjs_clsBases'], 'bloc de la classe étalée sans étalement')
     aucun(part, [MODULE_FN, ...MODULE_AIDES], 'partie de <@module>')
-    for (const nom of ['module-dynamique', 'etale-classe']) assert.doesNotMatch(part, marque(nom), `une marque du bloc ${nom} est restée seule`)
+    for (const nom of ['dynamic-module', 'spread-class']) assert.doesNotMatch(part, marque(nom), `une marque du bloc ${nom} est restée seule`)
     valide(part)
   })
 

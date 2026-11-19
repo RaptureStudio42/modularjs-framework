@@ -3,7 +3,9 @@
 // entre parenthèses (`item={choisir($o)}`, `item={($o.a)}`) : l'enfant suit l'écriture par un nom et `µrefresh($o)` dans les deux modes. Un
 // choix (`item={$sel ?? $o.a}`, `item={$ok ? $o.a : $p.a}`) : `µrefresh($o)` redessine l'enfant. Deux frères qui tiennent le même objet,
 // liés ou non par `!{…}`, l'enfant glissé dans une mise en page qui tient aussi l'objet (`<slot>`), le petit-enfant sous un enfant qui
-// redonne l'objet sans le lire, l'ordre des reffets : le même écran et le même ordre que sous l'écriture directe. Quatre réglages :
+// redonne l'objet sans le lire, l'ordre des reffets : le même écran et le même ordre que sous l'écriture directe. Avec l'enveloppe, le
+// frère qui n'écrit pas suit lui aussi, sous les deux écritures : il tient le même objet (docs/03-reactivite.md) ; sans elle, il reste
+// tel quel. Quatre réglages :
 // développement et production, avec et sans enveloppe (le réglage `proxy: false` : l'écriture par un nom se signale par `µrefresh`, qui ne
 // relance pas les reffets de l'enfant). Cœur construit, monté dans happy-dom
 import assert from 'node:assert/strict'
@@ -99,11 +101,12 @@ for (const [nom, opts] of REGLAGES) describe(`écriture par un nom comme l'écri
     const n = await ecran(tag, (el) => { el.nom(5); if (sans) el.raf() }, ['mjs-vn'])
     assert.deepEqual([d, n], [['{"b":{"c":6}}'], ['{"b":{"c":5}}']])
   })
-  it('frères : celui qui écrit, par un nom ou directement, se redessine ; l\'autre, ni dans un cas ni dans l\'autre', async () => {
+  // avec l'enveloppe, l'autre frère tient le même objet et suit l'écriture de celui qui écrit (docs/03-reactivite.md) ; sans elle, il reste tel quel
+  it(sans ? 'frères : celui qui écrit, par un nom ou directement, se redessine ; l\'autre, ni dans un cas ni dans l\'autre' : 'frères : celui qui écrit, par un nom ou directement, se redessine ; l\'autre, qui tient le même objet, aussi, dans un cas comme dans l\'autre', async () => {
     const n = await ecran('sb', (el) => { const [e1] = tous(el, 'MJS-VS'); e1.nomE(4); if (sans) e1.rafE() }, ['mjs-vs'])
     const d = await ecran('sb', (el) => { tous(el, 'MJS-VS')[0].directE(4) }, ['mjs-vs'])
     assert.deepEqual(n, d)
-    assert.deepEqual(d, ['{"b":{"c":4}} / {"b":{"c":0}}'])
+    assert.deepEqual(d, [sans ? '{"b":{"c":4}} / {"b":{"c":0}}' : '{"b":{"c":4}} / {"b":{"c":4}}'])
   })
   it('frères liés par !{…} : le même écran sous l\'écriture par un nom et sous l\'écriture directe', async () => {
     const n = await ecran('lb', (el) => { const [e1] = tous(el, 'MJS-VL'); e1.nomE(4); if (sans) e1.rafE() }, ['mjs-vl'])

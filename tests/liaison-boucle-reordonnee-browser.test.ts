@@ -14,6 +14,7 @@ import { existsSync } from 'node:fs'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { MODES, variantes, construire, charger, graves } from './helpers/liaison-navigateur.js'
 import type { Cible, Mode, Ouverture } from './helpers/liaison-navigateur.js'
+import { playTogether } from './helpers/engines-together.js'
 
 // l'état du parent, imprimé en JSON : ce qu'il croit de ses lignes
 const PARENT = (donnees: string, corps: string) => `<script>
@@ -163,7 +164,7 @@ const cible  = (mode: Mode) => {
 
 const GENRES_PAR_MODE = (mode: Mode): Genre[] => mode === 'ssr' ? GENRES.filter((g) => g !== 'coeur') : GENRES
 
-for (const nom of ['chromium', 'firefox'] as const) describe(`boucle réordonnée, composants liés à deux sens (${nom} réel)`, function () {
+for (const nom of ['chromium', 'firefox'] as const) playTogether(describe(`boucle réordonnée, composants liés à deux sens (${nom} réel)`, function () {
   this.timeout(300000)
   let present = false
   let browser: any
@@ -211,4 +212,4 @@ for (const nom of ['chromium', 'firefox'] as const) describe(`boucle réordonné
       }
     })
   }
-})
+}))

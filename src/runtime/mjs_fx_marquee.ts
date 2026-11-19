@@ -66,10 +66,10 @@ var _MJS_FX_MARQUEE_COPY = _MJS_FX_MARQUEE_RUN + ' > [mjs-fx-marquee-copy]';
 // @@ drag=true axis=both on=scroll
 // la position `u` d'un décalage (px, positif vers la droite ou le bas), ramenée dans ]-tour, 0] : la
 // piste porte des copies à 0, tour, 2 tours… — à -tour, elle est exactement où elle était à 0
-function _mjsFxMarqueeWrap(u, tour) {
-  if (!(tour > 0)) return 0;
-  var m = u % tour;
-  if (m > 0) m -= tour;
+function _mjsFxMarqueeWrap(u, turn) {
+  if (!(turn > 0)) return 0;
+  var m = u % turn;
+  if (m > 0) m -= turn;
   return m === 0 ? 0 : m;
 }
 // @@
@@ -515,7 +515,7 @@ function _mjsFxMarqueeTell(el, comp) {
       var touched = [];
       var all     = false;
       var early   = false;
-      var arrive, depart;
+      var arrive, start;
       // @@ drag=true axis=both on=scroll
       // décalage de la main (px), position écrite, boucle d'une image à la fois (rendez-vous, minuterie de repos, calque promu)
       var ux      = 0;
@@ -615,7 +615,7 @@ function _mjsFxMarqueeTell(el, comp) {
         ty = ay ? wy + (cs ? parseFloat(cs.rowGap) || 0 : 0) : 0;
         // rien à défiler (une balise vide, une liste vide) ou rien à couvrir (une balise sans taille, cachée) : rien n'est posé
         var src  = _mjsFxMarqueeKept(originals());
-        var need = function(box, tour) { return src.length > 0 && tour > 0 && box > 0 ? Math.min(40, Math.ceil(box / tour) + extra) : 0; };
+        var need = function(box, turn) { return src.length > 0 && turn > 0 && box > 0 ? Math.min(40, Math.ceil(box / turn) + extra) : 0; };
         var nx   = need(el.clientWidth, tx);
         var ny   = need(el.clientHeight, ty);
         // @@ axis=both
@@ -966,10 +966,10 @@ function _mjsFxMarqueeTell(el, comp) {
       // @@ on=scroll
       if (scroll) {
         arrive = attach;
-        depart = detach;
+        start  = detach;
       }
       // @@
-      var seen = _mjsFxMarqueeAway(el, arrive, depart);
+      var seen = _mjsFxMarqueeAway(el, arrive, start);
 
       return function() {
         seen();

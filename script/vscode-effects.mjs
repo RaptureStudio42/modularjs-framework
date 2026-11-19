@@ -103,7 +103,7 @@ function wordsOf(ast) {
 }
 
 function wordsOfRule(rule) {
-  const words = wordsOf(parseRule(rule, { bloc: 'effet', ligne: 0 }));
+  const words = wordsOf(parseRule(rule, { block: 'effect', line: 0 }));
   return words.length > 0 ? words : null;
 }
 
@@ -173,9 +173,9 @@ export function buildEffects() {
 // la règle d'un réglage d'effet CSS de l'appli dans la langue `lang`, comme le catalogue l'affiche : une durée, une valeur CSS, la part de
 // `on: view` (`visible`), ses mots
 function customRule(rule, lang) {
-  if (rule === 'time') return inLang(lang, () => t('effets.regle-duree'));
-  if (rule === 'css') return inLang(lang, () => t('effets.regle-css'));
-  if (rule === 'visible') return inLang(lang, () => t('effets.regle-visible'));
+  if (rule === 'time') return inLang(lang, () => t('effects.rule-duration'));
+  if (rule === 'css') return inLang(lang, () => t('effects.rule-css'));
+  if (rule === 'visible') return inLang(lang, () => t('effects.rule-visible'));
   const words = wordsOfRule(rule);
   if (!words) throw new Error('vscode-effects : règle d\'effet CSS inattendue — ' + rule);
   return words.join(', ');

@@ -7,7 +7,7 @@
 // version atomique, disque abîmé…) est IGNORÉ + un warn (onLog), JAMAIS un crash du boot entier
 // pour une seule entrée. Seule la sauvegarde `<id>.json` d'une partie est chargée : une copie du fichier laissée dans le dossier
 // (même id dans son contenu) est ignorée avec un warn, jamais un doublon au boot. Seuls les fichiers RÉGULIERS sont chargés (JAMAIS un lien symbolique
-// déposé dans le dossier, ignoré sans être suivi) — le confinement de _chemin() protège save()/
+// déposé dans le dossier, ignoré sans être suivi) — le confinement de _path() protège save()/
 // remove() contre un id malveillant, mais ne dit rien d'une entrée déjà présente sur disque.
 // PAS de journal WAL en v1 (raffinement v2) — le débounce court
 // de persist.ts (150 ms défaut) borne déjà la fenêtre de perte au tour par tour, jamais plus.
@@ -57,7 +57,7 @@ export class FilePersistAdapter implements MjsServerPersistAdapter {
   private _inFlight = new PendingWrites()      // écritures/suppressions suivies 30 s chacune — flush() les attend
 
   constructor(opts: FilePersistAdapterOpts) {
-    if (!opts.dir) throw new Error(t('serveur.persist-file-dir-manquant'))
+    if (!opts.dir) throw new Error(t('mjs-server.persist-file-dir-missing'))
     this._dir   = opts.dir
     this._onLog = opts.onLog ?? defaultLog
     this._ready  = mkdir(this._dir, { recursive: true }).then(() => {})
@@ -68,16 +68,16 @@ export class FilePersistAdapter implements MjsServerPersistAdapter {
   // jamais concernés, seul un id restauré/fourni à la main l'est. Double garde : refus à l'avance
   // (blacklist, rapide) ET vérification du chemin RÉSOLU (couvre un cas exotique que la blacklist
   // aurait raté) — erreur claire dans les deux cas, jamais un accès disque hors du dossier configuré.
-  private _chemin(id: string): string {
+  private _path(id: string): string {
     if (!id || id.includes('/') || id.includes('\\') || id.includes('..') || id.includes('\0')) {
-      throw new Error(t('serveur.persist-file-id-invalide', { id: id }))
+      throw new Error(t('mjs-server.persist-file-id-invalid', { id: id }))
     }
-    const chemin = join(this._dir, id +'.json')
+    const path = join(this._dir, id +'.json')
     const base   = resolve(this._dir) + sep
-    if (!resolve(chemin).startsWith(base)) {
-      throw new Error(t('serveur.persist-file-id-hors-dossier', { id: id }))
+    if (!resolve(path).startsWith(base)) {
+      throw new Error(t('mjs-server.persist-file-id-outside-dir', { id: id }))
     }
-    return chemin
+    return path
   }
 
   async load(): Promise<Array<{ id: string; data: MjsServerGameSnapshot }>> {
@@ -89,7 +89,7 @@ export class FilePersistAdapter implements MjsServerPersistAdapter {
       // seuls les fichiers RÉGULIERS — `dirent.isFile()` porte sur l'entrée du dossier elle-même,
       // JAMAIS suivie (contrairement à readFile ci-dessous) : un lien symbolique déposé dans le
       // dossier de stockage désignerait sinon un fichier hors de `this._dir`, contournant le
-      // confinement de _chemin() (qui ne protège que save()/remove(), jamais un symlink déjà là)
+      // confinement de _path() (qui ne protège que save()/remove(), jamais un symlink déjà là)
       if (!dirent.isFile()) continue
       const file = dirent.name
       if (!file.endsWith('.json') || file.endsWith('.tmp.json')) continue   // '.tmp.json' termine aussi par '.json' — l'exclusion doit passer en second
@@ -100,67 +100,67 @@ export class FilePersistAdapter implements MjsServerPersistAdapter {
         // démarrage en doublon de `game7.json` — seule la sauvegarde `<id>.json`, celle qu'écrit save(), est chargée, la copie
         // est nommée dans un avertissement et laissée sur le disque (un id qui n'est pas une chaîne reste au refus du moteur)
         if (typeof data.id === 'string' && file !== data.id +'.json') {
-          this._onLog('warn', t('serveur.persist-file-copie-ignoree', { fichier: file, id: data.id }))
+          this._onLog('warn', t('mjs-server.persist-file-copy-ignored', { file, id: data.id }))
           continue
         }
         results.push({ id: data.id, data })
       } catch (err) {
-        this._onLog('warn', t('serveur.persist-file-fichier-corrompu', { fichier: file }), { err: err instanceof Error ? err.message : String(err) })
+        this._onLog('warn', t('mjs-server.persist-file-file-corrupt', { file }), { err: err instanceof Error ? err.message : String(err) })
       }
     }
     return results
   }
 
-  // promesse rendue = fin de l'écriture, jamais rejetée (cf. _suivre) : le moteur s'y enchaîne
+  // promesse rendue = fin de l'écriture, jamais rejetée (cf. _track) : le moteur s'y enchaîne
   save(id: string, data: MjsServerGameSnapshot): Promise<void> {
-    return this._suivre(this._ecrireAtomique(id, data), `save('${id}')`)
+    return this._track(this._writeAtomic(id, data), `save('${id}')`)
   }
 
   remove(id: string): Promise<void> {
-    return this._suivre(this._retirer(id), `remove('${id}')`)
+    return this._track(this._remove(id), `remove('${id}')`)
   }
 
   // attend les écritures en vol — chacune au plus WRITE_TIMEOUT_MS depuis son départ (cf. PendingWrites) : un warn compte celles
   // restées sans réponse, puis flush() rend la main
   async flush(): Promise<void> {
     const unanswered = await this._inFlight.settle()
-    if (unanswered > 0) this._onLog('warn', t('serveur.persist-backend-flush-sans-reponse', { backend: 'file', nb: unanswered, delai: WRITE_TIMEOUT_MS / 1000 }))
+    if (unanswered > 0) this._onLog('warn', t('mjs-server.persist-backend-flush-no-response', { backend: 'file', count: unanswered, delay: WRITE_TIMEOUT_MS / 1000 }))
   }
 
   /** garde-fou : `p` ne devrait jamais arriver ici déjà vouée au rejet (save/remove
    *  catchent déjà tout en interne), mais le `.catch()` évite qu'une promesse orpheline rejetée ne
    *  devienne un unhandledRejection (Node 20 tue le process dessus) — filet de sécurité, le correctif
-   *  principal est côté appelant (cf. _ecrireAtomique, `_ready` dans le try). `_inFlight` ne suit `p` que
+   *  principal est côté appelant (cf. _writeAtomic, `_ready` dans le try). `_inFlight` ne suit `p` que
    *  WRITE_TIMEOUT_MS (cf. l'en-tête, « ARRÊT ») */
-  private _suivre(p: Promise<void>, label: string): Promise<void> {
+  private _track(p: Promise<void>, label: string): Promise<void> {
     this._inFlight.track(p)
-    return p.catch(err => this._onLog('warn', t('serveur.persist-backend-rejet-non-intercepte', { backend: 'file', label: label }), { err: err instanceof Error ? err.message : String(err) }))
+    return p.catch(err => this._onLog('warn', t('mjs-server.persist-backend-unhandled-rejection', { backend: 'file', label: label }), { err: err instanceof Error ? err.message : String(err) }))
   }
 
-  private async _ecrireAtomique(id: string, data: MjsServerGameSnapshot): Promise<void> {
-    let cible: string
-    try { cible = this._chemin(id) }   // valide l'id AVANT de construire quoi que ce soit (y compris `tmp`, ci-dessous — un id '../x' donnerait aussi un tmp hors dossier)
-    catch (err) { this._onLog('warn', t('serveur.persist-backend-save-echouee', { backend: 'file', id: id }), { err: err instanceof Error ? err.message : String(err) }); return }
+  private async _writeAtomic(id: string, data: MjsServerGameSnapshot): Promise<void> {
+    let target: string
+    try { target = this._path(id) }   // valide l'id AVANT de construire quoi que ce soit (y compris `tmp`, ci-dessous — un id '../x' donnerait aussi un tmp hors dossier)
+    catch (err) { this._onLog('warn', t('mjs-server.persist-backend-save-failed', { backend: 'file', id: id }), { err: err instanceof Error ? err.message : String(err) }); return }
     const tmp = join(this._dir, id +'.'+ randomBytes(4).toString('hex') +'.tmp.json')
     try {
       await this._ready   // mkdir initial — DANS le try : un mkdir raté doit warn, jamais rejeter à sec
       await writeFile(tmp, encodeSnapshot(data))
-      await rename(tmp, cible)
+      await rename(tmp, target)
     } catch (err) {
-      this._onLog('warn', t('serveur.persist-backend-save-echouee', { backend: 'file', id: id }), { err: err instanceof Error ? err.message : String(err) })
+      this._onLog('warn', t('mjs-server.persist-backend-save-failed', { backend: 'file', id: id }), { err: err instanceof Error ? err.message : String(err) })
       await unlink(tmp).catch(() => {})   // best-effort — n'abandonne pas de débris si le rename lui-même a échoué
     }
   }
 
-  /** id invalide (cf. _chemin) → warn, JAMAIS un throw synchrone depuis remove() (même politique que
+  /** id invalide (cf. _path) → warn, JAMAIS un throw synchrone depuis remove() (même politique que
    *  le reste du fichier : save()/remove() ne lèvent jamais à sec, cf. commentaire de tête). */
-  private async _retirer(id: string): Promise<void> {
-    let cible: string
-    try { cible = this._chemin(id) }
-    catch (err) { this._onLog('warn', t('serveur.persist-backend-remove-echouee', { backend: 'file', id: id }), { err: err instanceof Error ? err.message : String(err) }); return }
-    await unlink(cible).catch((err) => {
+  private async _remove(id: string): Promise<void> {
+    let target: string
+    try { target = this._path(id) }
+    catch (err) { this._onLog('warn', t('mjs-server.persist-backend-remove-failed', { backend: 'file', id: id }), { err: err instanceof Error ? err.message : String(err) }); return }
+    await unlink(target).catch((err) => {
       if (isENOENT(err)) return   // déjà absent — pas une erreur (remove idempotent, cf. contrat)
-      this._onLog('warn', t('serveur.persist-backend-remove-echouee', { backend: 'file', id: id }), { err: err instanceof Error ? err.message : String(err) })
+      this._onLog('warn', t('mjs-server.persist-backend-remove-failed', { backend: 'file', id: id }), { err: err instanceof Error ? err.message : String(err) })
     })
   }
 }

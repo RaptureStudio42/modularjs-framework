@@ -23,9 +23,9 @@ export function nameOf(client: MjsWsClient): string {
 }
 
 /** journal console, chaque ligne préfixée `prefixe` (le serveur : `[MJS-WS]`) */
-export function consoleLog(prefixe: string): MjsWsLogFn {
+export function consoleLog(prefix: string): MjsWsLogFn {
   return (level: MjsWsLogLevel, message: string, meta?: unknown): void => {
-    const line = `${prefixe} ${message}`
+    const line = `${prefix} ${message}`
     if (level === 'error') console.error(line, meta ?? '')
     else if (level === 'warn') console.warn(line, meta ?? '')
     else console.log(line, meta ?? '')
@@ -70,8 +70,8 @@ export function suggestKey(key: string, validKeys: Iterable<string>): string | n
 }
 
 /** journal par défaut d'un paquet : la console, chaque ligne préfixée `[mjs-ws:<nom>]` */
-export function defaultLogOf(nom: string): MjsWsLogFn {
-  return consoleLog(`[mjs-ws:${nom}]`)
+export function defaultLogOf(name: string): MjsWsLogFn {
+  return consoleLog(`[mjs-ws:${name}]`)
 }
 
 /** seaux de débit par (salon, identité) — un seau par identité dans chaque salon, partagé par ses onglets */
@@ -80,8 +80,8 @@ export interface MjsWsPerRoomBuckets {
   readonly buckets: Map<string, Map<string, TokenBucket>>
   /** le seau de cette identité dans ce salon, créé plein à la première demande */
   bucketOf(room: string, id: string): TokenBucket
-  /** mémoire bornée : retire les seaux des salons vidés (`app.room(salon).size === 0`), jamais ceux d'un salon habité —
-   *  ou ceux que dit vides `estVide`, quand l'appelant lit chaque salon une seule fois pour plusieurs registres */
+  /** mémoire bornée : retire les seaux des salons vidés (`app.room(salon).size === 0`) — ou ceux que dit vides `isEmpty`, quand
+   *  l'appelant lit chaque salon une seule fois pour plusieurs registres — et, dans un salon habité, les seaux redevenus pleins */
   sweep(app: MjsWsApp | ((room: string) => boolean)): void
 }
 
@@ -97,8 +97,13 @@ export function perRoomBuckets(burst: number, rate: number): MjsWsPerRoomBuckets
       return b
     },
     sweep(app) {
-      const estVide = typeof app === 'function' ? app : (nom: string) => app.room(nom).size === 0
-      for (const nom of buckets.keys()) if (estVide(nom)) buckets.delete(nom)
+      const isEmpty = typeof app === 'function' ? app : (name: string) => app.room(name).size === 0
+      // un salon jamais vide (la page d'accueil) gardait le seau de chaque visiteur passé : un seau redevenu plein vaut un neuf, il part
+      for (const [name, perRoom] of buckets) {
+        if (isEmpty(name)) { buckets.delete(name); continue }
+        for (const [id, b] of perRoom) if (b.full) perRoom.delete(id)
+        if (perRoom.size === 0) buckets.delete(name)
+      }
     },
   }
 }

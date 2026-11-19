@@ -11,7 +11,7 @@ const dir  = process.argv[2]
 const mode = process.argv[3]   // 'avec-close' | 'sans-close'
 
 const journal = createJournal({ dir })
-journal.record('server', { message: 'entree-debouncee', pile: 'Error: fixture journal-close\n  at x', url: '/fixture' })
+journal.record('server', { message: 'entree-debouncee', stack: 'Error: fixture journal-close\n  at x', url: '/fixture' })
 
 if (mode === 'avec-close') journal.close()
 

@@ -139,11 +139,11 @@ describe('MJS-WS — débit partagé (limits.rateBy)', () => {
       const a = await connecte(transport, 'u1')
       const b = await connecte(transport, 'u1')
       await envoie(a, 1)
-      assert.equal((app as any)._seauxPartages(), 1)
+      assert.equal((app as any)._sharedBuckets(), 1)
       a.ws.close(); await tick(10)
-      assert.equal((app as any)._seauxPartages(), 1, 'encore un onglet du compte')
+      assert.equal((app as any)._sharedBuckets(), 1, 'encore un onglet du compte')
       b.ws.close(); await tick(10)
-      assert.equal((app as any)._seauxPartages(), 0)
+      assert.equal((app as any)._sharedBuckets(), 0)
     } finally {
       await app.stop()
     }

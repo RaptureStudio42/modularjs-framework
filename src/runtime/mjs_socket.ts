@@ -62,7 +62,7 @@ var _mjsSockBinSaid = 0;
 // donc l'avertissement prudent
 var _mjsSockDepth = 64;
 // deux suites d'octets ou d'éléments (tampon, vue, tableau typé) : même longueur, mêmes éléments, `NaN` égal à `NaN`
-var _mjsSockOctets = function(x, y) {
+var _mjsSockBytes = function(x, y) {
   if (x.length !== y.length) return false;
   for (var i = 0; i < x.length; i++) if (!Object.is(x[i], y[i])) return false;
   return true;
@@ -85,9 +85,9 @@ var _mjsSockSame = function(a, b, visited) {
     else if (tag === '[object Number]' || tag === '[object Boolean]' || tag === '[object String]') ok = Object.is(a.valueOf(), b.valueOf());
     else if (typeof URL !== 'undefined' && a instanceof URL) ok = a.href === b.href;
     else if (tag === '[object WeakMap]' || tag === '[object WeakSet]') ok = false;
-    else if (tag === '[object ArrayBuffer]' || tag === '[object SharedArrayBuffer]') ok = _mjsSockOctets(new Uint8Array(a), new Uint8Array(b));
-    else if (tag === '[object DataView]') ok = _mjsSockOctets(new Uint8Array(a.buffer, a.byteOffset, a.byteLength), new Uint8Array(b.buffer, b.byteOffset, b.byteLength));
-    else if (ArrayBuffer.isView(a)) ok = _mjsSockOctets(a, b);
+    else if (tag === '[object ArrayBuffer]' || tag === '[object SharedArrayBuffer]') ok = _mjsSockBytes(new Uint8Array(a), new Uint8Array(b));
+    else if (tag === '[object DataView]') ok = _mjsSockBytes(new Uint8Array(a.buffer, a.byteOffset, a.byteLength), new Uint8Array(b.buffer, b.byteOffset, b.byteLength));
+    else if (ArrayBuffer.isView(a)) ok = _mjsSockBytes(a, b);
     else if (a instanceof Map) {
       ok = a.size === b.size;
       a.forEach(function(v, k) { if (ok) ok = b.has(k) && _mjsSockSame(v, b.get(k), visited); });
@@ -139,9 +139,9 @@ var _mjsSockSameAuth = function(a, b) {
     // une autre identité demandée à une adresse déjà tenue : la connexion revient telle quelle, sous sa première
     // identité — la console le dit une fois par connexion, au lieu de se taire
     // sans option, ou sans clé `auth` : l'appel ne demande aucune identité, il reprend la connexion telle qu'elle est
-    var dits = existing._mjs_warnedOpts || (existing._mjs_warnedOpts = {});
-    if (opts && typeof opts === 'object' && 'auth' in opts && !_mjsSockSameAuth(existing.opts && existing.opts.auth, opts.auth) && !dits['reuse-auth']) {
-      dits['reuse-auth'] = true;
+    var told = existing._mjs_warnedOpts || (existing._mjs_warnedOpts = {});
+    if (opts && typeof opts === 'object' && 'auth' in opts && !_mjsSockSameAuth(existing.opts && existing.opts.auth, opts.auth) && !told['reuse-auth']) {
+      told['reuse-auth'] = true;
       µ.warn('[µ.socket] ' + µ._mjs_txt('sockDuplicateAuth', { url: url }, '{url} : une connexion à cette adresse existe déjà avec un autre auth — elle vous revient telle quelle, sous sa première identité ; fermez-la (destroy()) avant d\'en ouvrir une autre sous une autre identité'));
     }
     return existing;
@@ -199,7 +199,7 @@ var _mjsSockSameAuth = function(a, b) {
 // route change, ce que `link` a posé est défait puis refait (la connexion reste ; l'effet relit son salon) ; rend
 // de quoi renoncer
 µ._mjs_fxSock = function(given, server, msg, link, more) {
-  more = more || {};
+  more         = more || {};
   var done     = false;
   var sock     = null;
   var undo     = null;
@@ -210,13 +210,13 @@ var _mjsSockSameAuth = function(a, b) {
   var roomName = null;
   var route    = null;
   var usable   = function(k) { return !!k && typeof k === 'object' && typeof k.room === 'function' && !k._mjs_destroyed; };
-  var prete    = function(k) { return !k._mjs_destroyed && (k.state === 'open' || !k.opts || k.opts.auth === void 0); };
+  var ready    = function(k) { return !k._mjs_destroyed && (k.state === 'open' || !k.opts || k.opts.auth === void 0); };
   var bind     = function(k) {
     sock  = k;
     roomName = more.room ? more.room() : null;
     undo  = link(k);
   };
-  var defait = function() {
+  var revert = function() {
     var u = undo;
     undo = null;
     sock = null;
@@ -256,11 +256,11 @@ var _mjsSockSameAuth = function(a, b) {
       if (done) return;
       done = true;
       if (route) route();
-      defait();
+      revert();
       own.destroy();
     };
   }
-  var lache = function() {
+  var drops = function() {
     if (timer) clearTimeout(timer);
     timer = 0;
     var i = wait ? µ._mjs_sockWait.indexOf(wait) : -1;
@@ -273,24 +273,24 @@ var _mjsSockSameAuth = function(a, b) {
     watch = 0;
   };
   // détruite par l'appli : l'effet s'en détache, et relit sa variable (une autre connexion peut y arriver)
-  var perdue = function() {
-    defait();
+  var onLost = function() {
+    revert();
     startWatch();
   };
-  var branche = function(k) {
-    lache();
+  var branch = function(k) {
+    drops();
     stopWatch();
-    (k._mjs_fxDrops || (k._mjs_fxDrops = [])).push(perdue);
+    (k._mjs_fxDrops || (k._mjs_fxDrops = [])).push(onLost);
     bind(k);
   };
   // une connexion dans la variable : branchée tout de suite, ou à son ouverture si elle a un `auth` (l'appli l'ouvre)
   var adopt = function(k) {
-    if (prete(k)) branche(k);
+    if (ready(k)) branch(k);
     else {
       awaited = k;
       wait  = function() {
-        if (done || !prete(k)) return;
-        branche(k);
+        if (done || !ready(k)) return;
+        branch(k);
       };
       µ._mjs_sockWait.push(wait);
     }
@@ -306,7 +306,7 @@ var _mjsSockSameAuth = function(a, b) {
       return;
     }
     if (!usable(v) || v === awaited) return;
-    lache();
+    drops();
     adopt(v);
   };
   var startWatch = function() {
@@ -325,12 +325,12 @@ var _mjsSockSameAuth = function(a, b) {
     if (done) return;
     done = true;
     if (route) route();
-    lache();
+    drops();
     stopWatch();
     var d = sock && sock._mjs_fxDrops;
-    var i = d ? d.indexOf(perdue) : -1;
+    var i = d ? d.indexOf(onLost) : -1;
     if (i >= 0) d.splice(i, 1);
-    defait();
+    revert();
   };
 };
 
@@ -338,9 +338,9 @@ var _mjsSockSameAuth = function(a, b) {
 // s'il manque, le serveur répond « type inconnu », et l'effet le dit une fois en console au lieu de ne
 // rien faire (cf. _mjs_fxMissing). `invoke` : ce qui s'écrit dans `app.use(…)` quand ce n'est pas `paquet()` —
 // heatmapPackage refuse de démarrer sans ses origines
-µ._mjs_fxPackage = function(sock, prefix, effet, paquet, invoke) {
+µ._mjs_fxPackage = function(sock, prefix, effect, pack, invoke) {
   var p = sock._mjs_fxPackages || (sock._mjs_fxPackages = {});
-  if (!p[prefix]) p[prefix] = { effet: effet, paquet: paquet, invoke: invoke || paquet + '()', dit: false };
+  if (!p[prefix]) p[prefix] = { effect: effect, pack: pack, invoke: invoke || pack + '()', said: false };
 };
 
 // le salon d'un effet en direct : `room` écrit ; sinon la page — son chemin et sa route (`#/…` du
@@ -430,9 +430,9 @@ MjsSocket.prototype._mjs_fxMissing = function(type) {
   var p = this._mjs_fxPackages;
   if (!p) return;
   for (var prefix in p) {
-    if (type.indexOf(prefix) !== 0 || p[prefix].dit) continue;
-    p[prefix].dit = true;
-    µ.error(µ._mjs_msg('socketPackage', { effet: p[prefix].effet, type: type, paquet: p[prefix].paquet, invoke: p[prefix].invoke }, '{effet} : le serveur MJS WS ne connaît pas « {type} » — il lui manque le paquet {paquet} : ajoutez app.use({invoke}) côté serveur ; en attendant, rien ne part'));
+    if (type.indexOf(prefix) !== 0 || p[prefix].said) continue;
+    p[prefix].said = true;
+    µ.error(µ._mjs_msg('socketPackage', { effect: p[prefix].effect, type: type, pack: p[prefix].pack, invoke: p[prefix].invoke }, '{effect} : le serveur MJS WS ne connaît pas « {type} » — il lui manque le paquet {pack} : ajoutez app.use({invoke}) côté serveur ; en attendant, rien ne part'));
   }
 };
 
@@ -679,22 +679,22 @@ MjsSocket.prototype._mjs_onDenied = function(msg) {
   // une requête qui attendait l'ouverture n'est jamais partie : rejetée avec la raison du refus (`denied`), pas « connexion
   // fermée », et jamais envoyée sous une autre identité (la création et la connexion d'un compte repartent d'elles-mêmes sur
   // la connexion invitée qui suit, cf. mjs_accounts.ts)
-  var refus = this._mjs_st.lastError, pend = this._mjs_pendingOpenReqs;
-  var pourquoi = (refus && typeof refus.message === 'string') ? refus.message : 'denied';
+  var rejection = this._mjs_st.lastError, pend = this._mjs_pendingOpenReqs;
+  var why = (rejection && typeof rejection.message === 'string') ? rejection.message : 'denied';
   this._mjs_pendingOpenReqs = [];
   for (var __pi = 0; __pi < pend.length; __pi++) {
     var __r = this._mjs_reqs[pend[__pi].id];
     if (!__r) { continue; }
     delete this._mjs_reqs[pend[__pi].id];
     if (__r.timer) { clearTimeout(__r.timer); }
-    try { __r.reject({ code: 'denied', message: pourquoi }); } catch {}
+    try { __r.reject({ code: 'denied', message: why }); } catch {}
   }
   this._mjs_teardown(true);           // fin définitive
   // la file hors ligne appartient à l'identité refusée : un connect() suivant, peut-être sous une autre identité, n'en
   // envoie rien (même règle à l'adieu du serveur et à la session exclusive perdue, cf. µ:bye et _mjs_onClose), pas plus que
   // de ses envois différés encore en attente — et le dit
-  var perdus = this._mjs_queue.length + this._mjs_cancelPending();
-  if (perdus) { µ.warn('[µ.socket] ' + µ._mjs_txt('sockQueueDenied', { n: perdus }, 'file hors ligne vidée ({n} en attente) : le serveur a refusé l\'identité pour laquelle ces messages ont été écrits, ils ne partent sous aucune autre — renvoyez-les une fois reconnecté si besoin')); }
+  var lost = this._mjs_queue.length + this._mjs_cancelPending();
+  if (lost) { µ.warn('[µ.socket] ' + µ._mjs_txt('sockQueueDenied', { n: lost }, 'file hors ligne vidée ({n} en attente) : le serveur a refusé l\'identité pour laquelle ces messages ont été écrits, ils ne partent sous aucune autre — renvoyez-les une fois reconnecté si besoin')); }
   this._mjs_queue = [];
   this._mjs_queueOverflowWarned = false;
   this._mjs_setState('closed');
@@ -1525,9 +1525,9 @@ MjsSocket.prototype.room = function(name) {
     on:       function(type, h) {
       if (gone) { late('on'); return function() {}; }
       var off = self.on(prefix + type, h);
-      var un  = function() { var i = mine.indexOf(un); if (i !== -1) { mine.splice(i, 1); off(); } };
-      mine.push(un);
-      return un;
+      var one = function() { var i = mine.indexOf(one); if (i !== -1) { mine.splice(i, 1); off(); } };
+      mine.push(one);
+      return one;
     },
     send:     function(type, p, opts) {
       if (gone) { late('send'); return false; }
@@ -1581,18 +1581,18 @@ MjsSocket.prototype.room = function(name) {
 
 // une poignée de discussion ou de hall ouverte pendant qu'un composant s'exécute (initialisation, µmount, effet — fonction
 // de magasin comprise : c'est le moment de l'appel qui compte) suit ce composant, comme µevery : fermée à sa destruction
-// (`fermer` rend false s'il n'y a rien à fermer), rouverte s'il revient dans la page (`ouvrir`). Fermée par l'appli
+// (`fermer` rend false s'il n'y a rien à fermer), rouverte s'il revient dans la page (`openNow`). Fermée par l'appli
 // (`h._mjs_shut`), elle le reste ; ouverte hors de tout composant, rien ne change. Une partie ne suit pas le composant (cf.
 // mjs_game.ts)
-MjsSocket.prototype._mjs_ownHandle = function(h, fermer, ouvrir) {
-  var comp = µ.activeComponent, fin;
+MjsSocket.prototype._mjs_ownHandle = function(h, close, openNow) {
+  var comp = µ.activeComponent, end;
   if (!comp || typeof comp._mjs_onDestroy !== 'function') { return; }
-  fin = function() {
-    comp._mjs_onDestroy(fin);
-    if (h._mjs_shut || fermer() === false) { return; }
-    (comp._mjs_mount_cbs || (comp._mjs_mount_cbs = [])).push(function() { if (!h._mjs_shut) { ouvrir(); } });
+  end = function() {
+    comp._mjs_onDestroy(end);
+    if (h._mjs_shut || close() === false) { return; }
+    (comp._mjs_mount_cbs || (comp._mjs_mount_cbs = [])).push(function() { if (!h._mjs_shut) { openNow(); } });
   };
-  comp._mjs_onDestroy(fin);
+  comp._mjs_onDestroy(end);
 };
 
 MjsSocket.prototype._mjs_onLeft = function(msg) {

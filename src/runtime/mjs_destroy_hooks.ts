@@ -21,7 +21,7 @@
   if (p) Node.prototype.removeChild.call(p, n);
 };
 
-// <retour-sortie>
+// <exit-reverse>
 // le retrait en cours de chaque balise : remise puis retirée de nouveau pendant sa sortie (une microtâche suffit), elle change de
 // retrait, et seul le dernier la retire (cf. `_mjs_destroyWithHooks`)
 var _mjsDyingRuns = new WeakMap();
@@ -31,16 +31,16 @@ var _mjsDyingRuns = new WeakMap();
   var run = _mjsDyingRuns.get(n);
   return !!(run && run.lost);
 };
-// </retour-sortie>
+// </exit-reverse>
 
 if (µ.Element) {
   µ.Element.prototype._mjs_destroyWithHooks = async function(node, waitOut) {
     var elements, timeoutId, transitions;
     node._mjs_dying = true;
-    // <retour-sortie>
+    // <exit-reverse>
     var run = {};
     _mjsDyingRuns.set(node, run);
-    // </retour-sortie>
+    // </exit-reverse>
     // Élément SORTANT avec un outro : on CAPTURE sa position visuelle MAINTENANT
     // (synchrone, avant que `_mjs_reconcileList` ne le déplace en dying-tail). On ne
     // l'épingle pas tout de suite (sinon, en absolute sans top/left, il suivrait
@@ -181,10 +181,10 @@ if (µ.Element) {
           if (typeof µ._mjs_playTransition === 'function') {
             transitions.push(µ._mjs_playTransition(el, el._mjs_outro, 'out'));
           }
-          // <retour-sortie>
+          // <exit-reverse>
           // aucun état de sortie posé par le moteur : rien ne la ramènera (cf. `µ._mjs_outLost`)
           if (!el._mjs_transition_state || el._mjs_transition_state.direction !== 'out') run.lost = true;
-          // </retour-sortie>
+          // </exit-reverse>
         } catch (err) {
           µ.error("Synchronous transition error:", err);
         }
@@ -206,13 +206,13 @@ if (µ.Element) {
         }
       }
     }
-    // <retour-sortie>
+    // <exit-reverse>
     // remise puis retirée de nouveau pendant cette sortie : le retrait suivant libère les remplissages, retire la balise et appelle
     // `@outroend` ; celui-ci s'arrête là, sans quoi il retirerait d'un coup la balise que le suivant fait sortir. Remise et restée :
     // la transition de son retour a repris chaque balise dans son état (cf. `µ._mjs_txBack`), rien n'est à libérer ici — un
     // remplissage rendu maintenant montrerait la balise à son état naturel avant le départ de son entrée
     if (_mjsDyingRuns.get(node) !== run || !node._mjs_dying) return;
-    // </retour-sortie>
+    // </exit-reverse>
     // flash-zombie : `µ._mjs_runTransition` (mode css)
     // DIFFÈRE désormais le `anim.cancel()` (libération du `fill:'forwards'`)
     // d'un membre de CE groupe qui finit son outro individuel AVANT les autres
@@ -229,12 +229,12 @@ if (µ.Element) {
       if (typeof __elFr._mjs_pendingFillRelease === 'function') {
         __elFr._mjs_pendingFillRelease();
       }
-      // <retour-sortie>
+      // <exit-reverse>
       // dernier retrait : l'état de sortie de la balise est défait — le remplissage qui tenait son image de fin est annulé, rien ne reste
       // sur la balise retirée
       const __st = __elFr._mjs_transition_state;
       if (__st && __st.direction === 'out') __st.abort();
-      // </retour-sortie>
+      // </exit-reverse>
     }
     // Si le nœud a été ressuscité (_mjs_tryReviveDying l'a clear), on n'a plus
     // rien à détruire. Les callbacks outroend NE doivent PAS firer dans ce cas.

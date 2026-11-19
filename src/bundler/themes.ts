@@ -54,28 +54,28 @@ export function compileThemeFile(source: string, filePath: string, opts: ThemeCo
   const varPrefix    = opts.varPrefix ?? 'mjs'
   const defaultTheme = opts.defaultTheme ?? 'light'
   const name         = themeNameOf(filePath)
-  if (!THEME_FILE_NAME_RE.test(name)) throw new Error(t('bundler.theme-nom-fichier', { nom: name, fichier: basename(filePath) }))
+  if (!THEME_FILE_NAME_RE.test(name)) throw new Error(t('bundler.theme-name-file', { name, file: basename(filePath) }))
 
   const sections = extractSections(source)
-  if (sections.themes.length === 0)      throw new Error(t('bundler.theme-fichier-sans-bloc', { fichier: basename(filePath) }))
+  if (sections.themes.length === 0)      throw new Error(t('bundler.theme-file-no-block', { file: basename(filePath) }))
   // fichiers de thème — « le fichier ne contient QUE des blocs <theme> (+ commentaires) » : un
   // commentaire HTML (et le blanc autour) hors du bloc est toléré, le reste (balise, texte nu)
   // continue d'échouer avec le même message
-  const htmlUtile = sections.html.replace(/<!--(?:-?>|[\s\S]*?--!?>)/g, '').trim()
-  if (htmlUtile !== '')                  throw new Error(t('bundler.theme-fichier-impur', { fichier: basename(filePath), quoi: 'du HTML' }))
-  if (sections.script.raw.trim() !== '') throw new Error(t('bundler.theme-fichier-impur', { fichier: basename(filePath), quoi: 'un <script>' }))
-  if (sections.style.raw.trim() !== '')  throw new Error(t('bundler.theme-fichier-impur', { fichier: basename(filePath), quoi: 'un <style>' }))
+  const usefulHtml = sections.html.replace(/<!--(?:-?>|[\s\S]*?--!?>)/g, '').trim()
+  if (usefulHtml !== '')                  throw new Error(t('bundler.theme-file-impure', { file: basename(filePath), what: 'du HTML' }))
+  if (sections.script.raw.trim() !== '') throw new Error(t('bundler.theme-file-impure', { file: basename(filePath), what: 'un <script>' }))
+  if (sections.style.raw.trim() !== '')  throw new Error(t('bundler.theme-file-impure', { file: basename(filePath), what: 'un <style>' }))
 
-  const bloc = sections.themes[0]
-  if (sections.themes.length > 1) throw new Error(t('bundler.theme-fichier-multi', { fichier: basename(filePath) }))
-  if (bloc.name !== '')           throw new Error(t('bundler.theme-fichier-name', { fichier: basename(filePath), nom: bloc.name }))
+  const block = sections.themes[0]
+  if (sections.themes.length > 1) throw new Error(t('bundler.theme-file-multi', { file: basename(filePath) }))
+  if (block.name !== '')           throw new Error(t('bundler.theme-file-name', { file: basename(filePath), name: block.name }))
 
   // le thème par défaut vaut AUSSI sans attribut : c'est lui que voit une page nue
-  const cibles = [`:where([data-mjs-theme='${name}'])`, `:where([theme='${name}'])`]
-  if (name === defaultTheme) cibles.unshift(':where(:root)')
+  const targets = [`:where([data-mjs-theme='${name}'])`, `:where([theme='${name}'])`]
+  if (name === defaultTheme) targets.unshift(':where(:root)')
 
-  const rw    = rewriteStyleVars(bloc.raw, { prefix: varPrefix })
-  const css   = compileCss(wrapThemeBlock(cibles.join(','), rw.code, bloc.lang), bloc.lang)
+  const rw  = rewriteStyleVars(block.raw, { prefix: varPrefix })
+  const css = compileCss(wrapThemeBlock(targets.join(','), rw.code, block.lang), block.lang)
   // taille du texte en px rendue adaptable à l'écran, comme dans un <style> (cf. transpiler/font-size) : ses valeurs vont au bloc :root
   const fluid = opts.responsiveFontSize ? rewriteFontSizes(css, opts.responsiveFontSize) : { css, sizes: [] }
 
@@ -94,8 +94,8 @@ export function assembleThemes(themes: CompiledTheme[], defaultTheme = 'light'):
   // Comparaison par POINT DE CODE, jamais `localeCompare` : celui-ci dépend de la locale
   // de la machine — deux builds du même code sur deux postes rendraient un CSS différemment
   // ordonné, exactement ce que `writeManifest` interdit explicitement pour la même raison.
-  const parCodePoint = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
-  const parDefaut = themes.filter(th => th.name === defaultTheme)
-  const autres    = themes.filter(th => th.name !== defaultTheme).sort((a, b) => parCodePoint(a.name, b.name))
-  return [...parDefaut, ...autres].map(th => th.css).join('')
+  const byCodePoint   = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
+  const defaultThemes = themes.filter(th => th.name === defaultTheme)
+  const others        = themes.filter(th => th.name !== defaultTheme).sort((a, b) => byCodePoint(a.name, b.name))
+  return [...defaultThemes, ...others].map(th => th.css).join('')
 }

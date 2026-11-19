@@ -33,8 +33,8 @@ const HOTE = [
 
 // pour chaque visionneuse : sa balise, ce que son titre dit, une ligne de sa liste, la partie qui s'ouvre au clic
 const VISIONNEUSES: Record<string, { balise: string, titre: string, ligne: string, clic: string, detail: string }> = {
-  theme:  { balise: 'mjs-theme-viewer', titre: 'Variables de thème', ligne: '.variable', clic: '.variable .nom', detail: '.variable .detail' },
-  errors: { balise: 'mjs-journal-viewer', titre: 'Journal d\'erreurs', ligne: '.entree', clic: '.entree', detail: '.entree .pile' },
+  theme:  { balise: 'mjs-theme-viewer', titre: 'Variables de thème', ligne: '.variable', clic: '.variable .name', detail: '.variable .detail' },
+  errors: { balise: 'mjs-journal-viewer', titre: 'Journal d\'erreurs', ligne: '.entry', clic: '.entry', detail: '.entry .stack' },
 }
 
 function projet(coeur: 'complet' | 'nu', js: 'split' | 'bundle', manifesteAPart = false): string {
@@ -140,7 +140,7 @@ describe('visionneuses de développement — navigateurs réels, serveurs réels
     const bilan: string[] = []
     try {
       // une erreur cliente au journal : la liste du journal a une ligne à déplier
-      const envoi = await fetch(`${base}/__mjs/errors`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'boum', pile: 'Error: boum\n    at essai', url: `${base}/`, version: '1' }) })
+      const envoi = await fetch(`${base}/__mjs/errors`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'boum', stack: 'Error: boum\n    at essai', url: `${base}/`, version: '1' }) })
       assert.equal(envoi.status, 204, 'l\'erreur cliente est reçue par le journal')
       for (const [nomNavigateur, navigateur] of Object.entries(navigateurs)) for (const nom of Object.keys(VISIONNEUSES)) {
         const v = await inspecter(navigateur, base, nom)

@@ -11,7 +11,7 @@
 //   load()             → HGETALL <prefix>games (une seule commande, tout le hash d'un coup,
 //                         réponse RESP = tableau PLAT [champ1, valeur1, champ2, valeur2, …])
 //
-// CONNEXION PARESSEUSE — AUCUN socket ouvert avant le premier save/remove/load (cf. _amorcer) :
+// CONNEXION PARESSEUSE — AUCUN socket ouvert avant le premier save/remove/load (cf. _prime) :
 // une seule connexion en rôle 'command' (jamais de pub/sub ici, contrairement à RedisAdapter côté
 // MJS-WS). FILE D'ATTENTE pendant l'indisponibilité — save/remove/load appelés AVANT que la
 // connexion soit prête (1er appel, ou Redis injoignable/en reconnexion) sont mis en attente
@@ -68,7 +68,7 @@ export class RedisPersistAdapter implements MjsServerPersistAdapter {
   private _conn: RedisConnection
   private _key: string
   private _onLog: MjsWsLogFn
-  private _amorcee = false
+  private _primed = false
   private _inFlight = new PendingWrites()
   // callbacks « réveille-moi à la prochaine connexion réussie » — posés par _awaitConnection,
   // consommés (splice) à CHAQUE onConnected (initiale ou reconnexion), jamais accumulés au-delà
@@ -86,9 +86,9 @@ export class RedisPersistAdapter implements MjsServerPersistAdapter {
     })
   }
 
-  private _amorcer(): void {
-    if (this._amorcee) return
-    this._amorcee = true
+  private _prime(): void {
+    if (this._primed) return
+    this._primed = true
     this._conn.connect()
   }
 
@@ -99,7 +99,7 @@ export class RedisPersistAdapter implements MjsServerPersistAdapter {
    *  qui peut ne jamais survenir si Redis reste indisponible longtemps) : N attentes expirées = N
    *  closures retenues en mémoire pour rien. */
   private _awaitConnection(timeoutMs: number): Promise<boolean> {
-    this._amorcer()
+    this._prime()
     if (this._conn.ready) return Promise.resolve(true)
     return new Promise((resolve) => {
       let settled = false
@@ -119,10 +119,10 @@ export class RedisPersistAdapter implements MjsServerPersistAdapter {
    *  prochaine connexion, bornée à CONNECT_TIMEOUT_MS) — jamais throw, toujours un warn en cas
    *  d'échec (connexion jamais obtenue OU commande RESP en erreur). */
   private _runWhenReady(task: () => Promise<void>, label: string): Promise<void> {
-    const run = () => task().catch(err => this._onLog('warn', t('serveur.persist-redis-operation-echouee', { label: label }), { err: err instanceof Error ? err.message : String(err) }))
+    const run = () => task().catch(err => this._onLog('warn', t('mjs-server.persist-redis-operation-failed', { label: label }), { err: err instanceof Error ? err.message : String(err) }))
     if (this._conn.ready) return run()
     return this._awaitConnection(CONNECT_TIMEOUT_MS).then((ready) => {
-      if (!ready) { this._onLog('warn', t('serveur.persist-redis-connexion-indisponible', { label: label, timeout: CONNECT_TIMEOUT_MS })); return }
+      if (!ready) { this._onLog('warn', t('mjs-server.persist-redis-connection-unavailable', { label: label, timeout: CONNECT_TIMEOUT_MS })); return }
       return run()
     })
   }
@@ -130,28 +130,28 @@ export class RedisPersistAdapter implements MjsServerPersistAdapter {
   // garde-fou — .catch() : une promesse orpheline rejetée ne doit JAMAIS devenir un unhandledRejection
   // (Node 20 tue le process dessus). En pratique _runWhenReady catche déjà tout en interne (jamais un
   // rejet ici) — filet de sécurité. `_inFlight` ne suit `p` que WRITE_TIMEOUT_MS (cf. l'en-tête)
-  private _suivre(p: Promise<void>, label: string): Promise<void> {
+  private _track(p: Promise<void>, label: string): Promise<void> {
     this._inFlight.track(p)
-    return p.catch(err => this._onLog('warn', t('serveur.persist-backend-rejet-non-intercepte', { backend: 'redis', label: label }), { err: err instanceof Error ? err.message : String(err) }))
+    return p.catch(err => this._onLog('warn', t('mjs-server.persist-backend-unhandled-rejection', { backend: 'redis', label: label }), { err: err instanceof Error ? err.message : String(err) }))
   }
 
-  // promesse rendue = fin de la commande, jamais rejetée (cf. _suivre) : le moteur s'y enchaîne
+  // promesse rendue = fin de la commande, jamais rejetée (cf. _track) : le moteur s'y enchaîne
   save(id: string, data: MjsServerGameSnapshot): Promise<void> {
-    return this._suivre(this._runWhenReady(() => this._conn.send(['HSET', this._key, id, encodeSnapshot(data)]).then(() => {}), `save('${id}')`), `save('${id}')`)
+    return this._track(this._runWhenReady(() => this._conn.send(['HSET', this._key, id, encodeSnapshot(data)]).then(() => {}), `save('${id}')`), `save('${id}')`)
   }
 
   remove(id: string): Promise<void> {
-    return this._suivre(this._runWhenReady(() => this._conn.send(['HDEL', this._key, id]).then(() => {}), `remove('${id}')`), `remove('${id}')`)
+    return this._track(this._runWhenReady(() => this._conn.send(['HDEL', this._key, id]).then(() => {}), `remove('${id}')`), `remove('${id}')`)
   }
 
   async load(): Promise<Array<{ id: string; data: MjsServerGameSnapshot }>> {
     const ready = await this._awaitConnection(CONNECT_TIMEOUT_MS)
-    if (!ready) { this._onLog('warn', t('serveur.persist-redis-load-delai-depasse', { timeout: CONNECT_TIMEOUT_MS })); return [] }
+    if (!ready) { this._onLog('warn', t('mjs-server.persist-redis-load-timeout', { timeout: CONNECT_TIMEOUT_MS })); return [] }
     try {
       const v = await this._conn.send(['HGETALL', this._key])
       return this._parserHash(v)
     } catch (err) {
-      this._onLog('warn', t('serveur.persist-backend-load-echoue', { backend: 'redis' }), { err: err instanceof Error ? err.message : String(err) })
+      this._onLog('warn', t('mjs-server.persist-backend-load-failed', { backend: 'redis' }), { err: err instanceof Error ? err.message : String(err) })
       return []
     }
   }
@@ -162,7 +162,7 @@ export class RedisPersistAdapter implements MjsServerPersistAdapter {
     for (let i = 0; i + 1 < flat.length; i += 2) {
       const id = String(flat[i])
       try { results.push({ id, data: decodeSnapshot(flat[i + 1]) }) }
-      catch (err) { this._onLog('warn', t('serveur.persist-backend-entree-illisible', { backend: 'redis', id: id }), { err: err instanceof Error ? err.message : String(err) }) }
+      catch (err) { this._onLog('warn', t('mjs-server.persist-backend-entry-unreadable', { backend: 'redis', id: id }), { err: err instanceof Error ? err.message : String(err) }) }
     }
     return results
   }
@@ -172,7 +172,7 @@ export class RedisPersistAdapter implements MjsServerPersistAdapter {
    *  la justification (dernier appel du cycle de vie). */
   async flush(): Promise<void> {
     const unanswered = await this._inFlight.settle()
-    if (unanswered > 0) this._onLog('warn', t('serveur.persist-backend-flush-sans-reponse', { backend: 'redis', nb: unanswered, delai: WRITE_TIMEOUT_MS / 1000 }))
+    if (unanswered > 0) this._onLog('warn', t('mjs-server.persist-backend-flush-no-response', { backend: 'redis', count: unanswered, delay: WRITE_TIMEOUT_MS / 1000 }))
     this._conn.stop()
   }
 }

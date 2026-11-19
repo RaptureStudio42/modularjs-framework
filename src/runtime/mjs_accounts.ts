@@ -101,14 +101,14 @@ if (typeof MjsSocket !== 'undefined') {
   // applique un jeton FRAÎCHEMENT élevé (hello déjà accepté, cf. _compteElever) — store + stockage
   // local, en un seul point pour ne jamais désynchroniser les deux.
   function _accountApply(h, token) {
-    var payload = _accountDecodeToken(token);
-    h._mjs_jeton = token;
+    var payload      = _accountDecodeToken(token);
+    h._mjs_token     = token;
     h.state.loggedIn = true;
-    h.state.name   = (payload && payload.name) || null;
+    h.state.name     = (payload && payload.name) || null;
     h.state.roles    = (payload && payload.roles) || [];
     h.state.token    = token;
-    h.state.error   = null;
-    _accountWrite(h._mjs_cle, token);
+    h.state.error    = null;
+    _accountWrite(h._mjs_sk, token);
   }
 
   // normalise une raison de rejet en CHAÎNE affichable — les refus serveur (account:create/connecter)
@@ -126,13 +126,13 @@ if (typeof MjsSocket !== 'undefined') {
   // déconnexion ») + restaure l'auth D'ORIGINE (cf. tête de fichier « Élévation », sans quoi une
   // reconnexion future ressusciterait le compte via la closure encore vivante du jeton révoqué).
   function _accountForget(h) {
-    h._mjs_jeton = null;
+    h._mjs_token     = null;
     h._mjs_authToken = null;
     h.state.loggedIn = false;
-    h.state.name   = null;
+    h.state.name     = null;
     h.state.roles    = [];
     h.state.token    = null;
-    _accountErase(h._mjs_cle);
+    _accountErase(h._mjs_sk);
     h._mjs_sock.opts.auth = h._mjs_originalAuth;
   }
 
@@ -164,65 +164,65 @@ if (typeof MjsSocket !== 'undefined') {
     var self = h._mjs_sock;
     self.opts.auth = function() { return token; };
     // jeton en cours d'élévation — tout welcome AUTHENTIFIÉ ultérieur (même arrivé après le rejet
-    // de CETTE promesse, cf. surWelcome/wiring persistant dans _mjs_ensureAccountWiring) remet
+    // de CETTE promesse, cf. onWelcome/wiring persistant dans _mjs_ensureAccountWiring) remet
     // compte.state en accord avec la connexion réelle. Effacé par _accountForget (déconnexion, ou
     // refus EXPLICITE du serveur) — jamais par la sonde ni par le filet de temps, qui ne prouvent rien.
     h._mjs_authToken = token;
     return new Promise(function(resolve, reject) {
-      var reglee = false;
-      var minuteur, sondeur;
-      function fini() {
-        clearTimeout(minuteur);
-        clearInterval(sondeur);
-        self.off('welcome', surWelcome);
-        self.off('denied', surRefus);
+      var settled = false;
+      var timer, prober;
+      function finished() {
+        clearTimeout(timer);
+        clearInterval(prober);
+        self.off('welcome', onWelcome);
+        self.off('denied', onDenied);
       }
-      function surWelcome() {
+      function onWelcome() {
         // jeton PÉRIMÉ (logout()/nouvelle élévation entre-temps, cf. _accountForget/_accountElevate) :
         // une opération plus récente rend caduque la réponse de celle-ci — ne jamais ressusciter le
         // compte sur un jeton qui n'est plus celui en cours.
-        if (reglee || h._mjs_authToken !== token) { return; }
-        reglee = true;
-        fini();
+        if (settled || h._mjs_authToken !== token) { return; }
+        settled = true;
+        finished();
         _accountApply(h, token);
         resolve();
       }
-      function surRefus(p) {
-        if (reglee) { return; }
-        reglee = true;
-        fini();
-        reject(p || { code: 'account-elevation-echec', message: 'connexion refusée' });
+      function onDenied(p) {
+        if (settled) { return; }
+        settled = true;
+        finished();
+        reject(p || { code: 'account-elevation-failed', message: 'connexion refusée' });
       }
-      self.on('welcome', surWelcome);
-      self.on('denied', surRefus);
-      sondeur = setInterval(function() {
-        if (reglee || self.state !== 'closed') { return; }
-        reglee = true;
-        fini();
-        reject(self.lastError || { code: 'account-elevation-echec', message: 'connexion fermée' });
+      self.on('welcome', onWelcome);
+      self.on('denied', onDenied);
+      prober = setInterval(function() {
+        if (settled || self.state !== 'closed') { return; }
+        settled = true;
+        finished();
+        reject(self.lastError || { code: 'account-elevation-failed', message: 'connexion fermée' });
       }, MJS_ACCOUNT_ELEVATION_PROBE_MS);
-      minuteur = setTimeout(function() {
-        if (reglee) { return; }
-        reglee = true;
-        fini();
-        reject(self.lastError || { code: 'account-elevation-echec', message: 'aucune réponse du serveur' });
+      timer = setTimeout(function() {
+        if (settled) { return; }
+        settled = true;
+        finished();
+        reject(self.lastError || { code: 'account-elevation-failed', message: 'aucune réponse du serveur' });
       }, MJS_ACCOUNT_ELEVATION_TIMEOUT_MS);
       self._mjs_reopen();
     });
   }
 
   MjsSocket.prototype._mjs_ensureAccountWiring = function() {
-    if (this._mjs_compteWired) { return; }
-    this._mjs_compteWired = true;
-    var self = this;
-    var conf = this.opts.account;
-    var key  = (conf && conf.key) || MJS_ACCOUNT_DEFAULT_KEY;
-    var state = µ.state({ loggedIn: false, name: null, roles: [], error: null, token: null });
+    if (this._mjs_accountWired) { return; }
+    this._mjs_accountWired = true;
+    var self               = this;
+    var conf               = this.opts.account;
+    var key                = (conf && conf.key) || MJS_ACCOUNT_DEFAULT_KEY;
+    var state              = µ.state({ loggedIn: false, name: null, roles: [], error: null, token: null });
     // opts.auth D'ORIGINE — capturé UNE FOIS, AVANT toute élévation (cf. _compteOublier) : ce
     // module « emprunte » opts.auth pendant qu'une identité de compte est active, le lui rend à la
     // déconnexion — jamais une appropriation permanente d'un réglage qui appartient à l'appli.
-    var h = { state: state, _mjs_sock: self, _mjs_cle: key, _mjs_jeton: null, _mjs_authToken: null, _mjs_originalAuth: this.opts.auth };
-    this._mjs_compte = h;
+    var h = { state: state, _mjs_sock: self, _mjs_sk: key, _mjs_token: null, _mjs_authToken: null, _mjs_originalAuth: this.opts.auth };
+    this._mjs_account = h;
 
     // welcome PERSISTANT (vit tant que le socket existe, contrairement au 'welcome' scopé à UNE
     // seule élévation dans _accountElevate, désabonné dès que sa propre promesse se règle) : un
@@ -281,7 +281,7 @@ if (typeof MjsSocket !== 'undefined') {
       // l'intention de déconnexion LOCALE prime, TOUT DE SUITE — jamais après l'ack (cf. tête de
       // fichier) : une élévation encore en vol (son propre welcome pas encore reçu) ne doit jamais
       // ressusciter loggedIn/le jeton après ce point, même si ce welcome arrive avant la réponse de
-      // CETTE requête account:logout (cf. surWelcome/_accountElevate, gardé par h._mjs_authToken).
+      // CETTE requête account:logout (cf. onWelcome/_accountElevate, gardé par h._mjs_authToken).
       _accountForget(h);
       p.catch(function() {});   // échec réseau déjà sans conséquence pour l'état local, purgé ci-dessus
       return p;
@@ -294,9 +294,9 @@ if (typeof MjsSocket !== 'undefined') {
     // Seul un refus du serveur l'efface (denied persistant ci-dessus, qui fait repartir la page en
     // invité) : un accueil plus lent que le filet de temps ou un close() de l'appli ne prouvent rien
     // contre lui, le rejet de l'élévation est alors sans suite.
-    var stocke = _accountRead(key);
-    if (stocke) {
-      _accountElevate(h, stocke).catch(function() {});
+    var stored = _accountRead(key);
+    if (stored) {
+      _accountElevate(h, stored).catch(function() {});
     }
   };
 
@@ -309,7 +309,7 @@ if (typeof MjsSocket !== 'undefined') {
     get: function() {
       this._mjs_ensureAccountWiring();
       this._mjs_ensure();
-      return this._mjs_compte.state;
+      return this._mjs_account.state;
     },
   });
 

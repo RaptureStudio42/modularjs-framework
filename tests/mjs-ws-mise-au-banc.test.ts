@@ -110,8 +110,8 @@ describe('MJS-WS — mise au banc par compte', () => {
       autre.ws.close()
 
       const s = app.stats()
-      assert.equal(s.garde.misesAuBanc, 1)
-      assert.equal(s.connexions.refuseesBan, 1)
+      assert.equal(s.guard.bans, 1)
+      assert.equal(s.connections.refusedBan, 1)
     } finally {
       await app.stop()
     }
@@ -123,7 +123,7 @@ describe('MJS-WS — mise au banc par compte', () => {
       await seFaireExpulser(transport, 'u1')
       const retour = await rawHello(transport, 'u1')
       assert.ok(retour.frames.some(f => f.t === 'µ:welcome'))
-      assert.equal(app.stats().garde.misesAuBanc, 0)
+      assert.equal(app.stats().guard.bans, 0)
       retour.ws.close()
     } finally {
       await app.stop()
@@ -178,7 +178,7 @@ describe('MJS-WS — mise au banc par compte', () => {
         assert.equal(await c.fermeture, 4000, 'expulsé pour silence')
         await tick()
       }
-      assert.equal(app.stats().garde.misesAuBanc, 0)
+      assert.equal(app.stats().guard.bans, 0)
     } finally {
       await app.stop()
     }
@@ -213,7 +213,7 @@ describe('MJS-WS — mise au banc par compte', () => {
       await seFaireExpulser(transport)
       const retour = await rawHello(transport)
       assert.ok(retour.frames.some(f => f.t === 'µ:welcome'))
-      assert.equal(app.stats().garde.misesAuBanc, 0)
+      assert.equal(app.stats().guard.bans, 0)
       retour.ws.close()
     } finally {
       await app.stop()
@@ -226,10 +226,10 @@ describe('MJS-WS — mise au banc par compte', () => {
       await seFaireExpulser(transport, 'u1')                       // une faute, sous le seuil
       await seFaireExpulser(transport, 'u2')
       await seFaireExpulser(transport, 'u2')                       // u2 au banc
-      assert.deepEqual((app as any)._banc(), { fautes: 1, bannis: 1 })
+      assert.deepEqual((app as any)._banState(), { faults: 1, banned: 1 })
       await tick(150)
       const c = await rawHello(transport, 'u3')                    // toute nouvelle arrivée balaie l'expiré
-      assert.deepEqual((app as any)._banc(), { fautes: 0, bannis: 0 })
+      assert.deepEqual((app as any)._banState(), { faults: 0, banned: 0 })
       c.ws.close()
     } finally {
       await app.stop()
@@ -266,7 +266,7 @@ describe('MJS-WS — mise au banc par IP (socket réel, 127.0.0.1)', function ()
       const { code, raison } = await refusee.fermeture
       assert.equal(code, 1008, 'refus à l’admission, avant tout hello')
       assert.match(raison, /banni|banned/i)
-      assert.equal(app.stats().connexions.refuseesBan, 1)
+      assert.equal(app.stats().connections.refusedBan, 1)
     } finally {
       await app.stop()
     }
@@ -286,7 +286,7 @@ describe('MJS-WS — mise au banc par IP (socket réel, 127.0.0.1)', function ()
       }
       const refusee = connectReal(port)
       assert.equal((await refusee.fermeture).code, 1008, 'l’IP est au banc après 2 trames trop lourdes')
-      assert.equal(app.stats().garde.misesAuBanc, 1)
+      assert.equal(app.stats().guard.bans, 1)
     } finally {
       await app.stop()
     }

@@ -65,7 +65,7 @@ function _mjsFxSpritePoses(v) {
   for (var i = 0; i < list.length && out.length < 1000; i++) {
     var txt = String(list[i]).trim();
     if (/^\d+$/.test(txt)) out.push(Math.min(999, Number(txt)));
-    else µ.warn(µ._mjs_msg('spritePoses', { valeur: txt }, '*sprite : poses : « {valeur} » n\'est pas un numéro de case — écarté'));
+    else µ.warn(µ._mjs_msg('spritePoses', { value: txt }, '*sprite : poses : « {value} » n\'est pas un numéro de case — écarté'));
   }
   return out.length > 0 ? out : null;
 }

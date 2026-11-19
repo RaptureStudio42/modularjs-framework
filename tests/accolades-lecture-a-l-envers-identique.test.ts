@@ -5,9 +5,9 @@
 // divisions, conditions (`if (…) /x/`) jusqu'au-delà des 400 caractères où se cherche leur parenthèse ouvrante
 
 import assert from 'node:assert/strict'
-import { Scanner, extractBalanced, lireAccoladesALEnvers } from '../src/parser/index.js'
+import { Scanner, extractBalanced, readBracesBackward } from '../src/parser/index.js'
 
-type Lue = { corps: string, fin: number } | null
+type Lue = { body: string, end: number } | null
 
 // chaque accolade lue seule, du texte qui la suit : la définition
 function reference(html: string): Map<number, Lue> {
@@ -16,7 +16,7 @@ function reference(html: string): Map<number, Lue> {
     const lecteur = new Scanner(html)
     lecteur.pos = at + 1
     try {
-      lues.set(at, { corps: extractBalanced(lecteur, '}'), fin: lecteur.pos })
+      lues.set(at, { body: extractBalanced(lecteur, '}'), end: lecteur.pos })
     }
     catch {
       lues.set(at, null)
@@ -50,7 +50,7 @@ function texte(hasard: () => number, morceaux: number, longs: boolean): string {
 
 function compare(html: string): void {
   const attendu = [...reference(html)]
-  const lu      = [...lireAccoladesALEnvers(html)].sort((a, b) => a[0] - b[0])
+  const lu      = [...readBracesBackward(html)].sort((a, b) => a[0] - b[0])
   assert.deepEqual(lu, attendu, `texte : ${JSON.stringify(html)}`)
 }
 

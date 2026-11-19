@@ -18,7 +18,7 @@ async function dureePresence(total: number): Promise<number> {
   const t0 = performance.now()
   for (let i = 0; i < N; i++) rooms.onDisconnect(clients[i])
   const duree = performance.now() - t0
-  assert.equal(rooms.statsSnapshot().abonnesPresence, total - N, 'les abonnés partis sont bien retirés, les autres restent')
+  assert.equal(rooms.statsSnapshot().presenceSubscribers, total - N, 'les abonnés partis sont bien retirés, les autres restent')
   return duree
 }
 

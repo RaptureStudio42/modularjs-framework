@@ -50,7 +50,7 @@ describe('µ.smooth — auto-dispose via opts.owner (fuite rAF à vie sinon)', f
     const owner = makeFakeOwner()
     const source: any = { a: { x: 1, y: 1 } }
 
-    const out = µ.smooth(source, { retard: 0, owner })
+    const out = µ.smooth(source, { delay: 0, owner })
     const task = getTask()
 
     assert.equal(µ.Ticker._mjs_tasks.has(task), true, 'la tâche est bien active avant destruction du owner')
@@ -75,7 +75,7 @@ describe('µ.smooth — auto-dispose via opts.owner (fuite rAF à vie sinon)', f
   it("sans owner (comportement pré-existant) : aucun _mjs_onDestroy n'est appelé, dispose() manuel toujours nécessaire", function () {
     const { µ, getTask } = makeMu()
     const source: any = {}
-    const out = µ.smooth(source, { retard: 0 }) // pas de owner
+    const out = µ.smooth(source, { delay: 0 }) // pas de owner
     const task = getTask()
 
     assert.equal(µ.Ticker._mjs_tasks.has(task), true)
@@ -88,7 +88,7 @@ describe('µ.smooth — auto-dispose via opts.owner (fuite rAF à vie sinon)', f
   it("owner fourni SANS _mjs_onDestroy (objet quelconque) : pas de crash, dégrade gracieusement vers le comportement manuel", function () {
     const { µ } = makeMu()
     const source: any = {}
-    assert.doesNotThrow(() => µ.smooth(source, { retard: 0, owner: {} }))
-    assert.doesNotThrow(() => µ.smooth(source, { retard: 0, owner: null }))
+    assert.doesNotThrow(() => µ.smooth(source, { delay: 0, owner: {} }))
+    assert.doesNotThrow(() => µ.smooth(source, { delay: 0, owner: null }))
   })
 })

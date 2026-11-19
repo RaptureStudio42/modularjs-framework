@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import { mjsWs } from '../src/mjs-ws/index.js'
 import { MemoryTransport } from '../src/mjs-ws/transport.js'
-import { creerRegistre, defSchema, encode, decode, hashRegistre, chargerDefinitions } from '../src/schema/core.js'
+import { createRegistry, defineSchema, encode, decode, hashRegistry, loadDefinitions } from '../src/schema/core.js'
 import type { MjsWsApp, MjsWsOptions } from '../src/mjs-ws/index.js'
 
 const tick = (ms = 0) => new Promise<void>(r => setTimeout(r, ms))
@@ -43,15 +43,15 @@ describe('MJS-WS — µschema (intégration serveur, client brut simulé)', () =
     app.on('pos', (p, client) => recus.push({ p, id: client.id }))
     const { ws } = await connectHello(transport, 'memory://s1')
 
-    const registreTest = creerRegistre()
-    defSchema(registreTest, 'pos', { x: 'i16', y: 'i16' })   // MÊME déclaration, registre SÉPARÉ
+    const registreTest = createRegistry()
+    defineSchema(registreTest, 'pos', { x: 'i16', y: 'i16' })   // MÊME déclaration, registre SÉPARÉ
     ws.send(encode(registreTest, 'pos', { x: -7, y: 42 }))
     await tick()
 
     assert.equal(recus.length, 1)
     assert.deepEqual(recus[0].p, { x: -7, y: 42 })
-    assert.equal(app.stats().messages.binaireRecues, 1)
-    assert.equal(app.stats().messages.binaireIgnorees, 0)
+    assert.equal(app.stats().messages.binaryReceived, 1)
+    assert.equal(app.stats().messages.binaryIgnored, 0)
   })
 
   it('2. sortant — app.send()/broadcast()/room().send() encodent en binaire quand le type a un schéma, décodable par un registre indépendant', async () => {
@@ -67,9 +67,9 @@ describe('MJS-WS — µschema (intégration serveur, client brut simulé)', () =
 
     const binaires = binOf(recu)
     assert.equal(binaires.length, 2, 'send() + broadcast() → 2 trames binaires (room vide → 0 destinataire)')
-    const registreTest = creerRegistre()
-    defSchema(registreTest, 'etat', { hp: 'u8', pseudo: 'str8' })
-    assert.deepEqual(binaires.map(b => decode(registreTest, b).objet), [{ hp: 80, pseudo: 'Zora' }, { hp: 55, pseudo: 'Elfe' }])
+    const registreTest = createRegistry()
+    defineSchema(registreTest, 'etat', { hp: 'u8', pseudo: 'str8' })
+    assert.deepEqual(binaires.map(b => decode(registreTest, b).data), [{ hp: 80, pseudo: 'Zora' }, { hp: 55, pseudo: 'Elfe' }])
   })
 
   it('3. codec \'binary\' strict — texte applicatif REJETÉ (compté + µ:error throttlé) ; envoi SANS schéma → throw à l\'envoi, déterministe même sans destinataire', async () => {
@@ -82,7 +82,7 @@ describe('MJS-WS — µschema (intégration serveur, client brut simulé)', () =
     ws.send(JSON.stringify({ t: 'chatTexte', p: { msg: 'salut' } }))
     await tick()
 
-    assert.equal(app.stats().messages.texteRejete, 1)
+    assert.equal(app.stats().messages.textRejected, 1)
     assert.ok(framesOfType(recu, 'µ:error').length >= 1, 'µ:error reçu pour le texte applicatif rejeté')
   })
 
@@ -112,7 +112,7 @@ describe('MJS-WS — µschema (intégration serveur, client brut simulé)', () =
   it('6. hello.schemaHash différent → µ:schema poussée juste après welcome, DÉFINITIONS rechargeables ET décodables (voyage complet)', async () => {
     const { transport, app } = await startApp()
     app.schema('pos', { x: 'i16', y: 'i16' })
-    const attendu = (() => { const r = creerRegistre(); defSchema(r, 'pos', { x: 'i16', y: 'i16' }); return hashRegistre(r) })()
+    const attendu = (() => { const r = createRegistry(); defineSchema(r, 'pos', { x: 'i16', y: 'i16' }); return hashRegistry(r) })()
 
     const { recu } = await connectHello(transport, 'memory://s6', { schemaHash: 'pas-le-bon-hash' })
     const welcome     = framesOfType(recu, 'µ:welcome')[0]
@@ -121,29 +121,29 @@ describe('MJS-WS — µschema (intégration serveur, client brut simulé)', () =
     assert.equal(welcome.p.schemaHash, attendu)
     assert.equal(schemaFrame.p.version, attendu)
 
-    const rechargé = chargerDefinitions(schemaFrame.p.definitions)
+    const rechargé = loadDefinitions(schemaFrame.p.definitions)
     const client = Array.from(app.clients)[0]
     app.send(client, 'pos', { x: 12, y: -3 })
     await tick()
     const dernierBinaire = binOf(recu).at(-1)!
-    assert.deepEqual(decode(rechargé, dernierBinaire).objet, { x: 12, y: -3 })
+    assert.deepEqual(decode(rechargé, dernierBinaire).data, { x: 12, y: -3 })
   })
 
   it('6b. hello.schemaHash IDENTIQUE au serveur → aucune µ:schema poussée (rien à synchroniser)', async () => {
     const { transport, app } = await startApp()
     app.schema('pos', { x: 'i16', y: 'i16' })
-    const hashServeur = (() => { const r = creerRegistre(); defSchema(r, 'pos', { x: 'i16', y: 'i16' }); return hashRegistre(r) })()
+    const hashServeur = (() => { const r = createRegistry(); defineSchema(r, 'pos', { x: 'i16', y: 'i16' }); return hashRegistry(r) })()
     const { recu } = await connectHello(transport, 'memory://s6b', { schemaHash: hashServeur })
     assert.equal(framesOfType(recu, 'µ:schema').length, 0)
   })
 
-  it('7. entrant — id de schéma inconnu → binaireIgnorees compté ; µ:error throttlé SEULEMENT en mode \'binary\' (silence en \'auto\')', async () => {
+  it('7. entrant — id de schéma inconnu → binaryIgnored compté ; µ:error throttlé SEULEMENT en mode \'binary\' (silence en \'auto\')', async () => {
     const { transport: t1, app: a1 } = await startApp()
     a1.schema('x', { n: 'u8' })
     const { ws: ws1, recu: r1 } = await connectHello(t1, 'memory://s7a')
     ws1.send(new Uint8Array([250]))   // id hors registre (un seul schéma déclaré → id 0 valide, 250 ne l'est pas)
     await tick()
-    assert.equal(a1.stats().messages.binaireIgnorees, 1)
+    assert.equal(a1.stats().messages.binaryIgnored, 1)
     assert.equal(framesOfType(r1, 'µ:error').length, 0, 'mode auto — silencieux (pas de canal de reconnaissance gratuit)')
 
     const { transport: t2, app: a2 } = await startApp({ codec: 'binary', onLog: () => {} })
@@ -151,7 +151,7 @@ describe('MJS-WS — µschema (intégration serveur, client brut simulé)', () =
     const { ws: ws2, recu: r2 } = await connectHello(t2, 'memory://s7b')
     ws2.send(new Uint8Array([250]))
     await tick()
-    assert.equal(a2.stats().messages.binaireIgnorees, 1)
+    assert.equal(a2.stats().messages.binaryIgnored, 1)
     assert.ok(framesOfType(r2, 'µ:error').length >= 1, 'mode binary — signalée par µ:error throttlé')
   })
 
@@ -196,7 +196,7 @@ describe('MJS-WS — µschema (intégration serveur, client brut simulé)', () =
     for (let i = 0; i < 5; i++) ws.send(malformee)
     await tick()
 
-    assert.equal(app.stats().messages.binaireIgnorees, 5, 'chaque trame malformée compte, throttlée ou non (compteur jamais gagé par le throttle)')
+    assert.equal(app.stats().messages.binaryIgnored, 5, 'chaque trame malformée compte, throttlée ou non (compteur jamais gagé par le throttle)')
     assert.equal(logs.length, 1, 'AVANT le fix : 1 log par trame reçue (5) — APRÈS : throttlé comme sendThrottledError, 1 seul log pour la fenêtre')
     assert.equal(framesOfType(recu, 'µ:error').length, 1, 'µ:error client — même fenêtre partagée que le log (une seule porte throttleActif)')
   })

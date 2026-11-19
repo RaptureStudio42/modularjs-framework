@@ -98,7 +98,7 @@ describe('MJS-WS — pont universel : nonce anti-rejeu exigé par défaut', func
       assert.equal(premiere.status, 200)
       assert.deepEqual(premiere.json, { ok: true })
       assert.equal(rejeu.status, 401)
-      assert.equal(rejeu.json.error, 'nonce-rejoué')
+      assert.equal(rejeu.json.error, 'nonce-replayed')
     }
     finally {
       await app.stop()

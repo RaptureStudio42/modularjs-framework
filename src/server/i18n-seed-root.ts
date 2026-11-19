@@ -10,14 +10,14 @@ export function buildSeedRoot(used: any, langs: any): any {
   for (const lang in used) {
     const root = langs && langs[lang] && langs[lang].root
     if (!root) { continue }
-    for (const cle in used[lang]) {
-      const parts = cle.split('.')
+    for (const key in used[lang]) {
+      const parts = key.split('.')
       if (parts.indexOf('__proto__') !== -1) { continue }
       let src = root
       for (let i = 0; i < parts.length && src != null; i++) {
         src = typeof src === 'object' && Object.prototype.hasOwnProperty.call(src, parts[i]) ? src[parts[i]] : undefined
       }
-      if (used[lang][cle] === false ? src != null : src == null) { continue }
+      if (used[lang][key] === false ? src != null : src == null) { continue }
       out = out || {}
       let dst = out[lang] = out[lang] || {}
       for (let j = 0; j < parts.length - 1; j++) {

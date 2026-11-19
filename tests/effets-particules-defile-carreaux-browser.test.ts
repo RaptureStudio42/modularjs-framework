@@ -288,7 +288,7 @@ describe('*particles, *marquee, *pixels (navigateurs réels)', function () {
           total:   tuiles.length,
           pleines: tuiles.filter((t) => op(t) > 0.99).length,
           vides:   tuiles.filter((t) => op(t) < 0.01).length,
-          enCours: tuiles.filter((t) => t.getAnimations().some((a: any) => a.transitionProperty === 'opacity')).length
+          pending: tuiles.filter((t) => t.getAnimations().some((a: any) => a.transitionProperty === 'opacity')).length
         }
       }, classe)
 
@@ -314,7 +314,7 @@ describe('*particles, *marquee, *pixels (navigateurs réels)', function () {
         assert.ok(r.total > 50, `des carreaux : ${JSON.stringify(r)}`)
         if (nappe) assert.ok(r.vides < r.total / 2, `la nappe couvre encore la balise, elle n'est pas déjà envolée : ${JSON.stringify(r)}`)
         else assert.ok(r.pleines < r.total / 2, `le remplissage commence, les carreaux ne sont pas déjà pleins : ${JSON.stringify(r)}`)
-        assert.ok(r.enCours > r.total / 2, `leur fondu est en cours : ${JSON.stringify(r)}`)
+        assert.ok(r.pending > r.total / 2, `leur fondu est en cours : ${JSON.stringify(r)}`)
       }
 
       for (const [on, classe] of [['always', 'a'], ['view', 'v'], ['load', 'charge'], ['always', 'bloc']]) {
@@ -357,7 +357,7 @@ describe('*particles, *marquee, *pixels (navigateurs réels)', function () {
           await montre(page, 'a')
           const r = await carreaux(page, 'a')
           assert.ok(r.total > 50, `des carreaux : ${JSON.stringify(r)}`)
-          assert.ok(r.pleines === r.total && r.enCours === 0, `pleins d'emblée, aucun fondu : ${JSON.stringify(r)}`)
+          assert.ok(r.pleines === r.total && r.pending === 0, `pleins d'emblée, aucun fondu : ${JSON.stringify(r)}`)
         })
       })
 

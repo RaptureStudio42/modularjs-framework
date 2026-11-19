@@ -65,12 +65,8 @@ export interface MjsConfig {
    */
   assetDirs?: string[]
   /**
-   * Répertoire du runtime MJS (mjs_*.coffee) si différent de l'emplacement
-   * auto-détecté (cf. `Bundler.locateRuntimeDir`). Accepté par KNOWN_KEYS (validation) mais jamais déclaré ici
-   * ni transmis par `resolveBundlerOpts` : un projet le renseignant voyait
-   * son build passer la validation SANS ERREUR, mais l'option n'avait
-   * STRICTEMENT AUCUN EFFET — le pire des deux mondes (ça a l'air d'avoir
-   * marché, mais non).
+   * Répertoire du runtime MJS si différent de l'emplacement auto-détecté (cf. `Bundler.locateRuntimeDir`) : résolu depuis le
+   * dossier de mjs.config.json et transmis au Bundler par `resolveBundlerOpts`.
    */
   runtimeDir?: string
   defaultScriptLang?: SupportedLang
@@ -226,10 +222,17 @@ export interface MjsConfig {
    * à l'octet pour une construction neuve. Dans les deux cas, un changement fait hors de MJS se signale par `µrefresh($x)`.
    */
   derived?: 'clock' | 'precise'
+  /**
+   * Reffets (`µeffect`) d'un composant redessiné par un état partagé (`µurl`, `µnav`, `µonline`, un `µ$$x`, un `µStore`, un contexte
+   * `§§x`…) : `"precise"` (défaut) = seuls passent ceux qui ont lu cet état, et ceux pour qui MJS ne peut pas le savoir (cf.
+   * docs/03-reactivite.md) ; `"all"` = tous passent à chaque changement de cet état — le code produit et le cœur sont alors ceux de
+   * cette règle.
+   */
+  reffets?: 'precise' | 'all'
   /** Pages d'une table de routes : `"idle"` (défaut) chargées au repos après l'affichage, `"on"` toutes à l'ouverture, `"off"` chacune à sa première visite. */
   routes?: { preload?: 'on' | 'idle' | 'off' }
-  /** Composants écrits seulement sous une branche fermable (un `{if}` et ses `{else}` ; ni `{for}` ni `{await}`) : `"off"` (défaut) demandés à
-   *  l'ouverture de leur branche, `"on"` préchargés au démarrage avec leur parent. */
+  /** Composants écrits seulement sous une branche fermable (un `{if}` et ses `{else}` ; ni `{for}` ni `{await}`) : `"idle"` (défaut) préchargés
+   *  au repos après l'affichage, `"off"` demandés à l'ouverture de leur branche, `"on"` préchargés au démarrage avec leur parent. */
   blocks?: { preload?: 'idle' | 'on' | 'off' }
   /**
    * Objets de l'état (`$o = { … }`, `$l = […]`) : `true` (défaut) = enveloppés (Proxy), MJS voit aussi un changement fait hors de son
@@ -330,14 +333,14 @@ export interface MjsConfig {
    */
   ws?: WsConfig
   /**
-   * Démarrage du serveur de jeu (`mjs serveur`, cf. cli/server.ts + docs/24-mjs-server.md
+   * Démarrage du serveur de jeu (`mjs server`, cf. cli/server.ts + docs/24-mjs-server.md
    * §2). MÊME forme que `ws` ci-dessus (résolution d'entry propre —
-   * --entry > serveur.entry > défauts `serveur.server.mjs`/`serveur.js`/`serveur.civet`/
+   * --entry > server.entry > défauts `game.server.mjs`/`game.js`/`game.civet`/
    * `server/*`, AUCUNE collision avec les défauts `ws.*` : les deux commandes coexistent dans
-   * un même projet) + `antiCheat.movesPerIdentity` (cf. `ServeurConfig`). `persist` reste
+   * un même projet) + `antiCheat.movesPerIdentity` (cf. `ServerConfig`). `persist` reste
    * ENTRY-ONLY (adaptateurs à fonctions, non représentables en JSON).
    */
-  serveur?: ServeurConfig
+  server?: ServerConfig
   /**
    * i18n façon Rails. Dictionnaires dans
    * `<sourceDir>/i18n/<langue>.yml|.yaml|.json` (RACINE, embarquée dans le
@@ -348,8 +351,8 @@ export interface MjsConfig {
    * défaut : il reste caché puis paraît d'un coup ; `'key'` affiche la clé brute ;
    * `'*skeleton'` des barres grises à la place de chaque texte ; `'*loader(bloom)'` un
    * indicateur de chargement à la place du module, qui reste caché comme en `'wait'`) ;
-   * `hash` : obfuscation des noms de fragments (booléen, défaut `true`,
-   * EFFECTIVE EN PROD SEULEMENT — cf. `Bundler.isProd()`). `persist`
+   * `hash` : obfuscation des noms de fragments (`'auto'` défaut : en prod
+   * seulement, cf. `Bundler.isProd()` ; `true` toujours ; `false` jamais). `persist`
    * (booléen, défaut `false`) : mémorise la langue choisie EXPLICITEMENT via
    * `localStorage`. `detect` (booléen, défaut `false`) : devine la langue
    * initiale via `Intl`/`navigator` au 1er chargement. `urlParam` (booléen,
@@ -600,7 +603,7 @@ export const OPTIONAL_RUNTIME_MODULES = [
  * `types` et `state`. Jamais appelé par le cœur : une appli qui n'écrit pas `µform` n'a pas un octet de plus, même si elle lit le formulaire
  * d'un champ (`input.form`) ; `<@@field>` ne lit l'objet (`µ._mjs_formErr`) que s'il est là.
  * `collections` (la part des collections de l'état : clé objet d'une `Map` suivie, index des clés, enveloppe d'une `WeakMap` ou d'un `WeakSet` —
- * pas un fichier : les blocs `<collections>` et `<faibles>` du cœur) : DÉTECTÉ PAR SCAN du nom d'une collection (`Map`, `Set`, `WeakMap`,
+ * pas un fichier : les blocs `<collections>` et `<weak>` du cœur) : DÉTECTÉ PAR SCAN du nom d'une collection (`Map`, `Set`, `WeakMap`,
  * `WeakSet`) dans le code d'une unité ou d'un fichier `.js` importé ; une collection donnée à l'état par un code que la construction ne lit pas
  * (bibliothèque chargée à part) se demande par ce nom, dans une liste `runtime` complète : une liste remplace le repérage des modules optionnels.
  */
@@ -671,7 +674,7 @@ export function expandRuntimePresets(runtime: readonly string[]): { modules: str
   for (const entry of runtime) {
     if (Object.prototype.hasOwnProperty.call(RUNTIME_PRESETS, entry)) {
       const preset = RUNTIME_PRESETS[entry]
-      if (preset.length === 0) warnings.push(t('bundler.config.runtime-paquet-non-implemente', { paquet: entry }))
+      if (preset.length === 0) warnings.push(t('bundler.config.runtime-package-not-implemented', { pkg: entry }))
       for (const m of preset) if (!modules.includes(m)) modules.push(m)
       continue
     }
@@ -693,13 +696,13 @@ export function expandRuntimePresets(runtime: readonly string[]): { modules: str
  * pseudos View Transitions.
  */
 export const VT_PRESET_BASES = [
-  'fade', 'slide', 'zoom', 'zoom-out', 'volet', 'reveal', 'flip',
+  'fade', 'slide', 'zoom', 'zoom-out', 'cover', 'reveal', 'flip',
   'cube', 'turn', 'iris', 'swipe', 'bars', 'blocks',
 ] as const
 
 export const VT_DIRECTIONS = ['left', 'right', 'up', 'down'] as const
 
-export const VT_DIRECTIONAL_BASES = ['slide', 'volet', 'reveal', 'flip', 'cube', 'turn', 'swipe', 'bars'] as const
+export const VT_DIRECTIONAL_BASES = ['slide', 'cover', 'reveal', 'flip', 'cube', 'turn', 'swipe', 'bars'] as const
 
 /** Une valeur de préréglage est-elle valide ? (base seule, ou `base:direction` —
  *  représentation SYNTHÉTIQUE interne reconstruite après parsing, jamais une
@@ -818,9 +821,9 @@ export type VtParseResult = { ok: true; value: VtParsedValue } | { ok: false; er
  */
 export function parseVtValue(raw: string): VtParseResult {
   const s = (raw ?? '').trim()
-  if (s === '') return { ok: false, error: t('bundler.config.vt-valeur-vide') }
+  if (s === '') return { ok: false, error: t('bundler.config.vt-value-empty') }
   const m = s.match(/^([^=]+?)(?:=\s*\{([^}]*)\}\s*)?$/)
-  if (!m) return { ok: false, error: t('bundler.config.vt-valeur-malformee', { valeur: s }) }
+  if (!m) return { ok: false, error: t('bundler.config.vt-value-malformed', { value: s }) }
   const namePart = m[1].trim()
   const optsRaw = m[2]
 
@@ -830,12 +833,12 @@ export function parseVtValue(raw: string): VtParseResult {
     const before = namePart.split(':')[0]
     return {
       ok: false,
-      error: t('bundler.config.vt-direction-dans-nom', { nom: namePart, avant: before }),
+      error: t('bundler.config.vt-direction-in-name', { name: namePart, before }),
     }
   }
 
   const nm = namePart.match(/^([a-z][a-z0-9-]*)$/)
-  if (!nm) return { ok: false, error: t('bundler.config.vt-nom-invalide', { nom: namePart }) }
+  if (!nm) return { ok: false, error: t('bundler.config.vt-name-invalid', { name: namePart }) }
   const base = nm[1]
   let dir: 'left' | 'right' | 'up' | 'down' | null = null
 
@@ -848,20 +851,21 @@ export function parseVtValue(raw: string): VtParseResult {
       const pair = pairRaw.trim()
       if (pair === '') continue // virgule finale tolérée
       const pm = pair.match(/^([a-zA-Z]+)\s*:\s*(.+)$/)
-      if (!pm) return { ok: false, error: t('bundler.config.vt-option-malformee', { option: pair }) }
+      if (!pm) return { ok: false, error: t('bundler.config.vt-option-malformed', { option: pair }) }
       const rawKey = pm[1]
-      const key = VT_OPTION_KEY_ALIASES[rawKey]
+      // la table lue par ses clés propres : `constructor`, `toString` (hérités de tout objet) sont des clés inconnues
+      const key = Object.hasOwn(VT_OPTION_KEY_ALIASES, rawKey) ? VT_OPTION_KEY_ALIASES[rawKey] : undefined
       if (!key) {
         const suggestion = suggestVtOptionKey(rawKey)
         const hint = suggestion ? ` — vouliez-vous dire '${suggestion.long}'/'${suggestion.short}' ?` : ''
         const validList = VT_OPTION_KEYS.map(k => `${k}/${VT_OPTION_SHORT[k]}`).join(', ')
-        return { ok: false, error: t('bundler.config.vt-option-cle-inconnue', { cle: rawKey, hint, valides: validList }) }
+        return { ok: false, error: t('bundler.config.vt-option-key-unknown', { key: rawKey, hint, valid: validList }) }
       }
       // clé en double — la MÊME option sous ses 2 formes (ou répétée telle quelle) :
       // { dir: left, direction: right } n'a plus de sens depuis que le suffixe
       // `:direction` (seule source possible de conflit) est retiré.
       if (seenKeys.has(key)) {
-        return { ok: false, error: t('bundler.config.vt-cle-double', { cle: key, court: VT_OPTION_SHORT[key] }) }
+        return { ok: false, error: t('bundler.config.vt-key-duplicate', { key, short: VT_OPTION_SHORT[key] }) }
       }
       seenKeys.add(key)
       let val = pm[2].trim()
@@ -872,11 +876,11 @@ export function parseVtValue(raw: string): VtParseResult {
         if (!(VT_DIRECTIONAL_BASES as readonly string[]).includes(base)) {
           return {
             ok: false,
-            error: t('bundler.config.vt-direction-non-directionnelle', { base, bases: VT_DIRECTIONAL_BASES.join(', ') }),
+            error: t('bundler.config.vt-direction-not-directional', { base, bases: VT_DIRECTIONAL_BASES.join(', ') }),
           }
         }
         if (!(VT_DIRECTIONS as readonly string[]).includes(val)) {
-          return { ok: false, error: t('bundler.config.vt-direction-invalide', { valeur: val, valides: VT_DIRECTIONS.join(', ') }) }
+          return { ok: false, error: t('bundler.config.vt-direction-invalid', { value: val, valid: VT_DIRECTIONS.join(', ') }) }
         }
         dir = val as 'left' | 'right' | 'up' | 'down'
       }
@@ -885,17 +889,17 @@ export function parseVtValue(raw: string): VtParseResult {
         // 'ms'/'s' suffixés N'EXISTENT PLUS (RETRAIT), cf. le commentaire de tête.
         const dm = val.match(/^(\d+)$/)
         if (!dm) {
-          return { ok: false, error: t('bundler.config.vt-duration-invalide') }
+          return { ok: false, error: t('bundler.config.vt-duration-invalid') }
         }
         const ms = parseInt(dm[1], 10)
         if (!(ms > 0)) {
-          return { ok: false, error: t('bundler.config.vt-duration-invalide') }
+          return { ok: false, error: t('bundler.config.vt-duration-invalid') }
         }
         durationMs = ms
       }
       else if (key === 'priority') {
         if (!/^\d+$/.test(val)) {
-          return { ok: false, error: t('bundler.config.vt-priority-invalide', { valeur: val }) }
+          return { ok: false, error: t('bundler.config.vt-priority-invalid', { value: val }) }
         }
         priority = parseInt(val, 10)
       }
@@ -1042,9 +1046,7 @@ export interface LintConfig {
   /** Du code qui suit, dans le même bloc, un `return`, un `throw`, un `break` ou un `continue` :
    *  il ne s'exécute jamais (la production le retire sans le dire). Défaut `true` — `false` coupe. */
   unreachable?: boolean
-  /** dans un script, une chaîne `"…"` ou `'…'` écrite sur plusieurs lignes où un `#` (ou un `//`) ouvre un
-   *  commentaire : le reste de sa ligne quitte la chaîne sans erreur ; défaut `true` — `false` coupe,
-   *  `"error"` en fait une erreur de build */
+  /** acceptée, sans effet : les chaînes écrites sur plusieurs lignes sont lues correctement */
   multilineString?: boolean | 'error'
 }
 
@@ -1286,7 +1288,7 @@ export interface WsConfig {
 }
 
 /**
- * Section `serveur` — démarrage de `mjs serveur` (cf. le JSDoc de `MjsConfig.serveur`,
+ * Section `server` — démarrage de `mjs server` (cf. le JSDoc de `MjsConfig.server`,
  * cli/server.ts). MÊMES clés que `WsConfig` (mjsServer() accepte EXACTEMENT les mêmes
  * options que mjsWs(), cf. docs/24-mjs-server.md §9) — étendue en TYPE plutôt que dupliquée
  * en littéral (source unique de la forme partagée) — plus `antiCheat.movesPerIdentity` et
@@ -1295,13 +1297,13 @@ export interface WsConfig {
  * pendant ici : ses adaptateurs exposent des FONCTIONS (`load`/`save`/`remove`), non
  * JSON-ables — reste ENTRY-ONLY, comme `schemas`/une instance `transport` maison (§6.4 doc 23).
  */
-export interface ServeurConfig extends WsConfig {
+export interface ServerConfig extends WsConfig {
   /**
    * anti-triche (mjs-server/index.ts `MjsServerAntiTricheOptions`) — quota de coups
    * PAR IDENTITÉ agrégé sur TOUTES les parties vivantes de l'app. `[n, fenêtreMs]` (entiers > 0)
    * ou `null` (aucun contrôle, défaut). MÊME règle que les clés héritées de `WsConfig` :
    * définissable ICI ou dans l'entry (`antiCheat`), l'ENTRY prime EN BLOC en cas de doublon
-   * (cf. cli/server.ts buildServeurRunPlan), avec un warn.
+   * (cf. cli/server.ts buildServerRunPlan), avec un warn.
    */
   antiCheat?: {
     movesPerIdentity?: [number, number] | null
@@ -1362,7 +1364,7 @@ const MAX_GUARD_DELAY_MS = 86400000
 
 /** Une durée de mjs.config.json (`effects.guard.delay`, `i18n.timeout`) : un nombre de millisecondes ≥ 0, ou "800ms" / "1.5s".
  *  Rend les millisecondes, ou `null` si la valeur n'en est pas une. */
-export function dureeEnMs(v: unknown): number | null {
+export function durationInMs(v: unknown): number | null {
   if (typeof v === 'number') return isFinite(v) && v >= 0 ? v : null
   const m = typeof v === 'string' ? /^(\d+(?:\.\d+)?)(ms|s)$/.exec(v) : null
   return m ? parseFloat(m[1]) * (m[2] === 's' ? 1000 : 1) : null
@@ -1371,10 +1373,10 @@ export function dureeEnMs(v: unknown): number | null {
 /** Plafond d'une durée de la config : `i18n.timeout` ne dépasse pas celui d'une minuterie (2^31 - 1 ms, au-delà elle part aussitôt),
  *  `effects.guard.delay` 24 h. Un seul contrôle pour mjs.config.json (`findConfig`) et pour l'API (`new Bundler(...)`) ;
  *  une valeur qui n'est pas une durée n'est pas l'affaire d'ici. */
-export function verifierPlafondDuree(cle: 'i18n.timeout' | 'effects.guard.delay', v: unknown): void {
-  const ms  = v === undefined ? null : dureeEnMs(v)
-  const max = cle === 'i18n.timeout' ? MAX_TIMER_MS : MAX_GUARD_DELAY_MS
-  if (ms !== null && Math.round(ms) > max) throw new Error(t(cle === 'i18n.timeout' ? 'bundler.config.i18n-timeout-trop-long' : 'bundler.config.effects-guard-delay-trop-long', { valeur: JSON.stringify(v) }))
+export function checkDurationCap(key: 'i18n.timeout' | 'effects.guard.delay', v: unknown): void {
+  const ms  = v === undefined ? null : durationInMs(v)
+  const max = key === 'i18n.timeout' ? MAX_TIMER_MS : MAX_GUARD_DELAY_MS
+  if (ms !== null && Math.round(ms) > max) throw new Error(t(key === 'i18n.timeout' ? 'bundler.config.i18n-timeout-too-long' : 'bundler.config.effects-guard-delay-too-long', { value: JSON.stringify(v) }))
 }
 
 /** Journal d'erreurs 3 étages — cf. le JSDoc de `MjsConfig.journal` pour la sémantique. */
@@ -1590,7 +1592,7 @@ export const RENDER_MAX_BODY_MAX     = 104_857_600
 const KNOWN_KEYS = new Set([
   'sourceDir', 'outputDir', 'manifestPath', 'manifestExternal', 'urlPrefix',
   'defaultScriptLang', 'languages', 'minify', 'dev',
-  'stylesheetsDir', 'assetDirs', 'runtimeDir', 'sigil', 'contextAlias', 'render', 'preload', 'viewTransition', 'lint', 'logLevel', 'messages', 'types', 'typesReport', 'derived', 'routes', 'blocks', 'proxy', 'runtime', 'collections', 'css', 'js', 'ws', 'serveur', 'i18n', 'lang', 'journal',
+  'stylesheetsDir', 'assetDirs', 'runtimeDir', 'sigil', 'contextAlias', 'render', 'preload', 'viewTransition', 'lint', 'logLevel', 'messages', 'types', 'typesReport', 'derived', 'reffets', 'routes', 'blocks', 'proxy', 'runtime', 'collections', 'css', 'js', 'ws', 'server', 'i18n', 'lang', 'journal',
   'varPrefix', 'defaultTheme', 'image', 'csp', 'anchorHistory', 'sourceMap', 'prune', 'effects', 'bundles', 'responsiveFontSize',
 ])
 // plus petite valeur REFUSÉE de chaque réglage numérique de `responsiveFontSize` (la valeur doit la dépasser)
@@ -1600,14 +1602,14 @@ const FONT_SIZE_MIN: Record<string, number> = { base: 0, breakpoint: 0, factor: 
 function validateResponsiveFontSize(value: unknown): void {
   if (value === undefined || typeof value === 'boolean') return
   const shown = (v: unknown): string => typeof v === 'number' ? String(v) : JSON.stringify(v)
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error(t('bundler.config.responsive-font-size-type', { valeur: shown(value) }))
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error(t('bundler.config.responsive-font-size-type', { value: shown(value) }))
   for (const [k, v] of Object.entries(value)) {
-    if (!(FONT_SIZE_KEYS as readonly string[]).includes(k)) throw new Error(t('bundler.config.cle-inconnue', { cle: `responsiveFontSize.${k}`, valides: FONT_SIZE_KEYS.join(', ') }))
+    if (!(FONT_SIZE_KEYS as readonly string[]).includes(k)) throw new Error(t('bundler.config.key-unknown', { key: `responsiveFontSize.${k}`, valid: FONT_SIZE_KEYS.join(', ') }))
     if (k === 'unit') {
-      if (v !== 'rem' && v !== 'px') throw new Error(t('bundler.config.valeur-invalide-simple', { cle: 'responsiveFontSize.unit', valeur: v, valides: 'rem, px' }))
+      if (v !== 'rem' && v !== 'px') throw new Error(t('bundler.config.value-invalid-simple', { key: 'responsiveFontSize.unit', value: v, valid: 'rem, px' }))
     }
     else if (typeof v !== 'number' || !Number.isFinite(v) || v <= FONT_SIZE_MIN[k]) {
-      throw new Error(t('bundler.config.responsive-font-size-nombre', { cle: k, min: FONT_SIZE_MIN[k], valeur: shown(v) }))
+      throw new Error(t('bundler.config.responsive-font-size-number', { key: k, min: FONT_SIZE_MIN[k], value: shown(v) }))
     }
   }
 }
@@ -1641,7 +1643,9 @@ const KNOWN_PRELOAD_KEYS = new Set(['view', 'page'])
 const VALID_PRELOAD_MODES = new Set(['off', 'hover', 'on'])
 // dérivé de LINT_TYPES (src/diagnostics.ts) — source UNIQUE de la liste des types de lint,
 // jamais un second tableau maintenu ici à la main
-const KNOWN_LINT_KEYS = new Set<string>(LINT_TYPES)
+// `multilineString` : acceptée sans effet ni avertissement — les chaînes écrites sur plusieurs lignes sont lues correctement, une configuration
+// qui l'écrit se construit comme avant
+const KNOWN_LINT_KEYS = new Set<string>([...LINT_TYPES, 'multilineString'])
 const VALID_MESSAGES_MODES = new Set(['demand', 'idle'])
 const VALID_LOG_LEVELS = new Set<LogLevelName>(['log', 'warn', 'error', 'silent'])
 const KNOWN_LOG_LEVEL_KEYS = new Set(['dev', 'prod'])
@@ -1650,12 +1654,12 @@ const VALID_TEMPLATE_LANGS = new Set(['civet'])
 const KNOWN_I18N_KEYS = new Set(['default', 'placeholder', 'hash', 'persist', 'detect', 'urlParam', 'source', 'timeout'])
 const KNOWN_JOURNAL_KEYS = new Set(['server', 'client', 'viewer', 'maxEntries', 'maxBytes', 'maxDays', 'trustProxy'])
 const KNOWN_WS_KEYS = new Set(['entry', 'transport', 'port', 'host', 'codec', 'heartbeat', 'limits', 'token', 'bridge', 'resume', 'adapter', 'stats', 'sessionExclusive', 'verifyOrigin', 'ban'])
-// section `serveur` (mjs serveur, cli/server.ts) — MÊMES clés que KNOWN_WS_KEYS (mjsServer()
+// section `server` (mjs server, cli/server.ts) — MÊMES clés que KNOWN_WS_KEYS (mjsServer()
 // accepte exactement les mêmes options que mjsWs()) + `antiCheat` (entièrement propre
-// à MJS-Server, cf. `ServeurConfig`). `persist` volontairement ABSENT (adaptateurs à fonctions,
-// non JSON-ables — reste ENTRY-ONLY, cf. le JSDoc de `ServeurConfig`).
-const KNOWN_SERVEUR_KEYS = new Set([...KNOWN_WS_KEYS, 'antiCheat'])
-const KNOWN_SERVEUR_ANTITRICHE_KEYS = new Set(['movesPerIdentity', 'codePerIp', 'privateGamesPerCreator'])
+// à MJS-Server, cf. `ServerConfig`). `persist` volontairement ABSENT (adaptateurs à fonctions,
+// non JSON-ables — reste ENTRY-ONLY, cf. le JSDoc de `ServerConfig`).
+const KNOWN_SERVER_KEYS = new Set([...KNOWN_WS_KEYS, 'antiCheat'])
+const KNOWN_SERVER_ANTICHEAT_KEYS = new Set(['movesPerIdentity', 'codePerIp', 'privateGamesPerCreator'])
 const VALID_WS_TRANSPORTS = new Set(['ws', 'uws'])
 const VALID_WS_CODECS = new Set(['auto', 'binary', 'json'])
 // session exclusive par identité (sessionExclusive — 2 modes) — les 2 formes CHAÎNE
@@ -1706,16 +1710,16 @@ export function normalizeUrlPrefix(prefix: string): string {
  */
 function validateAssetDirs(dirs: unknown, path: string): void {
   if (!Array.isArray(dirs)) {
-    throw new Error(t('bundler.config.asset-dirs-doit-etre-liste', { valeur: JSON.stringify(dirs), type: typeof dirs }))
+    throw new Error(t('bundler.config.asset-dirs-must-be-list', { value: JSON.stringify(dirs), type: typeof dirs }))
   }
-  const racine = dirname(path)
-  dirs.forEach((dossier, index) => {
-    if (typeof dossier !== 'string' || dossier.trim() === '') {
-      throw new Error(t('bundler.config.asset-dirs-element-invalide', { index, valeur: JSON.stringify(dossier), type: typeof dossier }))
+  const root = dirname(path)
+  dirs.forEach((dir, index) => {
+    if (typeof dir !== 'string' || dir.trim() === '') {
+      throw new Error(t('bundler.config.asset-dirs-element-invalid', { index, value: JSON.stringify(dir), type: typeof dir }))
     }
-    const chemin = resolve(racine, dossier)
-    if (!existsSync(chemin)) throw new Error(t('bundler.config.asset-dirs-dossier-absent', { index, dossier, chemin }))
-    if (!statSync(chemin).isDirectory()) throw new Error(t('bundler.config.asset-dirs-pas-un-dossier', { index, dossier, chemin }))
+    const path = resolve(root, dir)
+    if (!existsSync(path)) throw new Error(t('bundler.config.asset-dirs-dir-missing', { index, dir: dir, path: path }))
+    if (!statSync(path).isDirectory()) throw new Error(t('bundler.config.asset-dirs-not-a-dir', { index, dir: dir, path: path }))
   })
 }
 
@@ -1724,17 +1728,17 @@ function validateAssetDirs(dirs: unknown, path: string): void {
 const SOURCE_EXTENSIONS = ['.mjs', '.civet', '.coffee']
 
 // disque insensible à la casse (macOS, Windows) : `App/Modularjs` y désigne le dossier `app/modularjs`
-function formeSurDisque(chemin: string): string {
-  return process.platform === 'darwin' || process.platform === 'win32' ? chemin.toLowerCase() : chemin
+function onDiskForm(path: string): string {
+  return process.platform === 'darwin' || process.platform === 'win32' ? path.toLowerCase() : path
 }
 
 /**
- * `chemin` est-il `dossier` lui-même ou un chemin dedans, sur le disque : chemins réels (liens symboliques suivis, chemin
- * pas encore créé compris, cf. cheminReel) et, sur macOS et Windows, sans la casse.
+ * `chemin` est-il `dir` lui-même ou un chemin dedans, sur le disque : chemins réels (liens symboliques suivis, chemin
+ * pas encore créé compris, cf. realPath) et, sur macOS et Windows, sans la casse.
  */
-export function cheminDansDossier(chemin: string, dossier: string): boolean {
-  const c = formeSurDisque(cheminReel(chemin))
-  const d = formeSurDisque(cheminReel(dossier))
+export function pathInDir(path: string, dir: string): boolean {
+  const c = onDiskForm(realPath(path))
+  const d = onDiskForm(realPath(dir))
   return c === d || c.startsWith(d.endsWith(sep) ? d : d + sep)
 }
 
@@ -1747,37 +1751,37 @@ export function cheminDansDossier(chemin: string, dossier: string): boolean {
  * (`outputDir` hors de `sourceDir` — un projet qui construit sous son dossier des sources, `sourceDir: "."`
  * par exemple, y garde son manifeste). Dans ce dernier cas, le manifeste côtoie les fichiers de l'auteur : le
  * constructeur ne remplace un fichier existant que s'il porte la marque des fichiers qu'il produit, contrôle fait
- * au build, avant toute écriture (cf. Bundler.refusSortiesAuteur) — jamais ici, qui ne regarde que les chemins.
+ * au build, avant toute écriture (cf. Bundler.authorOutputsReject) — jamais ici, qui ne regarde que les chemins.
  * Chemins ABSOLUS et définitifs (mjs.config.json à la lecture, drapeaux `--manifest`/`--output` dans cli.ts),
- * comparés sur le disque (cf. cheminDansDossier) : un lien symbolique vers le dossier des sources, ou une autre
+ * comparés sur le disque (cf. pathInDir) : un lien symbolique vers le dossier des sources, ou une autre
  * casse sur macOS et Windows, mènent aux mêmes fichiers.
  */
-export function refusManifestPath(o: { manifestPath: string, sourceDir: string, outputDir: string, manifestExternal?: string }): { raison: 'extension', extension: string } | { raison: 'externe' } | { raison: 'sources' } | null {
+export function rejectManifestPath(o: { manifestPath: string, sourceDir: string, outputDir: string, manifestExternal?: string }): { reason: 'extension', extension: string } | { reason: 'external' } | { reason: 'sources' } | null {
   const extension = SOURCE_EXTENSIONS.find(ext => o.manifestPath.toLowerCase().endsWith(ext))
-  if (extension !== undefined) return { raison: 'extension', extension }
-  if (o.manifestExternal !== undefined && formeSurDisque(cheminReel(o.manifestExternal)) === formeSurDisque(cheminReel(o.manifestPath))) return { raison: 'externe' }
-  if (cheminDansDossier(o.manifestPath, o.sourceDir) && !cheminDansDossier(o.outputDir, o.sourceDir)) return { raison: 'sources' }
+  if (extension !== undefined) return { reason: 'extension', extension }
+  if (o.manifestExternal !== undefined && onDiskForm(realPath(o.manifestExternal)) === onDiskForm(realPath(o.manifestPath))) return { reason: 'external' }
+  if (pathInDir(o.manifestPath, o.sourceDir) && !pathInDir(o.outputDir, o.sourceDir)) return { reason: 'sources' }
   return null
 }
 
 function validateManifestPath(config: any, path: string): void {
-  const racine    = dirname(path)
+  const root      = dirname(path)
   const sourceDir = config.sourceDir ?? 'app/modularjs'
   const outputDir = config.outputDir ?? 'public/modularjs'
-  const refus     = refusManifestPath({
-    manifestPath:     resolve(racine, config.manifestPath),
-    sourceDir:        resolve(racine, sourceDir),
-    outputDir:        resolve(racine, outputDir),
-    manifestExternal: typeof config.manifestExternal === 'string' ? resolve(racine, config.manifestExternal) : undefined,
+  const reject    = rejectManifestPath({
+    manifestPath:     resolve(root, config.manifestPath),
+    sourceDir:        resolve(root, sourceDir),
+    outputDir:        resolve(root, outputDir),
+    manifestExternal: typeof config.manifestExternal === 'string' ? resolve(root, config.manifestExternal) : undefined,
   })
-  if (refus?.raison === 'extension') {
-    throw new Error(t('bundler.config.manifestpath-extension-source', { valeur: config.manifestPath, extension: refus.extension }))
+  if (reject?.reason === 'extension') {
+    throw new Error(t('bundler.config.manifestpath-extension-source', { value: config.manifestPath, extension: reject.extension }))
   }
-  if (refus?.raison === 'externe') {
-    throw new Error(t('bundler.config.manifestpath-egal-externe', { valeur: config.manifestPath }))
+  if (reject?.reason === 'external') {
+    throw new Error(t('bundler.config.manifestpath-equal-external', { value: config.manifestPath }))
   }
-  if (refus?.raison === 'sources') {
-    throw new Error(t('bundler.config.manifestpath-dans-sources', { valeur: config.manifestPath, sourceDir, outputDir }))
+  if (reject?.reason === 'sources') {
+    throw new Error(t('bundler.config.manifestpath-in-sources', { value: config.manifestPath, sourceDir, outputDir }))
   }
 }
 
@@ -1786,26 +1790,26 @@ function validateManifestPath(config: any, path: string): void {
  */
 function validateConfig(config: any, path: string): void {
   if (typeof config !== 'object' || config === null || Array.isArray(config)) {
-    throw new Error(t('bundler.config.doit-etre-objet-racine', { chemin: path }))
+    throw new Error(t('bundler.config.must-be-object-root', { path }))
   }
   // `env` a existé un jour comme clé de config : un projet qui la porte encore doit
   // apprendre où ce choix vit maintenant, pas se prendre un « clé inconnue » opaque
   if (config.env !== undefined) {
-    throw new Error(t('bundler.config.env-vient-de-la-commande', { chemin: path }))
+    throw new Error(t('bundler.config.env-comes-from-command', { path }))
   }
   for (const k of Object.keys(config)) {
     if (!KNOWN_KEYS.has(k)) {
-      throw new Error(t('bundler.config.cle-inconnue-racine', { cle: k, chemin: path, valides: Array.from(KNOWN_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.key-unknown-root', { key: k, path, valid: Array.from(KNOWN_KEYS).join(', ') }))
     }
   }
   // gardes `!== undefined` (pas
   // falsy) : `defaultScriptLang: ""` / `sigil: ""` (chaîne vide, falsy)
   // contournaient le check puis `opts.sigil ?? 'µ'` conservait la chaîne vide.
   if (config.defaultScriptLang !== undefined && !VALID_LANGS.has(config.defaultScriptLang)) {
-    throw new Error(t('bundler.config.valeur-invalide-simple', { cle: 'defaultScriptLang', valeur: config.defaultScriptLang, valides: Array.from(VALID_LANGS).join(', ') }))
+    throw new Error(t('bundler.config.value-invalid-simple', { key: 'defaultScriptLang', value: config.defaultScriptLang, valid: Array.from(VALID_LANGS).join(', ') }))
   }
   if (config.sigil !== undefined && !VALID_SIGILS.has(config.sigil)) {
-    throw new Error(t('bundler.config.sigil-invalide', { valeur: config.sigil, valides: Array.from(VALID_SIGILS).join(', ') }))
+    throw new Error(t('bundler.config.sigil-invalid', { value: config.sigil, valid: Array.from(VALID_SIGILS).join(', ') }))
   }
   validateResponsiveFontSize(config.responsiveFontSize)
   // la validation « stricte » ne
@@ -1818,10 +1822,10 @@ function validateConfig(config: any, path: string): void {
   for (const k of ['varPrefix', 'defaultTheme'] as const) {
     // une chaîne, pas seulement sa forme écrite : `["dark"]` s'écrit `dark` mais n'est égal à aucun nom de thème
     if (config[k] !== undefined && typeof config[k] !== 'string') {
-      throw new Error(t('bundler.config.doit-etre-chaine', { cle: k, valeur: JSON.stringify(config[k]), type: typeof config[k] }))
+      throw new Error(t('bundler.config.must-be-string', { key: k, value: JSON.stringify(config[k]), type: typeof config[k] }))
     }
     if (config[k] !== undefined && !VAR_PREFIX_RE.test(config[k])) {
-      throw new Error(t('bundler.config.valeur-invalide-simple', { cle: k, valeur: String(config[k]), valides: 'minuscules, chiffres et tirets (ex. mjs, app, light)' }))
+      throw new Error(t('bundler.config.value-invalid-simple', { key: k, value: String(config[k]), valid: 'minuscules, chiffres et tirets (ex. mjs, app, light)' }))
     }
   }
   const STRING_KEYS = [
@@ -1830,7 +1834,7 @@ function validateConfig(config: any, path: string): void {
   ] as const
   for (const k of STRING_KEYS) {
     if (config[k] !== undefined && typeof config[k] !== 'string') {
-      throw new Error(t('bundler.config.doit-etre-chaine', { cle: k, valeur: JSON.stringify(config[k]), type: typeof config[k] }))
+      throw new Error(t('bundler.config.must-be-string', { key: k, value: JSON.stringify(config[k]), type: typeof config[k] }))
     }
   }
   if (config.manifestPath !== undefined) validateManifestPath(config, path)
@@ -1846,25 +1850,25 @@ function validateConfig(config: any, path: string): void {
   if (config.urlPrefix !== undefined) {
     const normalized = normalizeUrlPrefix(config.urlPrefix)
     if (normalized !== '' && !normalized.startsWith('/')) {
-      throw new Error(t('bundler.config.urlprefix-slash-initial-exige', { valeur: JSON.stringify(config.urlPrefix) }))
+      throw new Error(t('bundler.config.urlprefix-slash-initial-required', { value: JSON.stringify(config.urlPrefix) }))
     }
     config.urlPrefix = normalized
   }
   if (config.contextAlias !== undefined && typeof config.contextAlias !== 'boolean') {
-    throw new Error(t('bundler.config.doit-etre-booleen', { cle: 'contextAlias', valeur: JSON.stringify(config.contextAlias), type: typeof config.contextAlias }))
+    throw new Error(t('bundler.config.must-be-boolean', { key: 'contextAlias', value: JSON.stringify(config.contextAlias), type: typeof config.contextAlias }))
   }
   if (config.csp !== undefined && typeof config.csp !== 'boolean') {
-    throw new Error(t('bundler.config.doit-etre-booleen', { cle: 'csp', valeur: JSON.stringify(config.csp), type: typeof config.csp }))
+    throw new Error(t('bundler.config.must-be-boolean', { key: 'csp', value: JSON.stringify(config.csp), type: typeof config.csp }))
   }
   if (config.anchorHistory !== undefined && typeof config.anchorHistory !== 'boolean') {
-    throw new Error(t('bundler.config.doit-etre-booleen', { cle: 'anchorHistory', valeur: JSON.stringify(config.anchorHistory), type: typeof config.anchorHistory }))
+    throw new Error(t('bundler.config.must-be-boolean', { key: 'anchorHistory', value: JSON.stringify(config.anchorHistory), type: typeof config.anchorHistory }))
   }
   if (config.prune !== undefined && typeof config.prune !== 'boolean') {
-    throw new Error(t('bundler.config.doit-etre-booleen', { cle: 'prune', valeur: JSON.stringify(config.prune), type: typeof config.prune }))
+    throw new Error(t('bundler.config.must-be-boolean', { key: 'prune', value: JSON.stringify(config.prune), type: typeof config.prune }))
   }
   if (config.bundles !== undefined) validateBundlesConfig(config.bundles)
   if (config.sourceMap !== undefined && (typeof config.sourceMap !== 'string' || !VALID_SOURCE_MAP_MODES.has(config.sourceMap))) {
-    throw new Error(t('bundler.config.source-map-mode-invalide', { valeur: JSON.stringify(config.sourceMap), valides: Array.from(VALID_SOURCE_MAP_MODES).join(', ') }))
+    throw new Error(t('bundler.config.source-map-mode-invalid', { value: JSON.stringify(config.sourceMap), valid: Array.from(VALID_SOURCE_MAP_MODES).join(', ') }))
   }
   if (config.js !== undefined) validateJsConfig(config.js, path)
   // Impasse DIRECTE, ÉVALUÉE AVANT les deux checks css ci-dessous : `csp: true` exige un CSS
@@ -1880,13 +1884,13 @@ function validateConfig(config: any, path: string): void {
   // `csp: true` supprime les `<style>` en ligne du rendu serveur en les remplaçant par des
   // `<link>` vers les feuilles émises — feuilles qui n'existent QUE si le CSS est découpé
   if (config.csp === true && (config.css ?? 'bundle') === 'bundle') {
-    throw new Error(t('bundler.config.csp-exige-css-decoupe'))
+    throw new Error(t('bundler.config.csp-requires-css-split'))
   }
   // `js: 'bundle'` fusionne composants+modules+cœur dans le manifeste — un CSS déjà
   // DÉCOUPÉ en fichiers séparés (`split`/`lazy`) contredirait « un seul fichier JS » : seul
   // `css: 'bundle'` (défaut) reste compatible, même angle que csp ci-dessus.
   if (config.js === 'bundle' && (config.css ?? 'bundle') !== 'bundle') {
-    throw new Error(t('bundler.config.js-bundle-exige-css-bundle'))
+    throw new Error(t('bundler.config.js-bundle-requires-css-bundle'))
   }
   // `minify` n'était validé QUE pour la
   // présence de clés inconnues au niveau racine, jamais pour son propre TYPE :
@@ -1899,18 +1903,18 @@ function validateConfig(config: any, path: string): void {
   // `minify` accepte aussi `'auto'` (le défaut : on suit `env`). Tout le reste
   // (`"true"`, `'prod'`, un nombre…) reste refusé immédiatement, même motif qu'au-dessus.
   if (config.minify !== undefined && typeof config.minify !== 'boolean' && config.minify !== 'auto') {
-    throw new Error(t('bundler.config.doit-etre-booleen', { cle: 'minify', valeur: JSON.stringify(config.minify), type: typeof config.minify }))
+    throw new Error(t('bundler.config.must-be-boolean', { key: 'minify', value: JSON.stringify(config.minify), type: typeof config.minify }))
   }
   // un `dev` NON-objet (ex.
   // `dev: "3939"`) faisait sauter EN SILENCE toute la validation du bloc
   // (`typeof "3939" === 'object'` faux → skip). On exige un objet non-array.
   if (config.dev !== undefined) {
     if (typeof config.dev !== 'object' || config.dev === null || Array.isArray(config.dev)) {
-      throw new Error(t('bundler.config.dev-doit-etre-objet', { chemin: path }))
+      throw new Error(t('bundler.config.dev-must-be-object', { path }))
     }
     for (const k of Object.keys(config.dev)) {
       if (!KNOWN_DEV_KEYS.has(k)) {
-        throw new Error(t('bundler.config.dev-cle-inconnue', { cle: k }))
+        throw new Error(t('bundler.config.dev-key-unknown', { key: k }))
       }
     }
     // même angle mort que `minify` :
@@ -1920,31 +1924,31 @@ function validateConfig(config: any, path: string): void {
     // serveur dev plutôt qu'une erreur de config claire et immédiate.
     if (config.dev.port !== undefined) {
       if (typeof config.dev.port !== 'number' || !Number.isFinite(config.dev.port)) {
-        throw new Error(t('bundler.config.dev-port-doit-etre-nombre', { valeur: JSON.stringify(config.dev.port), type: typeof config.dev.port }))
+        throw new Error(t('bundler.config.dev-port-must-be-number', { value: JSON.stringify(config.dev.port), type: typeof config.dev.port }))
       }
       // `dev.port: 99999` (hors
       // plage TCP) et `3939.5` (non entier) passaient. Un port valide est un
       // entier 1-65535.
       if (!Number.isInteger(config.dev.port) || config.dev.port < 1 || config.dev.port > 65535) {
-        throw new Error(t('bundler.config.port-hors-plage', { cle: 'dev.port', valeur: JSON.stringify(config.dev.port) }))
+        throw new Error(t('bundler.config.port-out-of-range', { key: 'dev.port', value: JSON.stringify(config.dev.port) }))
       }
     }
     if (config.dev.host !== undefined && typeof config.dev.host !== 'string') {
-      throw new Error(t('bundler.config.doit-etre-chaine', { cle: 'dev.host', valeur: JSON.stringify(config.dev.host), type: typeof config.dev.host }))
+      throw new Error(t('bundler.config.must-be-string', { key: 'dev.host', value: JSON.stringify(config.dev.host), type: typeof config.dev.host }))
     }
     // un hôte vide fait écouter le serveur de développement sur toutes les adresses de la machine (`::`), pas en local
     if (typeof config.dev.host === 'string' && config.dev.host.trim() === '') {
-      throw new Error(t('bundler.config.chaine-non-vide-invalide', { cle: 'dev.host', valeur: JSON.stringify(config.dev.host), type: 'string' }))
+      throw new Error(t('bundler.config.string-not-empty-invalid', { key: 'dev.host', value: JSON.stringify(config.dev.host), type: 'string' }))
     }
     // noms acceptés en plus des siens par le serveur de développement : `true`, ou des noms d'hôte nus
     // (ni `http://`, ni port, ni chemin), `.domaine` pour un domaine et ses sous-domaines, IPv6 admise
-    const hotes = config.dev.allowedHosts
-    if (hotes !== undefined && hotes !== true) {
-      if (!Array.isArray(hotes)) throw new Error(t('bundler.config.dev-allowed-hosts-invalide', { valeur: JSON.stringify(hotes) }))
-      for (const nom of hotes) {
-        const n = typeof nom === 'string' ? nom.trim() : ''
+    const hosts = config.dev.allowedHosts
+    if (hosts !== undefined && hosts !== true) {
+      if (!Array.isArray(hosts)) throw new Error(t('bundler.config.dev-allowed-hosts-invalid', { value: JSON.stringify(hosts) }))
+      for (const name of hosts) {
+        const n = typeof name === 'string' ? name.trim() : ''
         if (!/^\.?[a-z0-9_-]+(?:\.[a-z0-9_-]+)*$/i.test(n) && !/^\[?[0-9a-f.]*:[0-9a-f.]*:[0-9a-f:.]*\]?$/i.test(n)) {
-          throw new Error(t('bundler.config.dev-allowed-hosts-invalide', { valeur: JSON.stringify(nom) }))
+          throw new Error(t('bundler.config.dev-allowed-hosts-invalid', { value: JSON.stringify(name) }))
         }
       }
     }
@@ -1957,9 +1961,9 @@ function validateConfig(config: any, path: string): void {
     // plutôt que silencieusement ignoré au build.
     if (config.js === 'bundle') {
       const routes: Record<string, RenderRoute> = config.render.routes ?? {}
-      const pageDemandes = [config.render.startup, ...Object.values(routes).map(r => r?.startup)]
-      if (pageDemandes.includes('bundle')) {
-        throw new Error(t('bundler.config.startup-bundle-avec-js-bundle'))
+      const requestedStartups = [config.render.startup, ...Object.values(routes).map(r => r?.startup)]
+      if (requestedStartups.includes('bundle')) {
+        throw new Error(t('bundler.config.startup-bundle-with-js-bundle'))
       }
     }
   }
@@ -1968,8 +1972,8 @@ function validateConfig(config: any, path: string): void {
   }
   if (config.viewTransition !== undefined) {
     const vt = config.viewTransition
-    const genericError = () => new Error(t('bundler.config.view-transition-invalide-generique', {
-      valeur: vt, bases: VT_PRESET_BASES.join(', '), basesDir: VT_DIRECTIONAL_BASES.join(', '),
+    const genericError = () => new Error(t('bundler.config.view-transition-invalid-generic', {
+      value: vt, bases: VT_PRESET_BASES.join(', '), basesDir: VT_DIRECTIONAL_BASES.join(', '),
     }))
     if (typeof vt !== 'string') throw genericError()
     if (vt !== 'none') {
@@ -1981,7 +1985,7 @@ function validateConfig(config: any, path: string): void {
       // control-flow narrowing natif des unions discriminées (`if (!parsed.ok)` ne
       // suffit pas à écarter la branche `{ok:true}` sans strictNullChecks).
       if (!parsed.ok) {
-        throw new Error(t('bundler.config.view-transition-invalide-detail', { valeur: vt, erreur: (parsed as { ok: false; error: string }).error }))
+        throw new Error(t('bundler.config.view-transition-invalid-detail', { value: vt, error: (parsed as { ok: false; error: string }).error }))
       }
       // Le NOM (hors options) doit appartenir à la bibliothèque connue — la config
       // reste STRICTE là où le compilateur (directive/attribut) reste tolérant
@@ -1997,64 +2001,67 @@ function validateConfig(config: any, path: string): void {
     validateLogLevelConfig(config.logLevel, path)
   }
   if (config.messages !== undefined && !VALID_MESSAGES_MODES.has(config.messages)) {
-    throw new Error(t('bundler.config.messages-invalide', { valeur: typeof config.messages === 'string' ? config.messages : JSON.stringify(config.messages), valides: Array.from(VALID_MESSAGES_MODES).join(', ') }))
+    throw new Error(t('bundler.config.messages-invalid', { value: typeof config.messages === 'string' ? config.messages : JSON.stringify(config.messages), valid: Array.from(VALID_MESSAGES_MODES).join(', ') }))
   }
   if (config.types !== undefined && config.types !== 'warn' && config.types !== 'error' && config.types !== 'throw') {
-    throw new Error(t('bundler.config.types-invalide', { valeur: JSON.stringify(config.types) }))
+    throw new Error(t('bundler.config.types-invalid', { value: JSON.stringify(config.types) }))
   }
   // un chemin du site (jamais `//hôte`) ou une adresse https, sans espace ni caractère qui sortirait du texte du manifeste
   if (config.typesReport !== undefined && (typeof config.typesReport !== 'string' || !/^(?:\/(?!\/)|https:\/\/)[^\s<>"'\\]*$/.test(config.typesReport))) {
-    throw new Error(t('bundler.config.types-report-invalide', { valeur: JSON.stringify(config.typesReport) }))
+    throw new Error(t('bundler.config.types-report-invalid', { value: JSON.stringify(config.typesReport) }))
   }
   if (config.derived !== undefined && config.derived !== 'clock' && config.derived !== 'precise') {
-    throw new Error(t('bundler.config.derived-invalide', { valeur: JSON.stringify(config.derived) }))
+    throw new Error(t('bundler.config.derived-invalid', { value: JSON.stringify(config.derived) }))
+  }
+  if (config.reffets !== undefined && config.reffets !== 'precise' && config.reffets !== 'all') {
+    throw new Error(t('bundler.config.reffets-invalid', { value: JSON.stringify(config.reffets) }))
   }
   if (config.routes !== undefined) {
     const r = config.routes
     if (r === null || typeof r !== 'object' || Array.isArray(r) || Object.keys(r).some((k) => k !== 'preload') || (r.preload !== undefined && r.preload !== 'on' && r.preload !== 'idle' && r.preload !== 'off')) {
-      throw new Error(t('bundler.config.routes-invalide', { valeur: JSON.stringify(r) }))
+      throw new Error(t('bundler.config.routes-invalid', { value: JSON.stringify(r) }))
     }
   }
   if (config.blocks !== undefined) {
     const b = config.blocks
     if (b === null || typeof b !== 'object' || Array.isArray(b) || Object.keys(b).some((k) => k !== 'preload') || (b.preload !== undefined && !BLOCKS_PRELOAD_MODES.includes(b.preload))) {
-      throw new Error(t('bundler.config.blocks-invalide', { valeur: JSON.stringify(b) }))
+      throw new Error(t('bundler.config.blocks-invalid', { value: JSON.stringify(b) }))
     }
   }
   if (config.collections !== undefined && typeof config.collections !== 'boolean') {
-    throw new Error(t('bundler.config.collections-invalide', { valeur: JSON.stringify(config.collections) }))
+    throw new Error(t('bundler.config.collections-invalid', { value: JSON.stringify(config.collections) }))
   }
   if (config.proxy !== undefined && typeof config.proxy !== 'boolean') {
-    throw new Error(t('bundler.config.proxy-invalide', { valeur: JSON.stringify(config.proxy) }))
+    throw new Error(t('bundler.config.proxy-invalid', { value: JSON.stringify(config.proxy) }))
   }
   if (config.effects !== undefined) {
     const e = config.effects
-    if (typeof e !== 'object' || e === null || Array.isArray(e)) throw new Error(t('bundler.config.effects-objet', { valeur: JSON.stringify(e) }))
+    if (typeof e !== 'object' || e === null || Array.isArray(e)) throw new Error(t('bundler.config.effects-object', { value: JSON.stringify(e) }))
     for (const [k, v] of Object.entries(e)) {
       // `constructor`, `toString`, `__proto__` : des noms que tout objet hérite, jamais un réglage
-      const permis = Object.prototype.hasOwnProperty.call(EFFECTS_VALUES, k) ? EFFECTS_VALUES[k] : undefined
-      if (!permis) throw new Error(t('bundler.config.effects-cle', { cle: k, valides: Object.keys(EFFECTS_VALUES).join(', ') }))
+      const allowed = Object.prototype.hasOwnProperty.call(EFFECTS_VALUES, k) ? EFFECTS_VALUES[k] : undefined
+      if (!allowed) throw new Error(t('bundler.config.effects-key', { key: k, valid: Object.keys(EFFECTS_VALUES).join(', ') }))
       if (k === 'skeleton') {
-        if (!Array.isArray(v)) throw new Error(t('bundler.config.effects-liste', { cle: k, valeur: JSON.stringify(v), valides: permis.map(x => '"' + x + '"').join(', ') }))
+        if (!Array.isArray(v)) throw new Error(t('bundler.config.effects-list', { key: k, value: JSON.stringify(v), valid: allowed.map(x => '"' + x + '"').join(', ') }))
         if (v.includes('i18n')) throw new Error(t('bundler.config.effects-skeleton-i18n'))
-        for (const x of v) if (!permis.includes(x)) throw new Error(t('bundler.config.effects-element', { cle: k, valeur: String(x), valides: permis.map(y => '"' + y + '"').join(', ') }))
+        for (const x of v) if (!allowed.includes(x)) throw new Error(t('bundler.config.effects-element', { key: k, value: String(x), valid: allowed.map(y => '"' + y + '"').join(', ') }))
         continue
       }
       // rate : des messages par seconde, un entier de 1 à 1000
       if (k === 'rate') {
-        if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > 1000) throw new Error(t('bundler.config.effects-rate', { valeur: JSON.stringify(v) }))
+        if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > 1000) throw new Error(t('bundler.config.effects-rate', { value: JSON.stringify(v) }))
         continue
       }
       // guard : un booléen, ou { delay } — une durée (800, "800ms", "1.5s")
       if (k === 'guard') {
         if (typeof v === 'boolean') continue
-        if (typeof v !== 'object' || v === null || Array.isArray(v) || Object.keys(v).some(x => x !== 'delay')) throw new Error(t('bundler.config.effects-guard', { valeur: JSON.stringify(v) }))
+        if (typeof v !== 'object' || v === null || Array.isArray(v) || Object.keys(v).some(x => x !== 'delay')) throw new Error(t('bundler.config.effects-guard', { value: JSON.stringify(v) }))
         const d = (v as { delay?: unknown }).delay
-        if (d !== undefined && dureeEnMs(d) === null) throw new Error(t('bundler.config.effects-guard-delay', { valeur: JSON.stringify(d) }))
-        verifierPlafondDuree('effects.guard.delay', d)
+        if (d !== undefined && durationInMs(d) === null) throw new Error(t('bundler.config.effects-guard-delay', { value: JSON.stringify(d) }))
+        checkDurationCap('effects.guard.delay', d)
         continue
       }
-      if (!permis.includes(v as string)) throw new Error(t('bundler.config.effects-valeur', { cle: k, valeur: JSON.stringify(v), valides: permis.map(x => '"' + x + '"').join(', ') }))
+      if (!allowed.includes(v as string)) throw new Error(t('bundler.config.effects-value', { key: k, value: JSON.stringify(v), valid: allowed.map(x => '"' + x + '"').join(', ') }))
     }
   }
   if (config.runtime !== undefined) {
@@ -2069,8 +2076,8 @@ function validateConfig(config: any, path: string): void {
   if (config.ws !== undefined) {
     validateWsConfig(config.ws, path)
   }
-  if (config.serveur !== undefined) {
-    validateWsConfig(config.serveur, path, 'serveur')
+  if (config.server !== undefined) {
+    validateWsConfig(config.server, path, 'server')
   }
   if (config.languages !== undefined) {
     validateLanguagesConfig(config.languages, path)
@@ -2089,7 +2096,7 @@ function validateConfig(config: any, path: string): void {
     config.languages?.script !== undefined &&
     config.defaultScriptLang !== config.languages.script
   ) {
-    throw new Error(t('bundler.config.default-script-lang-conflit', { a: config.defaultScriptLang, b: config.languages.script }))
+    throw new Error(t('bundler.config.default-script-lang-conflict', { a: config.defaultScriptLang, b: config.languages.script }))
   }
 }
 
@@ -2110,16 +2117,16 @@ function validateConfig(config: any, path: string): void {
 function validateRuntimeConfig(runtime: any, path: string, lint?: LintToggles): void {
   if (typeof runtime === 'string') {
     if (runtime !== 'all' && runtime !== 'core') {
-      throw new Error(t('bundler.config.runtime-invalide-chaine', { valeur: runtime, modules: OPTIONAL_RUNTIME_MODULES.join(', ') }))
+      throw new Error(t('bundler.config.runtime-invalid-string', { value: runtime, modules: OPTIONAL_RUNTIME_MODULES.join(', ') }))
     }
     return
   }
   if (!Array.isArray(runtime)) {
-    throw new Error(t('bundler.config.runtime-doit-etre-tableau', { valeur: JSON.stringify(runtime), type: typeof runtime, chemin: path }))
+    throw new Error(t('bundler.config.runtime-must-be-array', { value: JSON.stringify(runtime), type: typeof runtime, path }))
   }
   for (const m of runtime) {
     if (typeof m !== 'string') {
-      throw new Error(t('bundler.config.runtime-module-doit-etre-chaine', { valeur: JSON.stringify(m), type: typeof m }))
+      throw new Error(t('bundler.config.runtime-module-must-be-string', { value: JSON.stringify(m), type: typeof m }))
     }
   }
   // 'autoloader' et 'runes' n'y figurent pas : le premier n'est du cœur qu'en `js: 'split'` et se
@@ -2143,8 +2150,8 @@ function validateRuntimeConfig(runtime: any, path: string, lint?: LintToggles): 
       throw new Error(t('bundler.config.runtime-module-core', { module: m, modules: OPTIONAL_RUNTIME_MODULES.join(', ') }))
     }
     if (!(OPTIONAL_RUNTIME_MODULES as readonly string[]).includes(m)) {
-      const nouveau = Object.hasOwn(REPLACED_FX_MODULES, m) ? t('bundler.config.runtime-module-remplace', { module: m, nouveau: REPLACED_FX_MODULES[m] }) : ''
-      throw new Error(t('bundler.config.runtime-module-inconnu', { module: m, modules: OPTIONAL_RUNTIME_MODULES.join(', '), presets: Object.keys(RUNTIME_PRESETS).join(', ') }) + nouveau)
+      const fresh = Object.hasOwn(REPLACED_FX_MODULES, m) ? t('bundler.config.runtime-module-replaced', { module: m, newName: REPLACED_FX_MODULES[m] }) : ''
+      throw new Error(t('bundler.config.runtime-module-unknown', { module: m, modules: OPTIONAL_RUNTIME_MODULES.join(', '), presets: Object.keys(RUNTIME_PRESETS).join(', ') }) + fresh)
     }
   }
 }
@@ -2156,27 +2163,27 @@ function validateRuntimeConfig(runtime: any, path: string, lint?: LintToggles): 
 function validatePreloadConfig(preload: any, path: string): void {
   if (typeof preload === 'string') {
     if (!VALID_PRELOAD_MODES.has(preload)) {
-      throw new Error(t('bundler.config.preload-invalide', { valeur: preload, valides: Array.from(VALID_PRELOAD_MODES).join(', ') }))
+      throw new Error(t('bundler.config.preload-invalid', { value: preload, valid: Array.from(VALID_PRELOAD_MODES).join(', ') }))
     }
     return
   }
   if (typeof preload !== 'object' || preload === null || Array.isArray(preload)) {
-    throw new Error(t('bundler.config.preload-doit-etre-objet', { chemin: path }))
+    throw new Error(t('bundler.config.preload-must-be-object', { path }))
   }
   // anciens axes `local`/`server` renommés `view`/`page` : détection
   // CIBLÉE (message dédié, plus clair que le « clé inconnue » générique
   // ci-dessous) si l'une OU l'autre ancienne clé traîne encore.
   if ('local' in preload || 'server' in preload) {
-    throw new Error(t('bundler.config.preload-axes-renommes'))
+    throw new Error(t('bundler.config.preload-axes-renamed'))
   }
   for (const k of Object.keys(preload)) {
     if (!KNOWN_PRELOAD_KEYS.has(k)) {
-      throw new Error(t('bundler.config.cle-inconnue', { cle: `preload.${k}`, valides: Array.from(KNOWN_PRELOAD_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.key-unknown', { key: `preload.${k}`, valid: Array.from(KNOWN_PRELOAD_KEYS).join(', ') }))
     }
   }
   for (const axis of ['view', 'page'] as const) {
     if (preload[axis] !== undefined && !VALID_PRELOAD_MODES.has(preload[axis])) {
-      throw new Error(t('bundler.config.preload-axis-invalide', { axe: axis, valeur: preload[axis], valides: Array.from(VALID_PRELOAD_MODES).join(', ') }))
+      throw new Error(t('bundler.config.preload-axis-invalid', { axis, value: preload[axis], valid: Array.from(VALID_PRELOAD_MODES).join(', ') }))
     }
   }
 }
@@ -2189,7 +2196,7 @@ function validatePreloadConfig(preload: any, path: string): void {
  */
 function validateCssConfig(css: any, _path: string): void {
   if (typeof css !== 'string' || !VALID_CSS_MODES.has(css)) {
-    throw new Error(t('bundler.config.css-mode-invalide', { valeur: css, valides: Array.from(VALID_CSS_MODES).join(', ') }))
+    throw new Error(t('bundler.config.css-mode-invalid', { value: css, valid: Array.from(VALID_CSS_MODES).join(', ') }))
   }
 }
 
@@ -2199,34 +2206,34 @@ const BUNDLE_NAME_RE = /^[a-z0-9][a-z0-9-]*$/
 const KNOWN_BUNDLE_KEYS = new Set(['roots', 'except'])
 
 function validateBundlesConfig(bundles: any): void {
-  if (typeof bundles !== 'object' || bundles === null || Array.isArray(bundles)) throw new Error(t('bundler.config.bundles-objet', { valeur: JSON.stringify(bundles) }))
-  for (const [nom, groupe] of Object.entries(bundles)) {
-    if (!BUNDLE_NAME_RE.test(nom)) throw new Error(t('bundler.config.bundles-nom', { nom }))
-    let liste: any = groupe
-    if (typeof groupe === 'object' && groupe !== null && !Array.isArray(groupe)) {
-      for (const k of Object.keys(groupe)) {
-        if (!KNOWN_BUNDLE_KEYS.has(k)) throw new Error(t('bundler.config.bundles-cle-inconnue', { nom, cle: k, valides: Array.from(KNOWN_BUNDLE_KEYS).join(', ') }))
+  if (typeof bundles !== 'object' || bundles === null || Array.isArray(bundles)) throw new Error(t('bundler.config.bundles-object', { value: JSON.stringify(bundles) }))
+  for (const [name, group] of Object.entries(bundles)) {
+    if (!BUNDLE_NAME_RE.test(name)) throw new Error(t('bundler.config.bundles-name', { name: name }))
+    let list: any = group
+    if (typeof group === 'object' && group !== null && !Array.isArray(group)) {
+      for (const k of Object.keys(group)) {
+        if (!KNOWN_BUNDLE_KEYS.has(k)) throw new Error(t('bundler.config.bundles-key-unknown', { name: name, key: k, valid: Array.from(KNOWN_BUNDLE_KEYS).join(', ') }))
       }
-      liste = (groupe as any).roots
-      const except = (groupe as any).except
+      list = (group as any).roots
+      const except = (group as any).except
       if (except !== undefined) {
-        if (!Array.isArray(except)) throw new Error(t('bundler.config.bundles-except', { nom, valeur: JSON.stringify(except) }))
-        for (const exclu of except) {
-          if (typeof exclu !== 'string' || exclu.trim() === '') throw new Error(t('bundler.config.bundles-except', { nom, valeur: JSON.stringify(exclu) }))
+        if (!Array.isArray(except)) throw new Error(t('bundler.config.bundles-except', { name: name, value: JSON.stringify(except) }))
+        for (const excluded of except) {
+          if (typeof excluded !== 'string' || excluded.trim() === '') throw new Error(t('bundler.config.bundles-except', { name: name, value: JSON.stringify(excluded) }))
         }
       }
     }
-    if (!Array.isArray(liste)) throw new Error(t('bundler.config.bundles-liste', { nom, valeur: JSON.stringify(groupe) }))
-    if (liste.length === 0) throw new Error(t('bundler.config.bundles-vide', { nom }))
-    for (const racine of liste) {
-      if (typeof racine !== 'string' || racine.trim() === '') throw new Error(t('bundler.config.bundles-element', { nom, valeur: JSON.stringify(racine) }))
+    if (!Array.isArray(list)) throw new Error(t('bundler.config.bundles-list', { name: name, value: JSON.stringify(group) }))
+    if (list.length === 0) throw new Error(t('bundler.config.bundles-empty', { name: name }))
+    for (const root of list) {
+      if (typeof root !== 'string' || root.trim() === '') throw new Error(t('bundler.config.bundles-element', { name: name, value: JSON.stringify(root) }))
     }
   }
 }
 
 function validateJsConfig(js: any, _path: string): void {
   if (typeof js !== 'string' || !VALID_JS_MODES.has(js)) {
-    throw new Error(t('bundler.config.js-mode-invalide', { valeur: js, valides: Array.from(VALID_JS_MODES).join(', ') }))
+    throw new Error(t('bundler.config.js-mode-invalid', { value: js, valid: Array.from(VALID_JS_MODES).join(', ') }))
   }
 }
 
@@ -2237,35 +2244,35 @@ function validateJsConfig(js: any, _path: string): void {
  */
 function validateImageConfig(image: any, path: string): void {
   if (typeof image !== 'object' || image === null || Array.isArray(image)) {
-    throw new Error(t('bundler.config.image-doit-etre-objet', { chemin: path }))
+    throw new Error(t('bundler.config.image-must-be-object', { path }))
   }
   for (const k of Object.keys(image)) {
     if (!KNOWN_IMAGE_KEYS.has(k)) {
-      throw new Error(t('bundler.config.cle-inconnue', { cle: `image.${k}`, valides: Array.from(KNOWN_IMAGE_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.key-unknown', { key: `image.${k}`, valid: Array.from(KNOWN_IMAGE_KEYS).join(', ') }))
     }
   }
   if (image.widths !== undefined) {
     if (!Array.isArray(image.widths) || image.widths.length === 0 || image.widths.some((w: any) => typeof w !== 'number' || !Number.isInteger(w) || w < 1)) {
-      throw new Error(t('bundler.config.image-widths-invalide', { valeur: JSON.stringify(image.widths) }))
+      throw new Error(t('bundler.config.image-widths-invalid', { value: JSON.stringify(image.widths) }))
     }
     // une largeur en double produirait deux fois la même variante ; au-delà de IMAGE_WIDTH_MAX, ce n'est plus une largeur d'écran
-    const doublon = image.widths.find((w: number, i: number) => image.widths.indexOf(w) !== i)
-    if (doublon !== undefined) {
-      throw new Error(t('bundler.config.image-widths-doublon', { valeur: JSON.stringify(image.widths), largeur: doublon }))
+    const duplicate = image.widths.find((w: number, i: number) => image.widths.indexOf(w) !== i)
+    if (duplicate !== undefined) {
+      throw new Error(t('bundler.config.image-widths-duplicate', { value: JSON.stringify(image.widths), width: duplicate }))
     }
-    const demesuree = image.widths.find((w: number) => w > IMAGE_WIDTH_MAX)
-    if (demesuree !== undefined) {
-      throw new Error(t('bundler.config.image-widths-trop-grande', { valeur: JSON.stringify(image.widths), largeur: demesuree, max: IMAGE_WIDTH_MAX }))
+    const oversized = image.widths.find((w: number) => w > IMAGE_WIDTH_MAX)
+    if (oversized !== undefined) {
+      throw new Error(t('bundler.config.image-widths-too-large', { value: JSON.stringify(image.widths), width: oversized, max: IMAGE_WIDTH_MAX }))
     }
   }
   if (image.formats !== undefined) {
     if (!Array.isArray(image.formats) || image.formats.length === 0 || image.formats.some((f: any) => !VALID_IMAGE_FORMATS.has(f))) {
-      throw new Error(t('bundler.config.image-formats-invalide', { valeur: JSON.stringify(image.formats), valides: Array.from(VALID_IMAGE_FORMATS).join(', ') }))
+      throw new Error(t('bundler.config.image-formats-invalid', { value: JSON.stringify(image.formats), valid: Array.from(VALID_IMAGE_FORMATS).join(', ') }))
     }
   }
   if (image.quality !== undefined) {
     if (typeof image.quality !== 'number' || !Number.isInteger(image.quality) || image.quality < 1 || image.quality > 100) {
-      throw new Error(t('bundler.config.image-quality-invalide', { valeur: JSON.stringify(image.quality) }))
+      throw new Error(t('bundler.config.image-quality-invalid', { value: JSON.stringify(image.quality) }))
     }
   }
 }
@@ -2278,28 +2285,28 @@ function validateImageConfig(image: any, path: string): void {
  */
 function validateLintConfig(lint: any, path: string): void {
   if (typeof lint !== 'object' || lint === null || Array.isArray(lint)) {
-    throw new Error(t('bundler.config.lint-doit-etre-objet', { chemin: path }))
+    throw new Error(t('bundler.config.lint-must-be-object', { path }))
   }
   for (const k of Object.keys(lint)) {
     if (!KNOWN_LINT_KEYS.has(k)) {
-      throw new Error(t('bundler.config.cle-inconnue', { cle: `lint.${k}`, valides: Array.from(KNOWN_LINT_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.key-unknown', { key: `lint.${k}`, valid: Array.from(KNOWN_LINT_KEYS).join(', ') }))
     }
   }
   if (lint.maxStateVars !== undefined) {
     if (typeof lint.maxStateVars !== 'number' || !Number.isInteger(lint.maxStateVars) || lint.maxStateVars < 0) {
-      throw new Error(t('bundler.config.lint-max-state-vars-invalide', { valeur: JSON.stringify(lint.maxStateVars), type: typeof lint.maxStateVars }))
+      throw new Error(t('bundler.config.lint-max-state-vars-invalid', { value: JSON.stringify(lint.maxStateVars), type: typeof lint.maxStateVars }))
     }
   }
   // les clés qui acceptent aussi "error" : l'avertissement devient une erreur de build
   for (const type of LINT_ERROR_TYPES) {
     if (lint[type] !== undefined && typeof lint[type] !== 'boolean' && lint[type] !== 'error') {
-      throw new Error(t('bundler.config.lint-empty-component-invalide', { cle: type, valeur: JSON.stringify(lint[type]) }))
+      throw new Error(t('bundler.config.lint-empty-component-invalid', { key: type, value: JSON.stringify(lint[type]) }))
     }
   }
   for (const type of LINT_TYPES) {
     if (type === 'maxStateVars' || (LINT_ERROR_TYPES as readonly string[]).includes(type)) continue  // validés ci-dessus
     if (lint[type] !== undefined && typeof lint[type] !== 'boolean') {
-      throw new Error(t('bundler.config.lint-type-invalide', { cle: type, valeur: JSON.stringify(lint[type]), type: typeof lint[type] }))
+      throw new Error(t('bundler.config.lint-type-invalid', { key: type, value: JSON.stringify(lint[type]), type: typeof lint[type] }))
     }
   }
 }
@@ -2312,84 +2319,88 @@ function validateLintConfig(lint: any, path: string): void {
 function validateLogLevelConfig(value: any, path: string): void {
   if (typeof value === 'string') {
     if (!VALID_LOG_LEVELS.has(value as LogLevelName)) {
-      throw new Error(t('bundler.config.log-level-invalide', { valeur: value, valides: Array.from(VALID_LOG_LEVELS).join(', ') }))
+      throw new Error(t('bundler.config.log-level-invalid', { value, valid: Array.from(VALID_LOG_LEVELS).join(', ') }))
     }
     return
   }
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(t('bundler.config.log-level-doit-etre-objet', { chemin: path }))
+    throw new Error(t('bundler.config.log-level-must-be-object', { path }))
   }
   for (const k of Object.keys(value)) {
     if (!KNOWN_LOG_LEVEL_KEYS.has(k)) {
-      throw new Error(t('bundler.config.cle-inconnue', { cle: `logLevel.${k}`, valides: Array.from(KNOWN_LOG_LEVEL_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.key-unknown', { key: `logLevel.${k}`, valid: Array.from(KNOWN_LOG_LEVEL_KEYS).join(', ') }))
     }
   }
   for (const env of ['dev', 'prod'] as const) {
     if (value[env] !== undefined && !VALID_LOG_LEVELS.has(value[env])) {
-      throw new Error(t('bundler.config.log-level-env-invalide', { env, valeur: value[env], valides: Array.from(VALID_LOG_LEVELS).join(', ') }))
+      throw new Error(t('bundler.config.log-level-env-invalid', { env, value: value[env], valid: Array.from(VALID_LOG_LEVELS).join(', ') }))
     }
   }
 }
 
-// validateWsConfig() et ses sous-blocs : le bloc `ws` et le bloc `serveur` (`p`, préfixe des clés dans les messages) ont la même
-// forme, `antiCheat` en plus pour `serveur` (cf. validateServeurAntiCheatConfig) — une seule famille de fonctions
+// validateWsConfig() et ses sous-blocs : le bloc `ws` et le bloc `server` (`p`, préfixe des clés dans les messages) ont la même
+// forme, `antiCheat` en plus pour `server` (cf. validateServerAntiCheatConfig) — une seule famille de fonctions
 /**
  * Valide le bloc `ws` (démarrage de `mjs ws`, cf. cli/ws.ts). MÊME patron
  * strict que `validateRuntimeConfig`/`validateLintConfig` ci-dessus : clé
  * inconnue ou type faux = échec immédiat, avec suggestion orthographique sur
  * les fautes de frappe (`suggestKey`, cf. plus haut).
  */
-function validateWsConfig(ws: any, path: string, p: 'ws' | 'serveur' = 'ws'): void {
-  const connues = p === 'ws' ? KNOWN_WS_KEYS : KNOWN_SERVEUR_KEYS
+function validateWsConfig(ws: any, path: string, p: 'ws' | 'server' = 'ws'): void {
+  const known = p === 'ws' ? KNOWN_WS_KEYS : KNOWN_SERVER_KEYS
   if (typeof ws !== 'object' || ws === null || Array.isArray(ws)) {
-    throw new Error(t(p === 'ws' ? 'bundler.config.ws-doit-etre-objet' : 'bundler.config.serveur-doit-etre-objet', { chemin: path }))
+    throw new Error(t(p === 'ws' ? 'bundler.config.ws-must-be-object' : 'bundler.config.server-must-be-object', { path }))
   }
   for (const k of Object.keys(ws)) {
-    if (!connues.has(k)) {
-      const suggestion = suggestKey(k, connues)
+    if (!known.has(k)) {
+      const suggestion = suggestKey(k, known)
       const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `${p}.${k}`, hint, valides: Array.from(connues).join(', ') }))
+      throw new Error(t('bundler.config.key-unknown-hint', { key: `${p}.${k}`, hint, valid: Array.from(known).join(', ') }))
     }
   }
   if (ws.entry !== undefined && typeof ws.entry !== 'string') {
-    throw new Error(t('bundler.config.doit-etre-chaine', { cle: `${p}.entry`, valeur: JSON.stringify(ws.entry), type: typeof ws.entry }))
+    throw new Error(t('bundler.config.must-be-string', { key: `${p}.entry`, value: JSON.stringify(ws.entry), type: typeof ws.entry }))
   }
   if (ws.transport !== undefined) {
     if (typeof ws.transport !== 'string' || !VALID_WS_TRANSPORTS.has(ws.transport)) {
       const suggestion = typeof ws.transport === 'string' ? suggestKey(ws.transport, VALID_WS_TRANSPORTS) : null
       const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.transport-invalide', { cle: `${p}.transport`, valeur: JSON.stringify(ws.transport), hint, valides: Array.from(VALID_WS_TRANSPORTS).join(', ') }))
+      throw new Error(t('bundler.config.transport-invalid', { key: `${p}.transport`, value: JSON.stringify(ws.transport), hint, valid: Array.from(VALID_WS_TRANSPORTS).join(', ') }))
     }
   }
   if (ws.host !== undefined && typeof ws.host !== 'string') {
-    throw new Error(t('bundler.config.doit-etre-chaine', { cle: `${p}.host`, valeur: JSON.stringify(ws.host), type: typeof ws.host }))
+    throw new Error(t('bundler.config.must-be-string', { key: `${p}.host`, value: JSON.stringify(ws.host), type: typeof ws.host }))
+  }
+  // vide ou fait de blancs : refusé comme `dev.host` et `ws.bridge.host` (un hôte vide ne passe pas en silence pour le défaut)
+  if (typeof ws.host === 'string' && ws.host.trim() === '') {
+    throw new Error(t('bundler.config.string-not-empty-invalid', { key: `${p}.host`, value: JSON.stringify(ws.host), type: 'string' }))
   }
   if (ws.codec !== undefined) {
     if (typeof ws.codec !== 'string' || !VALID_WS_CODECS.has(ws.codec)) {
       const suggestion = typeof ws.codec === 'string' ? suggestKey(ws.codec, VALID_WS_CODECS) : null
       const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.codec-invalide', { cle: `${p}.codec`, valeur: JSON.stringify(ws.codec), hint, valides: Array.from(VALID_WS_CODECS).join(', ') }))
+      throw new Error(t('bundler.config.codec-invalid', { key: `${p}.codec`, value: JSON.stringify(ws.codec), hint, valid: Array.from(VALID_WS_CODECS).join(', ') }))
     }
   }
   if (ws.port !== undefined) {
     if (typeof ws.port !== 'number' || !Number.isInteger(ws.port) || ws.port < 1 || ws.port > 65535) {
-      throw new Error(t('bundler.config.port-hors-plage', { cle: `${p}.port`, valeur: JSON.stringify(ws.port) }))
+      throw new Error(t('bundler.config.port-out-of-range', { key: `${p}.port`, value: JSON.stringify(ws.port) }))
     }
   }
   if (ws.heartbeat !== undefined) {
     if (typeof ws.heartbeat !== 'number' || !Number.isInteger(ws.heartbeat) || ws.heartbeat <= 0) {
-      throw new Error(t('bundler.config.entier-positif-ms-invalide', { cle: `${p}.heartbeat`, valeur: JSON.stringify(ws.heartbeat), type: typeof ws.heartbeat }))
+      throw new Error(t('bundler.config.integer-positive-ms-invalid', { key: `${p}.heartbeat`, value: JSON.stringify(ws.heartbeat), type: typeof ws.heartbeat }))
     }
   }
   if (ws.limits !== undefined) {
     if (typeof ws.limits !== 'object' || ws.limits === null || Array.isArray(ws.limits)) {
-      throw new Error(t('bundler.config.limits-doit-etre-objet', { cle: `${p}.limits`, chemin: path }))
+      throw new Error(t('bundler.config.limits-must-be-object', { key: `${p}.limits`, path }))
     }
     for (const k of Object.keys(ws.limits)) {
       if (!KNOWN_WS_LIMITS_KEYS.has(k)) {
         const suggestion = suggestKey(k, KNOWN_WS_LIMITS_KEYS)
         const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-        throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `${p}.limits.${k}`, hint, valides: Array.from(KNOWN_WS_LIMITS_KEYS).join(', ') }))
+        throw new Error(t('bundler.config.key-unknown-hint', { key: `${p}.limits.${k}`, hint, valid: Array.from(KNOWN_WS_LIMITS_KEYS).join(', ') }))
       }
     }
     for (const k of KNOWN_WS_LIMITS_KEYS) {
@@ -2400,8 +2411,8 @@ function validateWsConfig(ws: any, path: string, p: 'ws' | 'serveur' = 'ws'): vo
       // jamais null (même règle qu'avant).
       if (v === null && NULLABLE_WS_LIMITS_KEYS.has(k)) continue
       if (v !== undefined && (typeof v !== 'number' || !Number.isInteger(v) || v <= 0)) {
-        const suffix = NULLABLE_WS_LIMITS_KEYS.has(k) ? t('bundler.config.limite-nullable-suffixe') : ''
-        throw new Error(t('bundler.config.limits-cle-invalide', { cle: `${p}.limits.${k}`, suffixe: suffix, valeur: JSON.stringify(v), type: typeof v }))
+        const suffix = NULLABLE_WS_LIMITS_KEYS.has(k) ? t('bundler.config.limit-nullable-suffix') : ''
+        throw new Error(t('bundler.config.limits-key-invalid', { key: `${p}.limits.${k}`, suffix, value: JSON.stringify(v), type: typeof v }))
       }
     }
   }
@@ -2418,7 +2429,7 @@ function validateWsConfig(ws: any, path: string, p: 'ws' | 'serveur' = 'ws'): vo
     validateWsAdapterConfig(ws.adapter, path, p)
   }
   if (ws.stats !== undefined && typeof ws.stats !== 'boolean') {
-    throw new Error(t('bundler.config.doit-etre-booleen', { cle: `${p}.stats`, valeur: JSON.stringify(ws.stats), type: typeof ws.stats }))
+    throw new Error(t('bundler.config.must-be-boolean', { key: `${p}.stats`, value: JSON.stringify(ws.stats), type: typeof ws.stats }))
   }
   // session exclusive par identité (sessionExclusive — 2 modes) — élargi (MÊME patron
   // strict que ws.codec plus haut) : booléen `true`/`false` OU une des 2 chaînes de
@@ -2429,7 +2440,7 @@ function validateWsConfig(ws: any, path: string, p: 'ws' | 'serveur' = 'ws'): vo
     if (typeof se !== 'boolean' && !(typeof se === 'string' && VALID_SESSION_EXCLUSIVE.has(se))) {
       const suggestion = typeof se === 'string' ? suggestKey(se, VALID_SESSION_EXCLUSIVE) : null
       const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.session-exclusive-invalide', { cle: `${p}.sessionExclusive`, valeur: JSON.stringify(se), hint, valides: Array.from(VALID_SESSION_EXCLUSIVE).join(', ') }))
+      throw new Error(t('bundler.config.session-exclusive-invalid', { key: `${p}.sessionExclusive`, value: JSON.stringify(se), hint, valid: Array.from(VALID_SESSION_EXCLUSIVE).join(', ') }))
     }
   }
   // vérification d'origine (verifyOrigin) — SEULE la forme allowlist existe en JSON (cf.
@@ -2438,50 +2449,50 @@ function validateWsConfig(ws: any, path: string, p: 'ws' | 'serveur' = 'ws'): vo
   if (ws.verifyOrigin !== undefined) {
     const vo = ws.verifyOrigin
     if (!Array.isArray(vo) || vo.length === 0 || vo.some((o: unknown) => typeof o !== 'string' || o.length === 0)) {
-      throw new Error(t('bundler.config.verify-origin-invalide', { cle: `${p}.verifyOrigin`, valeur: JSON.stringify(vo) }))
+      throw new Error(t('bundler.config.verify-origin-invalid', { key: `${p}.verifyOrigin`, value: JSON.stringify(vo) }))
     }
   }
-  if (p === 'serveur' && ws.antiCheat !== undefined) {
-    validateServeurAntiCheatConfig(ws.antiCheat, path)
+  if (p === 'server' && ws.antiCheat !== undefined) {
+    validateServerAntiCheatConfig(ws.antiCheat, path)
   }
   if (ws.ban !== undefined) validateBanConfig(ws.ban, `${p}.ban`)
 }
 
-// débit partagé — `ws.limits.rateBy` / `serveur.limits.rateBy` : une des 4 chaînes, sinon échec
+// débit partagé — `ws.limits.rateBy` / `server.limits.rateBy` : une des 4 chaînes, sinon échec
 // immédiat avec suggestion (MÊME ton que ws.codec)
-function validateRateBy(v: unknown, cle: string): void {
+function validateRateBy(v: unknown, key: string): void {
   if (v === undefined) return
   if (typeof v !== 'string' || !VALID_WS_RATE_BY.has(v)) {
     const suggestion = typeof v === 'string' ? suggestKey(v, VALID_WS_RATE_BY) : null
     const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-    throw new Error(t('bundler.config.rate-by-invalide', { cle, valeur: JSON.stringify(v), hint, valides: Array.from(VALID_WS_RATE_BY).join(', ') }))
+    throw new Error(t('bundler.config.rate-by-invalid', { key: key, value: JSON.stringify(v), hint, valid: Array.from(VALID_WS_RATE_BY).join(', ') }))
   }
 }
 
-// mise au banc — `ws.ban` / `serveur.ban` : booléen, ou objet { after?, within?, duration?, by? }
+// mise au banc — `ws.ban` / `server.ban` : booléen, ou objet { after?, within?, duration?, by? }
 // (entiers > 0, `by` parmi VALID_WS_BAN_BY) ; clé inconnue = échec immédiat avec suggestion
-function validateBanConfig(ban: any, cle: string): void {
+function validateBanConfig(ban: any, key: string): void {
   if (typeof ban === 'boolean') return
   if (typeof ban !== 'object' || ban === null || Array.isArray(ban)) {
-    throw new Error(t('bundler.config.ban-doit-etre', { cle, valeur: JSON.stringify(ban), type: typeof ban }))
+    throw new Error(t('bundler.config.ban-must-be', { key: key, value: JSON.stringify(ban), type: typeof ban }))
   }
   for (const k of Object.keys(ban)) {
     if (!KNOWN_WS_BAN_KEYS.has(k)) {
       const suggestion = suggestKey(k, KNOWN_WS_BAN_KEYS)
       const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `${cle}.${k}`, hint, valides: Array.from(KNOWN_WS_BAN_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.key-unknown-hint', { key: `${key}.${k}`, hint, valid: Array.from(KNOWN_WS_BAN_KEYS).join(', ') }))
     }
   }
   for (const k of ['after', 'within', 'duration']) {
     const v = ban[k]
     if (v !== undefined && (typeof v !== 'number' || !Number.isInteger(v) || v <= 0)) {
-      throw new Error(t('bundler.config.entier-positif-invalide', { cle: `${cle}.${k}`, valeur: JSON.stringify(v), type: typeof v }))
+      throw new Error(t('bundler.config.integer-positive-invalid', { key: `${key}.${k}`, value: JSON.stringify(v), type: typeof v }))
     }
   }
   if (ban.by !== undefined && (typeof ban.by !== 'string' || !VALID_WS_BAN_BY.has(ban.by))) {
     const suggestion = typeof ban.by === 'string' ? suggestKey(ban.by, VALID_WS_BAN_BY) : null
     const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-    throw new Error(t('bundler.config.ban-by-invalide', { cle: `${cle}.by`, valeur: JSON.stringify(ban.by), hint, valides: Array.from(VALID_WS_BAN_BY).join(', ') }))
+    throw new Error(t('bundler.config.ban-by-invalid', { key: `${key}.by`, value: JSON.stringify(ban.by), hint, valid: Array.from(VALID_WS_BAN_BY).join(', ') }))
   }
 }
 
@@ -2492,28 +2503,28 @@ function validateBanConfig(ban: any, cle: string): void {
  * exacte de l'URL (schéma, host, port, base) n'est vérifiée qu'au runtime par adapter-redis.ts
  * (parseRedisUrl), au moment où mjsWs() construit réellement l'adaptateur.
  */
-function validateWsAdapterConfig(adapter: any, path: string, p: 'ws' | 'serveur'): void {
+function validateWsAdapterConfig(adapter: any, path: string, p: 'ws' | 'server'): void {
   if (typeof adapter !== 'object' || adapter === null || Array.isArray(adapter)) {
-    throw new Error(t('bundler.config.adapter-doit-etre-objet', { cle: `${p}.adapter`, chemin: path }))
+    throw new Error(t('bundler.config.adapter-must-be-object', { key: `${p}.adapter`, path }))
   }
   for (const k of Object.keys(adapter)) {
     if (!KNOWN_WS_ADAPTER_KEYS.has(k)) {
       const suggestion = suggestKey(k, KNOWN_WS_ADAPTER_KEYS)
       const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `${p}.adapter.${k}`, hint, valides: Array.from(KNOWN_WS_ADAPTER_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.key-unknown-hint', { key: `${p}.adapter.${k}`, hint, valid: Array.from(KNOWN_WS_ADAPTER_KEYS).join(', ') }))
     }
   }
   if (typeof adapter.redis !== 'string' || adapter.redis === '') {
-    throw new Error(t('bundler.config.adapter-redis-requis', { cle: `${p}.adapter.redis` }))
+    throw new Error(t('bundler.config.adapter-redis-required', { key: `${p}.adapter.redis` }))
   }
   if (adapter.prefix !== undefined && (typeof adapter.prefix !== 'string' || adapter.prefix === '')) {
-    throw new Error(t('bundler.config.chaine-non-vide-invalide', { cle: `${p}.adapter.prefix`, valeur: JSON.stringify(adapter.prefix), type: typeof adapter.prefix }))
+    throw new Error(t('bundler.config.string-not-empty-invalid', { key: `${p}.adapter.prefix`, value: JSON.stringify(adapter.prefix), type: typeof adapter.prefix }))
   }
   // anti-entropie de présence (cf. src/mjs-ws/adapter.ts attachPresenceAntiEntropy) — MÊME
   // patron que ws.heartbeat (entier > 0) mais avec `false` en soupape de désactivation
   if (adapter.antiEntropy !== undefined && adapter.antiEntropy !== false) {
     if (typeof adapter.antiEntropy !== 'number' || !Number.isInteger(adapter.antiEntropy) || adapter.antiEntropy <= 0) {
-      throw new Error(t('bundler.config.entier-ou-false-invalide', { cle: `${p}.adapter.antiEntropy`, valeur: JSON.stringify(adapter.antiEntropy), type: typeof adapter.antiEntropy }))
+      throw new Error(t('bundler.config.integer-or-false-invalid', { key: `${p}.adapter.antiEntropy`, value: JSON.stringify(adapter.antiEntropy), type: typeof adapter.antiEntropy }))
     }
   }
 }
@@ -2526,21 +2537,21 @@ function validateWsAdapterConfig(adapter: any, path: string, p: 'ws' | 'serveur'
  * COMMUTATEUR de fonctionnalité, juste un réglage fin — l'activation réelle du balayage reste
  * data-driven au runtime (cf. le JSDoc de `WsConfig.token`).
  */
-function validateWsTokenConfig(token: any, path: string, p: 'ws' | 'serveur'): void {
+function validateWsTokenConfig(token: any, path: string, p: 'ws' | 'server'): void {
   if (typeof token !== 'object' || token === null || Array.isArray(token)) {
-    throw new Error(t('bundler.config.token-doit-etre-objet', { cle: `${p}.token`, valeur: JSON.stringify(token), type: typeof token, chemin: path }))
+    throw new Error(t('bundler.config.token-must-be-object', { key: `${p}.token`, value: JSON.stringify(token), type: typeof token, path }))
   }
   for (const k of Object.keys(token)) {
     if (!KNOWN_WS_TOKEN_KEYS.has(k)) {
       const suggestion = suggestKey(k, KNOWN_WS_TOKEN_KEYS)
       const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `${p}.token.${k}`, hint, valides: Array.from(KNOWN_WS_TOKEN_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.key-unknown-hint', { key: `${p}.token.${k}`, hint, valid: Array.from(KNOWN_WS_TOKEN_KEYS).join(', ') }))
     }
   }
   for (const k of KNOWN_WS_TOKEN_KEYS) {
     const v = (token as any)[k]
     if (v !== undefined && (typeof v !== 'number' || !Number.isInteger(v) || v <= 0)) {
-      throw new Error(t('bundler.config.entier-positif-invalide', { cle: `${p}.token.${k}`, valeur: JSON.stringify(v), type: typeof v }))
+      throw new Error(t('bundler.config.integer-positive-invalid', { key: `${p}.token.${k}`, value: JSON.stringify(v), type: typeof v }))
     }
   }
 }
@@ -2551,22 +2562,22 @@ function validateWsTokenConfig(token: any, path: string, p: 'ws' | 'serveur'): v
  * orthographique, type faux = échec immédiat. `true` = défauts, `false` ≡ absent (accepté
  * pour couper explicitement), objet = réglages fins — entiers > 0 seulement.
  */
-function validateWsResumeConfig(resume: any, path: string, p: 'ws' | 'serveur'): void {
+function validateWsResumeConfig(resume: any, path: string, p: 'ws' | 'server'): void {
   if (typeof resume === 'boolean') return
   if (typeof resume !== 'object' || resume === null || Array.isArray(resume)) {
-    throw new Error(t('bundler.config.resume-doit-etre-objet', { cle: `${p}.resume`, valeur: JSON.stringify(resume), type: typeof resume, chemin: path }))
+    throw new Error(t('bundler.config.resume-must-be-object', { key: `${p}.resume`, value: JSON.stringify(resume), type: typeof resume, path }))
   }
   for (const k of Object.keys(resume)) {
     if (!KNOWN_WS_RESUME_KEYS.has(k)) {
       const suggestion = suggestKey(k, KNOWN_WS_RESUME_KEYS)
       const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `${p}.resume.${k}`, hint, valides: Array.from(KNOWN_WS_RESUME_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.key-unknown-hint', { key: `${p}.resume.${k}`, hint, valid: Array.from(KNOWN_WS_RESUME_KEYS).join(', ') }))
     }
   }
   for (const k of KNOWN_WS_RESUME_KEYS) {
     const v = (resume as any)[k]
     if (v !== undefined && (typeof v !== 'number' || !Number.isInteger(v) || v <= 0)) {
-      throw new Error(t('bundler.config.entier-positif-invalide', { cle: `${p}.resume.${k}`, valeur: JSON.stringify(v), type: typeof v }))
+      throw new Error(t('bundler.config.integer-positive-invalid', { key: `${p}.resume.${k}`, value: JSON.stringify(v), type: typeof v }))
     }
   }
 }
@@ -2578,52 +2589,56 @@ function validateWsResumeConfig(resume: any, path: string, p: 'ws' | 'serveur'):
  * (validation de FORME) — cf. le JSDoc de `WsConfig.bridge` : l'obligation réelle est
  * tranchée par bridge.ts, au moment où mjsWs() est réellement appelé.
  */
-function validateWsBridgeConfig(bridge: any, path: string, p: 'ws' | 'serveur'): void {
+function validateWsBridgeConfig(bridge: any, path: string, p: 'ws' | 'server'): void {
   if (typeof bridge !== 'object' || bridge === null || Array.isArray(bridge)) {
-    throw new Error(t('bundler.config.bridge-doit-etre-objet', { cle: `${p}.bridge`, chemin: path }))
+    throw new Error(t('bundler.config.bridge-must-be-object', { key: `${p}.bridge`, path }))
   }
   for (const k of Object.keys(bridge)) {
     if (!KNOWN_WS_BRIDGE_KEYS.has(k)) {
       const suggestion = suggestKey(k, KNOWN_WS_BRIDGE_KEYS)
       const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `${p}.bridge.${k}`, hint, valides: Array.from(KNOWN_WS_BRIDGE_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.key-unknown-hint', { key: `${p}.bridge.${k}`, hint, valid: Array.from(KNOWN_WS_BRIDGE_KEYS).join(', ') }))
     }
   }
   if (bridge.port !== undefined) {
     if (typeof bridge.port !== 'number' || !Number.isInteger(bridge.port) || bridge.port < 1 || bridge.port > 65535) {
-      throw new Error(t('bundler.config.port-hors-plage', { cle: `${p}.bridge.port`, valeur: JSON.stringify(bridge.port) }))
+      throw new Error(t('bundler.config.port-out-of-range', { key: `${p}.bridge.port`, value: JSON.stringify(bridge.port) }))
     }
   }
   if (bridge.host !== undefined && typeof bridge.host !== 'string') {
-    throw new Error(t('bundler.config.doit-etre-chaine', { cle: `${p}.bridge.host`, valeur: JSON.stringify(bridge.host), type: typeof bridge.host }))
+    throw new Error(t('bundler.config.must-be-string', { key: `${p}.bridge.host`, value: JSON.stringify(bridge.host), type: typeof bridge.host }))
+  }
+  // vide ou fait de blancs : refusé comme `dev.host` (un hôte vide ferait écouter le pont sur toutes les adresses de la machine)
+  if (typeof bridge.host === 'string' && bridge.host.trim() === '') {
+    throw new Error(t('bundler.config.string-not-empty-invalid', { key: `${p}.bridge.host`, value: JSON.stringify(bridge.host), type: 'string' }))
   }
   if (bridge.secret !== undefined && typeof bridge.secret !== 'string') {
-    throw new Error(t('bundler.config.doit-etre-chaine', { cle: `${p}.bridge.secret`, valeur: JSON.stringify(bridge.secret), type: typeof bridge.secret }))
+    throw new Error(t('bundler.config.must-be-string', { key: `${p}.bridge.secret`, value: JSON.stringify(bridge.secret), type: typeof bridge.secret }))
   }
   if (bridge.webhooks !== undefined) {
     const wh = bridge.webhooks
     if (typeof wh !== 'object' || wh === null || Array.isArray(wh)) {
-      throw new Error(t('bundler.config.webhooks-doit-etre-objet', { cle: `${p}.bridge.webhooks`, chemin: path }))
+      throw new Error(t('bundler.config.webhooks-must-be-object', { key: `${p}.bridge.webhooks`, path }))
     }
     for (const k of Object.keys(wh)) {
       if (!KNOWN_WS_BRIDGE_WEBHOOKS_KEYS.has(k)) {
         const suggestion = suggestKey(k, KNOWN_WS_BRIDGE_WEBHOOKS_KEYS)
         const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-        throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `${p}.bridge.webhooks.${k}`, hint, valides: Array.from(KNOWN_WS_BRIDGE_WEBHOOKS_KEYS).join(', ') }))
+        throw new Error(t('bundler.config.key-unknown-hint', { key: `${p}.bridge.webhooks.${k}`, hint, valid: Array.from(KNOWN_WS_BRIDGE_WEBHOOKS_KEYS).join(', ') }))
       }
     }
     if (typeof wh.url !== 'string' || wh.url === '') {
-      throw new Error(t('bundler.config.webhooks-url-requis', { cle: `${p}.bridge.webhooks.url` }))
+      throw new Error(t('bundler.config.webhooks-url-required', { key: `${p}.bridge.webhooks.url` }))
     }
     if (wh.secret !== undefined && typeof wh.secret !== 'string') {
-      throw new Error(t('bundler.config.doit-etre-chaine', { cle: `${p}.bridge.webhooks.secret`, valeur: JSON.stringify(wh.secret), type: typeof wh.secret }))
+      throw new Error(t('bundler.config.must-be-string', { key: `${p}.bridge.webhooks.secret`, value: JSON.stringify(wh.secret), type: typeof wh.secret }))
     }
     if (!Array.isArray(wh.events) || wh.events.length === 0 || !wh.events.every((e: unknown) => typeof e === 'string' && e.length > 0)) {
-      throw new Error(t('bundler.config.webhooks-events-invalide', { cle: `${p}.bridge.webhooks.events` }))
+      throw new Error(t('bundler.config.webhooks-events-invalid', { key: `${p}.bridge.webhooks.events` }))
     }
     if (wh.timeoutMs !== undefined) {
       if (typeof wh.timeoutMs !== 'number' || !Number.isInteger(wh.timeoutMs) || wh.timeoutMs <= 0) {
-        throw new Error(t('bundler.config.entier-positif-ms-invalide', { cle: `${p}.bridge.webhooks.timeoutMs`, valeur: JSON.stringify(wh.timeoutMs), type: typeof wh.timeoutMs }))
+        throw new Error(t('bundler.config.integer-positive-ms-invalid', { key: `${p}.bridge.webhooks.timeoutMs`, value: JSON.stringify(wh.timeoutMs), type: typeof wh.timeoutMs }))
       }
     }
   }
@@ -2632,7 +2647,7 @@ function validateWsBridgeConfig(bridge: any, path: string, p: 'ws' | 'serveur'):
   }
   // nonce anti-rejeu — simple booléen, MÊME patron que guardProcess/stats (racine)
   if (bridge.nonce !== undefined && typeof bridge.nonce !== 'boolean') {
-    throw new Error(t('bundler.config.doit-etre-booleen-simple', { cle: `${p}.bridge.nonce`, valeur: JSON.stringify(bridge.nonce), type: typeof bridge.nonce }))
+    throw new Error(t('bundler.config.must-be-boolean-simple', { key: `${p}.bridge.nonce`, value: JSON.stringify(bridge.nonce), type: typeof bridge.nonce }))
   }
 }
 
@@ -2642,16 +2657,16 @@ function validateWsBridgeConfig(bridge: any, path: string, p: 'ws' | 'serveur'):
  * sinon un objet `{ perIp?, fails? }` — clé inconnue = échec immédiat avec suggestion
  * orthographique, chaque seau présent doit être un tuple `[capacité, fenêtreMs]` de 2 entiers > 0.
  */
-function validateWsBridgeRateLimitConfig(rateLimit: any, path: string, p: 'ws' | 'serveur'): void {
+function validateWsBridgeRateLimitConfig(rateLimit: any, path: string, p: 'ws' | 'server'): void {
   if (rateLimit === false) return
   if (typeof rateLimit !== 'object' || rateLimit === null || Array.isArray(rateLimit)) {
-    throw new Error(t('bundler.config.ratelimit-doit-etre-objet', { cle: `${p}.bridge.rateLimit`, valeur: JSON.stringify(rateLimit), type: typeof rateLimit, chemin: path }))
+    throw new Error(t('bundler.config.ratelimit-must-be-object', { key: `${p}.bridge.rateLimit`, value: JSON.stringify(rateLimit), type: typeof rateLimit, path }))
   }
   for (const k of Object.keys(rateLimit)) {
     if (!KNOWN_WS_BRIDGE_RATE_LIMIT_KEYS.has(k)) {
       const suggestion = suggestKey(k, KNOWN_WS_BRIDGE_RATE_LIMIT_KEYS)
       const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `${p}.bridge.rateLimit.${k}`, hint, valides: Array.from(KNOWN_WS_BRIDGE_RATE_LIMIT_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.key-unknown-hint', { key: `${p}.bridge.rateLimit.${k}`, hint, valid: Array.from(KNOWN_WS_BRIDGE_RATE_LIMIT_KEYS).join(', ') }))
     }
   }
   for (const k of KNOWN_WS_BRIDGE_RATE_LIMIT_KEYS) {
@@ -2659,37 +2674,37 @@ function validateWsBridgeRateLimitConfig(rateLimit: any, path: string, p: 'ws' |
     if (v === undefined) continue
     const valid = Array.isArray(v) && v.length === 2 && v.every((n: unknown) => typeof n === 'number' && Number.isInteger(n) && n > 0)
     if (!valid) {
-      throw new Error(t('bundler.config.ratelimit-tuple-invalide', { cle: `${p}.bridge.rateLimit.${k}`, valeur: JSON.stringify(v) }))
+      throw new Error(t('bundler.config.ratelimit-tuple-invalid', { key: `${p}.bridge.rateLimit.${k}`, value: JSON.stringify(v) }))
     }
   }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// section `serveur` (mjs serveur, cli/server.ts) — MÊME patron strict que la section `ws`
-// ci-dessus, messages préfixés `serveur.` (pas `ws.`) pour ne jamais induire en erreur un dev
-// qui configure `mjs serveur`. Les SOUS-STRUCTURES (limits/token/bridge/resume/adapter) ont la
+// section `server` (mjs server, cli/server.ts) — MÊME patron strict que la section `ws`
+// ci-dessus, messages préfixés `server.` (pas `ws.`) pour ne jamais induire en erreur un dev
+// qui configure `mjs server`. Les SOUS-STRUCTURES (limits/token/bridge/resume/adapter) ont la
 // MÊME forme que `ws.*` — les Sets de clés connues (KNOWN_WS_LIMITS_KEYS, KNOWN_WS_TOKEN_KEYS,
 // KNOWN_WS_BRIDGE_KEYS, KNOWN_WS_BRIDGE_WEBHOOKS_KEYS, KNOWN_WS_BRIDGE_RATE_LIMIT_KEYS,
 // KNOWN_WS_RESUME_KEYS, KNOWN_WS_ADAPTER_KEYS, VALID_WS_TRANSPORTS, VALID_WS_CODECS,
 // VALID_SESSION_EXCLUSIVE, NULLABLE_WS_LIMITS_KEYS) sont RÉUTILISÉES telles quelles (pure
 // donnée, aucun texte 'ws.' dedans) — et la validation elle-même est celle de `ws` (validateWsConfig,
-// appelée avec le préfixe `serveur`) ; seul `antiCheat` est propre à cette section.
+// appelée avec le préfixe `server`) ; seul `antiCheat` est propre à cette section.
 // ──────────────────────────────────────────────────────────────────────────
 
 /**
- * Valide `serveur.antiCheat` (mjs-server/index.ts `MjsServerAntiTricheOptions`) —
+ * Valide `server.antiCheat` (mjs-server/index.ts `MjsServerAntiTricheOptions`) —
  * `movesPerIdentity` et `codePerIp` existent ici (JSON-able) : `[n entier ≥ 1, fenêtreMs entier
  * > 0]` ou `null`. MÊME patron strict que le reste : clé inconnue = échec immédiat.
  */
-function validateServeurAntiCheatConfig(antiCheat: any, path: string): void {
+function validateServerAntiCheatConfig(antiCheat: any, path: string): void {
   if (typeof antiCheat !== 'object' || antiCheat === null || Array.isArray(antiCheat)) {
-    throw new Error(t('bundler.config.antitriche-doit-etre-objet', { chemin: path }))
+    throw new Error(t('bundler.config.anti-cheat-must-be-object', { path }))
   }
   for (const k of Object.keys(antiCheat)) {
-    if (!KNOWN_SERVEUR_ANTITRICHE_KEYS.has(k)) {
-      const suggestion = suggestKey(k, KNOWN_SERVEUR_ANTITRICHE_KEYS)
+    if (!KNOWN_SERVER_ANTICHEAT_KEYS.has(k)) {
+      const suggestion = suggestKey(k, KNOWN_SERVER_ANTICHEAT_KEYS)
       const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `serveur.antiCheat.${k}`, hint, valides: Array.from(KNOWN_SERVEUR_ANTITRICHE_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.key-unknown-hint', { key: `server.antiCheat.${k}`, hint, valid: Array.from(KNOWN_SERVER_ANTICHEAT_KEYS).join(', ') }))
     }
   }
   if (antiCheat.movesPerIdentity !== undefined && antiCheat.movesPerIdentity !== null) {
@@ -2698,7 +2713,7 @@ function validateServeurAntiCheatConfig(antiCheat: any, path: string): void {
       Number.isInteger(mpi[0]) && mpi[0] >= 1 &&
       typeof mpi[1] === 'number' && Number.isInteger(mpi[1]) && mpi[1] > 0
     if (!valid) {
-      throw new Error(t('bundler.config.moves-per-identity-invalide', { valeur: JSON.stringify(mpi) }))
+      throw new Error(t('bundler.config.moves-per-identity-invalid', { value: JSON.stringify(mpi) }))
     }
   }
   if (antiCheat.codePerIp !== undefined && antiCheat.codePerIp !== null) {
@@ -2707,13 +2722,13 @@ function validateServeurAntiCheatConfig(antiCheat: any, path: string): void {
       Number.isInteger(cpi[0]) && cpi[0] >= 1 &&
       typeof cpi[1] === 'number' && Number.isInteger(cpi[1]) && cpi[1] > 0
     if (!valid) {
-      throw new Error(t('bundler.config.code-per-ip-invalide', { valeur: JSON.stringify(cpi) }))
+      throw new Error(t('bundler.config.code-per-ip-invalid', { value: JSON.stringify(cpi) }))
     }
   }
   if (antiCheat.privateGamesPerCreator !== undefined && antiCheat.privateGamesPerCreator !== null) {
     const pgc = antiCheat.privateGamesPerCreator
     if (!Number.isInteger(pgc) || pgc < 1) {
-      throw new Error(t('bundler.config.private-games-per-creator-invalide', { valeur: JSON.stringify(pgc) }))
+      throw new Error(t('bundler.config.private-games-per-creator-invalid', { value: JSON.stringify(pgc) }))
     }
   }
 }
@@ -2726,19 +2741,19 @@ function validateServeurAntiCheatConfig(antiCheat: any, path: string): void {
  */
 function validateLanguagesConfig(languages: any, path: string): void {
   if (typeof languages !== 'object' || languages === null || Array.isArray(languages)) {
-    throw new Error(t('bundler.config.languages-doit-etre-objet', { chemin: path }))
+    throw new Error(t('bundler.config.languages-must-be-object', { path }))
   }
   for (const k of Object.keys(languages)) {
     if (!KNOWN_LANGUAGES_KEYS.has(k)) {
-      throw new Error(t('bundler.config.cle-inconnue', { cle: `languages.${k}`, valides: Array.from(KNOWN_LANGUAGES_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.key-unknown', { key: `languages.${k}`, valid: Array.from(KNOWN_LANGUAGES_KEYS).join(', ') }))
     }
   }
   if (languages.script !== undefined && !VALID_LANGS.has(languages.script)) {
-    throw new Error(t('bundler.config.valeur-invalide-simple', { cle: 'languages.script', valeur: languages.script, valides: Array.from(VALID_LANGS).join(', ') }))
+    throw new Error(t('bundler.config.value-invalid-simple', { key: 'languages.script', value: languages.script, valid: Array.from(VALID_LANGS).join(', ') }))
   }
-  if (languages.template === 'js') throw new Error(t('bundler.config.template-js-retire', { cle: '[mjs.config.json] languages.template' }))
+  if (languages.template === 'js') throw new Error(t('bundler.config.template-js-removed', { key: '[mjs.config.json] languages.template' }))
   if (languages.template !== undefined && !VALID_TEMPLATE_LANGS.has(languages.template)) {
-    throw new Error(t('bundler.config.valeur-invalide-simple', { cle: 'languages.template', valeur: languages.template, valides: Array.from(VALID_TEMPLATE_LANGS).join(', ') }))
+    throw new Error(t('bundler.config.value-invalid-simple', { key: 'languages.template', value: languages.template, valid: Array.from(VALID_TEMPLATE_LANGS).join(', ') }))
   }
 }
 
@@ -2750,35 +2765,35 @@ function validateLanguagesConfig(languages: any, path: string): void {
  */
 function validateI18nConfig(i18n: any, path: string): void {
   if (typeof i18n !== 'object' || i18n === null || Array.isArray(i18n)) {
-    throw new Error(t('bundler.config.i18n-doit-etre-objet', { chemin: path }))
+    throw new Error(t('bundler.config.i18n-must-be-object', { path }))
   }
   for (const k of Object.keys(i18n)) {
     if (!KNOWN_I18N_KEYS.has(k)) {
-      throw new Error(t('bundler.config.cle-inconnue', { cle: `i18n.${k}`, valides: Array.from(KNOWN_I18N_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.key-unknown', { key: `i18n.${k}`, valid: Array.from(KNOWN_I18N_KEYS).join(', ') }))
     }
   }
   if (i18n.default !== undefined && (typeof i18n.default !== 'string' || i18n.default.length === 0)) {
-    throw new Error(t('bundler.config.i18n-default-invalide', { valeur: JSON.stringify(i18n.default) }))
+    throw new Error(t('bundler.config.i18n-default-invalid', { value: JSON.stringify(i18n.default) }))
   }
   if (i18n.placeholder !== undefined) parsePlaceholder(i18n.placeholder, PLACEHOLDER_CONFIG)
   if (i18n.hash !== undefined && typeof i18n.hash !== 'boolean' && i18n.hash !== 'auto') {
-    throw new Error(t('bundler.config.booleen-defaut-invalide', { cle: 'i18n.hash', defaut: 'auto', valeur: JSON.stringify(i18n.hash) }))
+    throw new Error(t('bundler.config.boolean-default-invalid', { key: 'i18n.hash', defaultValue: 'auto', value: JSON.stringify(i18n.hash) }))
   }
   if (i18n.persist !== undefined && typeof i18n.persist !== 'boolean') {
-    throw new Error(t('bundler.config.booleen-defaut-invalide', { cle: 'i18n.persist', defaut: 'false', valeur: JSON.stringify(i18n.persist) }))
+    throw new Error(t('bundler.config.boolean-default-invalid', { key: 'i18n.persist', defaultValue: 'false', value: JSON.stringify(i18n.persist) }))
   }
   if (i18n.detect !== undefined && typeof i18n.detect !== 'boolean') {
-    throw new Error(t('bundler.config.booleen-defaut-invalide', { cle: 'i18n.detect', defaut: 'false', valeur: JSON.stringify(i18n.detect) }))
+    throw new Error(t('bundler.config.boolean-default-invalid', { key: 'i18n.detect', defaultValue: 'false', value: JSON.stringify(i18n.detect) }))
   }
   if (i18n.urlParam !== undefined && typeof i18n.urlParam !== 'boolean') {
-    throw new Error(t('bundler.config.booleen-defaut-invalide', { cle: 'i18n.urlParam', defaut: 'false', valeur: JSON.stringify(i18n.urlParam) }))
+    throw new Error(t('bundler.config.boolean-default-invalid', { key: 'i18n.urlParam', defaultValue: 'false', value: JSON.stringify(i18n.urlParam) }))
   }
-  if (i18n.timeout !== undefined && dureeEnMs(i18n.timeout) === null) {
-    throw new Error(t('bundler.config.i18n-timeout-invalide', { valeur: JSON.stringify(i18n.timeout) }))
+  if (i18n.timeout !== undefined && durationInMs(i18n.timeout) === null) {
+    throw new Error(t('bundler.config.i18n-timeout-invalid', { value: JSON.stringify(i18n.timeout) }))
   }
-  verifierPlafondDuree('i18n.timeout', i18n.timeout)
+  checkDurationCap('i18n.timeout', i18n.timeout)
   if (i18n.source !== undefined && (typeof i18n.source !== 'string' || i18n.source.length === 0)) {
-    throw new Error(t('bundler.config.i18n-source-invalide', { valeur: JSON.stringify(i18n.source) }))
+    throw new Error(t('bundler.config.i18n-source-invalid', { value: JSON.stringify(i18n.source) }))
   }
 }
 
@@ -2790,36 +2805,36 @@ function validateI18nConfig(i18n: any, path: string): void {
  */
 function validateJournalConfig(journal: any, path: string): void {
   if (typeof journal !== 'object' || journal === null || Array.isArray(journal)) {
-    throw new Error(t('bundler.config.journal-doit-etre-objet', { chemin: path }))
+    throw new Error(t('bundler.config.journal-must-be-object', { path }))
   }
   for (const k of Object.keys(journal)) {
     if (!KNOWN_JOURNAL_KEYS.has(k)) {
-      throw new Error(t('bundler.config.cle-inconnue', { cle: `journal.${k}`, valides: Array.from(KNOWN_JOURNAL_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.key-unknown', { key: `journal.${k}`, valid: Array.from(KNOWN_JOURNAL_KEYS).join(', ') }))
     }
   }
   if (journal.server !== undefined && typeof journal.server !== 'boolean') {
-    throw new Error(t('bundler.config.booleen-defaut-invalide', { cle: 'journal.server', defaut: 'true', valeur: JSON.stringify(journal.server) }))
+    throw new Error(t('bundler.config.boolean-default-invalid', { key: 'journal.server', defaultValue: 'true', value: JSON.stringify(journal.server) }))
   }
   if (journal.client !== undefined && typeof journal.client !== 'boolean') {
-    throw new Error(t('bundler.config.booleen-defaut-invalide', { cle: 'journal.client', defaut: 'false', valeur: JSON.stringify(journal.client) }))
+    throw new Error(t('bundler.config.boolean-default-invalid', { key: 'journal.client', defaultValue: 'false', value: JSON.stringify(journal.client) }))
   }
   if (journal.viewer !== undefined && typeof journal.viewer !== 'boolean' && !(typeof journal.viewer === 'string' && journal.viewer.length > 0)) {
-    throw new Error(t('bundler.config.journal-viewer-invalide', { valeur: JSON.stringify(journal.viewer), type: typeof journal.viewer }))
+    throw new Error(t('bundler.config.journal-viewer-invalid', { value: JSON.stringify(journal.viewer), type: typeof journal.viewer }))
   }
   if (journal.maxEntries !== undefined && (typeof journal.maxEntries !== 'number' || !Number.isInteger(journal.maxEntries) || journal.maxEntries <= 0)) {
-    throw new Error(t('bundler.config.entier-positif-invalide', { cle: 'journal.maxEntries', valeur: JSON.stringify(journal.maxEntries), type: typeof journal.maxEntries }))
+    throw new Error(t('bundler.config.integer-positive-invalid', { key: 'journal.maxEntries', value: JSON.stringify(journal.maxEntries), type: typeof journal.maxEntries }))
   }
   if (journal.maxBytes !== undefined && (typeof journal.maxBytes !== 'number' || !Number.isInteger(journal.maxBytes) || journal.maxBytes <= 0)) {
-    throw new Error(t('bundler.config.entier-positif-invalide', { cle: 'journal.maxBytes', valeur: JSON.stringify(journal.maxBytes), type: typeof journal.maxBytes }))
+    throw new Error(t('bundler.config.integer-positive-invalid', { key: 'journal.maxBytes', value: JSON.stringify(journal.maxBytes), type: typeof journal.maxBytes }))
   }
   if (journal.maxDays !== undefined && (typeof journal.maxDays !== 'number' || !Number.isInteger(journal.maxDays) || journal.maxDays <= 0)) {
-    throw new Error(t('bundler.config.entier-positif-invalide', { cle: 'journal.maxDays', valeur: JSON.stringify(journal.maxDays), type: typeof journal.maxDays }))
+    throw new Error(t('bundler.config.integer-positive-invalid', { key: 'journal.maxDays', value: JSON.stringify(journal.maxDays), type: typeof journal.maxDays }))
   }
   // mêmes valeurs et mêmes refus que `trustProxy` de MJS-WS (`true`, plage trop large…), jamais ignorés en silence
   try {
     parseTrustProxy(journal.trustProxy)
   } catch (e: any) {
-    throw new Error(t('bundler.config.journal-trust-proxy-invalide', { chemin: path, erreur: e && e.message ? e.message : String(e) }))
+    throw new Error(t('bundler.config.journal-trust-proxy-invalid', { path, error: e && e.message ? e.message : String(e) }))
   }
 }
 
@@ -2846,9 +2861,9 @@ const TRUSTED_HOST_RE      = /^[a-z0-9.-]+$/
 const TRUSTED_HOST_IPV6_RE = /^[0-9a-f:]+$/
 
 function isValidTrustedHost(h: string): boolean {
-  const bas = h.toLowerCase()
-  if (TRUSTED_HOST_RE.test(bas) && !bas.includes('..') && !bas.startsWith('.')) return true
-  return TRUSTED_HOST_IPV6_RE.test(bas) && (bas.match(/:/g) || []).length >= 2
+  const lower = h.toLowerCase()
+  if (TRUSTED_HOST_RE.test(lower) && !lower.includes('..') && !lower.startsWith('.')) return true
+  return TRUSTED_HOST_IPV6_RE.test(lower) && (lower.match(/:/g) || []).length >= 2
 }
 
 // Les deux regex ci-dessus acceptent encore des
@@ -2861,9 +2876,9 @@ function isValidTrustedHost(h: string): boolean {
 // en URL (octets IPv4 hors bornes, ex. `123.456.789.0`) : l'appelant retombe alors sur le message
 // d'invalidité EXISTANT, pas sur le message de forme non-canonique.
 function canonicalTrustedHost(h: string): string | null {
-  const bas = h.toLowerCase()
+  const lower = h.toLowerCase()
   try {
-    const u = new URL('http://' + (bas.includes(':') ? '[' + bas + ']' : bas) + '/')
+    const u = new URL('http://' + (lower.includes(':') ? '[' + lower + ']' : lower) + '/')
     return u.hostname.replace(/^\[|\]$/g, '')
   } catch {
     return null
@@ -2886,38 +2901,38 @@ function validateForwardOrigin(fo: any, lint?: LintToggles): void {
   if (typeof fo === 'boolean') return
   if (typeof fo === 'string') {
     if (!fo) {
-      throw new Error(t('bundler.config.forward-origin-vide'))
+      throw new Error(t('bundler.config.forward-origin-empty'))
     }
     try {
       new URL(fo)
     } catch {
-      throw new Error(t('bundler.config.forward-origin-url-invalide', { valeur: JSON.stringify(fo) }))
+      throw new Error(t('bundler.config.forward-origin-url-invalid', { value: JSON.stringify(fo) }))
     }
     return
   }
   if (typeof fo === 'object' && fo !== null && !Array.isArray(fo)) {
     for (const k of Object.keys(fo)) {
       if (k !== 'trustedHosts') {
-        throw new Error(t('bundler.config.forward-origin-cle-inconnue', { cle: `render.forwardOrigin.${k}` }))
+        throw new Error(t('bundler.config.forward-origin-key-unknown', { key: `render.forwardOrigin.${k}` }))
       }
     }
     if (!Array.isArray(fo.trustedHosts) || fo.trustedHosts.length === 0) {
-      throw new Error(t('bundler.config.trusted-hosts-invalide', { valeur: JSON.stringify(fo.trustedHosts) }))
+      throw new Error(t('bundler.config.trusted-hosts-invalid', { value: JSON.stringify(fo.trustedHosts) }))
     }
     for (let i = 0; i < fo.trustedHosts.length; i++) {
       const h = fo.trustedHosts[i]
       if (typeof h !== 'string' || !h) {
-        throw new Error(t('bundler.config.trusted-host-item-invalide', { valeur: JSON.stringify(h), type: typeof h }))
+        throw new Error(t('bundler.config.trusted-host-item-invalid', { value: JSON.stringify(h), type: typeof h }))
       }
       if (!isValidTrustedHost(h)) {
-        throw new Error(t('bundler.config.forward-origin-trusted-host-invalide', { index: i, valeur: JSON.stringify(h) }))
+        throw new Error(t('bundler.config.forward-origin-trusted-host-invalid', { index: i, value: JSON.stringify(h) }))
       }
-      const canonique = canonicalTrustedHost(h)
-      if (canonique === null) {
-        throw new Error(t('bundler.config.forward-origin-trusted-host-invalide', { index: i, valeur: JSON.stringify(h) }))
+      const canonical = canonicalTrustedHost(h)
+      if (canonical === null) {
+        throw new Error(t('bundler.config.forward-origin-trusted-host-invalid', { index: i, value: JSON.stringify(h) }))
       }
-      if (canonique !== h.toLowerCase()) {
-        throw new Error(t('bundler.config.forward-origin-trusted-host-non-canonique', { index: i, valeur: JSON.stringify(h), canonique }))
+      if (canonical !== h.toLowerCase()) {
+        throw new Error(t('bundler.config.forward-origin-trusted-host-not-canonical', { index: i, value: JSON.stringify(h), canonical: canonical }))
       }
       // Hôte ACCEPTÉ (regex + forme canonique) mais TOUJOURS
       // bloqué à l'exécution par `isBlockedForwardTarget` (server/forward-origin.ts, défense en
@@ -2926,14 +2941,14 @@ function validateForwardOrigin(fo: any, lint?: LintToggles): void {
       // ICI un seul appel, jamais de risque de double avertissement, donc pas besoin du détour par
       // un tableau `warnings` renvoyé à l'appelant comme `expandRuntimePresets`). Sans ce signal, le
       // dev croit avoir autorisé un hôte qui n'activera jamais rien.
-      if (isBlockedForwardTarget(canonique)) {
-        const line = typedLine('config', t('bundler.config.forward-origin-trusted-host-interne', { index: i, valeur: JSON.stringify(h) }), lint)
+      if (isBlockedForwardTarget(canonical)) {
+        const line = typedLine('config', t('bundler.config.forward-origin-trusted-host-internal', { index: i, value: JSON.stringify(h) }), lint)
         if (line !== null) printDiagnostic(line, resolveColorsEnabled())
       }
     }
     return
   }
-  throw new Error(t('bundler.config.forward-origin-type-invalide', { valeur: JSON.stringify(fo), type: typeof fo }))
+  throw new Error(t('bundler.config.forward-origin-type-invalid', { value: JSON.stringify(fo), type: typeof fo }))
 }
 
 /**
@@ -2952,49 +2967,49 @@ function validateForwardOrigin(fo: any, lint?: LintToggles): void {
  * ancêtre lisible (droits, chemin fantôme) : le chemin est rendu tel quel, jamais une exception —
  * la garde retombe alors sur la comparaison lexicale, son comportement d'avant.
  */
-function cheminReel(chemin: string): string {
-  let tete = chemin
-  const restes: string[] = []
+function realPath(path: string): string {
+  let head = path
+  const leftovers: string[] = []
   for (;;) {
-    try { return join(realpathSync(tete), ...restes) } catch { /* pas encore là */ }
-    const parent = dirname(tete)
-    if (parent === tete) return chemin
-    restes.unshift(basename(tete))
-    tete = parent
+    try { return join(realpathSync(head), ...leftovers) } catch { /* pas encore là */ }
+    const parent = dirname(head)
+    if (parent === head) return path
+    leftovers.unshift(basename(head))
+    head = parent
   }
 }
 
 // une clé de route devient un chemin de fichier sous `render.outDir` au prérendu (`/blog` → `blog.html`,
 // cf. server/prerender.ts urlToFile) : un segment `..`, une barre inverse (séparateur sous Windows) ou
 // un chemin absolu le feraient écrire hors de ce dossier
-function routeHorsDossier(url: string): boolean {
-  const chemin = url.replace(/^\/+/, '')
-  return url.includes('\\') || chemin.split('/').includes('..') || win32.isAbsolute(chemin)
+function routeOutsideDir(url: string): boolean {
+  const path = url.replace(/^\/+/, '')
+  return url.includes('\\') || path.split('/').includes('..') || win32.isAbsolute(path)
 }
 
 function validateRenderConfig(render: any, path: string, lint?: LintToggles): void {
   if (typeof render !== 'object' || render === null || Array.isArray(render)) {
-    throw new Error(t('bundler.config.render-doit-etre-objet', { chemin: path }))
+    throw new Error(t('bundler.config.render-must-be-object', { path }))
   }
   for (const k of Object.keys(render)) {
     if (!KNOWN_RENDER_KEYS.has(k)) {
-      throw new Error(t('bundler.config.cle-inconnue', { cle: `render.${k}`, valides: Array.from(KNOWN_RENDER_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.key-unknown', { key: `render.${k}`, valid: Array.from(KNOWN_RENDER_KEYS).join(', ') }))
     }
   }
   if (render.default !== undefined && !VALID_RENDER_MODES.has(render.default)) {
-    throw new Error(t('bundler.config.valeur-invalide-simple', { cle: 'render.default', valeur: render.default, valides: Array.from(VALID_RENDER_MODES).join(', ') }))
+    throw new Error(t('bundler.config.value-invalid-simple', { key: 'render.default', value: render.default, valid: Array.from(VALID_RENDER_MODES).join(', ') }))
   }
   if (render.startup !== undefined && !VALID_STARTUP_MODES.has(render.startup)) {
-    throw new Error(t('bundler.config.valeur-invalide-simple', { cle: 'render.startup', valeur: render.startup, valides: Array.from(VALID_STARTUP_MODES).join(', ') }))
+    throw new Error(t('bundler.config.value-invalid-simple', { key: 'render.startup', value: render.startup, valid: Array.from(VALID_STARTUP_MODES).join(', ') }))
   }
   if (render.stream !== undefined && typeof render.stream !== 'boolean') {
-    throw new Error(t('bundler.config.doit-etre-booleen-simple', { cle: 'render.stream', valeur: JSON.stringify(render.stream), type: typeof render.stream }))
+    throw new Error(t('bundler.config.must-be-boolean-simple', { key: 'render.stream', value: JSON.stringify(render.stream), type: typeof render.stream }))
   }
   if (render.header !== undefined && typeof render.header !== 'string') {
-    throw new Error(t('bundler.config.doit-etre-chaine-simple', { cle: 'render.header', chemin: path }))
+    throw new Error(t('bundler.config.must-be-string-simple', { key: 'render.header', path }))
   }
   if (render.outDir !== undefined && typeof render.outDir !== 'string') {
-    throw new Error(t('bundler.config.doit-etre-chaine-simple', { cle: 'render.outDir', chemin: path }))
+    throw new Error(t('bundler.config.must-be-string-simple', { key: 'render.outDir', path }))
   }
   // `render.outDir` est le dossier que le prérendu ÉCRIT et dont il RETIRE ses fragments périmés (cf.
   // server/prerender.ts) : il doit rester DANS le projet. Un `..`, ou un chemin absolu ailleurs,
@@ -3005,67 +3020,67 @@ function validateRenderConfig(render: any, path: string, lint?: LintToggles): vo
     // Chemins RÉELS des deux côtés : un LIEN SYMBOLIQUE posé dans le projet et pointant ailleurs
     // passait la comparaison de chaînes — le prérendu écrivait et supprimait alors hors de l'arbre,
     // ce que cette garde existe précisément pour empêcher. Même idiome que la purge des orphelins.
-    const projet = cheminReel(dirname(path))
-    const cible  = cheminReel(resolve(dirname(path), render.outDir))
-    if (cible !== projet && !cible.startsWith(projet + sep)) {
-      throw new Error(t('bundler.config.render-outdir-hors-projet', { valeur: render.outDir, chemin: projet }))
+    const project = realPath(dirname(path))
+    const target  = realPath(resolve(dirname(path), render.outDir))
+    if (target !== project && !target.startsWith(project + sep)) {
+      throw new Error(t('bundler.config.render-outdir-outside-project', { value: render.outDir, path: project }))
     }
   }
   if (render.target !== undefined && (typeof render.target !== 'string' || render.target.length === 0)) {
-    throw new Error(t('bundler.config.render-target-invalide', { valeur: JSON.stringify(render.target) }))
+    throw new Error(t('bundler.config.render-target-invalid', { value: JSON.stringify(render.target) }))
   }
   if (render.method !== undefined && !VALID_RENDER_METHODS.has(render.method)) {
-    throw new Error(t('bundler.config.valeur-invalide-simple', { cle: 'render.method', valeur: render.method, valides: Array.from(VALID_RENDER_METHODS).join(', ') }))
+    throw new Error(t('bundler.config.value-invalid-simple', { key: 'render.method', value: render.method, valid: Array.from(VALID_RENDER_METHODS).join(', ') }))
   }
   if (render.cache !== undefined && !VALID_RENDER_CACHE_POLICIES.has(render.cache)) {
-    throw new Error(t('bundler.config.render-cache-invalide', { valeur: render.cache, valides: Array.from(VALID_RENDER_CACHE_POLICIES).join(', ') }))
+    throw new Error(t('bundler.config.render-cache-invalid', { value: render.cache, valid: Array.from(VALID_RENDER_CACHE_POLICIES).join(', ') }))
   }
   if (render.routes !== undefined) {
     if (typeof render.routes !== 'object' || render.routes === null || Array.isArray(render.routes)) {
-      throw new Error(t('bundler.config.render-routes-doit-etre-objet', { chemin: path }))
+      throw new Error(t('bundler.config.render-routes-must-be-object', { path }))
     }
     for (const url of Object.keys(render.routes)) {
       const route = render.routes[url]
-      if (routeHorsDossier(url)) {
-        throw new Error(t('bundler.config.route-hors-dossier', { url }))
+      if (routeOutsideDir(url)) {
+        throw new Error(t('bundler.config.route-outside-dir', { url }))
       }
       if (typeof route !== 'object' || route === null || Array.isArray(route)) {
-        throw new Error(t('bundler.config.route-doit-etre-objet', { url }))
+        throw new Error(t('bundler.config.route-must-be-object', { url }))
       }
       for (const k of Object.keys(route)) {
         if (!KNOWN_ROUTE_KEYS.has(k)) {
-          throw new Error(t('bundler.config.cle-inconnue', { cle: `render.routes['${url}'].${k}`, valides: Array.from(KNOWN_ROUTE_KEYS).join(', ') }))
+          throw new Error(t('bundler.config.key-unknown', { key: `render.routes['${url}'].${k}`, valid: Array.from(KNOWN_ROUTE_KEYS).join(', ') }))
         }
       }
       if (typeof route.component !== 'string' || !route.component) {
-        throw new Error(t('bundler.config.route-component-requis', { url }))
+        throw new Error(t('bundler.config.route-component-required', { url }))
       }
       if (route.mode !== undefined && !VALID_RENDER_MODES.has(route.mode)) {
-        throw new Error(t('bundler.config.valeur-invalide-simple', { cle: `render.routes['${url}'].mode`, valeur: route.mode, valides: Array.from(VALID_RENDER_MODES).join(', ') }))
+        throw new Error(t('bundler.config.value-invalid-simple', { key: `render.routes['${url}'].mode`, value: route.mode, valid: Array.from(VALID_RENDER_MODES).join(', ') }))
       }
       if (route.settleMs !== undefined) {
         if (typeof route.settleMs !== 'number' || !Number.isInteger(route.settleMs) || route.settleMs <= 0) {
-          throw new Error(t('bundler.config.entier-positif-invalide', { cle: `render.routes['${url}'].settleMs`, valeur: JSON.stringify(route.settleMs), type: typeof route.settleMs }))
+          throw new Error(t('bundler.config.integer-positive-invalid', { key: `render.routes['${url}'].settleMs`, value: JSON.stringify(route.settleMs), type: typeof route.settleMs }))
         }
       }
       if (route.engine !== undefined && !VALID_RENDER_ENGINES.has(route.engine)) {
-        throw new Error(t('bundler.config.valeur-invalide-simple', { cle: `render.routes['${url}'].engine`, valeur: route.engine, valides: Array.from(VALID_RENDER_ENGINES).join(', ') }))
+        throw new Error(t('bundler.config.value-invalid-simple', { key: `render.routes['${url}'].engine`, value: route.engine, valid: Array.from(VALID_RENDER_ENGINES).join(', ') }))
       }
       if (route.startup !== undefined && !VALID_STARTUP_MODES.has(route.startup)) {
-        throw new Error(t('bundler.config.valeur-invalide-simple', { cle: `render.routes['${url}'].startup`, valeur: route.startup, valides: Array.from(VALID_STARTUP_MODES).join(', ') }))
+        throw new Error(t('bundler.config.value-invalid-simple', { key: `render.routes['${url}'].startup`, value: route.startup, valid: Array.from(VALID_STARTUP_MODES).join(', ') }))
       }
       if (route.light !== undefined && typeof route.light !== 'boolean') {
-        throw new Error(t('bundler.config.doit-etre-booleen-simple', { cle: `render.routes['${url}'].light`, valeur: JSON.stringify(route.light), type: typeof route.light }))
+        throw new Error(t('bundler.config.must-be-boolean-simple', { key: `render.routes['${url}'].light`, value: JSON.stringify(route.light), type: typeof route.light }))
       }
       if (route.stream !== undefined && typeof route.stream !== 'boolean') {
-        throw new Error(t('bundler.config.doit-etre-booleen-simple', { cle: `render.routes['${url}'].stream`, valeur: JSON.stringify(route.stream), type: typeof route.stream }))
+        throw new Error(t('bundler.config.must-be-boolean-simple', { key: `render.routes['${url}'].stream`, value: JSON.stringify(route.stream), type: typeof route.stream }))
       }
       // `light` décrit comment le SERVEUR monte la racine : une route `csr` n'est jamais rendue
       // au serveur, la clé n'y change donc rien. Avertissement NON bloquant (la configuration
       // reste valide, même canal direct que l'hôte interne de `forwardOrigin` plus bas) : sans
       // lui, le dev croit avoir demandé un fragment léger là où aucun fragment n'est produit.
       if (route.light === true && normalizeMode(route.mode ?? render.default ?? FALLBACK_MODE) === 'csr') {
-        const line = typedLine('config', t('bundler.config.route-light-sans-effet-csr', { url }), lint)
+        const line = typedLine('config', t('bundler.config.route-light-no-effect-csr', { url }), lint)
         if (line !== null) printDiagnostic(line, resolveColorsEnabled())
       }
     }
@@ -3076,15 +3091,15 @@ function validateRenderConfig(render: any, path: string, lint?: LintToggles): vo
     // sont en portée ensemble. Les langues d'une même route partagent la MÊME URL : jamais une
     // collision. Une route qui ne produit pas de fichier de page (autre mode de démarrage, route
     // paramétrée, page non prérendue) n'entre pas dans le compte.
-    const parSlug = new Map<string, string[]>()
+    const bySlug = new Map<string, string[]>()
     for (const url of Object.keys(render.routes)) {
       const route = render.routes[url]
       if ((route.startup ?? render.startup) !== 'bundle') continue
       if (!isBuildPrerenderable(url, normalizeMode(route.mode ?? render.default ?? FALLBACK_MODE))) continue
       const slug = startupSlug(url)
-      parSlug.set(slug, [...(parSlug.get(slug) ?? []), url])
+      bySlug.set(slug, [...(bySlug.get(slug) ?? []), url])
     }
-    for (const [slug, urls] of parSlug) {
+    for (const [slug, urls] of bySlug) {
       if (urls.length > 1) {
         throw new Error(t('bundler.config.startup-slug-collision', { slug, urls: urls.join(', ') }))
       }
@@ -3092,15 +3107,15 @@ function validateRenderConfig(render: any, path: string, lint?: LintToggles): vo
   }
   if (render.locales !== undefined) {
     if (!Array.isArray(render.locales)) {
-      throw new Error(t('bundler.config.locales-invalide', { valeur: JSON.stringify(render.locales), type: typeof render.locales, chemin: path }))
+      throw new Error(t('bundler.config.locales-invalid', { value: JSON.stringify(render.locales), type: typeof render.locales, path }))
     }
     for (const l of render.locales) {
       if (typeof l !== 'string' || !l) {
-        throw new Error(t('bundler.config.locale-item-invalide', { valeur: JSON.stringify(l), type: typeof l }))
+        throw new Error(t('bundler.config.locale-item-invalid', { value: JSON.stringify(l), type: typeof l }))
       }
       // une langue devient un sous-dossier de `render.outDir` au prérendu (`<outDir>/<langue>/…`) : même règle qu'une clé de route
-      if (routeHorsDossier(l)) {
-        throw new Error(t('bundler.config.locale-hors-dossier', { valeur: l }))
+      if (routeOutsideDir(l)) {
+        throw new Error(t('bundler.config.locale-outside-dir', { value: l }))
       }
     }
   }
@@ -3118,25 +3133,25 @@ function validateRenderConfig(render: any, path: string, lint?: LintToggles): vo
   }
   // `allowedOrigins`/`entry` sont dans KNOWN_RENDER_KEYS depuis le début
   // (seule leur PRÉSENCE était vérifiée) mais jamais typés, contrairement à `forwardOrigin`
-  // (même bloc) et `ws.entry`/`serveur.entry` (même nom que `entry`) : le repli runtime d'un
+  // (même bloc) et `ws.entry`/`server.entry` (même nom que `entry`) : le repli runtime d'un
   // `allowedOrigins` mal typé est documenté sûr (same-origin strict), mais silencieux — zéro
   // signal pour le dev qui croit avoir configuré une liste blanche.
   if (render.allowedOrigins !== undefined && render.allowedOrigins !== false) {
     if (!Array.isArray(render.allowedOrigins)) {
-      throw new Error(t('bundler.config.allowed-origins-invalide', { valeur: JSON.stringify(render.allowedOrigins), type: typeof render.allowedOrigins }))
+      throw new Error(t('bundler.config.allowed-origins-invalid', { value: JSON.stringify(render.allowedOrigins), type: typeof render.allowedOrigins }))
     }
     for (let i = 0; i < render.allowedOrigins.length; i++) {
       const o = render.allowedOrigins[i]
       if (typeof o !== 'string' || !o) {
-        throw new Error(t('bundler.config.allowed-origins-item-invalide', { index: i, valeur: JSON.stringify(o), type: typeof o }))
+        throw new Error(t('bundler.config.allowed-origins-item-invalid', { index: i, value: JSON.stringify(o), type: typeof o }))
       }
     }
   }
   if (render.entry !== undefined && typeof render.entry !== 'string') {
-    throw new Error(t('bundler.config.doit-etre-chaine', { cle: 'render.entry', valeur: JSON.stringify(render.entry), type: typeof render.entry }))
+    throw new Error(t('bundler.config.must-be-string', { key: 'render.entry', value: JSON.stringify(render.entry), type: typeof render.entry }))
   }
   if (render.maxBody !== undefined && (typeof render.maxBody !== 'number' || !Number.isInteger(render.maxBody) || render.maxBody < RENDER_MAX_BODY_MIN || render.maxBody > RENDER_MAX_BODY_MAX)) {
-    throw new Error(t('bundler.config.render-max-body', { valeur: JSON.stringify(render.maxBody) }))
+    throw new Error(t('bundler.config.render-max-body', { value: JSON.stringify(render.maxBody) }))
   }
 }
 
@@ -3146,16 +3161,16 @@ function validateRenderConfig(render: any, path: string, lint?: LintToggles): vo
  */
 function validateRenderEngineConfig(engine: any, path: string): void {
   if (typeof engine !== 'object' || engine === null || Array.isArray(engine)) {
-    throw new Error(t('bundler.config.render-engine-doit-etre-objet', { chemin: path }))
+    throw new Error(t('bundler.config.render-engine-must-be-object', { path }))
   }
   for (const k of Object.keys(engine)) {
     if (!KNOWN_RENDER_ENGINE_KEYS.has(k)) {
-      throw new Error(t('bundler.config.cle-inconnue', { cle: `render.engine.${k}`, valides: Array.from(KNOWN_RENDER_ENGINE_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.key-unknown', { key: `render.engine.${k}`, valid: Array.from(KNOWN_RENDER_ENGINE_KEYS).join(', ') }))
     }
   }
   for (const axis of ['prerender', 'request'] as const) {
     if (engine[axis] !== undefined && !VALID_RENDER_ENGINES.has(engine[axis])) {
-      throw new Error(t('bundler.config.valeur-invalide-simple', { cle: `render.engine.${axis}`, valeur: engine[axis], valides: Array.from(VALID_RENDER_ENGINES).join(', ') }))
+      throw new Error(t('bundler.config.value-invalid-simple', { key: `render.engine.${axis}`, value: engine[axis], valid: Array.from(VALID_RENDER_ENGINES).join(', ') }))
     }
   }
 }
@@ -3166,24 +3181,24 @@ function validateRenderEngineConfig(engine: any, path: string): void {
  */
 function validateBrowserPoolConfig(pool: any, path: string): void {
   if (typeof pool !== 'object' || pool === null || Array.isArray(pool)) {
-    throw new Error(t('bundler.config.browserpool-doit-etre-objet', { chemin: path }))
+    throw new Error(t('bundler.config.browserpool-must-be-object', { path }))
   }
   for (const k of Object.keys(pool)) {
     if (!KNOWN_BROWSER_POOL_KEYS.has(k)) {
-      throw new Error(t('bundler.config.cle-inconnue', { cle: `render.browserPool.${k}`, valides: Array.from(KNOWN_BROWSER_POOL_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.key-unknown', { key: `render.browserPool.${k}`, valid: Array.from(KNOWN_BROWSER_POOL_KEYS).join(', ') }))
     }
   }
   if (pool.size !== undefined) {
     if (typeof pool.size !== 'number' || !Number.isInteger(pool.size) || pool.size < 1) {
-      throw new Error(t('bundler.config.browserpool-size-invalide', { valeur: JSON.stringify(pool.size), type: typeof pool.size }))
+      throw new Error(t('bundler.config.browserpool-size-invalid', { value: JSON.stringify(pool.size), type: typeof pool.size }))
     }
   }
   if (pool.keepAlive !== undefined && typeof pool.keepAlive !== 'boolean') {
-    throw new Error(t('bundler.config.doit-etre-booleen', { cle: 'render.browserPool.keepAlive', valeur: JSON.stringify(pool.keepAlive), type: typeof pool.keepAlive }))
+    throw new Error(t('bundler.config.must-be-boolean', { key: 'render.browserPool.keepAlive', value: JSON.stringify(pool.keepAlive), type: typeof pool.keepAlive }))
   }
   if (pool.maxAgeMs !== undefined) {
     if (typeof pool.maxAgeMs !== 'number' || !Number.isInteger(pool.maxAgeMs) || pool.maxAgeMs < 0) {
-      throw new Error(t('bundler.config.browserpool-maxagems-invalide', { valeur: JSON.stringify(pool.maxAgeMs), type: typeof pool.maxAgeMs }))
+      throw new Error(t('bundler.config.browserpool-maxagems-invalid', { value: JSON.stringify(pool.maxAgeMs), type: typeof pool.maxAgeMs }))
     }
   }
   // le plafond de rendu était DÉCLARÉ au type et CONSOMMÉ à l'exécution (défaut 15 s,
@@ -3192,7 +3207,7 @@ function validateBrowserPoolConfig(pool: any, path: string): void {
   // atteignable qu'en appelant le moteur depuis du code
   if (pool.renderTimeoutMs !== undefined) {
     if (typeof pool.renderTimeoutMs !== 'number' || !Number.isInteger(pool.renderTimeoutMs) || pool.renderTimeoutMs < 1) {
-      throw new Error(t('bundler.config.browserpool-rendertimeoutms-invalide', { valeur: JSON.stringify(pool.renderTimeoutMs), type: typeof pool.renderTimeoutMs }))
+      throw new Error(t('bundler.config.browserpool-rendertimeoutms-invalid', { value: JSON.stringify(pool.renderTimeoutMs), type: typeof pool.renderTimeoutMs }))
     }
   }
 }
@@ -3206,21 +3221,21 @@ function validateBrowserPoolConfig(pool: any, path: string): void {
  */
 function validateRenderQueueConfig(queue: any, path: string): void {
   if (typeof queue !== 'object' || queue === null || Array.isArray(queue)) {
-    throw new Error(t('bundler.config.renderqueue-doit-etre-objet', { chemin: path }))
+    throw new Error(t('bundler.config.renderqueue-must-be-object', { path }))
   }
   for (const k of Object.keys(queue)) {
     if (!KNOWN_RENDER_QUEUE_KEYS.has(k)) {
-      throw new Error(t('bundler.config.cle-inconnue', { cle: `render.renderQueue.${k}`, valides: Array.from(KNOWN_RENDER_QUEUE_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.key-unknown', { key: `render.renderQueue.${k}`, valid: Array.from(KNOWN_RENDER_QUEUE_KEYS).join(', ') }))
     }
   }
   if (queue.concurrency !== undefined) {
     if (typeof queue.concurrency !== 'number' || !Number.isInteger(queue.concurrency) || queue.concurrency < 1) {
-      throw new Error(t('bundler.config.renderqueue-concurrency-invalide', { valeur: JSON.stringify(queue.concurrency), type: typeof queue.concurrency }))
+      throw new Error(t('bundler.config.renderqueue-concurrency-invalid', { value: JSON.stringify(queue.concurrency), type: typeof queue.concurrency }))
     }
   }
   if (queue.maxQueue !== undefined) {
     if (typeof queue.maxQueue !== 'number' || !Number.isInteger(queue.maxQueue) || queue.maxQueue < 0) {
-      throw new Error(t('bundler.config.renderqueue-maxqueue-invalide', { valeur: JSON.stringify(queue.maxQueue), type: typeof queue.maxQueue }))
+      throw new Error(t('bundler.config.renderqueue-maxqueue-invalid', { value: JSON.stringify(queue.maxQueue), type: typeof queue.maxQueue }))
     }
   }
 }
@@ -3235,7 +3250,8 @@ export function findConfig(startDir: string = process.cwd()): {
     if (existsSync(candidate)) {
       try {
         const raw = readFileSync(candidate, 'utf-8')
-        const config = JSON.parse(raw)
+        // une marque d'ordre des octets en tête (BOM, qu'ajoutent certains éditeurs) n'est pas du JSON : retirée avant la lecture
+        const config = JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw)
         // `null` n'a pas de `lang` : le message « doit être un objet » de validateConfig, pas une erreur de lecture
         setMessagesLang((config as { lang?: unknown } | null)?.lang)
         validateConfig(config, candidate)
@@ -3246,7 +3262,7 @@ export function findConfig(startDir: string = process.cwd()): {
         // Error(...)`, 184 passaient déjà par t('bundler.config....')) : toujours en anglais brut,
         // même `lang: 'fr'` réglé par ailleurs (le message le plus probable pour un débutant, au
         // tout premier mjs.config.json).
-        throw new Error(t('bundler.config.parse-error', { chemin: candidate, erreur: e.message }))
+        throw new Error(t('bundler.config.parse-error', { path: candidate, error: e.message }))
       }
     }
     const parent = dirname(dir)
@@ -3268,9 +3284,7 @@ export function resolveBundlerOpts(config: MjsConfig, configDir: string) {
     manifestExternal: r(config.manifestExternal),
     stylesheetsDir:   r(config.stylesheetsDir),
     assetDirs:        config.assetDirs?.map(d => resolve(configDir, d)),
-    // cf. le commentaire de MjsConfig.runtimeDir :
-    // validé par KNOWN_KEYS mais jamais résolu/retourné ici, donc jamais transmis
-    // au Bundler. Option silencieusement inerte.
+    // résolu depuis le dossier de mjs.config.json, transmis au Bundler (cf. MjsConfig.runtimeDir)
     runtimeDir:       r(config.runtimeDir),
     urlPrefix:        config.urlPrefix,
     // `languages.script` prime sur l'ancienne
@@ -3291,6 +3305,7 @@ export function resolveBundlerOpts(config: MjsConfig, configDir: string) {
     types:            config.types,
     typesReport:      config.typesReport,
     derivedMode:      config.derived,
+    reffetsMode:      config.reffets,
     routesPreload:    config.routes?.preload,
     blocksPreload:    config.blocks?.preload,
     proxy:            config.proxy,

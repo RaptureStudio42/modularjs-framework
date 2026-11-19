@@ -8,6 +8,7 @@
 import assert from 'node:assert/strict'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { navigateurPresent, construire, construireProd, ouvrir, boite, agrandit, type Construit } from './helpers/hologramme-zoom.js'
+import { playTogether } from './helpers/engines-together.js'
 
 type Pose = { nom: string, reglage: string, zoom: boolean, allume: boolean }
 
@@ -134,7 +135,7 @@ describe('*hologram : le reflet revient quand un script réécrit le contenu de 
   after(async () => { await terminateSharedWorkerPool() })
 
   for (const nom of NAVIGATEURS) {
-    describe(nom, function () {
+    playTogether(describe(nom, function () {
       let browser: any
 
       before(async function () {
@@ -279,6 +280,6 @@ describe('*hologram : le reflet revient quand un script réécrit le contenu de 
           }
         })
       }
-    })
+    }))
   }
 })

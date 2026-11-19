@@ -35,14 +35,14 @@ const coeur = async (used: Set<string>, opts: Record<string, unknown> = {}) => {
 const PROD = { env: 'prod' }
 
 // chaque aide, par le début de sa définition
-const MAJ     = ['µ._mjs_updAttrNode = function', '_mjs_updAttr(id, attrName, val, sur) {']
+const MAJ     = ['µ._mjs_updAttrNode = function', '_mjs_updAttr(id, attrName, val, safe) {']
 const SELECT  = ['µ._mjs_selVal = ']
 const ATTENTE = ['µ._mjs_pend = function', 'µ._mjs_ro = new WeakMap()']
 const FILTRE  = ['µ._mjs_safeAttr = function', 'µ._mjs_isExecUrlAttr = function', 'µ._mjs_URL_ATTRS = ', 'µ._mjs_DANGER_SCHEMES = ', 'µ._mjs_ctrlCharRe = ', 'µ._mjs_schemeRe = ']
 const TXT     = ['_mjs_updText(id, val) {']
 const SERVEUR = ['µ._ssrInfo = function']
 const VARIANT = ['var ssrInfo = µ._ssrInfo;']
-const BLOCS   = ['attribut-maj', 'attribut-select', 'props-en-attente', 'attribut-filtre', 'texte-racine', 'infos-serveur']
+const BLOCS   = ['attr-upd', 'attr-select', 'pending-props', 'attr-filter', 'root-text', 'server-info']
 
 const tous   = (texte: string, jalons: string[], quoi: string) => { for (const j of jalons) assert.ok(texte.includes(j), `${quoi} : « ${j} » manque`) }
 const aucun  = (texte: string, jalons: string[], quoi: string) => { for (const j of jalons) assert.ok(!texte.includes(j), `${quoi} : « ${j} » est encore là`) }

@@ -101,9 +101,9 @@ export interface MjsServerLockstepDivergence {
   /** sièges identifiés comme suspects pour ce tick — JAMAIS la majorité honnête (cf. tête de
    *  fichier) ; toujours ≥ 1 entrée quand cet objet existe (jamais renvoyé vide, cf. receiveHash) */
   suspects: string[]
-  /** 'auto-contradiction' = CE siège s'est contredit lui-même (2 hash différents, même tick — preuve
+  /** 'self-contradiction' = CE siège s'est contredit lui-même (2 hash différents, même tick — preuve
    *  interne) ; 'quorum' = hash minoritaire face à la référence MAJORITAIRE établie (cf. tête de fichier) */
-  reason: 'auto-contradiction' | 'quorum'
+  reason: 'self-contradiction' | 'quorum'
 }
 
 /** instantané gardé (cf. tête de fichier « INSTANTANÉS ») — renvoyé tel quel au resync et sauvegardé */
@@ -196,9 +196,9 @@ const DELAY_BEFORE_TICKS = 4
  *  de fichier. */
 interface TickHashState {
   perPlayer: Map<string, string>
-  comptes: Map<string, number>
+  counts: Map<string, number>
   reference: string | null
-  signales: Set<string>
+  reported: Set<string>
 }
 
 const absoluteMajority = (seats: number): number => Math.floor(seats / 2) + 1
@@ -264,7 +264,7 @@ export function createLockstep(id: string, maxTicks: number | null = null, bound
     addOrder(player, move, p) {
       const order: MjsServerLockstepOrder = { player, move, p }
       const bytes = jsonBytes(order)
-      if (maxOrderBytes != null && bytes > maxOrderBytes) throw new Error(t('serveur.partie-ordre-trop-gros', { taille: bytes, max: maxOrderBytes }))
+      if (maxOrderBytes != null && bytes > maxOrderBytes) throw new Error(t('mjs-server.game-order-too-big', { size: bytes, max: maxOrderBytes }))
       currentOrders.push(order)
       currentBytes += bytes
     },
@@ -359,7 +359,7 @@ export function createLockstep(id: string, maxTicks: number | null = null, bound
       if (!present.has(player)) return null
 
       let state = hashesPerTick.get(tick)
-      if (!state) { state = { perPlayer: new Map(), comptes: new Map(), reference: null, signales: new Set() }; hashesPerTick.set(tick, state) }
+      if (!state) { state = { perPlayer: new Map(), counts: new Map(), reference: null, reported: new Set() }; hashesPerTick.set(tick, state) }
 
       const previous = state.perPlayer.get(player)
 
@@ -367,21 +367,21 @@ export function createLockstep(id: string, maxTicks: number | null = null, bound
       // interne, suspect IMMÉDIAT, sans attendre le quorum (cf. tête de fichier). Le hash déjà
       // enregistré n'est JAMAIS écrasé (garde le 1er vote pour le décompte ci-dessous, stable).
       if (previous !== undefined && previous !== h) {
-        if (state.signales.has(player)) return null   // déjà signalé pour ce tick — jamais 2 fois
-        state.signales.add(player)
-        return { tick, suspects: [player], reason: 'auto-contradiction' }
+        if (state.reported.has(player)) return null   // déjà signalé pour ce tick — jamais 2 fois
+        state.reported.add(player)
+        return { tick, suspects: [player], reason: 'self-contradiction' }
       }
 
       if (previous === undefined) {
         state.perPlayer.set(player, h)
-        state.comptes.set(h, (state.comptes.get(h) ?? 0) + 1)
+        state.counts.set(h, (state.counts.get(h) ?? 0) + 1)
       }
 
       // référence déjà figée pour ce tick (majorité atteinte à un appel PRÉCÉDENT) — comparaison
       // directe, jamais de retour en arrière possible (cf. tête de fichier : pigeonhole)
       if (state.reference !== null) {
-        if (h === state.reference || state.signales.has(player)) return null
-        state.signales.add(player)
+        if (h === state.reference || state.reported.has(player)) return null
+        state.reported.add(player)
         return { tick, suspects: [player], reason: 'quorum' }
       }
 
@@ -390,17 +390,17 @@ export function createLockstep(id: string, maxTicks: number | null = null, bound
       for (const [voter, hv] of state.perPlayer) {
         if (present.has(voter)) continue
         state.perPlayer.delete(voter)
-        const left = (state.comptes.get(hv) ?? 1) - 1
-        if (left > 0) state.comptes.set(hv, left)
-        else state.comptes.delete(hv)
+        const left = (state.counts.get(hv) ?? 1) - 1
+        if (left > 0) state.counts.set(hv, left)
+        else state.counts.delete(hv)
       }
       // CE hash vient-il de franchir la majorité ABSOLUE des joueurs assis ?
-      if ((state.comptes.get(h) ?? 0) < absoluteMajority(present.size)) return null   // quorum pas encore atteint — silence, on attend d'autres rapports
+      if ((state.counts.get(h) ?? 0) < absoluteMajority(present.size)) return null   // quorum pas encore atteint — silence, on attend d'autres rapports
 
       state.reference = h
       const suspects: string[] = []
       for (const [j, hj] of state.perPlayer) {
-        if (hj !== h && !state.signales.has(j)) { state.signales.add(j); suspects.push(j) }
+        if (hj !== h && !state.reported.has(j)) { state.reported.add(j); suspects.push(j) }
       }
       return suspects.length > 0 ? { tick, suspects, reason: 'quorum' } : null   // personne à blâmer — silence
     },

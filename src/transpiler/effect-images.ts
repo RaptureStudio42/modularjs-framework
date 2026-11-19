@@ -13,66 +13,66 @@
 
 import { localImages } from '../effects/catalog.js'
 import { SIGN_RE } from '../parser/mjs-words.js'
-import type { AttributDeBalise, Etendue } from '../reader/index.js'
-import { balisesDe, composantLu } from './template-tree.js'
+import type { TagAttr, Span } from '../reader/index.js'
+import { tagsOf, readComponent } from './template-tree.js'
 
 export interface EffectImage {
   /** l'effet, tel qu'écrit */
-  effet: string
+  effect: string
   /** le réglage d'image */
-  reglage: string
+  setting: string
   /** le chemin du fichier, sans guillemets */
-  chemin: string
+  path: string
   /** la place du littéral (guillemets compris) dans le texte donné */
-  debut: number
-  fin: number
+  start: number
+  end: number
   /** l'effet ne lit que l'adresse de cette image, pas ses variantes de largeur */
   plain?: boolean
 }
 
 /** l'appel `µimage('chemin')` qu'un chemin local devient : le texte exact sous lequel le bundler range l'image résolue */
-export function imageCall(chemin: string): string {
-  return `µimage('${chemin}')`
+export function imageCall(path: string): string {
+  return `µimage('${path}')`
 }
 
 /** l'appel `µasset('chemin')` qu'un chemin local devient pour un réglage qui ne lit que l'adresse */
-export function assetCall(chemin: string): string {
-  return `µasset('${chemin}')`
+export function assetCall(path: string): string {
+  return `µasset('${path}')`
 }
 
 // le nom comme l'écrit une balise (parser/index.ts) : un effet, ou un alias d'effet pointé (`*behind.fond(`)
-const NOM_EFFET       = /^[A-Za-z][\w-]*(?:\.[\w-]+)?$/
+const EFFECT_NAME       = /^[A-Za-z][\w-]*(?:\.[\w-]+)?$/
 // une transition dont la valeur est un effet (`:in=*nom(réglages)`, `:out`, `:transition`, modificateurs compris)
 const TRANSITION      = new RegExp('^' + SIGN_RE + String.raw`(?:in|out|transition)(?:\.\w+)*$`)
-const EFFET_EN_VALEUR = /=\s*\*([A-Za-z][\w-]*(?:\.[\w-]+)?)\(/
+const EFFECT_AS_VALUE = /=\s*\*([A-Za-z][\w-]*(?:\.[\w-]+)?)\(/
 
 // ni le contenu d'un exemple (<pre>, <code>), ni un script ou un style écrits dans le gabarit
-const HORS_BALISAGE = new Set(['pre', 'code', 'script', 'style'])
+const OUTSIDE_MARKUP = new Set(['pre', 'code', 'script', 'style'])
 
 // l'effet que porte un attribut et la place de ses réglages : `*nom(réglages)` entre deux attributs, ou la valeur d'une
 // transition ; null pour tout autre attribut
-function effetDe(src: string, a: AttributDeBalise): { nom: string, reglages: Etendue } | null {
-  if (a.sorte === 'effet') return a.nom !== null && a.reglages !== null && NOM_EFFET.test(a.nom) ? { nom: a.nom, reglages: a.reglages } : null
-  if (a.valeur !== 'effet' || a.nom === null || !TRANSITION.test(a.nom)) return null
-  const brut = src.slice(a.debut, a.fin)
-  const m    = EFFET_EN_VALEUR.exec(brut)
-  if (m === null || !brut.endsWith(')')) return null
-  return { nom: m[1], reglages: { debut: a.debut + m.index + m[0].length, fin: a.fin - 1 } }
+function effectOf(src: string, a: TagAttr): { name: string, settings: Span } | null {
+  if (a.kind === 'effect') return a.name !== null && a.settings !== null && EFFECT_NAME.test(a.name) ? { name: a.name, settings: a.settings } : null
+  if (a.value !== 'effect' || a.name === null || !TRANSITION.test(a.name)) return null
+  const raw = src.slice(a.start, a.end)
+  const m   = EFFECT_AS_VALUE.exec(raw)
+  if (m === null || !raw.endsWith(')')) return null
+  return { name: m[1], settings: { start: a.start + m.index + m[0].length, end: a.end - 1 } }
 }
 
 /** les chemins locaux que les effets de `html` (un gabarit ou un composant entier) écrivent en clair dans leurs réglages
  *  d'image, dans l'ordre du texte ; `langue` : celle d'un <script> sans `lang`, que reçoit le compilateur (ses commentaires
  *  décident où la section se referme) */
-export function scanEffectImages(html: string, langue?: string): EffectImage[] {
-  const arbre = composantLu(html, langue)
-  const src   = arbre.source
+export function scanEffectImages(html: string, lang?: string): EffectImage[] {
+  const tree               = readComponent(html, lang)
+  const src                = tree.source
   const out: EffectImage[] = []
-  for (const b of balisesDe(arbre.enfants, HORS_BALISAGE)) {
-    for (const a of b.attributs) {
-      const effet = effetDe(src, a)
-      if (effet === null) continue
-      const { debut, fin } = effet.reglages
-      for (const img of localImages(effet.nom, src.slice(debut, fin))) out.push({ effet: effet.nom, reglage: img.key, chemin: img.path, debut: debut + img.start, fin: debut + img.end, ...(img.plain ? { plain: true } : {}) })
+  for (const b of tagsOf(tree.children, OUTSIDE_MARKUP)) {
+    for (const a of b.attrs) {
+      const effect = effectOf(src, a)
+      if (effect === null) continue
+      const { start, end } = effect.settings
+      for (const img of localImages(effect.name, src.slice(start, end))) out.push({ effect: effect.name, setting: img.key, path: img.path, start: start + img.start, end: start + img.end, ...(img.plain ? { plain: true } : {}) })
     }
   }
   return out
@@ -87,8 +87,8 @@ export function resolveEffectImages(html: string): string {
   let out    = ''
   let cursor = 0
   for (const e of found) {
-    out   += html.slice(cursor, e.debut) + (e.plain ? assetCall(e.chemin) : imageCall(e.chemin))
-    cursor = e.fin
+    out   += html.slice(cursor, e.start) + (e.plain ? assetCall(e.path) : imageCall(e.path))
+    cursor = e.end
   }
   return out + html.slice(cursor)
 }

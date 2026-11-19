@@ -118,9 +118,9 @@ describe('csp ssr — rendu serveur sous csp: true', function () {
   it('SABOTAGE — neutraliser le mode strict sur l\'émetteur de feuille fait rougir l\'assertion "aucun <style>"', async function () {
     this.timeout(30000)
     const res = await renderWithPatchedGuard(src => {
-      const needle = 'const feuille: FeuilleBalise = cspStrict'
+      const needle = 'const sheet: SheetTag = cspStrict'
       if (!src.includes(needle)) throw new Error('point de garde style introuvable — sabotage à revoir')
-      return src.replace(needle, 'const feuille: FeuilleBalise = (false as boolean)')
+      return src.replace(needle, 'const sheet: SheetTag = (false as boolean)')
     })
     assert.throws(() => {
       assert.doesNotMatch(res.html, /<style/, 'aucun <style> inline sous csp')

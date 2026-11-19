@@ -13,10 +13,10 @@ describe('journal — record() à coût constant, journal plein', () => {
     const j = createJournal({ dir: mjsTmp('journal-cout'), maxEntries: 100000, maxBytes })
     try {
       const gros = 'x'.repeat(1900)
-      for (let i = 0; i < 700; i++) j.record('server', { message: `erreur ${i} ${gros}`, pile: 'at f', url: '/p' })
+      for (let i = 0; i < 700; i++) j.record('server', { message: `erreur ${i} ${gros}`, stack: 'at f', url: '/p' })
       const n = 200
       const t0 = performance.now()
-      for (let i = 0; i < n; i++) j.record('server', { message: `nouvelle ${i} ${gros}`, pile: 'at g', url: '/q' })
+      for (let i = 0; i < n; i++) j.record('server', { message: `nouvelle ${i} ${gros}`, stack: 'at g', url: '/q' })
       const moyen = (performance.now() - t0) / n
       const taille = j.list().reduce((s, e) => s + Buffer.byteLength(JSON.stringify(e), 'utf-8') + 1, 0)
       assert.ok(taille <= maxBytes, `plafond dépassé : ${taille}`)

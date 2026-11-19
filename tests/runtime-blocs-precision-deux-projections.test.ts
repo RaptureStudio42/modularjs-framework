@@ -1,4 +1,4 @@
-// fichiers du runtime à blocs `<precision>` / `<horloge>` : lus tels quels, ils donnent la version de l'option `derived: "precise"` ;
+// fichiers du runtime à blocs `<precision>` / `<clock>` : lus tels quels, ils donnent la version de l'option `derived: "precise"` ;
 // le code par défaut (la règle de l'horloge) n'y est qu'en commentaire, et `npm run typecheck` exclut src/runtime. Chaque fichier est
 // projeté dans les deux modes par la fonction du bundler (projeterPrecision) : chaque projection se lit (esbuild), sans marque de bloc
 // restante, et ne nomme aucune variable introuvable que l'autre ne nomme pas — le runtime entier ne passe pas `tsc` (erreurs de type
@@ -12,25 +12,25 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { transformSync } from 'esbuild'
 import ts from 'typescript'
-import { projeterPrecision } from '../src/bundler/index.js'
+import { projectPrecision } from '../src/bundler/index.js'
 
 const DOSSIER = fileURLToPath(new URL('../src/runtime/', import.meta.url))
 const TOUS    = readdirSync(DOSSIER).filter((f) => f.endsWith('.ts')).sort()
-const BLOC    = /^[ \t]*\/\/ <\/?(precision|horloge)>$/m
+const BLOC    = /^[ \t]*\/\/ <\/?(precision|clock)>$/m
 const A_BLOCS = TOUS.filter((f) => BLOC.test(readFileSync(join(DOSSIER, f), 'utf-8')))
 
 function projection(f: string, precise: boolean): string {
-  return projeterPrecision(readFileSync(join(DOSSIER, f), 'utf-8'), precise)
+  return projectPrecision(readFileSync(join(DOSSIER, f), 'utf-8'), precise)
 }
 
 // noms introuvables (TS2304, TS2552) de chaque fichier à blocs, le runtime entier projeté dans un mode
 function nomsInconnus(precise: boolean): Map<string, string[]> {
   const options: ts.CompilerOptions = { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler, lib: ['lib.es2023.d.ts', 'lib.dom.d.ts', 'lib.dom.iterable.d.ts'], types: [], noEmit: true, skipLibCheck: true, allowImportingTsExtensions: true }
-  const hote    = ts.createCompilerHost(options)
-  const lire    = hote.getSourceFile.bind(hote)
-  hote.getSourceFile = (nom, langue, ...reste) => (nom.startsWith(DOSSIER) ? ts.createSourceFile(nom, projeterPrecision(readFileSync(nom, 'utf-8'), precise), langue) : lire(nom, langue, ...reste))
-  const prog    = ts.createProgram(TOUS.map((f) => join(DOSSIER, f)), options, hote)
-  const noms    = new Map<string, string[]>()
+  const hote                        = ts.createCompilerHost(options)
+  const lire                        = hote.getSourceFile.bind(hote)
+  hote.getSourceFile                = (nom, langue, ...reste) => (nom.startsWith(DOSSIER) ? ts.createSourceFile(nom, projectPrecision(readFileSync(nom, 'utf-8'), precise), langue) : lire(nom, langue, ...reste))
+  const prog                        = ts.createProgram(TOUS.map((f) => join(DOSSIER, f)), options, hote)
+  const noms                        = new Map<string, string[]>()
   for (const f of A_BLOCS) {
     const diags = prog.getSemanticDiagnostics(prog.getSourceFile(join(DOSSIER, f))).filter((d) => d.code === 2304 || d.code === 2552)
     noms.set(f, [...new Set(diags.map((d) => /'([^']+)'/.exec(ts.flattenDiagnosticMessageText(d.messageText, '\n'))?.[1] ?? String(d.code)))].sort())
@@ -38,7 +38,7 @@ function nomsInconnus(precise: boolean): Map<string, string[]> {
   return noms
 }
 
-describe('runtime — fichiers à blocs <precision> / <horloge> : les deux projections', function () {
+describe('runtime — fichiers à blocs <precision> / <clock> : les deux projections', function () {
   this.timeout(30000)
 
   it('trouve les fichiers à blocs du runtime (au moins les treize connus)', () => {

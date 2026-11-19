@@ -75,8 +75,13 @@ describe('prototype pollué : les effets qui recopient leurs réglages ne lisent
       const anims: any[] = []
       const de = (el: any) => anims.filter((a) => a.el === el)
 
+      // le prototype des éléments de happy-dom est celui de toutes les fenêtres du processus : son `animate` d'avant est rendu tel quel
+      // après le groupe, sinon les fichiers joués ensuite dans le même processus héritent de celui du test
+      let animateAvant: PropertyDescriptor | undefined
+
       before(async () => {
         window = new Window({ url: 'http://localhost/' })
+        animateAvant = Object.getOwnPropertyDescriptor(window.Element.prototype, 'animate')
         window.Element.prototype.animate = function (keyframes: any, opts: any) {
           let fin: any
           const a: any = { el: this, keyframes, opts, finished: new Promise((r) => { fin = r }), cancel() { fin(a) }, pause() {}, play() {}, finish() { fin(a) }, effect: { getComputedTiming: () => ({ progress: 1 }) } }
@@ -95,6 +100,8 @@ describe('prototype pollué : les effets qui recopient leurs réglages ne lisent
       })
       after(async () => {
         window.eval(Object.keys(CLES).map((k) => `delete Object.prototype[${JSON.stringify(k)}];`).join('\n'))
+        if (animateAvant) Object.defineProperty(window.Element.prototype, 'animate', animateAvant)
+        else delete window.Element.prototype.animate
         await window.happyDOM.close()
       })
 

@@ -14,6 +14,9 @@ export interface HandlerReference {
   place?: string
   // les noms que le gabarit met en portée autour de la référence (les paramètres d'un `<@failed>`)
   scope?: readonly string[]
+  // forme nue (`<button @clic>`, sans valeur) sans fonction du même nom : la méthode `@clic` du composant, refusée quand le
+  // <script> ne la déclare pas (cf. checkHandlerReferences)
+  bare?: boolean
 }
 
 // les fonctions globales que le navigateur offre sous leur nom nu : celles que TypeScript déclare pour le DOM

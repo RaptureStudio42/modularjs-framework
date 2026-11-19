@@ -328,7 +328,7 @@ describe('<!-- littéral dans une valeur d\'attribut avale le HTML jusqu\'au pro
 })
 
 describe('directive dupliquée masquée par un > dans la valeur d\'un AUTRE attribut de la même balise', function () {
-  it('> caché dans data-x=">" ENTRE deux @confirm de la même balise → transpiler.directive-dupliquee', async () => {
+  it('> caché dans data-x=">" ENTRE deux @confirm de la même balise → transpiler.directive-duplicate', async () => {
     await assert.rejects(transpile('<a :confirm="A" data-x=">" :confirm="B">x</a>', { moduleName: 'gtbetweenb5' }), /:confirm/)
   })
 

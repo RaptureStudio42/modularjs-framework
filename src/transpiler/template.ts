@@ -30,15 +30,15 @@
 // `{{html}}`/innerHTML, `{failed}`, tout code qui écrit du DOM (append, insert, replace, cloneNode,
 // createElement…), accès à l'ombre, import d'un code tiers. Cherchés dans le code ÉMIS (gabarit,
 // effets, script, module) : au moindre signe, le guetteur reste. Sans signe, le gabarit est fermé.
-const SIGNES_BALISE_POSSIBLE = /mjs-|<@|<slot|_updModule|_updDyn|_mjs_updHtml|innerHTML|outerHTML|insertAdjacent|createElement|createContextualFragment|DOMParser|importNode|cloneNode|append|prepend|replaceChildren|replaceWith|insertBefore|\.after\(|\.before\(|shadow|failed|\bimport\b|\brequire\b|µ\.[a-zA-Z_]*(?:render|mount|html|slot)/i
+const POSSIBLE_TAG_SIGNS = /mjs-|<@|<slot|_updModule|_updDyn|_mjs_updHtml|innerHTML|outerHTML|insertAdjacent|createElement|createContextualFragment|DOMParser|importNode|cloneNode|append|prepend|replaceChildren|replaceWith|insertBefore|\.after\(|\.before\(|shadow|failed|\bimport\b|\brequire\b|µ\.[a-zA-Z_]*(?:render|mount|html|slot)/i
 
 // Ligne du constructeur qui branche `µ.Autoloader.observe` sur l'ombre. Vide pour un gabarit fermé
 // (aucun signe ci-dessus, aucun hook de nœud, aucun slot indexé) : rien n'y apparaîtra jamais. Le contenu
 // glissé dans un `<slot>` vit dans le DOM du parent (gardé par le guetteur du parent ou du document), pas
 // dans l'ombre. Un composant léger n'a pas d'ombre — son hôte EST la racine, contenu glissé compris :
 // il garde son guetteur, décidé à l'exécution (`_mjs_isLight`).
-export function autoloaderLine(codes: string[], gardeSure: boolean): string {
-  if (gardeSure || codes.some((c) => SIGNES_BALISE_POSSIBLE.test(c))) {
+export function autoloaderLine(codes: string[], safeGuard: boolean): string {
+  if (safeGuard || codes.some((c) => POSSIBLE_TAG_SIGNS.test(c))) {
     return '\n\n    µ?.Autoloader?.observe?.(this._shadow);'
   }
   return '\n\n    if(this._mjs_isLight) µ?.Autoloader?.observe?.(this._shadow);'
@@ -72,7 +72,7 @@ class [[CLASS]] extends µ.Element {
   constructor() {
     super();
 
-    this._mjs_var_bits = [[VAR_BITS]];[[STATE_METHOD_CLASH_LINE]][[TYPES_LINE]]
+    this._mjs_var_bits = [[VAR_BITS]];[[STATE_METHOD_CLASH_LINE]][[TYPES_LINE]][[ALIAS_LINE]]
     this._mjs_computedDeps = [[COMPUTED_DEPS]];
     this._mjs_baseCss = \`[[BASE_CSS]]\`;
     this._mjs_preload = [[PRELOAD]];

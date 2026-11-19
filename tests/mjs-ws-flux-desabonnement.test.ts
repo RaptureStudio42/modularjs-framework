@@ -95,8 +95,8 @@ describe('MJS-WS — µ:unsub-stream : la connexion cesse de suivre un flux', fu
       b.envoyer('µ:unsub-stream', { stream: long }); await tick(10)
       const recues = b.trames.slice(depart)
       assert.deepEqual(recues.map(f => f.t), ['µ:error', 'µ:error'])
-      assert.equal(recues[0].p.message, t('ws.streams.desabonnement-flux-inconnu'))
-      assert.equal(recues[1].p.message, t('ws.streams.nom-trop-long', { max: 200 }))
+      assert.equal(recues[0].p.message, t('ws.streams.unsubscription-stream-unknown'))
+      assert.equal(recues[1].p.message, t('ws.streams.name-too-long', { max: 200 }))
       assert.ok(!JSON.stringify(recues).includes(long), 'le nom trop long n’est pas renvoyé')
       // rien n'a été créé : le flux reste inconnu (réponse honnête, état vide au seq 0)
       b.envoyer('µ:sub-stream', { stream: 'jamais' }); await tick(10)
@@ -114,7 +114,7 @@ describe('MJS-WS — µ:unsub-stream : la connexion cesse de suivre un flux', fu
       scores.destroy()
       const depart = b.trames.length
       b.envoyer('µ:unsub-stream', { stream: 'scores' }); await tick(10)
-      assert.deepEqual(b.trames.slice(depart).map(f => f.t + ' ' + f.p.message), ['µ:error ' + t('ws.streams.desabonnement-flux-inconnu')])
+      assert.deepEqual(b.trames.slice(depart).map(f => f.t + ' ' + f.p.message), ['µ:error ' + t('ws.streams.unsubscription-stream-unknown')])
     } finally {
       await b.app.stop()
     }
@@ -171,7 +171,7 @@ describe('MJS-WS — µ:unsub-stream : la connexion cesse de suivre un flux', fu
         attentes[1](reponse); await tick(10)
         reserve.add('apres', 2); await tick(20)
         assert.deepEqual(recu(b.trames, depart, 'reserve'), reponse ? ['reset', 'add:apres'] : ['µ:error'])
-        if (!reponse) assert.equal(b.trames.at(-1).p.message, t('ws.streams.acces-flux-refuse'))
+        if (!reponse) assert.equal(b.trames.at(-1).p.message, t('ws.streams.access-stream-refused'))
       } finally {
         await b.app.stop()
       }

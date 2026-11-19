@@ -23,14 +23,14 @@ describe('journal — jetons et courriels masqués à l\'écriture', () => {
     const j   = createJournal({ dir })
     j.record('client', {
       message: `échec pour jean.dupont@exemple.fr (Authorization: Bearer abcdef0123456789) jeton ${JWT}`,
-      pile:    'at https://site.test/compte?session=s3cr3t&onglet=2:10:5',
+      stack:    'at https://site.test/compte?session=s3cr3t&onglet=2:10:5',
       url:     'https://site.test/reinit?token=t0k3n-123&page=2&api_key=K3Y#access_token=zzz999',
     })
     j.close()
     const [e] = j.list()
     assert.equal(e.url, 'https://site.test/reinit?token=***&page=2&api_key=***#access_token=***')
     assert.equal(e.message, 'échec pour ***@exemple.fr (Authorization: Bearer ***) jeton ***')
-    assert.equal(e.pile, 'at https://site.test/compte?session=***&onglet=2:10:5')
+    assert.equal(e.stack, 'at https://site.test/compte?session=***&onglet=2:10:5')
     const disque = readFileSync(join(dir, 'mjs-errors-client.ndjson'), 'utf-8')
     for (const secret of ['t0k3n-123', 'K3Y', 'zzz999', 'jean.dupont', 'abcdef0123456789', JWT, 's3cr3t']) assert.ok(!disque.includes(secret), secret)
   })
@@ -39,7 +39,7 @@ describe('journal — jetons et courriels masqués à l\'écriture', () => {
 describe('journal — durée de vie des entrées (`maxDays`)', () => {
   const ancienne = (jours: number, message: string): string => {
     const quand = Date.now() - jours * 86_400_000
-    return JSON.stringify({ ts: quand, source: 'server', signature: message + '\n\n/', message, pile: '', url: '/', version: null, n: 1, premier: quand, dernier: quand }) + '\n'
+    return JSON.stringify({ ts: quand, source: 'server', signature: message + '\n\n/', message, pile: '', url: '/', version: null, n: 1, first: quand, last: quand }) + '\n'
   }
 
   it('défaut 30 jours : une entrée sans nouvelle occurrence depuis 40 jours est oubliée, sur le disque aussi', () => {

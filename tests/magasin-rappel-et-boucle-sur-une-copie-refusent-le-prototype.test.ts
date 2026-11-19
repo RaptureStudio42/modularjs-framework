@@ -678,7 +678,7 @@ describe('magasin $$ : le paramètre d\'un rappel et la variable d\'une boucle s
 
   it('témoins, compilation : ces formes restent telles qu\'écrites ; l\'élément d\'une copie faite par map ou flatMap sort gardé', () => {
     const temoins = [
-      'µ.store.liste.forEach((t) => { µ.__vu = t.id })',
+      'µ.store.liste.forEach((t) => { µ.__seenMark = t.id })',
       '[{ x: 0 }].forEach((t) => { t.x = 1 }); for (const u of [{ x: 0 }].filter((y) => y)) u.x = 1',
       'structuredClone(µ.store.liste).forEach((t) => { t.x = 1 }); for (const t of JSON.parse(JSON.stringify(µ.store.liste))) t.x = 1',
       'const c = µ.store.liste.slice(); c.push(1); c[0] = 2; c.length = 0; Object.values(µ.store.prefs).push(3)',

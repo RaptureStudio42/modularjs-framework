@@ -30,7 +30,7 @@
 // cache template. La fonction est JIT-inlinée par V8 après quelques exécutions.
 
 import { t } from '../messages/index.js'
-import { decodeHtmlEntities, attrSur } from './utils.js'
+import { decodeHtmlEntities, safeAttrFlag } from './utils.js'
 import { readHtmlComment } from '../mask.js'
 
 export type NodeKind = 'text' | 'html' | 'el' | 'textslot'
@@ -89,12 +89,12 @@ export const MATH_NS = 'http://www.w3.org/1998/Math/MathML'
 // éléments SVG dont le nom porte des majuscules : la table « adjust SVG tag names » du standard HTML (analyse des contenus étrangers), qui rétablit la
 // casse depuis les minuscules. Le navigateur la rejoue sur tout élément SVG qu'il lit dans du HTML ; ce mode impératif nomme lui-même ses éléments
 // (createElementNS) et dans l'espace de noms SVG la casse compte : `lineargradient` n'est qu'un élément inconnu, sans dégradé ni découpe ni filtre
-const SVG_TAG_NAMES = new Map(['altGlyph', 'altGlyphDef', 'altGlyphItem', 'animateColor', 'animateMotion', 'animateTransform', 'clipPath', 'feBlend', 'feColorMatrix', 'feComponentTransfer', 'feComposite', 'feConvolveMatrix', 'feDiffuseLighting', 'feDisplacementMap', 'feDistantLight', 'feDropShadow', 'feFlood', 'feFuncA', 'feFuncB', 'feFuncG', 'feFuncR', 'feGaussianBlur', 'feImage', 'feMerge', 'feMergeNode', 'feMorphology', 'feOffset', 'fePointLight', 'feSpecularLighting', 'feSpotLight', 'feTile', 'feTurbulence', 'foreignObject', 'glyphRef', 'linearGradient', 'radialGradient', 'textPath'].map((nom): [string, string] => [nom.toLowerCase(), nom]))
+const SVG_TAG_NAMES = new Map(['altGlyph', 'altGlyphDef', 'altGlyphItem', 'animateColor', 'animateMotion', 'animateTransform', 'clipPath', 'feBlend', 'feColorMatrix', 'feComponentTransfer', 'feComposite', 'feConvolveMatrix', 'feDiffuseLighting', 'feDisplacementMap', 'feDistantLight', 'feDropShadow', 'feFlood', 'feFuncA', 'feFuncB', 'feFuncG', 'feFuncR', 'feGaussianBlur', 'feImage', 'feMerge', 'feMergeNode', 'feMorphology', 'feOffset', 'fePointLight', 'feSpecularLighting', 'feSpotLight', 'feTile', 'feTurbulence', 'foreignObject', 'glyphRef', 'linearGradient', 'radialGradient', 'textPath'].map((name): [string, string] => [name.toLowerCase(), name]))
 
 // attributs des éléments SVG dont le nom porte des majuscules : la table « adjust SVG attributes » du standard HTML ; l'analyseur HTML du navigateur passe tout nom d'attribut
 // en minuscules, puis rétablit la casse de ceux-là sur un élément SVG ; ce mode impératif pose lui-même ses attributs et sur un élément SVG la casse compte : un `viewbox` n'est
 // qu'un attribut inconnu (le dessin n'est pas mis à l'échelle), un `gradientunits` laisse les unités par défaut du dégradé
-const SVG_ATTR_NAMES = new Map(['attributeName', 'attributeType', 'baseFrequency', 'baseProfile', 'calcMode', 'clipPathUnits', 'diffuseConstant', 'edgeMode', 'filterUnits', 'glyphRef', 'gradientTransform', 'gradientUnits', 'kernelMatrix', 'kernelUnitLength', 'keyPoints', 'keySplines', 'keyTimes', 'lengthAdjust', 'limitingConeAngle', 'markerHeight', 'markerUnits', 'markerWidth', 'maskContentUnits', 'maskUnits', 'numOctaves', 'pathLength', 'patternContentUnits', 'patternTransform', 'patternUnits', 'pointsAtX', 'pointsAtY', 'pointsAtZ', 'preserveAlpha', 'preserveAspectRatio', 'primitiveUnits', 'refX', 'refY', 'repeatCount', 'repeatDur', 'requiredExtensions', 'requiredFeatures', 'specularConstant', 'specularExponent', 'spreadMethod', 'startOffset', 'stdDeviation', 'stitchTiles', 'surfaceScale', 'systemLanguage', 'tableValues', 'targetX', 'targetY', 'textLength', 'viewBox', 'viewTarget', 'xChannelSelector', 'yChannelSelector', 'zoomAndPan'].map((nom): [string, string] => [nom.toLowerCase(), nom]))
+const SVG_ATTR_NAMES = new Map(['attributeName', 'attributeType', 'baseFrequency', 'baseProfile', 'calcMode', 'clipPathUnits', 'diffuseConstant', 'edgeMode', 'filterUnits', 'glyphRef', 'gradientTransform', 'gradientUnits', 'kernelMatrix', 'kernelUnitLength', 'keyPoints', 'keySplines', 'keyTimes', 'lengthAdjust', 'limitingConeAngle', 'markerHeight', 'markerUnits', 'markerWidth', 'maskContentUnits', 'maskUnits', 'numOctaves', 'pathLength', 'patternContentUnits', 'patternTransform', 'patternUnits', 'pointsAtX', 'pointsAtY', 'pointsAtZ', 'preserveAlpha', 'preserveAspectRatio', 'primitiveUnits', 'refX', 'refY', 'repeatCount', 'repeatDur', 'requiredExtensions', 'requiredFeatures', 'specularConstant', 'specularExponent', 'spreadMethod', 'startOffset', 'stdDeviation', 'stitchTiles', 'surfaceScale', 'systemLanguage', 'tableValues', 'targetX', 'targetY', 'textLength', 'viewBox', 'viewTarget', 'xChannelSelector', 'yChannelSelector', 'zoomAndPan'].map((name): [string, string] => [name.toLowerCase(), name]))
 
 // attributs « étrangers » : la table « adjust foreign attributes » du standard HTML, nom qualifié en minuscules → espace de noms ; l'analyseur HTML les pose dans leur espace de noms
 // (le `xlink:href` d'un `<use>` n'est lu que dans celui de XLink : sans lui l'icône n'apparaît pas) et `setAttribute` ne sait pas le faire, c'est `setAttributeNS` ; les autres noms
@@ -194,53 +194,53 @@ function computeLine(html: string, pos: number): number {
 }
 
 // lignes du fichier `.mjs` portées jusqu'ici : le générateur fait précéder chaque balise et chaque texte du gabarit d'une
-// marque `\u0000<ligne>\u0000` (marqueLigne), retirée avant toute lecture (retireLignes) — un message cite alors la ligne du
+// marque `\u0000<ligne>\u0000` (lineMark), retirée avant toute lecture (removeLines) — un message cite alors la ligne du
 // fichier, pas celle du morceau de gabarit lu (un bloc `{if}`/`{for}` est construit à part, sans les lignes qui le précèdent)
-const MARQUE_LIGNE_RE = /\u0000(\d+)\u0000/g
+const LINE_MARK_RE = /\u0000(\d+)\u0000/g
 
-export interface LignesDuGabarit { positions: number[], lignes: number[] }
+export interface TemplateLines { positions: number[], lines: number[] }
 
-export function marqueLigne(ligne: number | undefined): string {
-  return ligne === undefined ? '' : `\u0000${ligne}\u0000`
+export function lineMark(line: number | undefined): string {
+  return line === undefined ? '' : `\u0000${line}\u0000`
 }
 
 // HTML sans ses marques, et la ligne du fichier de chaque position marquée (null : aucune marque)
-export function retireLignes(html: string): { html: string, lignes: LignesDuGabarit | null } {
-  if (!html.includes('\u0000')) return { html, lignes: null }
+export function removeLines(html: string): { html: string, lines: TemplateLines | null } {
+  if (!html.includes('\u0000')) return { html, lines: null }
   const positions: number[] = []
-  const lignes: number[]    = []
-  let retire = 0
-  const propre = html.replace(MARQUE_LIGNE_RE, (marque: string, ligne: string, at: number) => {
-    positions.push(at - retire)
-    lignes.push(Number(ligne))
-    retire += marque.length
+  const lines: number[]     = []
+  let remove                = 0
+  const clean               = html.replace(LINE_MARK_RE, (mark: string, line: string, at: number) => {
+    positions.push(at - remove)
+    lines.push(Number(line))
+    remove += mark.length
     return ''
   })
-  return { html: propre, lignes: { positions, lignes } }
+  return { html: clean, lines: { positions, lines } }
 }
 
-// le gabarit racine sort du générateur sans ses marques (compile, cf. retenirLignesRacine) et revient ici par le transpileur :
+// le gabarit racine sort du générateur sans ses marques (compile, cf. retainRootLines) et revient ici par le transpileur :
 // ses lignes sont gardées à part, retrouvées par son texte
-let racine: { html: string, lignes: LignesDuGabarit } | null = null
+let rootNode: { html: string, lines: TemplateLines } | null = null
 
-export function retenirLignesRacine(html: string): string {
-  const lu = retireLignes(html)
-  racine = lu.lignes === null ? null : { html: lu.html, lignes: lu.lignes }
-  return lu.html
+export function retainRootLines(html: string): string {
+  const read = removeLines(html)
+  rootNode = read.lines === null ? null : { html: read.html, lines: read.lines }
+  return read.html
 }
 
 // ligne du fichier de ce qui commence en `pos` : celle de la dernière marque posée avant ; sans marque, la ligne comptée
 // dans le morceau
-function ligneDuFichier(html: string, lignes: LignesDuGabarit | null, pos: number): number {
-  if (lignes === null || lignes.positions.length === 0 || lignes.positions[0] > pos) return computeLine(html, pos)
-  let bas  = 0
-  let haut = lignes.positions.length - 1
-  while (bas < haut) {
-    const milieu = (bas + haut + 1) >> 1
-    if (lignes.positions[milieu] <= pos) bas = milieu
-    else haut = milieu - 1
+function fileLine(html: string, lines: TemplateLines | null, pos: number): number {
+  if (lines === null || lines.positions.length === 0 || lines.positions[0] > pos) return computeLine(html, pos)
+  let low = 0
+  let top = lines.positions.length - 1
+  while (low < top) {
+    const middle = (low + top + 1) >> 1
+    if (lines.positions[middle] <= pos) low = middle
+    else top = middle - 1
   }
-  return lignes.lignes[bas]
+  return lines.lines[low]
 }
 
 // la garde `checkFlowInsideP` ne regardait QUE le SOMMET de
@@ -266,7 +266,7 @@ function checkFlowInsideP(stack: { tag: string }[], tagName: string, line: () =>
   if (!P_CLOSING_TAGS.has(tagName)) return
   for (let k = stack.length - 1; k >= 0; k--) {
     if (P_SCOPE_STOP.has(stack[k].tag)) return
-    if (stack[k].tag === 'p') throw new Error(t('generator.p-contenu-interdit', { tag: tagName, ligne: line() }))
+    if (stack[k].tag === 'p') throw new Error(t('generator.p-content-forbidden', { tag: tagName, line: line() }))
   }
 }
 
@@ -303,9 +303,9 @@ function implicitCloseCount(stack: { tag: string }[], tag: string): number {
   const top = stack.length - 1
   if (tag === 'li' || tag === 'dt' || tag === 'dd') {
     for (let k = top; k >= 1; k--) {
-      const ouvert = stack[k].tag
-      if (tag === 'li' ? ouvert === 'li' : (ouvert === 'dt' || ouvert === 'dd')) return stack.length - k
-      if (LIST_ITEM_STOP.has(ouvert)) return 0
+      const open = stack[k].tag
+      if (tag === 'li' ? open === 'li' : (open === 'dt' || open === 'dd')) return stack.length - k
+      if (LIST_ITEM_STOP.has(open)) return 0
     }
     return 0
   }
@@ -349,19 +349,19 @@ function hasInScope(stack: { tag: string }[], tag: string): boolean {
 // recherche ne sort ni du tableau le plus proche ni d'un `<template>`
 function tableCloseCount(stack: { tag: string }[], tag: string): number {
   for (let k = stack.length - 1; k >= 1; k--) {
-    const ouvert = stack[k].tag
-    if (ouvert === 'template' || ouvert === 'html') return 0
-    if (ouvert === 'table') return stack.length - 1 - k
+    const open = stack[k].tag
+    if (open === 'template' || open === 'html') return 0
+    if (open === 'table') return stack.length - 1 - k
     if (tag === 'td' || tag === 'th') {
-      if (ouvert === 'td' || ouvert === 'th') return stack.length - k
-      if (ouvert === 'tr' || TABLE_SECTIONS.has(ouvert)) return stack.length - 1 - k
+      if (open === 'td' || open === 'th') return stack.length - k
+      if (open === 'tr' || TABLE_SECTIONS.has(open)) return stack.length - 1 - k
     }
     else if (tag === 'tr') {
-      if (ouvert === 'tr') return stack.length - k
-      if (TABLE_SECTIONS.has(ouvert)) return stack.length - 1 - k
+      if (open === 'tr') return stack.length - k
+      if (TABLE_SECTIONS.has(open)) return stack.length - 1 - k
     }
-    else if (tag === 'col' && ouvert === 'colgroup') return stack.length - 1 - k
-    else if (TABLE_SECTIONS.has(ouvert) || ouvert === 'caption' || ouvert === 'colgroup') return stack.length - k
+    else if (tag === 'col' && open === 'colgroup') return stack.length - 1 - k
+    else if (TABLE_SECTIONS.has(open) || open === 'caption' || open === 'colgroup') return stack.length - k
   }
   return 0
 }
@@ -374,11 +374,11 @@ function tableCloseCount(stack: { tag: string }[], tag: string): number {
 // `</h2>` referme le titre ouvert, quel que soit son niveau
 function endTagCloseCount(stack: { tag: string }[], tag: string): number {
   const special = SPECIAL_TAGS.has(tag)
-  const tableau = tag === 'table' || TABLE_STRUCTURE.has(tag)
+  const tableTag = tag === 'table' || TABLE_STRUCTURE.has(tag)
   for (let k = stack.length - 1; k >= 1; k--) {
-    const ouvert = stack[k].tag
-    if (ouvert === tag || (HEADINGS.has(tag) && HEADINGS.has(ouvert))) return stack.length - k
-    if (tableau ? (ouvert === 'table' || ouvert === 'template' || ouvert === 'html') : special ? (SCOPE_STOP.has(ouvert) || (tag === 'li' && (ouvert === 'ol' || ouvert === 'ul')) || (tag === 'p' && ouvert === 'button')) : SPECIAL_TAGS.has(ouvert)) return 0
+    const open = stack[k].tag
+    if (open === tag || (HEADINGS.has(tag) && HEADINGS.has(open))) return stack.length - k
+    if (tableTag ? (open === 'table' || open === 'template' || open === 'html') : special ? (SCOPE_STOP.has(open) || (tag === 'li' && (open === 'ol' || open === 'ul')) || (tag === 'p' && open === 'button')) : SPECIAL_TAGS.has(open)) return 0
   }
   return 0
 }
@@ -431,15 +431,15 @@ function checkTableContent(stack: { tag: string }[], tagName: string, tagInner: 
   if (!TABLE_CONTEXT.has(parent) || TABLE_CONTENT.has(tagName)) return
   if (tagName === 'input' && /\stype\s*=\s*(['"]?)hidden\1(?=[\s/]|$)/i.test(tagInner)) return
   // un <form> reste dans le tableau, vide et refermé sur place ; son contenu sort du formulaire
-  if (tagName === 'form') throw new Error(t('generator.hors-tableau-form', { parent, ligne: line() }))
-  throw new Error(t('generator.hors-tableau', { tag: tagName, parent, ligne: line() }))
+  if (tagName === 'form') throw new Error(t('generator.outside-table-form', { parent, line: line() }))
+  throw new Error(t('generator.outside-table', { tag: tagName, parent, line: line() }))
 }
 
 // texte (hors blancs) posé directement dans un tableau : retiré du tableau par le navigateur, comme un élément
 function checkTableText(stack: { tag: string }[], textChunk: string, line: () => number): void {
   const parent = stack[stack.length - 1].tag
   if (!(TABLE_CONTEXT.has(parent) || parent === 'colgroup') || isPureWhitespace(textChunk) || textChunk.includes('${')) return
-  throw new Error(t('generator.texte-hors-tableau', { parent, ligne: line() }))
+  throw new Error(t('generator.text-outside-table', { parent, line: line() }))
 }
 
 // `<form>` dans un `<form>`, `<select>` dans un `<select>`, `<a>` dans un `<a>` à travers un bloc ou une mise en forme :
@@ -448,14 +448,14 @@ function checkTableText(stack: { tag: string }[], textChunk: string, line: () =>
 function checkNesting(stack: { tag: string }[], tagName: string, line: () => number): void {
   if (tagName !== 'form' && tagName !== 'select' && tagName !== 'a') return
   for (let k = stack.length - 1; k >= 1; k--) {
-    const ouvert = stack[k].tag
-    if (ouvert === tagName) {
-      let refus = tagName !== 'a'
-      for (let j = k + 1; j < stack.length && !refus; j++) refus = SPECIAL_TAGS.has(stack[j].tag) || FORMATTING_TAGS.has(stack[j].tag)
-      if (refus) throw new Error(t('generator.imbrication-refusee', { tag: tagName, ligne: line() }))
+    const open = stack[k].tag
+    if (open === tagName) {
+      let reject = tagName !== 'a'
+      for (let j = k + 1; j < stack.length && !reject; j++) reject = SPECIAL_TAGS.has(stack[j].tag) || FORMATTING_TAGS.has(stack[j].tag)
+      if (reject) throw new Error(t('generator.nesting-refused', { tag: tagName, line: line() }))
       return
     }
-    if (ouvert === 'template' || (tagName === 'a' && FORMATTING_MARKERS.has(ouvert))) return
+    if (open === 'template' || (tagName === 'a' && FORMATTING_MARKERS.has(open))) return
   }
 }
 
@@ -465,16 +465,16 @@ function checkNesting(stack: { tag: string }[], tagName: string, line: () => num
 const DYNAMIC_IN_TEMPLATE_RE = /\$\{|type\s*=\s*['"]mjs\/marker['"]|\smjs-(?:l-)?id\s*=/
 
 function checkTemplateStatic(html: string, from: number, line: () => number): void {
-  const balise = /<(\/?)template(?=[\s/>])/gi
-  balise.lastIndex = from
-  let depth = 1
-  let end   = html.length
+  const tag     = /<(\/?)template(?=[\s/>])/gi
+  tag.lastIndex = from
+  let depth     = 1
+  let end       = html.length
   let m: RegExpExecArray | null
-  while ((m = balise.exec(html)) !== null) {
+  while ((m = tag.exec(html)) !== null) {
     depth += m[1] ? -1 : 1
     if (depth === 0) { end = m.index; break }
   }
-  if (DYNAMIC_IN_TEMPLATE_RE.test(html.slice(from, end))) throw new Error(t('generator.template-dynamique', { ligne: line() }))
+  if (DYNAMIC_IN_TEMPLATE_RE.test(html.slice(from, end))) throw new Error(t('generator.template-dynamic', { line: line() }))
 }
 
 // `<?…>`, `<!…>` (hors DOCTYPE) et `<![CDATA[…]]>` hors SVG/MathML : le navigateur en fait un COMMENTAIRE,
@@ -588,9 +588,9 @@ function isInsideQuotedSpan(pos: number, spans: [number, number][]): boolean {
 // dans les BLOCK_CONTAINERS (même principe qu'en mode impératif). Réduit la taille
 // du DOM cloné et accélère le parse HTML interne du browser.
 // ============================================================================
-export function extractPaths(html: string, opts: { stripWhitespace?: boolean, lignes?: LignesDuGabarit | null } = {}): PathInfo {
+export function extractPaths(html: string, opts: { stripWhitespace?: boolean, lines?: TemplateLines | null } = {}): PathInfo {
   const stripWs = opts.stripWhitespace ?? false
-  const lignesFichier = opts.lignes ?? null
+  const fileLines = opts.lines ?? null
   const out: string[] = []
   const paths: Record<string, number[]> = {}
   const kinds: Record<string, NodeKind> = {}
@@ -601,13 +601,13 @@ export function extractPaths(html: string, opts: { stripWhitespace?: boolean, li
     { tag: '#root', myIndex: -1, nextChild: 0 },
   ]
 
-  const recordIndex = (texte = false): number[] => {
+  const recordIndex = (text = false): number[] => {
     const p: number[] = []
     for (let s = 1; s < stack.length; s++) p.push(stack[s].myIndex)
     const top = stack[stack.length - 1]
     p.push(top.nextChild)
     top.nextChild += 1
-    top.lastText = texte
+    top.lastText = text
     return p
   }
 
@@ -626,7 +626,7 @@ export function extractPaths(html: string, opts: { stripWhitespace?: boolean, li
     if (i === _mjs_prevI) {
       _mjs_stall += 1
       if (_mjs_stall > 2) {
-        throw new Error(t('generator.extract-paths-boucle-infinie', { i, len, extrait: JSON.stringify(html.slice(Math.max(0, i - 20), i + 20)) }))
+        throw new Error(t('generator.extract-paths-loop-infinite', { i, len, excerpt: JSON.stringify(html.slice(Math.max(0, i - 20), i + 20)) }))
       }
     } else {
       _mjs_stall = 0
@@ -645,9 +645,9 @@ export function extractPaths(html: string, opts: { stripWhitespace?: boolean, li
     if (html.startsWith('<!', i) || html.startsWith('<?', i)) {
       // `<![CDATA[…]]>` sous un élément SVG/MathML : un texte, fermé par `]]>`
       if (html.startsWith('<![CDATA[', i) && currentIsForeign(stack, null)) {
-        const fin = html.indexOf(']]>', i + 9)
-        const stop = fin === -1 ? len : fin + 3
-        if ((fin === -1 ? len : fin) > i + 9 && !stack[stack.length - 1].lastText) recordIndex(true)
+        const end = html.indexOf(']]>', i + 9)
+        const stop = end === -1 ? len : end + 3
+        if ((end === -1 ? len : end) > i + 9 && !stack[stack.length - 1].lastText) recordIndex(true)
         out.push(html.slice(i, stop))
         i = stop
         continue
@@ -709,7 +709,7 @@ export function extractPaths(html: string, opts: { stripWhitespace?: boolean, li
         // ouvert) garde le comportement historique, hors périmètre ici.
         if (inQuote) {
           const openTagMatch = html.slice(i + 1).match(/^([a-zA-Z][a-zA-Z0-9_-]*)/)
-          throw new Error(t('generator.attribut-guillemet-non-ferme', { tag: openTagMatch ? openTagMatch[1] : '?' }))
+          throw new Error(t('generator.attribute-quote-not-closed', { tag: openTagMatch ? openTagMatch[1] : '?' }))
         }
         out.push(html.slice(i)); i = len; break
       }
@@ -719,13 +719,13 @@ export function extractPaths(html: string, opts: { stripWhitespace?: boolean, li
       const tagInner = selfClosing ? rawTag.slice(0, -1).trimEnd() : rawTag
 
       const nameMatch = tagInner.match(/^([a-zA-Z][a-zA-Z0-9_-]*)/)
-      const nomLu = (nameMatch ? nameMatch[1] : '').toLowerCase()
+      const readName = (nameMatch ? nameMatch[1] : '').toLowerCase()
       // balise HTML dans un SVG/MathML : les éléments étrangers se referment avant elle (cf. foreignBreakoutCount)
-      for (let n = foreignBreakoutCount(stack, nomLu, tagInner); n > 0; n--) out.push(`</${stack.pop()!.tag}>`)
-      const etranger = inForeignContent(stack, null)
+      for (let n = foreignBreakoutCount(stack, readName, tagInner); n > 0; n--) out.push(`</${stack.pop()!.tag}>`)
+      const foreign = inForeignContent(stack, null)
       // hors SVG/MathML, `<image>` est lu `<img>` ; `<html>`, `<head>`, `<body>` sont ignorés (cf. IGNORED_TAGS)
-      const tagName = nomLu === 'image' && !etranger ? 'img' : nomLu
-      if (IGNORED_TAGS.has(tagName) && !etranger) { i = j + 1; continue }
+      const tagName = readName === 'image' && !foreign ? 'img' : readName
+      if (IGNORED_TAGS.has(tagName) && !foreign) { i = j + 1; continue }
       const isVoid = VOID_TAGS.has(tagName)
       const isScript = tagName === 'script'
 
@@ -734,13 +734,13 @@ export function extractPaths(html: string, opts: { stripWhitespace?: boolean, li
       // celui-ci, où qu'il soit dans la pile ouverte (cf. checkFlowInsideP plus haut).
       // Avant elle, les fermetures implicites (cf. implicitCloseCount), écrites en clair dans le HTML
       // émis : tout analyseur (navigateur, DOM des tests) bâtit alors les mêmes frères
-      if (!etranger) {
-        checkNesting(stack, tagName, () => ligneDuFichier(html, lignesFichier, i))
+      if (!foreign) {
+        checkNesting(stack, tagName, () => fileLine(html, fileLines, i))
         for (let n = implicitCloseCount(stack, tagName); n > 0; n--) out.push(`</${stack.pop()!.tag}>`)
-        checkFlowInsideP(stack, tagName, () => ligneDuFichier(html, lignesFichier, i))
-        checkTableContent(stack, tagName, tagInner, () => ligneDuFichier(html, lignesFichier, i))
+        checkFlowInsideP(stack, tagName, () => fileLine(html, fileLines, i))
+        checkTableContent(stack, tagName, tagInner, () => fileLine(html, fileLines, i))
       }
-      if (tagName === 'template' && !selfClosing) checkTemplateStatic(html, j + 1, () => ligneDuFichier(html, lignesFichier, i))
+      if (tagName === 'template' && !selfClosing) checkTemplateStatic(html, j + 1, () => fileLine(html, fileLines, i))
 
       if (isScript) {
         const typeMatch = tagInner.match(/\btype\s*=\s*['"]mjs\/marker['"]/)
@@ -867,7 +867,7 @@ export function extractPaths(html: string, opts: { stripWhitespace?: boolean, li
     const end = next === -1 ? len : next
     const textChunk = html.slice(i, end)
     if (textChunk.length > 0) {
-      checkTableText(stack, textChunk, () => ligneDuFichier(html, lignesFichier, i + Math.max(0, textChunk.search(/\S/))))
+      checkTableText(stack, textChunk, () => fileLine(html, fileLines, i + Math.max(0, textChunk.search(/\S/))))
       // Strip whitespace-only chunks dans block containers.
       // Cohérent avec le mode impératif. Réduit le DOM cloné.
       //
@@ -1038,8 +1038,8 @@ function byteLen(code: string): number {
 // fonction ne se paie pas pour deux signes.
 function shortestAccess(direct: string, base: string, idxs: number[], compact: boolean): string {
   if (!compact) return direct
-  const court = `µ._p(${base},${idxs.join(',')})`
-  return byteLen(court) + 2 < byteLen(direct) ? court : direct
+  const short = `µ._p(${base},${idxs.join(',')})`
+  return byteLen(short) + 2 < byteLen(direct) ? short : direct
 }
 
 // balises que `µ._mjs_cloneTpl` (runtime, mjs_init.ts) sait lire DANS un <svg> quand le HTML
@@ -1060,11 +1060,11 @@ function foreignWrapTag(cleanHtml: string, foreignNs: string | null): string | n
   return null
 }
 
-function generateCloneFnBody(html: string, keepRefs?: Set<string>, compactPaths = false, foreignNs: string | null = null, lignesFichier: LignesDuGabarit | null = null, singleRoot = false): CreateFnInfo {
+function generateCloneFnBody(html: string, keepRefs?: Set<string>, compactPaths = false, foreignNs: string | null = null, fileLines: TemplateLines | null = null, singleRoot = false): CreateFnInfo {
   // Utilise extractPaths pour obtenir le HTML propre + paths.
   // Strip whitespace-only text nodes dans les block containers, cohérent
   // avec le mode impératif. Réduit le DOM cloné et accélère le parse.
-  const info = extractPaths(html, { stripWhitespace: true, lignes: lignesFichier })
+  const info = extractPaths(html, { stripWhitespace: true, lines: fileLines })
   // Élagage des refs mortes : seules les refs consommées (keepRefs)
   // donnent lieu à une navigation + une entrée refs[id]. ATTENTION : les
   // placeholders 'text'/'textslot' restent TOUJOURS extraits — leur marker
@@ -1092,11 +1092,11 @@ function generateCloneFnBody(html: string, keepRefs?: Set<string>, compactPaths 
   const alone = singleRoot && !wrapTag && info.rootCount === 1 && /^<[a-zA-Z]/.test(info.cleanHtml) && !/^<[^>]*\smjs-(?:mod|el)=/.test(info.cleanHtml)
   const paths = alone ? Object.fromEntries(Object.entries(info.paths).map(([id, p]) => [id, p.slice(1)])) : info.paths
   if (wrapTag) {
-    const wrappedLiteral = chaineJs(`<${wrapTag}>${info.cleanHtml}</${wrapTag}>`)
+    const wrappedLiteral = jsString(`<${wrapTag}>${info.cleanHtml}</${wrapTag}>`)
     lines.push(`const _mjs_fr = document.createDocumentFragment(); { const _mjs_w = µ._mjs_cloneTpl(${wrappedLiteral}).firstChild; while (_mjs_w.firstChild) _mjs_fr.appendChild(_mjs_w.firstChild); }`)
   }
   else {
-    const tplHtmlLiteral = chaineJs(info.cleanHtml)
+    const tplHtmlLiteral = jsString(info.cleanHtml)
     lines.push(`const _mjs_fr = µ._mjs_${alone ? 'cloneEl' : 'cloneTpl'}(${tplHtmlLiteral});`)
   }
 
@@ -1317,19 +1317,19 @@ export interface GenerateCreateFnBodyOpts {
  *
  * Critère auto : pas d'interpolations `${...}` dans le HTML → cloneNode possible.
  */
-export function generateCreateFnBody(htmlMarque: string, opts: GenerateCreateFnBodyOpts = {}): CreateFnInfo {
-  const lu     = retireLignes(htmlMarque)
-  const html   = lu.html
-  const lignes = lu.lignes ?? (racine !== null && racine.html === html ? racine.lignes : null)
+export function generateCreateFnBody(markedHtml: string, opts: GenerateCreateFnBodyOpts = {}): CreateFnInfo {
+  const read  = removeLines(markedHtml)
+  const html  = read.html
+  const lines = read.lines ?? (rootNode !== null && rootNode.html === html ? rootNode.lines : null)
   // Mode hybride : si pas d'interpolations runtime → cloneNode.
   // Sinon on émet le mode impératif createElement classique.
   if (!opts.forceImperative && (opts.forceClone || !hasInterpolations(html))) {
-    return generateCloneFnBody(html, opts.keepRefs, opts.compactPaths ?? false, opts.foreignNsRoot ?? null, lignes, opts.singleRoot ?? false)
+    return generateCloneFnBody(html, opts.keepRefs, opts.compactPaths ?? false, opts.foreignNsRoot ?? null, lines, opts.singleRoot ?? false)
   }
-  return generateCreateFnBodyImperative(html, opts.splitSelectPostUpdates ?? false, opts.foreignNsRoot ?? null, lignes)
+  return generateCreateFnBodyImperative(html, opts.splitSelectPostUpdates ?? false, opts.foreignNsRoot ?? null, lines)
 }
 
-function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: boolean, foreignNsRoot: string | null = null, lignesFichier: LignesDuGabarit | null = null): CreateFnInfo {
+function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: boolean, foreignNsRoot: string | null = null, fileLines: TemplateLines | null = null): CreateFnInfo {
   const lines: string[] = []
   const refIds: string[] = []
   // actif seulement si `splitSelectPostUpdates` :
@@ -1381,7 +1381,7 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
     if (i === _mjs_prevI) {
       _mjs_stall += 1
       if (_mjs_stall > 2) {
-        throw new Error(t('generator.create-fn-body-boucle-infinie', { i, len, extrait: JSON.stringify(html.slice(Math.max(0, i - 20), i + 20)) }))
+        throw new Error(t('generator.create-fn-body-loop-infinite', { i, len, excerpt: JSON.stringify(html.slice(Math.max(0, i - 20), i + 20)) }))
       }
     } else {
       _mjs_stall = 0
@@ -1415,10 +1415,10 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
     if (html.startsWith('<!', i) || html.startsWith('<?', i)) {
       // `<![CDATA[…]]>` sous un élément SVG/MathML : un texte, fermé par `]]>` (cf. extractPaths)
       if (html.startsWith('<![CDATA[', i) && currentIsForeign(stack, foreignNsRoot)) {
-        const fin = html.indexOf(']]>', i + 9)
-        const texte = html.slice(i + 9, fin === -1 ? len : fin)
-        if (texte.length > 0) appendTextNode(lines, stack[stack.length - 1].varName, texte, newVar)
-        i = fin === -1 ? len : fin + 3
+        const end = html.indexOf(']]>', i + 9)
+        const text = html.slice(i + 9, end === -1 ? len : end)
+        if (text.length > 0) appendTextNode(lines, stack[stack.length - 1].varName, text, newVar)
+        i = end === -1 ? len : end + 3
         continue
       }
       const end = html.indexOf('>', i)
@@ -1486,7 +1486,7 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
         // devient une ERREUR, plus un fragment vide silencieux.
         if (inQuote) {
           const openTagMatch = html.slice(i + 1).match(/^([a-zA-Z][a-zA-Z0-9_-]*)/)
-          throw new Error(t('generator.attribut-guillemet-non-ferme', { tag: openTagMatch ? openTagMatch[1] : '?' }))
+          throw new Error(t('generator.attribute-quote-not-closed', { tag: openTagMatch ? openTagMatch[1] : '?' }))
         }
         i = len; break
       }
@@ -1496,12 +1496,12 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
       const tagInner = selfClosing ? rawTag.slice(0, -1).trimEnd() : rawTag
 
       const nameMatch = tagInner.match(/^([a-zA-Z][a-zA-Z0-9_-]*)/)
-      const nomLu = (nameMatch ? nameMatch[1] : '').toLowerCase()
+      const readName = (nameMatch ? nameMatch[1] : '').toLowerCase()
       // mêmes lectures qu'extractPaths : sortie du SVG/MathML, `<image>` lu `<img>`, `<html>`/`<head>`/`<body>` ignorés
-      for (let n = foreignBreakoutCount(stack, nomLu, tagInner); n > 0; n--) popStackFrame()
-      const etranger = inForeignContent(stack, foreignNsRoot)
-      const tagName = nomLu === 'image' && !etranger ? 'img' : nomLu
-      if (IGNORED_TAGS.has(tagName) && !etranger) { i = j + 1; continue }
+      for (let n = foreignBreakoutCount(stack, readName, tagInner); n > 0; n--) popStackFrame()
+      const foreign = inForeignContent(stack, foreignNsRoot)
+      const tagName = readName === 'image' && !foreign ? 'img' : readName
+      if (IGNORED_TAGS.has(tagName) && !foreign) { i = j + 1; continue }
       const isVoid = VOID_TAGS.has(tagName)
       const isScript = tagName === 'script'
 
@@ -1509,13 +1509,13 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
       // impératif (atteint dès qu'une branche `{await}` voisine un `{for}`, cf.
       // compileAwait) n'était PAS DU TOUT protégé — un `<p>…<div>flow</div>…</p>`
       // y compilait sans erreur. Fermetures implicites d'abord, comme dans extractPaths.
-      if (!etranger) {
-        checkNesting(stack, tagName, () => ligneDuFichier(html, lignesFichier, i))
+      if (!foreign) {
+        checkNesting(stack, tagName, () => fileLine(html, fileLines, i))
         for (let n = implicitCloseCount(stack, tagName); n > 0; n--) popStackFrame()
-        checkFlowInsideP(stack, tagName, () => ligneDuFichier(html, lignesFichier, i))
-        checkTableContent(stack, tagName, tagInner, () => ligneDuFichier(html, lignesFichier, i))
+        checkFlowInsideP(stack, tagName, () => fileLine(html, fileLines, i))
+        checkTableContent(stack, tagName, tagInner, () => fileLine(html, fileLines, i))
       }
-      if (tagName === 'template' && !selfClosing) checkTemplateStatic(html, j + 1, () => ligneDuFichier(html, lignesFichier, i))
+      if (tagName === 'template' && !selfClosing) checkTemplateStatic(html, j + 1, () => fileLine(html, fileLines, i))
 
       // ──────── Cas spécial : marker `<script type='mjs/marker' mjs-t='X'>` ────────
       if (isScript) {
@@ -1648,7 +1648,7 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
       // root, cf. `GenerateCreateFnBodyOpts.splitSelectPostUpdates`).
       const deferredValueSink: string[] | undefined = tagName === 'select' ? [] : undefined
       const deferredElVar = (deferredValueSink && splitSelectPostUpdates) ? `__nodes[${JSON.stringify(foundIds[0])}]` : undefined
-      emitAttributes(lines, primaryVar, cleanedTagInner.slice(nomLu.length), deferredValueSink, deferredElVar, primaryNs)
+      emitAttributes(lines, primaryVar, cleanedTagInner.slice(readName.length), deferredValueSink, deferredElVar, primaryNs)
       if (splitSelectPostUpdates && deferredValueSink && deferredValueSink.length > 0) postUpdates.push(...deferredValueSink)
 
       // 5. Refs.
@@ -1668,8 +1668,8 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
       if (!isVoid && !selfClosing) {
         // le contenu d'un `<template>` va dans `template.content`, là où le navigateur le range — ajouté à l'élément
         // lui-même, il restait hors du contenu que lit `template.content`
-        const contenant = tagName === 'template' && !primaryNs ? primaryVar + '.content' : primaryVar
-        stack.push({ varName: contenant, tag: tagName, deferredLines: (!splitSelectPostUpdates && deferredValueSink && deferredValueSink.length > 0) ? deferredValueSink : undefined })
+        const container = tagName === 'template' && !primaryNs ? primaryVar + '.content' : primaryVar
+        stack.push({ varName: container, tag: tagName, deferredLines: (!splitSelectPostUpdates && deferredValueSink && deferredValueSink.length > 0) ? deferredValueSink : undefined })
 
         // Cas raw-text (script, style, textarea, title) : on consomme jusqu'à
         // </tag> sans parser le contenu.
@@ -1726,7 +1726,7 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
     const end = next === -1 ? len : next
     const textChunk = html.slice(i, end)
     if (textChunk.length > 0) {
-      checkTableText(stack, textChunk, () => ligneDuFichier(html, lignesFichier, i + Math.max(0, textChunk.search(/\S/))))
+      checkTableText(stack, textChunk, () => fileLine(html, fileLines, i + Math.max(0, textChunk.search(/\S/))))
       // Skip les text nodes purement whitespace si le parent est un
       // conteneur block-level (BLOCK_CONTAINERS). Économise N createTextNode
       // + N appendChild par instance de template. Sur 1000 rows × ~8 text nodes
@@ -1801,7 +1801,7 @@ function appendTextNode(
     // runtime. On émet un template literal qui sera évalué à chaque appel.
     // On doit toutefois ré-escape les `\` (backticks et `${` dans le texte non-
     // template auraient déjà été échappés par escapeTpl ; on les laisse).
-    lines.push(`const ${v} = document.createTextNode(\`${escapeForTpl(textChunk, decode ? 'texte' : false)}\`);`)
+    lines.push(`const ${v} = document.createTextNode(\`${escapeForTpl(textChunk, decode ? 'text' : false)}\`);`)
   } else {
     lines.push(`const ${v} = document.createTextNode(${JSON.stringify(decode ? decodeHtmlEntities(textChunk, true) : textChunk)});`)
   }
@@ -2008,13 +2008,13 @@ function emitAttrSet(
     if (adj.ns) lines.push(write(`''`))
     const bareExpr = bareInterpExpr(value)
     if (bareExpr !== null) {
-      lines.push(`µ._mjs_updAttrNode(${elVar}, ${JSON.stringify(attrName)}, (${bareExpr})${attrSur(attrName)});`)
+      lines.push(`µ._mjs_updAttrNode(${elVar}, ${JSON.stringify(attrName)}, (${bareExpr})${safeAttrFlag(attrName)});`)
     } else {
       // texte + interpolations mêlés (`class="a ${d.c}"`) ou expression complexe :
       // valeur TOUJOURS une chaîne (jamais false/null) — même choix que root/`{for}`
       // pour une prop booléenne mêlée, une chaîne non vide y reste "vraie".
       // texte fixe décodé : ce chemin ne repasse jamais par l'analyseur HTML (cf. plus bas)
-      lines.push(`µ._mjs_updAttrNode(${elVar}, ${JSON.stringify(attrName)}, \`${escapeForTpl(value, true).replace(FERMANTE_SCRIPT_RE, '<\\/$1')}\`${attrSur(attrName)});`)
+      lines.push(`µ._mjs_updAttrNode(${elVar}, ${JSON.stringify(attrName)}, \`${escapeForTpl(value, true).replace(CLOSING_SCRIPT_RE, '<\\/$1')}\`${safeAttrFlag(attrName)});`)
     }
     return
   }
@@ -2027,18 +2027,18 @@ function emitAttrSet(
   // `class`, `id` (et `value` d'un `<select>`) : par propriété, cf. plus haut
   if (!foreign && (attrName === 'class' || attrName === 'id' || (selectValue && attrName === 'value'))) {
     const prop = attrName === 'class' ? 'className' : attrName
-    lines.push(`${elVar}.${prop} = ${chaineJs(value)};`)
+    lines.push(`${elVar}.${prop} = ${jsString(value)};`)
     return
   }
-  lines.push(write(chaineJs(value)))
+  lines.push(write(jsString(value)))
 }
 
 // un `</script>` écrit dans une valeur d'attribut part dans une chaîne du JavaScript produit : écrit `<\/script>` (même
 // valeur), il ne referme pas la balise <script> d'une page où ce code serait mis en ligne
-const FERMANTE_SCRIPT_RE = /<\/(script)/gi
+const CLOSING_SCRIPT_RE = /<\/(script)/gi
 
-function chaineJs(texte: string): string {
-  return JSON.stringify(texte).replace(FERMANTE_SCRIPT_RE, '<\\/$1')
+function jsString(text: string): string {
+  return JSON.stringify(text).replace(CLOSING_SCRIPT_RE, '<\\/$1')
 }
 
 /**
@@ -2050,24 +2050,24 @@ function chaineJs(texte: string): string {
  * escapeTpl, `\``/`\\`/`\$\{` échappés) a besoin du retrait de double-escape ci-dessous.
  */
 // `decode` : `true` pour un attribut, `'texte'` pour un nœud texte (entités historiques sans `;`, cf. decodeHtmlEntities)
-function escapeForTpl(s: string, decode: boolean | 'texte' = false): string {
+function escapeForTpl(s: string, decode: boolean | 'text' = false): string {
   let out = ''
   let i = 0
   const n = s.length
   // texte statique entre deux fenêtres : entités décodées sur demande (cf. appendTextNode), puis échappé ;
   // un `${` que seul le décodage fait apparaître (`&#36;&#123;`) reste du texte (`\${`)
-  const statique = (seg: string): string => (decode ? decodeHtmlEntities(seg, decode === 'texte') : seg).replace(/[\\`]|\$(?=\{)/g, (c) => '\\' + c)
-  let debut = 0
+  const staticSeg = (seg: string): string => (decode ? decodeHtmlEntities(seg, decode === 'text') : seg).replace(/[\\`]|\$(?=\{)/g, (c) => '\\' + c)
+  let start = 0
   while (i < n) {
     if (s[i] === '$' && s[i + 1] === '{') {
       const close = scanInterpWindow(s, i)
       const end   = close === -1 ? n : close + 1
-      out += statique(s.slice(debut, i)) + s.slice(i, end)  // fenêtre ${...} VERBATIM : jamais rééchappée
-      i = end
-      debut = i
+      out        += staticSeg(s.slice(start, i)) + s.slice(i, end)  // fenêtre ${...} VERBATIM : jamais rééchappée
+      i           = end
+      start       = i
       continue
     }
     i++
   }
-  return out + statique(s.slice(debut))
+  return out + staticSeg(s.slice(start))
 }

@@ -90,9 +90,9 @@ export const RESERVED_TIMER_NAMES = new Set(['µturn', 'µmatch', 'µempty'])
 // messages du journal selon le code JEU que _guardTimerCall garde : une minuterie applicative (def.timers, par défaut), le crochet
 // hooks.onTurnTimeout, le passage de tour automatique (turns.order ; next() ne rend jamais de Promise : `rejected` y est sans objet)
 interface TimerCallKeys { thrown: MsgKey; rejected?: MsgKey }
-const TIMER_CALL_KEYS:      TimerCallKeys = { thrown: 'serveur.partie-timer-applicatif-leve', rejected: 'serveur.partie-timer-applicatif-rejete' }
-const TURN_TIMEOUT_KEYS:    TimerCallKeys = { thrown: 'serveur.partie-onturntimeout-leve', rejected: 'serveur.partie-onturntimeout-rejete' }
-const TURN_ORDER_AUTO_KEYS: TimerCallKeys = { thrown: 'serveur.partie-turns-order-timeout-leve' }
+const TIMER_CALL_KEYS:      TimerCallKeys = { thrown: 'mjs-server.game-timer-app-threw', rejected: 'mjs-server.game-timer-app-rejected' }
+const TURN_TIMEOUT_KEYS:    TimerCallKeys = { thrown: 'mjs-server.game-onturntimeout-threw', rejected: 'mjs-server.game-onturntimeout-rejected' }
+const TURN_ORDER_AUTO_KEYS: TimerCallKeys = { thrown: 'mjs-server.game-turns-order-timeout-threw' }
 
 // résultat de la fin « entrée refusée » d'un joueur dont hooks.onJoin a refusé l'entrée — même forme que les fins d'annulation
 // ({ cancelled: true, reason: 'seat-expired' }) : un drapeau et une raison
@@ -116,6 +116,9 @@ const TICK_PERSIST_THROTTLE_MS = 100
 // (coups) — jamais mélangé, cf. _bucketsHash. Les propositions d'instantané (µgame:snapshot) ont le leur, à la cadence du jeu (cf.
 // _consumeSnapshotToken) : au-delà de 30 Hz, une cadence de 1 en enverrait plus que ces 30 jetons.
 const HASH_LIMIT: [number, number] = [30, 1000]
+// longueur d'un hash d'état (µgame:hash), en caractères — µ.lockstep l'écrit en 8 caractères (FNV-1a 32 bits, cf. mjs_lockstep.ts) ; plus long, il est
+// refusé (jamais retenu, cf. _receiveHash) : sans borne, un joueur faisait garder un hash de la taille d'une trame par tick de la fenêtre
+const HASH_MAX_LENGTH = 64
 // anti-triche (détection par coup) — anneau borné DÉDIÉ (JAMAIS mélangé à `journal`, le
 // journal COURT v1 des coups CLASSIQUEMENT appliqués ci-dessus, cf. commentaire de tête du fichier)
 const ANTICHEAT_LOG_MAX = 100
@@ -142,12 +145,12 @@ export interface MjsServerDeltaOp { p: string; v?: unknown; x?: 1 }
  *  changement de FORME (objet<->tableau/scalaire) OU un tableau qui RÉTRÉCIT remplace tout le
  *  sous-arbre EN BLOC à ce chemin — plutôt qu'une récursion incohérente entre deux formes
  *  différentes, ou un diff par clé qui émettrait un `x:1` par index retiré (cf. juste plus bas). */
-function deepDiff(chemin: string, old: unknown, fresh: unknown, ops: MjsServerDeltaOp[]): void {
+function deepDiff(path: string, old: unknown, fresh: unknown, ops: MjsServerDeltaOp[]): void {
   if (old === fresh) return
   const oldObj = typeof old === 'object' && old !== null
   const newObj   = typeof fresh === 'object' && fresh !== null
   if (!oldObj || !newObj || Array.isArray(old) !== Array.isArray(fresh)) {
-    ops.push({ p: chemin, v: fresh })
+    ops.push({ p: path, v: fresh })
     return
   }
   // rétrécissement de tableau : un diff par clé émettrait `{x:1}` sur les index retirés — `delete`
@@ -156,7 +159,7 @@ function deepDiff(chemin: string, old: unknown, fresh: unknown, ops: MjsServerDe
   // tableau qui GRANDIT ou se réordonne à longueur ÉGALE garde le diff par clé (l'affectation
   // d'index étend `.length` toute seule côté client, aucun souci).
   if (Array.isArray(old) && Array.isArray(fresh) && fresh.length < old.length) {
-    ops.push({ p: chemin, v: fresh })
+    ops.push({ p: path, v: fresh })
     return
   }
   const keys = new Set([...Object.keys(old as object), ...Object.keys(fresh as object)])
@@ -164,12 +167,12 @@ function deepDiff(chemin: string, old: unknown, fresh: unknown, ops: MjsServerDe
   // __proto__/constructor/prototype (un pseudo « constructor ») y serait jetée par le client, qui ne suit jamais ces segments :
   // l'objet qui la porte est remplacé EN BLOC à ce chemin (à la racine, chemin vide : vue complète, cf. _buildFrame)
   for (const key of keys) {
-    if (key.includes('.') || UNSAFE_PATH_KEYS.has(key)) { ops.push({ p: chemin, v: fresh }); return }
+    if (key.includes('.') || UNSAFE_PATH_KEYS.has(key)) { ops.push({ p: path, v: fresh }); return }
   }
   for (const key of keys) {
-    const subPath = chemin ? chemin +'.'+ key : key
-    const inOld = Object.prototype.hasOwnProperty.call(old, key)
-    const inFresh   = Object.prototype.hasOwnProperty.call(fresh, key)
+    const subPath = path ? path +'.'+ key : key
+    const inOld   = Object.prototype.hasOwnProperty.call(old, key)
+    const inFresh = Object.prototype.hasOwnProperty.call(fresh, key)
     if (inOld && !inFresh) { ops.push({ p: subPath, x: 1 }); continue }
     if (!inOld && inFresh) { ops.push({ p: subPath, v: (fresh as Record<string, unknown>)[key] }); continue }
     deepDiff(subPath, (old as Record<string, unknown>)[key], (fresh as Record<string, unknown>)[key], ops)
@@ -234,7 +237,7 @@ export interface MjsServerSuspicionEvent {
 }
 
 /** compteurs anti-triche AGRÉGÉS pour l'app ENTIÈRE (tous jeux/parties confondus, jamais
- *  réinitialisés à la destruction d'UNE partie — même politique que garde.kicksDebit &c. côté
+ *  réinitialisés à la destruction d'UNE partie — même politique que guard.kicksRate &c. côté
  *  mjs-ws/stats.ts) — cf. index.ts::mjsServer() pour la création + le greffage ADDITIF sur
  *  app.stats() (`game: {...}`, rétro-compatible : un mjsWs() nu ou un app.stats() déjà consommé
  *  ailleurs ne perd rien), matchmaking.ts pour le rattachement à CHAQUE partie (MÊME patron que
@@ -282,6 +285,8 @@ export interface MjsServerGameSnapshot {
   /** cf. `_unconfirmedSeats`/_armConfirmWindow — sièges (id) qui n'ont pas encore confirmé leur
    *  place lors d'une complétion par file ; absent/`null` = aucune fenêtre de confirmation en cours */
   unconfirmedSeats?: string[] | null
+  /** cf. Game._lastMoveSeat — absent d'une sauvegarde de la 4.0.0 : relu dans le dernier coup du journal (cf. restoreGame) */
+  lastMoveSeat?: number | null
   /** mode lockstep — µpersist = JOURNAL D'ORDRES (cf. lockstep.ts) — `undefined` pour
    *  une partie 'authoritative' (absent après un aller-retour JSON, rétro-compat totale des anciens
    *  instantanés). Pas de `seed` : ré-dérivée de `id` à la restauration, cf. deterministicSeed. `snapshot` : le dernier
@@ -322,7 +327,7 @@ export class Game {
   /** mode action — depuis la dernière sauvegarde, la partie a changé à coup sûr (coup, intention, siège, phase, tour, game.changed()…) :
    *  la sauvegarde suivante s'écrit sans comparaison ; sinon seul du code dont l'effet ne se voit pas a tourné (simulate, slowTick,
    *  minuterie de l'appli), et elle ne s'écrit que si la partie diffère de sa dernière sauvegarde (cf. _prepareSave) */
-  _saveSure = false
+  _saveSafe = false
   _destroyed = false
   /** arrêt du serveur commencé (matchmaking.ts, holdTimers) : plus aucune minuterie de la partie ne part — ni grâce, ni tour, ni
    *  minuterie de l'appli. L'échéance reste dans `_timers`, donc dans la sauvegarde de la rafale finale, et part au redémarrage : une
@@ -439,6 +444,13 @@ export class Game {
    *  `stuck` : un de ces coups a passé limits.moveWaitMs sans se régler, les coups suivants sont refusés. L'entrée disparaît dès que
    *  plus rien n'est en cours */
   _movesInFlight = new Map<string, { turn: Promise<boolean>; done: Promise<unknown>; stuck: boolean }>()
+  /** siège du dernier coup classique accepté (cf. _playMove), gardé jusqu'au coup suivant — tant qu'aucun tour n'est établi, le `.next()`
+   *  'roundrobin' part du siège qui le suit, qu'il soit appelé pendant le coup ou après un `await` de son gestionnaire (sans lui, le tour
+   *  revenait au premier siège : celui qui ouvrait la partie rejouait aussitôt) ; un tour établi ne le lit jamais. Un changement de phase
+   *  (.to() vers une autre phase) l'oublie : la phase neuve commence au premier siège. Sauvegardé avec la partie (cf. serialize, restoreGame) */
+  _lastMoveSeat: number | null = null
+  /** joueurs dont un hash trop long a déjà été dit au journal du serveur (cf. _receiveHash) */
+  _longHashLogged = new Set<string>()
 
   constructor(app: MjsWsApp, def: MjsServerResolvedDef, onDestroy: (game: Game) => void, id: string) {
     this.app        = app
@@ -464,8 +476,9 @@ export class Game {
    *  repart du siège qui le suit (sans lui, il revenait au premier siège : un joueur rejouait aussitôt, un autre était sauté) */
   _passTurn(fromSeat: number | null): void {
     if (!this.def.turns) return
-    const order = this.def.turns.order
-    const nextSeat = order === 'roundrobin' ? this._nextRoundrobin(fromSeat) : order(this)
+    const order    = this.def.turns.order
+    const from     = fromSeat ?? (this.turn === null ? this._lastMoveSeat : null)
+    const nextSeat = order === 'roundrobin' ? this._nextRoundrobin(from) : order(this)
     this.turn = typeof nextSeat === 'string' ? nextSeat : (nextSeat ? nextSeat.id : null)
     this._armTurnTimeout()
     this._markDirty()
@@ -474,8 +487,9 @@ export class Game {
   /** change de phase — valide contre `def.phases` SI déclaré (sinon libre, aucune restriction) */
   to(phase: string): void {
     if (this.def.phases && !(phase in this.def.phases)) {
-      throw new Error(t('serveur.partie-phase-inconnue', { phase: phase, phases: Object.keys(this.def.phases).join(', ') }))
+      throw new Error(t('mjs-server.game-phase-unknown', { phase: phase, phases: Object.keys(this.def.phases).join(', ') }))
     }
+    if (phase !== this.phase) this._lastMoveSeat = null   // une phase neuve commence au premier siège ; rester dans la même ne change rien
     this.phase = phase
     this._markDirty()
   }
@@ -489,10 +503,10 @@ export class Game {
    *  Un nom absent de `def.timers` lève tout de suite (propriété PROPRE, comme moves/intents : un nom hérité, 'toString'…, n'est pas
    *  une minuterie déclarée) — armé, il ne lançait rien à son échéance. */
   timer(name: string, ms: number): void {
-    if (RESERVED_TIMER_NAMES.has(name)) throw new Error(t('serveur.partie-timer-nom-reserve', { nom: name }))
+    if (RESERVED_TIMER_NAMES.has(name)) throw new Error(t('mjs-server.game-timer-name-reserved', { name }))
     if (!Object.hasOwn(this.def.timers, name)) {
       const declared = Object.keys(this.def.timers)
-      throw new Error(t('serveur.partie-timer-inconnu', { nom: name, timers: declared.length > 0 ? declared.join(', ') : t('serveur.partie-timer-aucun') }))
+      throw new Error(t('mjs-server.game-timer-unknown', { name, timers: declared.length > 0 ? declared.join(', ') : t('mjs-server.game-timer-none') }))
     }
     this._armByName(name, ms)
   }
@@ -512,7 +526,7 @@ export class Game {
   changed(): void {
     if (this._destroyed || this._silent) return
     if (this.def.tick <= 0) { this._markDirty(); return }
-    if (this._onMutate) { this._saveSure = true; this._onMutate(this) }
+    if (this._onMutate) { this._saveSafe = true; this._onMutate(this) }
     this._broadcastWithoutLoop()
   }
 
@@ -520,7 +534,7 @@ export class Game {
    *  ce fichier. Throw en mode 'lockstep' (def.view est `null`, cf. game-def.ts) — ne devrait jamais être
    *  appelée pour une partie lockstep (aucun état serveur), cf. _infoMode/_broadcastTickOrders. */
   viewFor(player: MjsServerSeat | null): unknown {
-    if (!this.def.view) throw new Error(t('serveur.partie-vuede-lockstep'))
+    if (!this.def.view) throw new Error(t('mjs-server.game-viewfor-lockstep'))
     return this.def.view(this, player)
   }
 
@@ -549,7 +563,7 @@ export class Game {
    *  siège ; tant que le journal est entier, elle joue comme les autres (sa présence retient alors toute coupe, cf. _receiveSnapshot).
    *  Lève l'erreur que reçoit sa requête ; rien hors du mode lockstep */
   _requireSnapshotReader(reads: boolean): void {
-    if (!reads && this._lockstep?.snapshot()) throw new Error(t('serveur.partie-page-sans-instantane'))
+    if (!reads && this._lockstep?.snapshot()) throw new Error(t('mjs-server.game-page-no-snapshot'))
   }
 
   /** compensation de lag serveur (def.history) — rembobine le tampon d'historique à l'instant
@@ -560,7 +574,7 @@ export class Game {
    *  jamais mutable (cf. history.ts pour la justification). Throw si `def.history` n'est pas déclaré, ou
    *  si le tampon est vide (aucun tick encore écoulé, ou partie détruite). */
   rewind<T>(instantMs: number, fn: (positions: MjsServerHistoryPositions, meta: MjsServerHistoryMeta) => T): T {
-    if (!this._history) throw new Error(t('serveur.partie-rembobiner-sans-histo'))
+    if (!this._history) throw new Error(t('mjs-server.game-rewind-no-history'))
     return this._history.rewind(instantMs, fn)
   }
 
@@ -572,7 +586,7 @@ export class Game {
    *  compensation par défaut, jamais un throw pour une mesure simplement absente). Throw si
    *  `def.history` n'est pas déclaré (pas de `interp` par défaut sans lui). */
   timeSeenBy(player: MjsServerSeat): number {
-    if (!this.def.history) throw new Error(t('serveur.partie-instantvupar-sans-histo'))
+    if (!this.def.history) throw new Error(t('mjs-server.game-timeseenby-no-history'))
     let latency = 0
     for (const client of player.clients) { latency = client.latency ?? 0; break }
     return Date.now() - (latency + this.def.history.interp)
@@ -608,7 +622,7 @@ export class Game {
     this._broadcastTo('µgame:end', { result })
     this._broadcastToSpectatorsRaw('µgame:end', { result })
     try {
-      this._followRejection('serveur.partie-onend-rejete', this.def.hooks.onEnd?.(this, result))
+      this._followRejection('mjs-server.game-onend-rejected', this.def.hooks.onEnd?.(this, result))
     } finally {
       this._armByName('µempty', this.def.endTtl ?? this.def.emptyTtl)
     }
@@ -642,6 +656,7 @@ export class Game {
       result: this._endResult,
       started: this._started,
       unconfirmedSeats: this._unconfirmedSeats ? Array.from(this._unconfirmedSeats) : null,
+      lastMoveSeat: this._lastMoveSeat,
       lockstep: this._lockstep ? lockstepData(this._lockstep) : undefined,
     }
   }
@@ -683,9 +698,9 @@ export class Game {
     if (existing) { this._broadcastSeats(); return existing }
     // partie finie (grâce `endTtl`) : un joueur déjà assis s'y rattache encore (ci-dessus), un nouveau venu n'y prend pas le siège
     // laissé libre par un départ — il serait assis dans une partie terminée et hooks.onJoin tournerait après la fin
-    if (this._ended) throw new Error(t('serveur.partie-terminee'))
+    if (this._ended) throw new Error(t('mjs-server.game-finished'))
     const index = this.players.findIndex(j => j === null)
-    if (index === -1) throw new Error(t('serveur.partie-complete'))
+    if (index === -1) throw new Error(t('mjs-server.game-full'))
     const player: MjsServerSeat = { seat: index, id: peerIdOf(client), clients: new Set([client]), connected: true }
     this.players[index] = player
     // le siège est posé AVANT onJoin (le hook lit game.players et player.seat) ; un throw de onJoin REFUSE le joueur : son siège
@@ -695,7 +710,7 @@ export class Game {
     // tout de suite ; avec `admissions`, c'est l'appelant qui attend la Promise (l'appariement de la file, ou la réponse d'une partie
     // par code) et décide du sort du siège, qui n'est annoncé qu'ensuite
     try {
-      const key     = !admissions ? 'serveur.partie-onjoin-rejete' : this._silent ? 'serveur.partie-onjoin-rejete-file' : 'serveur.partie-onjoin-rejete-code'
+      const key     = !admissions ? 'mjs-server.game-onjoin-rejected' : this._silent ? 'mjs-server.game-onjoin-rejected-queue' : 'mjs-server.game-onjoin-rejected-code'
       const joining = this._followRejection(key, this.def.hooks.onJoin?.(this, player), admissions ? undefined : () => this._refuseSeat(player))
       if (admissions && joining) {
         admissions.push(joining.then(admitted => admitted ? null : player))
@@ -757,7 +772,7 @@ export class Game {
     try {
       this._passTurn(player.seat)
     } catch (err) {
-      this.def.log('error', t('serveur.partie-turns-order-refus-leve', { msg: errMessage(err) }))
+      this.def.log('error', t('mjs-server.game-turns-order-refusal-threw', { msg: errMessage(err) }))
     }
   }
 
@@ -797,7 +812,7 @@ export class Game {
    *  _infoMode : « à la reconnexion, le client reçoit seed + journal et rejoue ») */
   _resync(client: MjsWsClient): { seat: number; info: Record<string, unknown> } {
     const player = this._reattachSeat(client)
-    if (!player) throw new Error(t('serveur.partie-pas-dans-partie'))
+    if (!player) throw new Error(t('mjs-server.game-not-in-game'))
     this._confirmSeat(player.id)
     this._broadcastSeats()
     const info = this._infoMode(player)
@@ -839,7 +854,7 @@ export class Game {
     if (this.def.spectatorView) return this.def.spectatorView(this)
     if (!this._warnedSpectatorNoView) {
       this._warnedSpectatorNoView = true
-      this.def.log('warn', t('serveur.partie-spectateur-sans-vue', { type: this.type }))
+      this.def.log('warn', t('mjs-server.game-spectator-no-view', { type: this.type }))
     }
     return {}
   }
@@ -873,7 +888,7 @@ export class Game {
       for (const c of player.clients) { this._lastViews.delete(c); this._lastMeta.delete(c) }
       let failure: { err: unknown } | null = null   // enveloppée : une valeur levée falsy (throw undefined) reste une erreur
       try {
-        this._followRejection('serveur.partie-onleave-rejete', this.def.hooks.onLeave?.(this, player))
+        this._followRejection('mjs-server.game-onleave-rejected', this.def.hooks.onLeave?.(this, player))
       } catch (err) {
         failure = { err }
       }
@@ -883,7 +898,7 @@ export class Game {
         try {
           this._passTurn(player.seat)
         } catch (err) {
-          if (failure) this.def.log('error', t('serveur.partie-turns-order-depart-leve', { msg: errMessage(err) }))
+          if (failure) this.def.log('error', t('mjs-server.game-turns-order-start-threw', { msg: errMessage(err) }))
           else failure = { err }
         }
       }
@@ -894,7 +909,7 @@ export class Game {
       return
     }
     if (this._spectators.delete(client)) return
-    throw new Error(t('serveur.partie-pas-assis'))
+    throw new Error(t('mjs-server.game-not-seated'))
   }
 
   /** déconnexion (MJS-WS opts.onDisconnect) — marque le siège déconnecté SANS le vider ; la
@@ -936,7 +951,7 @@ export class Game {
   _onMove(client: MjsWsClient, move: string, p: unknown): unknown {
     const id      = peerIdOf(client)
     const pending = this._movesInFlight.get(id)
-    if (pending?.stuck) throw new Error(t('serveur.partie-coup-precedent-en-cours'))
+    if (pending?.stuck) throw new Error(t('mjs-server.game-move-previous-in-progress'))
     const result  = pending ? pending.turn.then(expired => this._playQueuedMove(client, move, p, expired)) : this._playMove(client, move, p)
     if (!result || typeof (result as any).then !== 'function') return result
     const ended = (result as Promise<unknown>).then(() => {}, () => {})
@@ -949,7 +964,7 @@ export class Game {
     entry.done.then(() => { if (this._movesInFlight.get(id) === entry) this._movesInFlight.delete(id) })
     return new Promise<unknown>((resolve, reject) => {
       (result as Promise<unknown>).then(resolve, reject)
-      turn.then(expired => { if (expired) reject(new Error(t('serveur.partie-coup-sans-reponse', { coup: move, ms: this._moveWaitMs() }))) })
+      turn.then(expired => { if (expired) reject(new Error(t('mjs-server.game-move-no-response', { move, ms: this._moveWaitMs() }))) })
     })
   }
 
@@ -966,7 +981,7 @@ export class Game {
     const ms = this._moveWaitMs()
     return new Promise<boolean>(resolve => {
       const timer = setTimeout(() => {
-        if (!this._destroyed) this.def.log('warn', t('serveur.partie-coup-sans-fin', { coup: move, ms }))
+        if (!this._destroyed) this.def.log('warn', t('mjs-server.game-move-no-end', { move, ms }))
         resolve(true)
       }, ms)
       timer.unref?.()
@@ -979,8 +994,8 @@ export class Game {
    *  (annulée, vidée) : il ne tourne pas, comme un coup qui arriverait maintenant ; le précédent a passé limits.moveWaitMs sans se
    *  régler (`expired`) : refusé, il ne joue pas en même temps que lui */
   _playQueuedMove(client: MjsWsClient, move: string, p: unknown, expired: boolean): unknown {
-    if (this._destroyed) throw new Error(t('serveur.matchmaking-partie-introuvable'))
-    if (expired) throw new Error(t('serveur.partie-coup-precedent-en-cours'))
+    if (this._destroyed) throw new Error(t('mjs-server.matchmaking-game-not-found'))
+    if (expired) throw new Error(t('mjs-server.game-move-previous-in-progress'))
     return this._playMove(client, move, p)
   }
 
@@ -988,23 +1003,23 @@ export class Game {
   _playMove(client: MjsWsClient, move: string, p: unknown): unknown {
     // partie déjà terminée (fenêtre de grâce `endTtl`) — la partie reste interrogeable (resync)
     // mais plus JOUABLE : aucun coup ne mute l'état ni ne se diffuse après .end()
-    if (this._ended) throw new Error(t('serveur.partie-terminee'))
+    if (this._ended) throw new Error(t('mjs-server.game-finished'))
     const player = this._findSeatOf(client)
     if (!player) {
       // anti-triche — message DÉDIÉ pour un spectateur CONNU (plutôt que le message
       // générique ci-dessous) : _findSeatOf ne cherche que dans `this.players`, un spectateur
       // n'y est jamais — cette garde est donc déjà, PAR CONSTRUCTION, ce qui rejette tout
       // µgame:move d'un spectateur (rien à ajouter côté autorisation, juste un message plus clair).
-      if (this._spectators.has(client)) throw new Error(t('serveur.partie-spectateur-lecture-seule'))
-      throw new Error(t('serveur.partie-pas-assis'))
+      if (this._spectators.has(client)) throw new Error(t('mjs-server.game-spectator-read-only'))
+      throw new Error(t('mjs-server.game-not-seated'))
     }
     if (this.def.phases && !(this.def.phases[this.phase ?? ''] ?? []).includes(move)) {
-      throw new Error(t('serveur.partie-coup-interdit-phase', { coup: move, phase: this.phase }))
+      throw new Error(t('mjs-server.game-move-forbidden-phase', { move, phase: this.phase }))
     }
     // `this.turn === null` = aucun tour encore établi (avant le 1er .next(), ex. une phase
     // d'attente/prêt-check) : personne n'est bloqué tant que .next() n'a jamais tourné une 1re
     // fois — la garde ne parle qu'une fois un VRAI tour en cours
-    if (this.def.turns && this.turn !== null && this.turn !== player.id) throw new Error(t('serveur.partie-pas-votre-tour'))
+    if (this.def.turns && this.turn !== null && this.turn !== player.id) throw new Error(t('mjs-server.game-not-your-turn'))
 
     // anti-triche (détection par coup, TOUT opt-in — def.suspect/antiReplay/limits.
     // moveIntervalMs) — cf. _antiCheatGuard : s'applique UNIFORMÉMENT aux 3 branches
@@ -1022,7 +1037,7 @@ export class Game {
     // devient un ordre valide (aucune whitelist demandée : chaque µgame:move reçu devient
     // un ORDRE, sous la seule condition de taille de lockstepJournal.maxOrderBytes).
     if (this.def.mode === 'lockstep') {
-      if (!this._consumeToken(player)) throw new Error(t('serveur.partie-trop-de-coups'))
+      if (!this._consumeToken(player)) throw new Error(t('mjs-server.game-too-many-moves'))
       // addOrder refuse un ordre trop gros (lockstepJournal.maxOrderBytes) : il passe AVANT accept(), comme les autres refus
       this._lockstep!.addOrder(player.id, move, p)
       accept()
@@ -1032,7 +1047,7 @@ export class Game {
 
     // le jeton anti-abus se consomme AVANT toute résolution du nom de coup (intent ou classique) —
     // sinon un spam de noms INEXISTANTS n'entame jamais le seau (contournement du quota)
-    if (!this._consumeToken(player)) throw new Error(t('serveur.partie-trop-de-coups'))
+    if (!this._consumeToken(player)) throw new Error(t('mjs-server.game-too-many-moves'))
 
     // mode action (def.intents, MÊME canal µgame:move que les coups classiques) — MISE EN FILE,
     // JAMAIS exécutée ici : la DERNIÈRE valeur gagne par nom (un spam de 'bouger' ne garde que la
@@ -1054,9 +1069,10 @@ export class Game {
     }
 
     const fn = Object.hasOwn(this.def.moves, move) ? this.def.moves[move] : undefined
-    if (!fn) throw new Error(t('serveur.partie-coup-inconnu', { coup: move }))
+    if (!fn) throw new Error(t('mjs-server.game-move-unknown', { move }))
     accept()
     this._confirmSeat(player.id)
+    this._lastMoveSeat = player.seat
     const result = fn(this, player, p)
     // coup ASYNCHRONE — `fn` peut renvoyer une Promise dont la RÉSOLUTION mute `state` (ex. un
     // appel réseau/BDD avant d'appliquer le coup) : le _markDirty() ci-dessous diffuse l'état
@@ -1097,6 +1113,16 @@ export class Game {
     const player = this._findSeatOf(client)
     if (!player) return
     if (!this._consumeHashToken(player)) return
+    // hash trop long (cf. HASH_MAX_LENGTH), compté en caractères (un emoji en vaut un, pas deux unités UTF-16 ; court en unités, il l'est
+    // aussi en caractères) : refusé, dit une fois par joueur dans le journal du serveur (un flood ne le répète pas)
+    const size = h.length > HASH_MAX_LENGTH ? [...h].length : h.length
+    if (size > HASH_MAX_LENGTH) {
+      if (!this._longHashLogged.has(player.id)) {
+        this._longHashLogged.add(player.id)
+        this.def.log('warn', t('mjs-server.game-hash-too-long', { player: player.id, size, max: HASH_MAX_LENGTH }))
+      }
+      return
+    }
     const seated: string[] = []
     for (const j of this.players) if (j) seated.push(j.id)
     const divergence = this._lockstep.receiveHash(player.id, tick, h, seated)
@@ -1161,9 +1187,9 @@ export class Game {
     this._onDestroy(this)
     if (stopping) return
     try {
-      this._followRejection('serveur.partie-ondestroy-rejete', this.def.hooks.onDestroy?.(this))
+      this._followRejection('mjs-server.game-ondestroy-rejected', this.def.hooks.onDestroy?.(this))
     } catch (err) {
-      this.def.log('error', t('serveur.partie-ondestroy-leve', { msg: errMessage(err) }))
+      this.def.log('error', t('mjs-server.game-ondestroy-threw', { msg: errMessage(err) }))
     }
   }
 
@@ -1237,7 +1263,7 @@ export class Game {
       if (deltaSize > viewSize * 0.6) return { ...base, view: viewNorm }   // repli : delta trop gros
       return { ...base, delta: ops }
     } catch (err) {
-      this.def.log('error', t('serveur.partie-vue-leve', { msg: errMessage(err) }))
+      this.def.log('error', t('mjs-server.game-view-threw', { msg: errMessage(err) }))
       return null
     }
   }
@@ -1277,7 +1303,7 @@ export class Game {
     try {
       info = this._spectatorInfo()
     } catch (err) {
-      this.def.log('error', t('serveur.partie-spectatorview-leve', { msg: errMessage(err) }))
+      this.def.log('error', t('mjs-server.game-spectatorview-threw', { msg: errMessage(err) }))
       return
     }
     const frame = { game: this.id, ...info, phase: this.phase, turn: this.turn, seq: this.seq }
@@ -1325,9 +1351,9 @@ export class Game {
     if (this._history) {
       this._tickCount++
       try {
-        this._history.pousser(this._tickCount, Date.now(), this.def.history!.extract(this))
+        this._history.push(this._tickCount, Date.now(), this.def.history!.extract(this))
       } catch (err) {
-        this.def.log('error', t('serveur.partie-histo-extraire-leve', { msg: errMessage(err) }))
+        this.def.log('error', t('mjs-server.game-history-extract-threw', { msg: errMessage(err) }))
       }
     }
     this._broadcastToPlayers()
@@ -1347,7 +1373,7 @@ export class Game {
     // journal plein (lockstepJournal.maxBytes) : ce tick n'est ni journalisé ni diffusé, la partie se termine — chaque
     // joueur garde l'état du dernier tick reçu, jamais un journal tronqué. hooks.onEnd tourne ici dans la boucle de tick : protégé
     if (!group) {
-      this.def.log('warn', t('serveur.partie-journal-lockstep-plein', { id: this.id, max: this.def.lockstepJournal?.maxBytes }))
+      this.def.log('warn', t('mjs-server.game-journal-lockstep-full', { id: this.id, max: this.def.lockstepJournal?.maxBytes }))
       this._guardTick('hooks.onEnd', () => this.end({ ended: true, reason: 'journal-full' }))
       this._markTick(true)
       return
@@ -1379,9 +1405,9 @@ export class Game {
    *  ne s'écrit que si la partie diffère de sa dernière sauvegarde (cf. _prepareSave). Boucle en marche, la marque attend son tick
    *  (_markDirtyTick) ; arrêtée (plus aucun siège connecté, partie finie), elle part tout de suite : une minuterie qui part alors est
    *  sauvegardée. Rien sans persistance ni sur une partie détruite ; une partie muette garde sa marque (_announce() la fait partir) */
-  _markTick(sure: boolean): void {
+  _markTick(safe: boolean): void {
     if (this._destroyed || !this._onMutate) return
-    if (sure) this._saveSure = true
+    if (safe) this._saveSafe = true
     this._tickMark = true
     if (!this._tickHandle && !this._silent) this._passTickMark(Date.now())
   }
@@ -1500,11 +1526,11 @@ export class Game {
     try {
       const r = fn()
       if (r && typeof (r as any).then === 'function') {
-        const pending = (r as Promise<unknown>).catch((err: unknown) => this.def.log('error', t('serveur.partie-tick-rejete', { quoi: what, msg: errMessage(err) })))
+        const pending = (r as Promise<unknown>).catch((err: unknown) => this.def.log('error', t('mjs-server.game-tick-rejected', { what, msg: errMessage(err) })))
         if (settled) void pending.then(settled)
       }
     } catch (err) {
-      this.def.log('error', t('serveur.partie-tick-leve', { quoi: what, msg: errMessage(err) }))
+      this.def.log('error', t('mjs-server.game-tick-threw', { what, msg: errMessage(err) }))
     }
   }
 
@@ -1564,12 +1590,12 @@ export class Game {
    *  n'est pas forcément l'ordre d'émission), renvoie un CLONE superficiel de `p` sans `_n`. */
   _extractN(playerId: string, p: unknown): unknown {
     if (!p || typeof p !== 'object' || !('_n' in (p as object))) return p
-    const { _n, ...reste } = p as Record<string, unknown>
+    const { _n, ...rest } = p as Record<string, unknown>
     if (typeof _n === 'number') {
       const last = this._lastAppliedN.get(playerId)
       if (last == null || _n > last) this._lastAppliedN.set(playerId, _n)
     }
-    return reste
+    return rest
   }
 
   /** annulation (`seat-expired`, `replaced`) : la même fin part aux sièges et aux spectateurs (cf. _broadcastToSpectatorsRaw) */
@@ -1594,7 +1620,7 @@ export class Game {
   /** réservée (µturn/µmatch/µempty) → code FRAMEWORK, laissé remonter tel quel (un throw ici est
    *  un bug interne, pas à masquer) — SAUF le code JEU que l'échéance de µturn appelle (hooks.onTurnTimeout,
    *  turns.order), gardé dans _onTurnExpired ; APPLICATIVE (def.timers) → code JEU, protégé (cf.
-   *  _guardApplicativeTimer) : un `setTimeout` nu n'a AUCUNE requête à qui répondre, un throw non
+   *  _guardAppTimer) : un `setTimeout` nu n'a AUCUNE requête à qui répondre, un throw non
    *  capturé y ferait planter le PROCESS entier. */
   _armByName(name: string, ms: number): void {
     if (this._destroyed) return   // partie détruite : plus aucune minuterie, ni du framework ni de l'appli (un crochet asynchrone peut rendre la main après la destruction)
@@ -1602,14 +1628,14 @@ export class Game {
     if (this._ended && !reserved) return   // partie finie : le code de l'appli ne tourne plus (ni .timer(), ni onEnd, ni la minuterie nommée d'une sauvegarde restaurée)
     const onExpire = reserved
       ? () => this._onReservedTimer(name)
-      : () => this._guardApplicativeTimer(name)
+      : () => this._guardAppTimer(name)
     this._arm(name, ms, onExpire)
   }
 
   /** minuterie APPLICATIVE (def.timers[name], cf. _armByName) — appel gardé par _guardTimerCall, qui ne sauvegarde la partie que si
    *  elle diffère de sa dernière sauvegarde (cf. _markTimerDirty) ; un nom non déclaré (sauvegarde d'une version antérieure de
    *  l'appli, nom hérité d'Object.prototype) ne lance rien */
-  _guardApplicativeTimer(name: string): void {
+  _guardAppTimer(name: string): void {
     const fn = Object.hasOwn(this.def.timers, name) ? this.def.timers[name] : undefined
     if (!fn) return
     this._guardTimerCall(name, () => fn(this), TIMER_CALL_KEYS, true)
@@ -1635,10 +1661,10 @@ export class Game {
         // comparée elle aussi à la dernière sauvegarde (changesOnly) — un coup ou une autre minuterie a pu changer l'état pendant
         // l'attente, et la suite le remettre à la valeur d'avant
         const pending = r as Promise<unknown>
-        pending.catch((err: unknown) => this.def.log('error', t(keys.rejected ?? keys.thrown, { nom: name, msg: errMessage(err) }))).then(() => this._markTimerDirty(changesOnly))
+        pending.catch((err: unknown) => this.def.log('error', t(keys.rejected ?? keys.thrown, { name, msg: errMessage(err) }))).then(() => this._markTimerDirty(changesOnly))
       }
     } catch (err) {
-      this.def.log('error', t(keys.thrown, { nom: name, msg: errMessage(err) }))
+      this.def.log('error', t(keys.thrown, { name, msg: errMessage(err) }))
     }
     // l'état a pu changer (même si la minuterie a levé après l'avoir modifié) : diffusion, et sauvegarde comme après un coup (changesOnly :
     // si la partie diffère de sa dernière sauvegarde)
@@ -1673,16 +1699,16 @@ export class Game {
 
   /** persist.ts vient de sérialiser la partie pour l'écrire (cf. runSave) : rend l'empreinte de ce qui part (`print`, cf. _savedPrint —
    *  retenue par persist.ts jusqu'à la fin de l'écriture, cf. _noteSaved) et si l'écriture est utile (`useful`) : faux en mode action
-   *  quand rien n'a changé à coup sûr depuis la dernière sauvegarde (cf. `_saveSure`) et que la partie est identique à la dernière
+   *  quand rien n'a changé à coup sûr depuis la dernière sauvegarde (cf. `_saveSafe`) et que la partie est identique à la dernière
    *  sauvegarde réussie — persist.ts ne l'écrit pas si le stockage porte bien celle-ci. Empreinte calculée seulement quand elle peut
    *  servir — `def.timers` non vide, ou, en mode action, simulate ou slowTick déclarés —, sinon inconnue (`null`) */
   _prepareSave(): { print: string | null; useful: boolean } {
-    const action = this.def.tick > 0
-    const sure   = !action || this._saveSure
-    const hidden = Object.keys(this.def.timers).length > 0 || (action && !!(this.def.simulate || this.def.slowTick))
-    const print  = hidden ? this._savedPrint() : null
-    this._saveSure = false
-    return { print, useful: sure || print === null || print !== this._lastSavePrint }
+    const action   = this.def.tick > 0
+    const safe     = !action || this._saveSafe
+    const hidden   = Object.keys(this.def.timers).length > 0 || (action && !!(this.def.simulate || this.def.slowTick))
+    const print    = hidden ? this._savedPrint() : null
+    this._saveSafe = false
+    return { print, useful: safe || print === null || print !== this._lastSavePrint }
   }
 
   /** l'écriture qui portait `print` (cf. _prepareSave) a abouti, la plus récente à aboutir : son empreinte devient celle de la dernière
@@ -1831,7 +1857,7 @@ export class Game {
         const reject = typeof r === 'object' && r.reject === true
         const reason  = (typeof r === 'object' && r.reason) || 'suspect'
         this._reportSuspicion(player, move, reason, reject)
-        if (reject) throw new Error(t('serveur.partie-coup-rejete-suspect', { coup: move, raison: reason }))
+        if (reject) throw new Error(t('mjs-server.game-move-rejected-suspect', { move, reason }))
       }
     }
 
@@ -1844,11 +1870,11 @@ export class Game {
         const last = this._lastAntiReplaySeq.get(player.id)
         if (last != null && seq <= last) {
           this._reportSuspicion(player, move, 'rejeu', true)
-          throw new Error(t('serveur.partie-coup-rejete-rejeu', { coup: move, seq: seq, dernier: last }))
+          throw new Error(t('mjs-server.game-move-rejected-replay', { move, seq: seq, last }))
         }
         if (last != null && seq - last > ANTIREPLAY_WINDOW) {
-          this._reportSuspicion(player, move, 'rejeu-fenetre', true)
-          throw new Error(t('serveur.partie-coup-rejete-sequence-avance', { coup: move, seq: seq, dernier: last }))
+          this._reportSuspicion(player, move, 'replay-window', true)
+          throw new Error(t('mjs-server.game-move-rejected-sequence-ahead', { move, seq: seq, last }))
         }
       }
     }
@@ -1859,7 +1885,7 @@ export class Game {
       const last = this._lastMoveAt.get(player.id)
       if (last != null && now - last < this.def.limits.moveIntervalMs) {
         this._reportSuspicion(player, move, 'rate', true)
-        throw new Error(t('serveur.partie-coup-rejete-cadence', { coup: move }))
+        throw new Error(t('mjs-server.game-move-rejected-cadence', { move }))
       }
     }
 
@@ -1873,8 +1899,8 @@ export class Game {
     // option absente, AUCUN contrôle (défaut). Réutilise _reportSuspicion (journal + _gameStats +
     // def.onSuspicion) — MÊME infrastructure que les 3 gardes ci-dessus, rien de dupliqué.
     if (this._identityQuota && !this._identityQuota(player.id)) {
-      this._reportSuspicion(player, move, 'quota-identite', true)
-      throw new Error(t('serveur.partie-coup-rejete-quota-identite', { coup: move }))
+      this._reportSuspicion(player, move, 'identity-quota', true)
+      throw new Error(t('mjs-server.game-move-rejected-quota-identity', { move }))
     }
 
     return () => {
@@ -1940,21 +1966,21 @@ export class Game {
  *  STRUCTURELLE que ce fichier lit directement (.slice()/.map()/for…of un peu plus bas), sinon
  *  c'est une TypeError bien plus cryptique qui surviendrait à leur place. */
 function validateSnapshot(data: MjsServerGameSnapshot): void {
-  if (!data || typeof data !== 'object') throw new Error(t('serveur.restore-invalide', { champ: t('serveur.restore-champ-racine'), attendu: t('serveur.restore-attendu-objet') }))
-  if (typeof data.id !== 'string' || data.id === '') throw new Error(t('serveur.restore-invalide', { champ: 'id', attendu: t('serveur.restore-attendu-chaine-non-vide') }))
-  if (typeof data.type !== 'string' || data.type === '') throw new Error(t('serveur.restore-invalide', { champ: 'type', attendu: t('serveur.restore-attendu-chaine-non-vide') }))
-  if (!Array.isArray(data.journal)) throw new Error(t('serveur.restore-invalide', { champ: 'journal', attendu: t('serveur.restore-attendu-tableau') }))
-  if (!Array.isArray(data.seats)) throw new Error(t('serveur.restore-invalide', { champ: 'seats', attendu: t('serveur.restore-attendu-tableau') }))
-  if (!Array.isArray(data.timers)) throw new Error(t('serveur.restore-invalide', { champ: 'timers', attendu: t('serveur.restore-attendu-tableau') }))
+  if (!data || typeof data !== 'object') throw new Error(t('mjs-server.restore-invalid', { field: t('mjs-server.restore-field-root'), expected: t('mjs-server.restore-expected-object') }))
+  if (typeof data.id !== 'string' || data.id === '') throw new Error(t('mjs-server.restore-invalid', { field: 'id', expected: t('mjs-server.restore-expected-string-not-empty') }))
+  if (typeof data.type !== 'string' || data.type === '') throw new Error(t('mjs-server.restore-invalid', { field: 'type', expected: t('mjs-server.restore-expected-string-not-empty') }))
+  if (!Array.isArray(data.journal)) throw new Error(t('mjs-server.restore-invalid', { field: 'journal', expected: t('mjs-server.restore-expected-array') }))
+  if (!Array.isArray(data.seats)) throw new Error(t('mjs-server.restore-invalid', { field: 'seats', expected: t('mjs-server.restore-expected-array') }))
+  if (!Array.isArray(data.timers)) throw new Error(t('mjs-server.restore-invalid', { field: 'timers', expected: t('mjs-server.restore-expected-array') }))
   for (const s of data.seats) {
     if (s === null) continue
     if (typeof s !== 'object' || typeof s.seat !== 'number' || typeof s.id !== 'string') {
-      throw new Error(t('serveur.restore-invalide', { champ: 'seats[]', attendu: t('serveur.restore-attendu-siege') }))
+      throw new Error(t('mjs-server.restore-invalid', { field: 'seats[]', expected: t('mjs-server.restore-expected-seat') }))
     }
   }
   for (const timer of data.timers) {
     if (!timer || typeof timer.name !== 'string' || typeof timer.at !== 'number') {
-      throw new Error(t('serveur.restore-invalide', { champ: 'timers[]', attendu: t('serveur.restore-attendu-minuterie') }))
+      throw new Error(t('mjs-server.restore-invalid', { field: 'timers[]', expected: t('mjs-server.restore-expected-timer') }))
     }
   }
   // instantané lockstep (cf. lockstep.ts « INSTANTANÉS ») : un tick entier ≥ 1, un état, un générateur entier de 32 bits — faux, la
@@ -1963,12 +1989,12 @@ function validateSnapshot(data: MjsServerGameSnapshot): void {
   if (snapshot !== undefined && snapshot !== null) {
     const s = snapshot as Partial<MjsServerLockstepSnapshot>
     const ok = typeof snapshot === 'object' && Number.isInteger(s.tick) && s.tick! >= 1 && s.state !== undefined && Number.isInteger(s.rng) && s.rng! >= 0 && s.rng! <= 0xFFFFFFFF
-    if (!ok) throw new Error(t('serveur.restore-invalide', { champ: 'lockstep.snapshot', attendu: t('serveur.restore-attendu-instantane-lockstep') }))
+    if (!ok) throw new Error(t('mjs-server.restore-invalid', { field: 'lockstep.snapshot', expected: t('mjs-server.restore-expected-snapshot-lockstep') }))
     // le journal reprend au tick qui suit l'instantané : un chevauchement ferait rejouer aux clients des ordres déjà dans l'état, un
     // trou leur en ferait manquer
     const journal = (data.lockstep as { journal?: unknown } | undefined)?.journal
     if (Array.isArray(journal) && journal.length > 0 && (journal[0] as { tick?: unknown } | null)?.tick !== s.tick! + 1) {
-      throw new Error(t('serveur.restore-invalide', { champ: 'lockstep.journal', attendu: t('serveur.restore-attendu-journal-apres-instantane', { tick: s.tick! + 1 }) }))
+      throw new Error(t('mjs-server.restore-invalid', { field: 'lockstep.journal', expected: t('mjs-server.restore-expected-journal-after-snapshot', { tick: s.tick! + 1 }) }))
     }
   }
 }
@@ -2016,6 +2042,12 @@ export function restoreGame(app: MjsWsApp, def: MjsServerResolvedDef, onDestroy:
   game.turn    = data.turn
   game.seq     = def.mode === 'lockstep' ? data.seq : restoredSeq(data.seq)
   game.journal = data.journal.slice()
+  // dernier joueur à avoir joué (cf. Game._lastMoveSeat), pour que la main soit la même qu'avant l'arrêt ; une sauvegarde de la 4.0.0 ne
+  // le porte pas : il se relit dans le dernier coup de son journal, retenu seulement s'il est de la phase sauvegardée (elle le liste, ou la
+  // partie n'a pas de phase) — le coup d'une phase passée ne compte pas, la phase neuve commence au premier siège (cf. Game.to)
+  const lastMove     = data.journal.at(-1)
+  const inPhase      = !!lastMove && (data.phase === null || (def.phases?.[data.phase] ?? []).includes(lastMove.move))
+  game._lastMoveSeat = 'lastMoveSeat' in data ? (Number.isInteger(data.lastMoveSeat) ? data.lastMoveSeat as number : null) : (inPhase ? data.seats.find(s => s?.id === lastMove!.player)?.seat ?? null : null)
   game.players = data.seats.map(s => s ? { seat: s.seat, id: s.id, clients: new Set<MjsWsClient>(), connected: false } : null)
   // cf. `_ended`/`_endResult`/`_started`/`_unconfirmedSeats` (game.ts) — absents d'un instantané
   // ANTÉRIEUR à ces champs : `??` retombe sur le comportement HISTORIQUE (jouable, pas encore
@@ -2057,6 +2089,6 @@ export function restoreGame(app: MjsWsApp, def: MjsServerResolvedDef, onDestroy:
 export function createGame(app: MjsWsApp, def: MjsServerResolvedDef, onDestroy: (game: Game) => void, id: string): Game {
   const game = new Game(app, def, onDestroy, id)
   if (def.state) game.state = def.state(game)
-  game._followRejection('serveur.partie-oncreate-rejete', def.hooks.onCreate?.(game))
+  game._followRejection('mjs-server.game-oncreate-rejected', def.hooks.onCreate?.(game))
   return game
 }

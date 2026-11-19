@@ -127,8 +127,8 @@ const bySize     = (a: string, b: string): number => Number(a) - Number(b)
 // déclaration en tête (après `{` ou `;` et des blancs) : `font-size`, un nombre en px seul, `!important` permis
 // blancs et commentaires permis après la valeur (`font-size: 50px /* titre */;`)
 // un commentaire s'arrête à son premier `*/`, lu sans retour arrière : une file de commentaires suivie d'une valeur échoue aussitôt
-const DECL_RE    = /(font-size[ \t\n\r\f]*:[ \t\n\r\f]*)(\d*\.?\d+)px(?=(?:[ \t\n\r\f]|\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\/)*(?:!(?:[ \t\n\r\f]|\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\/)*important(?:[ \t\n\r\f]|\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\/)*)?(?:;|\}|$))/iy
-const BLANCS_RE  = /[ \t\n\r\f]*/y
+const DECL_RE   = /(font-size[ \t\n\r\f]*:[ \t\n\r\f]*)(\d*\.?\d+)px(?=(?:[ \t\n\r\f]|\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\/)*(?:!(?:[ \t\n\r\f]|\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\/)*important(?:[ \t\n\r\f]|\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\/)*)?(?:;|\}|$))/iy
+const BLANKS_RE = /[ \t\n\r\f]*/y
 
 /** CSS compilé → chaque `font-size: <n>px` au-dessus du seuil devient `font-size: var(--mjs-fs-<n>)` ; chaînes et commentaires
  *  recopiés tels quels. `sizes` : les valeurs converties, sans doublon, rangées */
@@ -159,8 +159,8 @@ export function rewriteFontSizes(css: string, settings: FontSizeSettings): { css
       // blancs et commentaires entre `{` (ou `;`) et la déclaration, recopiés tels quels : `.b { /* note */ font-size: 50px; }`
       let j = i + 1
       for (;;) {
-        BLANCS_RE.lastIndex = j
-        j += BLANCS_RE.exec(css)![0].length
+        BLANKS_RE.lastIndex = j
+        j += BLANKS_RE.exec(css)![0].length
         const end = css.startsWith('/*', j) ? css.indexOf('*/', j + 2) : -1
         if (end === -1) break
         j = end + 2

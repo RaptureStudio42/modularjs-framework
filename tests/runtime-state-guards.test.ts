@@ -236,7 +236,7 @@ describe('µderived + await : refusé à la compilation', () => {
   // est lu sur la vue déjà MASQUÉE par `maskInert` (chaînes/commentaires remplacés par
   // des jetons NUL avant cette passe, restaurés après) : un `await` DANS une chaîne
   // n'y apparaît donc jamais littéralement — `/\bawait\b/` sur `realExpr` suffit.
-  it('µderived $total = await f($x), $x → lève transpiler.derived-await-interdit', () => {
+  it('µderived $total = await f($x), $x → lève transpiler.derived-await-forbidden', () => {
     assert.throws(() => tokenize('µderived $total = await f($x), $x'), /synchrone/,
       'un µderived est synchrone : await interdit dans son corps')
   })

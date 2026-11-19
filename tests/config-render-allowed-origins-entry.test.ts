@@ -38,7 +38,7 @@ describe('config — render.allowedOrigins / render.entry validés strictement',
     assert.doesNotThrow(() => findConfig(root))
   })
 
-  it('entry EN NOMBRE (pas une chaîne) : refusé, MÊME patron que ws.entry/serveur.entry', () => {
+  it('entry EN NOMBRE (pas une chaîne) : refusé, MÊME patron que ws.entry/server.entry', () => {
     const root = fixture({ entry: 42 })
     assert.throws(() => findConfig(root), /render\.entry/, 'AVANT le fix : accepté sans erreur, contrairement à ws.entry')
   })

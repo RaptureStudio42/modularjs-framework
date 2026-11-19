@@ -1,5 +1,5 @@
-// Construction : la machinerie des valeurs dérivées (blocs balisés `<derivees>` de runtime/mjs_element.ts, mjs_init.ts et mjs_store_globals.ts —
-// `_mjs_setComputed`, l'horloge `_MJS_HORLOGE` et ses comptes `_mjsCompte`) n'entre au cœur que si une unité de la construction a une valeur
+// Construction : la machinerie des valeurs dérivées (blocs balisés `<derived-values>` de runtime/mjs_element.ts, mjs_init.ts et mjs_store_globals.ts —
+// `_mjs_setComputed`, l'horloge `_MJS_CLOCK` et ses comptes `_mjsCount`) n'entre au cœur que si une unité de la construction a une valeur
 // dérivée : son code compilé appelle `µ._mjs_setComputed(` (`$total = $a * 2`, `µderived`, une dérivée qui lit un magasin `$$x`). Une construction
 // qui n'est pas de production la garde, quelle que soit la clé `runtime` (cœur nu compris) : l'atelier de thème et le journal d'erreurs, compilés
 // à la volée hors de la construction, s'en servent. Une appli dont la seule dérivée vit dans un composant chargé à la demande garde des valeurs
@@ -26,7 +26,7 @@ const ENFANT     = '<script>\n  $a = 1\n  $$prix = 3\n  $total = $a * 2\n  µder
 
 // les morceaux de la machinerie, sous leur forme de code (un commentaire qui la nomme ne compte pas), et le repère de ses blocs ; la
 // signature, sans sa fin : la précision y ajoute la source de la valeur (`src`)
-const MORCEAUX = ['µ._mjs_setComputed = function', '_mjs_setComputed(k, fn', 'mjs-horloge', '_mjsCompte(', '// <derivees>']
+const MORCEAUX = ['µ._mjs_setComputed = function', '_mjs_setComputed(k, fn', 'mjs-clock', '_mjsCount(', '// <derived-values>']
 
 function sansMachinerie(texte: string, cas: string) {
   for (const m of MORCEAUX) assert.equal(texte.includes(m), false, `${cas} : « ${m} » n'est plus au cœur`)
@@ -105,7 +105,7 @@ describe('valeurs dérivées — leur machinerie au cœur seulement quand une un
     pareilQueLHorloge(sans, await coeur('magasin-sans-horloge', { 'prix.mjs': MAGASIN }, { env: 'prod', derivedMode: 'clock' }), 'magasin sans dérivée')
     const avec = await coeur('magasin-avec', { 'prix.mjs': MAGASIN, 'ttc.mjs': DU_MAGASIN }, { env: 'prod' })
     avecMachinerie(avec, 'dérivée d\'un magasin')
-    assert.equal(avec.includes('if (comp._mjs_computeds) _mjsCompte(comp._mjs_computeds, k);'), true, 'l\'écriture brute du magasin périme ses dérivées')
+    assert.equal(avec.includes('if (comp._mjs_computeds) _mjsCount(comp._mjs_computeds, k);'), true, 'l\'écriture brute du magasin périme ses dérivées')
   })
 
   it('développement : toute construction la garde, cœur nu sans dérivée compris (atelier de thème, journal d\'erreurs)', async () => {
@@ -117,10 +117,10 @@ describe('valeurs dérivées — leur machinerie au cœur seulement quand une un
 
   it('paquet minifié (réglages du banc) : sans dérivée, ni l\'horloge ni la fiche d\'une dérivée ; avec, les deux', async () => {
     const sans = await paquet('sans', { 'compteur.mjs': SANS })
-    assert.equal(sans.includes('mjs-horloge'), false, 'sans dérivée : pas d\'horloge')
+    assert.equal(sans.includes('mjs-clock'), false, 'sans dérivée : pas d\'horloge')
     assert.equal(sans.includes('_mjs_c:!0'), false, 'sans dérivée : pas de fiche de dérivée (`_mjs_setComputed`)')
     const avec = await paquet('avec', { 'compteur.mjs': SANS, 'total.mjs': DERIVEE })
-    assert.equal(avec.includes('mjs-horloge'), true, 'avec dérivée : l\'horloge')
+    assert.equal(avec.includes('mjs-clock'), true, 'avec dérivée : l\'horloge')
     assert.equal(avec.includes('_mjs_c:!0'), true, 'avec dérivée : la fiche d\'une dérivée')
   })
 
@@ -162,7 +162,7 @@ describe('valeurs dérivées — leur machinerie au cœur seulement quand une un
       const cible = await construire('split', { 'dpage.mjs': PAGE, 'c-total.mjs': ENFANT }, ['mjs-dpage'])
       const noyau = readdirSync(join(cible.racine, 'out')).find((f) => /^mjs_core/.test(f) && f.endsWith('.js'))
       assert.ok(noyau, 'le cœur est un fichier à part')
-      assert.equal(readFileSync(join(cible.racine, 'out', noyau), 'utf-8').includes('mjs-horloge'), true, 'l\'horloge est au cœur')
+      assert.equal(readFileSync(join(cible.racine, 'out', noyau), 'utf-8').includes('mjs-clock'), true, 'l\'horloge est au cœur')
       const o = await charger(browser, cible, 'mjs-dpage')
       try {
         const enfant = `document.querySelector('mjs-dpage')._shadow.querySelector('mjs-c-total')`

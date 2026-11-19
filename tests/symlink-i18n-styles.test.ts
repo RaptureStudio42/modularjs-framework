@@ -6,7 +6,7 @@
 // mjs_styles-<hash>.js pour la feuille partagée) — fonctions i18nSymlink()/sassSymlink().
 //
 // Correctif : même confinement RÉEL (realpathSync) que findFiles()/resolveOneAsset(), même message
-// catalogué 'bundler.index.symlink-hors-racine' — refus nommé, rien publié. Un lien INTERNE reste
+// catalogué 'bundler.index.symlink-outside-root' — refus nommé, rien publié. Un lien INTERNE reste
 // accepté (dernier test).
 
 import assert from 'node:assert/strict'

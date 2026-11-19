@@ -36,7 +36,7 @@ import { readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { t } from '../messages/index.js'
 
-// Délai de grâce de tout arrêt sur signal (`mjs dev` ici, `mjs serve`/`mjs ws`/`mjs serveur`
+// Délai de grâce de tout arrêt sur signal (`mjs dev` ici, `mjs serve`/`mjs ws`/`mjs server`
 // aussi) — la fermeture peut inclure un serveur HTTP dont une réponse est RÉELLEMENT en vol (un
 // `process.exit(0)` immédiat la coupait net) : borne ce délai plutôt qu'un blocage à vie si une
 // connexion garde son socket ouvert (keep-alive, qu'un simple `server.close()` attend
@@ -49,25 +49,25 @@ export const SHUTDOWN_GRACE_MS = 20000
 // d'attendre. Sous la seconde, c'est le MÊME Ctrl+C reçu deux fois (`npm run` le relaie à son
 // enfant ; tsx, en lancement depuis les sources, aussi quand l'enfant ne l'a pas vu sous 30 ms) :
 // ignoré, sans quoi un seul Ctrl+C couperait les pages en vol.
-export const FORCE_APRES_MS = 1000
+export const FORCE_AFTER_MS = 1000
 
-/** Garde d'arrêt partagée par `mjs dev`/`serve`/`ws`/`serveur` : 1er signal → `arreter()` ; signal
- *  suivant à plus de FORCE_APRES_MS du premier → `forcer()` ; sous ce délai, ignoré. Un arrêt
- *  encore en cours au bout de FORCE_APRES_MS dit comment couper tout de suite, une seule fois. */
-export function gardeArret<T>(arreter: () => T, forcer: () => void): () => T | undefined {
-  let debut: number | null = null
+/** Garde d'arrêt partagée par `mjs dev`/`serve`/`ws`/`server` : 1er signal → `arreter()` ; signal
+ *  suivant à plus de FORCE_AFTER_MS du premier → `force()` ; sous ce délai, ignoré. Un arrêt
+ *  encore en cours au bout de FORCE_AFTER_MS dit comment couper tout de suite, une seule fois. */
+export function stopGuard<T>(halt: () => T, force: () => void): () => T | undefined {
+  let start: number | null = null
   return () => {
-    if (debut !== null) {
-      if (Date.now() - debut > FORCE_APRES_MS) forcer()
+    if (start !== null) {
+      if (Date.now() - start > FORCE_AFTER_MS) force()
       return undefined
     }
-    debut = Date.now()
-    const indice = setTimeout(() => console.warn(t('cli.arret-forcer-indice')), FORCE_APRES_MS)
-    indice.unref()
-    const resultat = arreter()
+    start = Date.now()
+    const hint = setTimeout(() => console.warn(t('cli.stop-force-hint')), FORCE_AFTER_MS)
+    hint.unref()
+    const result = halt()
     // arrêt fini avant la seconde (ou abandonné) : plus d'indice à donner
-    if (resultat instanceof Promise) resultat.then(() => clearTimeout(indice), () => clearTimeout(indice))
-    return resultat
+    if (result instanceof Promise) result.then(() => clearTimeout(hint), () => clearTimeout(hint))
+    return result
   }
 }
 
@@ -134,18 +134,18 @@ export function acquireDevLock(
     const liveNotRecycled = Number.isFinite(pid) && pid !== process.pid && isAlive(pid) &&
       (startedAt === '' || procStartTime(pid) === null || procStartTime(pid) === startedAt)
     if (liveNotRecycled) {
-      console.error(t('cli.dev-lock.deja-actif', { pid }))
-      console.error(t('cli.dev-lock.lockfile-chemin', { chemin: lockPath }))
-      console.error(t('cli.dev-lock.pour-forcer', { pid }))
+      console.error(t('cli.dev-lock.already-active', { pid }))
+      console.error(t('cli.dev-lock.lockfile-path', { path: lockPath }))
+      console.error(t('cli.dev-lock.to-force', { pid }))
       process.exit(1)
     }
     // Orphelin (mort) OU PID recyclé (autre process) → récupération.
-    console.warn(t('cli.dev-lock.orphelin', { pid: Number.isFinite(pid) ? pid : '?' }))
+    console.warn(t('cli.dev-lock.orphan', { pid: Number.isFinite(pid) ? pid : '?' }))
     try { unlinkSync(lockPath) } catch {}
     // reboucle → nouvelle tentative de tryClaim
   }
   if (!acquired) {
-    console.error(t('cli.dev-lock.echec-acquisition', { chemin: lockPath }))
+    console.error(t('cli.dev-lock.failed-acquire', { path: lockPath }))
     process.exit(1)
   }
 
@@ -159,8 +159,8 @@ export function acquireDevLock(
   // handler enregistré plus tard ne tournerait donc JAMAIS. `cleanup()` reste
   // TOUJOURS exécuté même si `onShutdown` throw (le lock doit se libérer coûte
   // que coûte — c'est sa seule responsabilité NON négociable).
-  // 2e signal à plus d'une seconde du premier (cf. gardeArret) : coupe l'attente ci-dessous
-  let couperAttente: () => void = () => {}
+  // 2e signal à plus d'une seconde du premier (cf. stopGuard) : coupe l'attente ci-dessous
+  let cutWait: () => void = () => {}
   const shutdown = async (): Promise<void> => {
     // Bornée (cf. SHUTDOWN_GRACE_MS) plutôt qu'un `await onShutdown?.()` nu : sans cette borne,
     // un `onShutdown` qui attend le drainage complet d'un serveur HTTP (une connexion gardée
@@ -168,18 +168,18 @@ export function acquireDevLock(
     // sortirait alors JAMAIS. `.catch` best-effort : le lock doit toujours se libérer, un
     // `onShutdown` en échec ne doit jamais bloquer la sortie.
     let timer!: ReturnType<typeof setTimeout>
-    const delaiEcoule = new Promise<void>(resolve => { timer = setTimeout(resolve, SHUTDOWN_GRACE_MS); couperAttente = resolve })
-    const onShutdownReglee = Promise.resolve().then(() => onShutdown?.()).catch(() => { /* best-effort */ })
-    await Promise.race([onShutdownReglee, delaiEcoule])
+    const delayElapsed = new Promise<void>(resolve => { timer = setTimeout(resolve, SHUTDOWN_GRACE_MS); cutWait = resolve })
+    const onShutdownSettled = Promise.resolve().then(() => onShutdown?.()).catch(() => { /* best-effort */ })
+    await Promise.race([onShutdownSettled, delayElapsed])
     clearTimeout(timer)
     cleanup()
     process.exit(0)
   }
   // un seul arrêt ordonné : le même Ctrl+C reçu deux fois (ou SIGINT puis SIGTERM aussitôt) laisse
   // finir le premier ; un 2e Ctrl+C plus tard coupe l'attente — lock libéré dans les deux cas
-  const surSignal = gardeArret(shutdown, () => couperAttente())
+  const onSignal = stopGuard(shutdown, () => cutWait())
   process.on('exit', cleanup)
-  process.on('SIGINT', surSignal)
-  process.on('SIGTERM', surSignal)
-  process.on('SIGHUP', surSignal)
+  process.on('SIGINT', onSignal)
+  process.on('SIGTERM', onSignal)
+  process.on('SIGHUP', onSignal)
 }

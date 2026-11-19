@@ -13,6 +13,8 @@ import { mjsTmp } from './helpers/tmp.js'
 
 const LIRE   = (nom: string): string => `this._mjs_getContext('${nom}')`
 const ECRIRE = (nom: string, valeur: string): string => `this._mjs_setContext('${nom}', ${valeur})`
+// une lecture seule (`ok = §x >= 1`) se fait sur le composant, `_mjsThis`, comme dans un rappel ; l'écriture composée relit par `this`
+const LU     = (nom: string): string => `_mjsThis._mjs_getContext('${nom}')`
 
 describe('affectation composée sur un contexte, dans un gestionnaire du gabarit', () => {
   it('opérateurs arithmétiques et bit à bit, la valeur entre parenthèses', () => {
@@ -51,10 +53,10 @@ describe('affectation composée sur un contexte, dans un gestionnaire du gabarit
 
   it('témoins : chaînes, comparaisons et affectation simple inchangées', () => {
     assert.equal(cleanJs("$s = '§x++ et §y += 1'", []), "$.s = '§x++ et §y += 1'")
-    assert.equal(cleanJs('ok = §x >= 1', []), `ok = ${LIRE('x')} >= 1`)
-    assert.equal(cleanJs('ok = §x <= 1', []), `ok = ${LIRE('x')} <= 1`)
-    assert.equal(cleanJs('ok = §x != 1', []), `ok = ${LIRE('x')} != 1`)
-    assert.equal(cleanJs('ok = §x == 1', []), `ok = ${LIRE('x')} == 1`)
+    assert.equal(cleanJs('ok = §x >= 1', []), `ok = ${LU('x')} >= 1`)
+    assert.equal(cleanJs('ok = §x <= 1', []), `ok = ${LU('x')} <= 1`)
+    assert.equal(cleanJs('ok = §x != 1', []), `ok = ${LU('x')} != 1`)
+    assert.equal(cleanJs('ok = §x == 1', []), `ok = ${LU('x')} == 1`)
     assert.equal(cleanJs('§x = 1', []), ECRIRE('x', '1'))
   })
 

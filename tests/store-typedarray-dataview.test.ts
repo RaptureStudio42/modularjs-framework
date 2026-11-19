@@ -203,7 +203,7 @@ describe('µ.Store — TypedArray/DataView lus comme les autres objets natifs', 
     window.eval(`
       globalThis.result = {}
       var store = new µ.Store({ v: new Int32Array([1, 2, 3]) })
-      try { globalThis.result.apercu = µ._mjs_diApercu(store.data.v, 'typedarray') } catch (e) { globalThis.result.apercu = 'EXCEPTION: ' + e.message }
+      try { globalThis.result.apercu = µ._mjs_diPreview(store.data.v, 'typedarray') } catch (e) { globalThis.result.apercu = 'EXCEPTION: ' + e.message }
     `)
     const result = JSON.parse(window.eval('JSON.stringify(globalThis.result)'))
     assert.equal(result.apercu, 'Int32Array(3)', 'le nom générique « TypedArray » (v.constructor bloqué par la garde anti-pollution) ne doit pas apparaître à la place du nom précis')
@@ -216,9 +216,9 @@ describe('µ.Store — TypedArray/DataView lus comme les autres objets natifs', 
       var store = new µ.Store({ v: new Int32Array([1, 2, 3]), d: new DataView(new ArrayBuffer(4)) })
       var state = µ.state({ v: new Int32Array([1, 2]) })
       globalThis.result.kindStore = µ._mjs_diKind(store.data.v)
-      globalThis.result.apercuStore = µ._mjs_diApercu(store.data.v)
+      globalThis.result.apercuStore = µ._mjs_diPreview(store.data.v)
       globalThis.result.kindDataView = µ._mjs_diKind(store.data.d)
-      globalThis.result.apercuState = µ._mjs_diApercu(state.v)
+      globalThis.result.apercuState = µ._mjs_diPreview(state.v)
     `)
     const result = JSON.parse(window.eval('JSON.stringify(globalThis.result)'))
     assert.equal(result.kindStore, 'typedarray')

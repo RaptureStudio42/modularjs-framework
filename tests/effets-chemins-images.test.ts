@@ -118,7 +118,7 @@ describe('localImages — ce que la règle du catalogue range parmi les chemins 
 })
 
 describe('scanEffectImages — où les effets écrivent des chemins locaux', () => {
-  const effets = (html: string) => scanEffectImages(html).map((e) => [e.effet, e.reglage, e.chemin])
+  const effets = (html: string) => scanEffectImages(html).map((e) => [e.effect, e.setting, e.path])
 
   it('un effet sur une balise, entre d\'autres attributs', () => {
     assert.deepEqual(effets("<div class=\"x\" id=\"y\" *behind('a.png') data-z=\"1\"></div>"), [['behind', 'image', 'a.png']])
@@ -162,7 +162,7 @@ describe('scanEffectImages — où les effets écrivent des chemins locaux', () 
   it('les positions sont celles du texte donné', () => {
     const html = "<div *behind('a.png')></div>"
     const [e] = scanEffectImages(html)
-    assert.equal(html.slice(e.debut, e.fin), "'a.png'")
+    assert.equal(html.slice(e.start, e.end), "'a.png'")
   })
 })
 
@@ -225,14 +225,14 @@ describe('les messages d\'image d\'effet — le chemin local y est dit, l\'avert
   for (const lang of ['fr', 'en'] as const) {
     it(`${lang} : le libellé d'un réglage image cite le chemin d'un fichier, celui d'une liste d'images aussi`, () => {
       setMessagesLang(lang)
-      assert.match(t('effets.regle-image'), /photo\.jpg/)
-      assert.match(t('effets.regle-images'), /a\.jpg/)
+      assert.match(t('effects.rule-image'), /photo\.jpg/)
+      assert.match(t('effects.rule-images'), /a\.jpg/)
       assert.throws(() => parseEffect('behind', "image: ''"), /photo\.jpg/, 'la faute d\'un réglage image montre ce libellé')
     })
 
     it(`${lang} : l'avertissement de sharp absent nomme les réglages d'image des effets et <@@img>, pas seulement µimage`, () => {
       setMessagesLang(lang)
-      const message = t('bundler.index.image-sharp-absent')
+      const message = t('bundler.index.image-sharp-missing')
       assert.match(message, lang === 'fr' ? /réglages d'image des effets/ : /effect image settings/)
       assert.match(message, /<@@img>/)
       assert.match(message, /npm i -D sharp/)

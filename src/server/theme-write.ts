@@ -39,7 +39,7 @@ export interface ThemeDecl {
 export interface ThemeWriteOutcome {
   ok:     boolean
   /** motif du refus, '' quand `ok` */
-  reason: '' | 'introuvable' | 'ambigu' | 'inchange'
+  reason: '' | 'not-found' | 'ambiguous' | 'unchanged'
   /** lignes candidates trouvées — vide, une seule, ou toutes celles qui rendent le cas ambigu */
   lines:  number[]
   /** ligne effectivement réécrite (0 en cas de refus) */
@@ -57,7 +57,7 @@ export interface ThemeWriteOutcome {
 //   - la fin de la tranche, espaces de droite retirés.
 // le `//` exige un blanc devant : sinon `url(http://…)` serait coupé en deux (même règle que
 // transpiler/style-vars, qui a déjà payé ce piège)
-function finDeValeur(rest: string): number {
+function valueEnd(rest: string): number {
   let paren = 0
   for (let i = 0; i < rest.length; i++) {
     const c = rest[i]
@@ -76,16 +76,16 @@ function finDeValeur(rest: string): number {
     }
     if (c === '(') paren++
     else if (c === ')' && paren > 0) paren--
-    else if (c === ';' && paren === 0) return trimFin(rest, i)
-    else if (c === '/' && rest[i + 1] === '*') return trimFin(rest, i)
-    else if (c === '/' && rest[i + 1] === '/' && (i === 0 || /\s/.test(rest[i - 1]))) return trimFin(rest, i)
+    else if (c === ';' && paren === 0) return trimEnd(rest, i)
+    else if (c === '/' && rest[i + 1] === '*') return trimEnd(rest, i)
+    else if (c === '/' && rest[i + 1] === '/' && (i === 0 || /\s/.test(rest[i - 1]))) return trimEnd(rest, i)
   }
-  return trimFin(rest, rest.length)
+  return trimEnd(rest, rest.length)
 }
 
 /** longueur de `rest[0..fin[` une fois les blancs de droite retirés */
-function trimFin(rest: string, fin: number): number {
-  let n = fin
+function trimEnd(rest: string, end: number): number {
+  let n = end
   while (n > 0 && /[ \t]/.test(rest[n - 1])) n--
   return n
 }
@@ -103,11 +103,11 @@ export function findThemeDecls(source: string, name: string, prefix: string): Th
     const m    = re.exec(cr ? lines[i].slice(0, -1) : lines[i])
     if (!m) continue
     const rest = m[4]
-    const fin  = finDeValeur(rest)
+    const end  = valueEnd(rest)
     // valeur vide = la vraie valeur est ailleurs (ligne suivante, bloc imbriqué) : pas de
     // tranche à remplacer ici, la ligne n'est pas candidate
-    if (fin === 0) continue
-    hits.push({ line: i + 1, head: m[1] + m[2] + m[3], value: rest.slice(0, fin), tail: rest.slice(fin) + cr })
+    if (end === 0) continue
+    hits.push({ line: i + 1, head: m[1] + m[2] + m[3], value: rest.slice(0, end), tail: rest.slice(end) + cr })
   }
   return hits
 }
@@ -117,18 +117,18 @@ export function findThemeDecls(source: string, name: string, prefix: string): Th
  *  nom deux fois) mais ne fait jamais autorité — elle n'est retenue que si la ligne porte
  *  réellement la déclaration. Sinon : une seule candidate dans tout le fichier, ou refus. */
 export function rewriteThemeValue(source: string, name: string, prefix: string, value: string, hintLine = 0): ThemeWriteOutcome {
-  const refus = (reason: ThemeWriteOutcome['reason'], lines: number[]): ThemeWriteOutcome => ({ ok: false, reason, lines, line: 0, before: '', after: '', source: '' })
-  const hits  = findThemeDecls(source, name, prefix)
-  if (hits.length === 0) return refus('introuvable', [])
+  const reject = (reason: ThemeWriteOutcome['reason'], lines: number[]): ThemeWriteOutcome => ({ ok: false, reason, lines, line: 0, before: '', after: '', source: '' })
+  const hits   = findThemeDecls(source, name, prefix)
+  if (hits.length === 0) return reject('not-found', [])
 
-  let cible = hintLine > 0 ? hits.find(h => h.line === hintLine) : undefined
-  if (!cible) {
-    if (hits.length > 1) return refus('ambigu', hits.map(h => h.line))
-    cible = hits[0]
+  let target = hintLine > 0 ? hits.find(h => h.line === hintLine) : undefined
+  if (!target) {
+    if (hits.length > 1) return reject('ambiguous', hits.map(h => h.line))
+    target = hits[0]
   }
-  if (cible.value === value) return refus('inchange', [cible.line])
+  if (target.value === value) return reject('unchanged', [target.line])
 
   const lines = source.split('\n')
-  lines[cible.line - 1] = cible.head + value + cible.tail
-  return { ok: true, reason: '', lines: [cible.line], line: cible.line, before: cible.value, after: value, source: lines.join('\n') }
+  lines[target.line - 1] = target.head + value + target.tail
+  return { ok: true, reason: '', lines: [target.line], line: target.line, before: target.value, after: value, source: lines.join('\n') }
 }

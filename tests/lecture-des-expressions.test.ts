@@ -4,9 +4,9 @@
 
 import { strict as assert } from 'node:assert'
 import { execFileSync } from 'node:child_process'
-import { cleanJs, cleanJsExpr, cleanJsGestionnaire, runesAwait } from '../src/generator/utils.js'
+import { cleanJs, cleanJsExpr, cleanJsHandler, runesAwait } from '../src/generator/utils.js'
 import { readFileSync as lireFige } from 'node:fs'
-import { compteursExpressions } from '../src/reader/expression.js'
+import { expressionCounters } from '../src/reader/expression.js'
 
 type LectureDesExpressions = 'ancienne' | 'arbre'
 // sorties et messages de l'ancienne lecture des expressions, relevés avant son retrait
@@ -22,8 +22,8 @@ function ancienneLecture(sorte: string, code: string): string {
   if (fige === undefined) throw new Error(`sortie de l'ancienne lecture non relevée : ${sorte} ${code}`)
   return fige
 }
-import { compteursCode } from '../src/reader/code.js'
-import { LETTRES_RESERVEES } from '../src/reader/disguise.js'
+import { codeCounters } from '../src/reader/code.js'
+import { RESERVED_LETTERS } from '../src/reader/disguise.js'
 import { transpile } from '../src/transpiler/index.js'
 
 interface Lu { js?: string, erreur?: string, arbre: number, relues: number, raison: string }
@@ -34,13 +34,13 @@ function lire(expr: string, lecture: LectureDesExpressions, externes: string[] =
     if (!fige || fige.expr !== expr || JSON.stringify(fige.externes) !== JSON.stringify(externes)) throw new Error(`sortie de l'ancienne lecture non relevée : ${expr}`)
     return { ...fige, arbre: 0, relues: 0, raison: '' } as any
   }
-  const arbre  = compteursExpressions.arbre
-  const relues = compteursExpressions.relues
+  const arbre  = expressionCounters.tree
+  const relues = expressionCounters.reread
   try {
-    return { js: cleanJsExpr(expr, externes, 'essai'), arbre: compteursExpressions.arbre - arbre, relues: compteursExpressions.relues - relues, raison: compteursExpressions.derniere }
+    return { js: cleanJsExpr(expr, externes, 'essai'), arbre: expressionCounters.tree - arbre, relues: expressionCounters.reread - relues, raison: expressionCounters.last }
   }
   catch (e) {
-    return { erreur: (e as Error).message, arbre: compteursExpressions.arbre - arbre, relues: compteursExpressions.relues - relues, raison: compteursExpressions.derniere }
+    return { erreur: (e as Error).message, arbre: expressionCounters.tree - arbre, relues: expressionCounters.reread - relues, raison: expressionCounters.last }
   }
 }
 
@@ -109,8 +109,8 @@ describe('expressions du gabarit lues par l\'arbre', () => {
   })
 
   it('raccourcis que Civet ne lit pas, déguisés le temps de la compilation : contexte, composant, paramètre de route, `isnt`', () => {
-    parLArbre('µt(§boutique) + §§lang', 'µ.t(this._mjs_getContext(\'boutique\')) + this._mjs_getRCtx(\'lang\')')
-    parLArbre('@@total + [...§liste]', '_mjsThis.total + [...this._mjs_getContext(\'liste\')]')
+    parLArbre('µt(§boutique) + §§lang', 'µ.t(_mjsThis._mjs_getContext(\'boutique\')) + _mjsThis._mjs_getRCtx(\'lang\')')
+    parLArbre('@@total + [...§liste]', '_mjsThis.total + [..._mjsThis._mjs_getContext(\'liste\')]')
     parLArbre('&id', 'µ.url.params.id')
     parLArbre('if &id then &id else \'aucun\'', '(µ.url.params.id? µ.url.params.id : \'aucun\')')
     parLArbre('$a isnt 2 and $b', '$.a !== 2 && $.b')
@@ -120,7 +120,9 @@ describe('expressions du gabarit lues par l\'arbre', () => {
     commeLAncienne('a < $x < b')
     commeLAncienne('µread $x')
     commeLAncienne('{$x: 1}')
-    commeLAncienne('($x) -> $x')
+    // un paramètre nommé `$x` est refusé (`$` est réservé à l'état) ; l'ancienne lecture écrivait l'état à chaque appel
+    lire('($x) -> $x', 'ancienne')
+    assert.match(lire('($x) -> $x', 'arbre').erreur ?? '', /ne nommez pas un paramètre « \$x »/)
     commeLAncienne('obj.§x')
   })
 
@@ -135,11 +137,11 @@ describe('expressions du gabarit lues par l\'arbre', () => {
 
   it('fragments de JavaScript (liaisons, corps des gestionnaires) : lus par acorn, réécrits sur l\'arbre, sans compilation', () => {
     const fragment = (code: string, gestionnaire = false): { js: string, lus: number } => {
-      const lus = compteursExpressions.fragments ?? 0
-      return { js: gestionnaire ? cleanJsGestionnaire(code, []) : cleanJs(code, ['$Panier']), lus: (compteursExpressions.fragments ?? 0) - lus }
+      const lus = expressionCounters.fragments ?? 0
+      return { js: gestionnaire ? cleanJsHandler(code, []) : cleanJs(code, ['$Panier']), lus: (expressionCounters.fragments ?? 0) - lus }
     }
-    const civet = compteursCode.compilations
-    for (const [code, attendu] of [['$form.nom', '$.form.nom'], ['$liste[$i].fait', '$.liste[$.i].fait'], ['$Panier.total + $$prix.ttc', '$Panier.total + µ.store.prix.ttc'], ['§§theme.couleur', 'this._mjs_getRCtx(\'theme\').couleur'], ['µUrl.path', 'µ.Url.path']]) {
+    const civet = codeCounters.compilations
+    for (const [code, attendu] of [['$form.nom', '$.form.nom'], ['$liste[$i].fait', '$.liste[$.i].fait'], ['$Panier.total + $$prix.ttc', '$Panier.total + µ.store.prix.ttc'], ['§§theme.couleur', '_mjsThis._mjs_getRCtx(\'theme\').couleur'], ['µUrl.path', 'µ.Url.path']]) {
       assert.equal(ancienneLecture('fragment', code), attendu)
       const b = fragment(code)
       assert.equal(b.js, attendu)
@@ -150,7 +152,7 @@ describe('expressions du gabarit lues par l\'arbre', () => {
       assert.equal(b.js, ancienneLecture('gestionnaire civet', code))
       assert.equal(b.lus, 1, `${code} doit être lu par acorn`)
     }
-    assert.equal(compteursCode.compilations, civet, 'aucune compilation Civet pour un fragment de JavaScript')
+    assert.equal(codeCounters.compilations, civet, 'aucune compilation Civet pour un fragment de JavaScript')
     // un gestionnaire du dialecte est lu par Civet (fragmentDuDialecte), même sortie, `({$x})`, un nom hors d'une lecture, compris
     for (const [code, lus] of [['@x', 1], ['$n++ unless $bloque', 1], ['not $ok', 1], ['({$x})', 1], ['µemit \'ok\'', 1], ['$a # note', 1]] as const) {
       const b = fragment(code, true)
@@ -161,17 +163,17 @@ describe('expressions du gabarit lues par l\'arbre', () => {
   })
 
   it('cache par texte : la même expression ne recompile pas', () => {
-    const avant = compteursCode.compilations
+    const avant = codeCounters.compilations
     lire('$sondeCacheExpression7311 + 1', 'arbre')
     lire('$sondeCacheExpression7311 + 1', 'arbre')
-    assert.equal(compteursCode.compilations - avant, 1)
+    assert.equal(codeCounters.compilations - avant, 1)
   })
 
   it('un composant compilé : même sortie que l\'ancienne lecture', async () => {
-    const src = '<script>\n$liste = [1, 2]\n$n = 0\n</script>\n<p class="a {$n > 1 and \'b\'}" title={$n}>{$n * 2} {µlang}</p>\n{if $n is 0}<i>{"vide #{$n}"}</i>{elsif $n > 3}<b>{$liste.length}</b>{end}\n{for x in $liste.filter (v) -> v > $n}<span>{x}</span>{end}\n'
-    const arbre = compteursExpressions.arbre
+    const src   = '<script>\n$liste = [1, 2]\n$n = 0\n</script>\n<p class="a {$n > 1 and \'b\'}" title={$n}>{$n * 2} {µlang}</p>\n{if $n is 0}<i>{"vide #{$n}"}</i>{elsif $n > 3}<b>{$liste.length}</b>{end}\n{for x in $liste.filter (v) -> v > $n}<span>{x}</span>{end}\n'
+    const arbre = expressionCounters.tree
     const b     = (await transpile(src, { moduleName: 'lecture-expressions-essai' })).output
-    assert.ok(compteursExpressions.arbre > arbre, 'les expressions du composant sont lues par l\'arbre')
+    assert.ok(expressionCounters.tree > arbre, 'les expressions du composant sont lues par l\'arbre')
     assert.equal(b, COMPOSANTS[src])
   })
 
@@ -185,11 +187,11 @@ describe('expressions du gabarit lues par l\'arbre', () => {
 
   it('gestionnaire en Civet : une expression régulière passée en argument sans parenthèses est lue par Civet, son dedans reste tel qu\'écrit', () => {
     const code = '$v = $v.replace /[$x-z]/g, \'\''
-    const lus  = compteursExpressions.fragments
-    const js   = cleanJsGestionnaire(code, [])
+    const lus  = expressionCounters.fragments
+    const js   = cleanJsHandler(code, [])
     assert.equal(ancienneLecture('gestionnaire civet', code), '$.v = $.v.replace /[$x-z]/g, \'\'')
     assert.equal(js, ancienneLecture('gestionnaire civet', code))
-    assert.equal(compteursExpressions.fragments - lus, 1)
+    assert.equal(expressionCounters.fragments - lus, 1)
   })
 
   it('`isnt` que l\'ancienne lecture laisse en nom (devant `)`, `]`, `}`, `,`, `;`, `:`) : lu sans coffeeIsnt, Civet le garde en nom comme elle', () => {
@@ -199,7 +201,7 @@ describe('expressions du gabarit lues par l\'arbre', () => {
   })
 
   it('chaque écriture que l\'arbre lisait autrement : même sortie ou même message que l\'ancienne lecture', () => {
-    const lettre = LETTRES_RESERVEES['§']
+    const lettre = RESERVED_LETTERS['§']
     // null : lue par l'arbre, même sortie ou même message
     const cas: [string, RegExp | null][] = [
       ['$v := 2', null],
@@ -225,7 +227,7 @@ describe('expressions du gabarit lues par l\'arbre', () => {
   })
 
   it('signes de MJS, chaînes, gabarits de texte, expressions régulières, `==`, `in` : lus par l\'arbre, sortie de l\'ancienne lecture', () => {
-    parLArbre('§x + §§y + @@z + &id + $$s + µt(\'a\')', 'this._mjs_getContext(\'x\') + this._mjs_getRCtx(\'y\') + _mjsThis.z + µ.url.params.id + µ.store.s + µ.t(\'a\')')
+    parLArbre('§x + §§y + @@z + &id + $$s + µt(\'a\')', '_mjsThis._mjs_getContext(\'x\') + _mjsThis._mjs_getRCtx(\'y\') + _mjsThis.z + µ.url.params.id + µ.store.s + µ.t(\'a\')')
     parLArbre('\'$x $$y µr\' + $x', '\'$x $$y µr\' + $.x')
     parLArbre('"a#{$x}b#{$$y}"', '`a${$.x}b${µ.store.y}`')
     parLArbre('/\\$x/.test($s)', '/\\$x/.test($.s)')
@@ -235,16 +237,16 @@ describe('expressions du gabarit lues par l\'arbre', () => {
 
   it('gestionnaires : signes de MJS lus par acorn en JavaScript, chaque raison de les lire autrement', () => {
     const lu = (code: string, _gabarit: 'civet' | 'js'): { js: string, lus: number, relus: number, raison: string } => {
-      const lus    = compteursExpressions.fragments
-      const relus  = compteursExpressions.relues
+      const lus   = expressionCounters.fragments
+      const relus = expressionCounters.reread
       let js: string
       try {
-        js = cleanJsGestionnaire(code, [], undefined, code)
+        js = cleanJsHandler(code, [], undefined, code)
       }
       catch (e) {
         js = `erreur : ${(e as Error).message}`
       }
-      return { js, lus: compteursExpressions.fragments - lus, relus: compteursExpressions.relues - relus, raison: compteursExpressions.derniere }
+      return { js, lus: expressionCounters.fragments - lus, relus: expressionCounters.reread - relus, raison: expressionCounters.last }
     }
     for (const code of ['$n++; $liste.push(\'§x @@y &id\')', 'µemit(\'ok\', §§t)', 'if (&id) { $a = @@b }', '$s = $s.replace(/\\$x/g, \'\')', '$a = $b == 1 ? $$c : µd']) {
       const b = lu(code, 'civet')
@@ -256,18 +258,18 @@ describe('expressions du gabarit lues par l\'arbre', () => {
     const cas: [string, 'civet' | 'js', RegExp, number?, boolean?][] = [
       ['$v =: 2', 'civet', /réécrite avant Civet/],
       ['µtoggle $x', 'civet', /rune réécrite/],
-      [`$x = '${LETTRES_RESERVEES['§']}'`, 'civet', /lettre de déguisement écrite/],
+      [`$x = '${RESERVED_LETTERS['§']}'`, 'civet', /lettre de déguisement écrite/],
       ['$a = is', 'civet', /mot que l'ancienne lecture traduisait/, 2, true],
       ['$a. $b', 'civet', /propriété écrite sans point/, 2, true],
       ['§theme = \'x\'', 'civet', /écriture de contexte/],
     ]
     for (const [code, gabarit, raison, relus = 1, refus = false] of cas) {
-      const vues = new Map(compteursExpressions.raisons)
+      const vues = new Map(expressionCounters.reasons)
       const b    = lu(code, gabarit)
       if (refus) assert.match(b.js, /^erreur : .*handler inline : échec de compilation Civet(?![\s\S]*\$\.a)/s, code)
       else assert.equal(b.js, ancienneLecture(`gestionnaire ${gabarit}`, code), code)
       assert.equal(b.relus, relus, `${code} : lectures refusées`)
-      assert.ok([...compteursExpressions.raisons].some(([r, n]) => raison.test(r) && n > (vues.get(r) ?? 0)), `${code} : ${b.raison}`)
+      assert.ok([...expressionCounters.reasons].some(([r, n]) => raison.test(r) && n > (vues.get(r) ?? 0)), `${code} : ${b.raison}`)
     }
   })
 
@@ -280,10 +282,10 @@ describe('expressions du gabarit lues par l\'arbre', () => {
       [`<script lang="ts">\n$n = 1\n$s = 'a'\nconst total: number = 3\n</script>\n${gabarit}`, {}],
     ]
     for (const [src, options] of composants) {
-      const lus = compteursExpressions.arbre + compteursExpressions.fragments
+      const lus = expressionCounters.tree + expressionCounters.fragments
       const r   = await transpile(src, { moduleName: 'lecture-des-langues', devWarnings: false, ...options })
       const b   = `${r.output}\n--- carte\n${r.sourceMap ?? ''}`
-      assert.ok(compteursExpressions.arbre + compteursExpressions.fragments > lus, `gabarit lu par l'arbre : ${src}`)
+      assert.ok(expressionCounters.tree + expressionCounters.fragments > lus, `gabarit lu par l'arbre : ${src}`)
       assert.equal(b, COMPOSANTS[src], src)
     }
   })
@@ -300,13 +302,13 @@ describe('expressions du gabarit lues par l\'arbre', () => {
       assert.equal(lire(expr, 'arbre').js, attendu, expr)
       assert.notEqual(lire(expr, 'ancienne').js, attendu, `${expr} : l'ancienne lecture le refusait ou y laissait un nom sans le réécrire`)
     }
-    assert.equal(cleanJsGestionnaire('$s = `${ $s.replace(/}/g, $t) }`', []), '$.s = `${ $.s.replace(/}/g, $.t) }`')
+    assert.equal(cleanJsHandler('$s = `${ $s.replace(/}/g, $t) }`', []), '$.s = `${ $.s.replace(/}/g, $.t) }`')
   })
 
   it('l\'arbre seul : sans réglage, la compilation lit ses expressions et ses gestionnaires par l\'arbre ; le réglage de l\'ancienne lecture des fragments (MJS_LECTURE_FRAGMENTS) est retiré, sans effet', function () {
     this.timeout(60000)
     const module = (chemin: string): string => JSON.stringify(new URL(chemin, import.meta.url).href)
-    const sonde  = `const e = await import(${module('../src/reader/expression.ts')}); const { transpile } = await import(${module('../src/transpiler/index.ts')}); await transpile('<p>{$n + 1}</p>\\n<button @click={$n = $n + 1}>+</button>\\n', { moduleName: 'sonde' }); process.stdout.write(JSON.stringify({ reglage: typeof e.lectureDesFragments, arbre: e.compteursExpressions.arbre, fragments: e.compteursExpressions.fragments }))`
+    const sonde  = `const e = await import(${module('../src/reader/expression.ts')}); const { transpile } = await import(${module('../src/transpiler/index.ts')}); await transpile('<p>{$n + 1}</p>\\n<button @click={$n = $n + 1}>+</button>\\n', { moduleName: 'sonde' }); process.stdout.write(JSON.stringify({ reglage: typeof e.lectureDesFragments, arbre: e.expressionCounters.tree, fragments: e.expressionCounters.fragments }))`
     const lue    = (valeur?: string): { reglage: string, arbre: number, fragments: number } => {
       const env = { ...process.env }
       delete env.MJS_LECTURE_FRAGMENTS

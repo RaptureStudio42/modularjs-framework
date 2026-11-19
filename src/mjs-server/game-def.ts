@@ -1,4 +1,4 @@
-// mjs-server/game — validation STRICTE de la définition d'un jeu (`app.game(type, def)`), MÊME
+// mjs-server/game-def — validation STRICTE de la définition d'un jeu (`app.game(type, def)`), MÊME
 // patron que bundler/config.ts (clé inconnue = échec immédiat, suggestion orthographique sur
 // les fautes de frappe via `keyUnknown` de util.ts, qui porte le `suggestKey` de MJS-WS, mjs-ws/package-helpers.ts — prendre
 // celui de bundler/config.ts ferait dépendre MJS-Server du compilateur ; même algorithme). Résout tous les défauts UNE SEULE FOIS ici — game.ts et
@@ -7,7 +7,7 @@
 import type { Game, MjsServerSeat } from './game.js'
 // valeur (pas juste un type) importée de game.ts — jamais l'inverse : game.ts ne dépend QUE
 // des types de ce fichier (import type, effacé à la compilation), le sens runtime reste À SENS
-// UNIQUE (game.ts → game.ts) — aucun cycle d'import réel entre les deux modules.
+// UNIQUE (game-def.ts → game.ts) — aucun cycle d'import réel entre les deux modules.
 import { RESERVED_TIMER_NAMES, DEFAULT_MOVE_WAIT_MS, MAX_TIMEOUT_MS } from './game.js'
 // anti-triche (détection par coup, cf. game.ts::_antiCheatGuard) — types SEULS
 // (aucun cycle runtime, MÊME patron que MjsServerLockstepDivergence plus bas) : les signatures
@@ -32,12 +32,12 @@ function receivedValue(value: unknown): string {
   if (value === undefined) return 'undefined'
   if (typeof value === 'bigint') return `${value}n`
   if (typeof value === 'symbol') return String(value)
-  if (typeof value === 'function') return t('serveur.valeur-recue-fonction')
+  if (typeof value === 'function') return t('mjs-server.value-received-function')
   if (typeof value === 'number') return String(value)
   try {
-    return JSON.stringify(value) ?? t('serveur.valeur-recue-objet')
+    return JSON.stringify(value) ?? t('mjs-server.value-received-object')
   } catch {
-    return t('serveur.valeur-recue-objet')
+    return t('mjs-server.value-received-object')
   }
 }
 
@@ -103,8 +103,8 @@ export interface MjsServerHistoryDef {
   /** instantané { id → {x, y} } au tick courant — défaut : snapshot de `def.space` (requiert
    *  `space` déclaré) ; SANS `space`, cette clé est OBLIGATOIRE (aucun repli possible) */
   extract?: (game: Game) => Record<string, { x: number; y: number }>
-  /** ms — retard d'interpolation déclaré côté client (cf. runtime µ.interp `retard`), utilisé par
-   *  game.timeSeenBy — défaut 2 × période de tick (cohérent avec µ.interp `retard: 2`) */
+  /** ms — retard d'interpolation déclaré côté client (cf. runtime µ.interp `delay`, compté en périodes de réception), utilisé par
+   *  game.timeSeenBy — défaut 2 × période de tick (cohérent avec le `delay: 2` par défaut de µ.interp) */
   interp?: number
 }
 
@@ -325,119 +325,119 @@ const KNOWN_LOCKSTEP_JOURNAL_KEYS = new Set(['maxTicks', 'maxBytes', 'maxOrderBy
 export function resolveGameDef(type: string, raw: MjsServerGameDef, log: MjsWsLogFn = () => {}, maxPayload: number = DEFAULT_MAX_PAYLOAD): MjsServerResolvedDef {
   const prefix = `[MJS-Server] game('${type}')`
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-    throw new Error(t('serveur.game-def-invalide', { prefix: prefix }))
+    throw new Error(t('mjs-server.game-def-invalid', { prefix: prefix }))
   }
   for (const k of Object.keys(raw)) if (!KNOWN_GAME_KEYS.has(k)) throw keyUnknown(prefix, k, KNOWN_GAME_KEYS)
 
   if (!Number.isInteger(raw.seats) || raw.seats < 1) {
-    throw new Error(t('serveur.game-places-invalide', { prefix: prefix, received: JSON.stringify(raw.seats) }))
+    throw new Error(t('mjs-server.game-places-invalid', { prefix: prefix, received: JSON.stringify(raw.seats) }))
   }
   if (raw.code !== undefined && typeof raw.code !== 'boolean') {
-    throw new Error(t('serveur.game-code-invalide', { prefix: prefix, received: JSON.stringify(raw.code), receivedType: typeof raw.code }))
+    throw new Error(t('mjs-server.game-code-invalid', { prefix: prefix, received: JSON.stringify(raw.code), receivedType: typeof raw.code }))
   }
   if (raw.seatTtl !== undefined && (typeof raw.seatTtl !== 'number' || !Number.isFinite(raw.seatTtl) || raw.seatTtl <= 0)) {
-    throw new Error(t('serveur.game-seatttl-invalide', { prefix: prefix, received: receivedValue(raw.seatTtl) }))
+    throw new Error(t('mjs-server.game-seatttl-invalid', { prefix: prefix, received: receivedValue(raw.seatTtl) }))
   }
   if (raw.tick !== undefined && (typeof raw.tick !== 'number' || !Number.isFinite(raw.tick) || raw.tick < 0)) {
-    throw new Error(t('serveur.game-tick-invalide', { prefix: prefix, received: JSON.stringify(raw.tick) }))
+    throw new Error(t('mjs-server.game-tick-invalid', { prefix: prefix, received: JSON.stringify(raw.tick) }))
   }
   const tickHz = raw.tick ?? 0
   if (tickHz > 0 && (tickHz < 1 || tickHz > 60)) {
-    throw new Error(t('serveur.game-tick-hors-plage', { prefix: prefix, tickHz: tickHz }))
+    throw new Error(t('mjs-server.game-tick-out-of-range', { prefix: prefix, tickHz: tickHz }))
   }
 
   // mode salle — 'authoritative' (défaut, comportement ACTUEL inchangé) | 'lockstep'
   // (la salle ne simule rien, cf. mjs-server/lockstep.ts) — déterminé TÔT : gouverne les checks state/
   // view/deltas/intents/simulate/space/history/onDivergence ci-dessous (liste FERMÉE, cf. def.mode).
   if (raw.mode !== undefined && raw.mode !== 'authoritative' && raw.mode !== 'lockstep') {
-    throw new Error(t('serveur.game-mode-invalide', { prefix: prefix, received: JSON.stringify(raw.mode) }))
+    throw new Error(t('mjs-server.game-mode-invalid', { prefix: prefix, received: JSON.stringify(raw.mode) }))
   }
   const mode = raw.mode ?? 'authoritative'
   if (mode === 'lockstep' && tickHz === 0) {
-    throw new Error(t('serveur.game-tick-requis-lockstep', { prefix: prefix }))
+    throw new Error(t('mjs-server.game-tick-required-lockstep', { prefix: prefix }))
   }
 
   if (mode === 'lockstep') {
-    if (raw.state !== undefined) throw new Error(t('serveur.game-state-interdit-lockstep', { prefix: prefix }))
+    if (raw.state !== undefined) throw new Error(t('mjs-server.game-state-forbidden-lockstep', { prefix: prefix }))
   } else if (typeof raw.state !== 'function') {
-    throw new Error(t('serveur.game-state-requis', { prefix: prefix, received: JSON.stringify(raw.state) }))
+    throw new Error(t('mjs-server.game-state-required', { prefix: prefix, received: JSON.stringify(raw.state) }))
   }
   if (typeof raw.moves !== 'object' || raw.moves === null || Array.isArray(raw.moves)) {
-    throw new Error(t('serveur.game-moves-requis', { prefix: prefix }))
+    throw new Error(t('mjs-server.game-moves-required', { prefix: prefix }))
   }
   for (const [name, fn] of Object.entries(raw.moves)) {
-    if (typeof fn !== 'function') throw new Error(t('serveur.game-moves-nom-invalide', { prefix: prefix, nom: name, received: JSON.stringify(fn) }))
+    if (typeof fn !== 'function') throw new Error(t('mjs-server.game-moves-name-invalid', { prefix: prefix, name, received: JSON.stringify(fn) }))
   }
   if (raw.view !== undefined) {
-    if (mode === 'lockstep') throw new Error(t('serveur.game-view-interdit-lockstep', { prefix: prefix }))
-    if (typeof raw.view !== 'function') throw new Error(t('serveur.game-view-invalide', { prefix: prefix, received: JSON.stringify(raw.view) }))
+    if (mode === 'lockstep') throw new Error(t('mjs-server.game-view-forbidden-lockstep', { prefix: prefix }))
+    if (typeof raw.view !== 'function') throw new Error(t('mjs-server.game-view-invalid', { prefix: prefix, received: JSON.stringify(raw.view) }))
   }
   if (raw.onDivergence !== undefined) {
-    if (mode !== 'lockstep') throw new Error(t('serveur.game-ondivergence-hors-lockstep', { prefix: prefix }))
-    if (typeof raw.onDivergence !== 'function') throw new Error(t('serveur.game-ondivergence-invalide', { prefix: prefix, received: JSON.stringify(raw.onDivergence) }))
+    if (mode !== 'lockstep') throw new Error(t('mjs-server.game-ondivergence-outside-lockstep', { prefix: prefix }))
+    if (typeof raw.onDivergence !== 'function') throw new Error(t('mjs-server.game-ondivergence-invalid', { prefix: prefix, received: JSON.stringify(raw.onDivergence) }))
   }
   if (raw.lockstepJournal !== undefined) {
-    if (mode !== 'lockstep') throw new Error(t('serveur.game-lockstepjournal-hors-lockstep', { prefix: prefix }))
+    if (mode !== 'lockstep') throw new Error(t('mjs-server.game-lockstepjournal-outside-lockstep', { prefix: prefix }))
     if (typeof raw.lockstepJournal !== 'object' || raw.lockstepJournal === null || Array.isArray(raw.lockstepJournal)) {
-      throw new Error(t('serveur.game-lockstepjournal-invalide', { prefix: prefix }))
+      throw new Error(t('mjs-server.game-lockstepjournal-invalid', { prefix: prefix }))
     }
     for (const k of Object.keys(raw.lockstepJournal)) if (!KNOWN_LOCKSTEP_JOURNAL_KEYS.has(k)) throw keyUnknown(`${prefix}.lockstepJournal`, k, KNOWN_LOCKSTEP_JOURNAL_KEYS)
     // quatre clés facultatives : absente = défaut (aucun anneau pour maxTicks, aucun instantané pour snapshotEvery), présente = entier ≥ 1
     const { maxTicks, maxBytes, maxOrderBytes, snapshotEvery } = raw.lockstepJournal
     if (maxTicks !== undefined && (!Number.isInteger(maxTicks) || maxTicks < 1)) {
-      throw new Error(t('serveur.game-lockstepjournal-maxticks-invalide', { prefix: prefix, received: JSON.stringify(maxTicks) }))
+      throw new Error(t('mjs-server.game-lockstepjournal-maxticks-invalid', { prefix: prefix, received: JSON.stringify(maxTicks) }))
     }
     if (maxBytes !== undefined && (!Number.isInteger(maxBytes) || maxBytes < 1)) {
-      throw new Error(t('serveur.game-lockstepjournal-maxbytes-invalide', { prefix: prefix, received: receivedValue(maxBytes) }))
+      throw new Error(t('mjs-server.game-lockstepjournal-maxbytes-invalid', { prefix: prefix, received: receivedValue(maxBytes) }))
     }
     if (maxOrderBytes !== undefined && (!Number.isInteger(maxOrderBytes) || maxOrderBytes < 1)) {
-      throw new Error(t('serveur.game-lockstepjournal-maxorderbytes-invalide', { prefix: prefix, received: receivedValue(maxOrderBytes) }))
+      throw new Error(t('mjs-server.game-lockstepjournal-maxorderbytes-invalid', { prefix: prefix, received: receivedValue(maxOrderBytes) }))
     }
     if (snapshotEvery !== undefined && (!Number.isInteger(snapshotEvery) || snapshotEvery < 1)) {
-      throw new Error(t('serveur.game-lockstepjournal-snapshotevery-invalide', { prefix: prefix, received: receivedValue(snapshotEvery) }))
+      throw new Error(t('mjs-server.game-lockstepjournal-snapshotevery-invalid', { prefix: prefix, received: receivedValue(snapshotEvery) }))
     }
     // un instantané accordé en fin de fenêtre coupe le journal avant les ticks qui le suivent : un anneau plus court les aurait déjà
     // purgés, et laisserait un trou entre l'instantané et le journal
     const windowTicks = maxTicks !== undefined && snapshotEvery !== undefined ? snapshotWindow(snapshotEvery, tickHz) : 0
     if (maxTicks !== undefined && maxTicks < windowTicks) {
-      throw new Error(t('serveur.game-lockstepjournal-maxticks-sous-fenetre', { prefix: prefix, maxTicks: maxTicks, window: windowTicks }))
+      throw new Error(t('mjs-server.game-lockstepjournal-maxticks-below-window', { prefix: prefix, maxTicks: maxTicks, window: windowTicks }))
     }
   }
   if (raw.phases !== undefined) {
     if (typeof raw.phases !== 'object' || raw.phases === null || Array.isArray(raw.phases)) {
-      throw new Error(t('serveur.game-phases-invalide', { prefix: prefix }))
+      throw new Error(t('mjs-server.game-phases-invalid', { prefix: prefix }))
     }
     for (const [phase, allowed] of Object.entries(raw.phases)) {
       if (!Array.isArray(allowed) || allowed.some(c => typeof c !== 'string')) {
-        throw new Error(t('serveur.game-phases-valeur-invalide', { prefix: prefix, phase: phase, received: JSON.stringify(allowed) }))
+        throw new Error(t('mjs-server.game-phases-value-invalid', { prefix: prefix, phase: phase, received: JSON.stringify(allowed) }))
       }
     }
   }
   if (raw.turns !== undefined) {
     if (typeof raw.turns !== 'object' || raw.turns === null || Array.isArray(raw.turns)) {
-      throw new Error(t('serveur.game-turns-invalide', { prefix: prefix }))
+      throw new Error(t('mjs-server.game-turns-invalid', { prefix: prefix }))
     }
     for (const k of Object.keys(raw.turns)) if (!KNOWN_TURNS_KEYS.has(k)) throw keyUnknown(`${prefix}.turns`, k, KNOWN_TURNS_KEYS)
     if (raw.turns.order !== undefined && raw.turns.order !== 'roundrobin' && typeof raw.turns.order !== 'function') {
-      throw new Error(t('serveur.game-turns-order-invalide', { prefix: prefix, received: JSON.stringify(raw.turns.order) }))
+      throw new Error(t('mjs-server.game-turns-order-invalid', { prefix: prefix, received: JSON.stringify(raw.turns.order) }))
     }
     // `null` = aucune minuterie de tour ; sinon un nombre fini > 0 (Infinity refusé, comme pour les autres durées)
     if (raw.turns.timeout !== undefined && raw.turns.timeout !== null && (typeof raw.turns.timeout !== 'number' || !Number.isFinite(raw.turns.timeout) || raw.turns.timeout <= 0)) {
-      throw new Error(t('serveur.game-turns-timeout-invalide', { prefix: prefix, received: receivedValue(raw.turns.timeout) }))
+      throw new Error(t('mjs-server.game-turns-timeout-invalid', { prefix: prefix, received: receivedValue(raw.turns.timeout) }))
     }
   }
   if (raw.timers !== undefined) {
     if (typeof raw.timers !== 'object' || raw.timers === null || Array.isArray(raw.timers)) {
-      throw new Error(t('serveur.game-timers-invalide', { prefix: prefix }))
+      throw new Error(t('mjs-server.game-timers-invalid', { prefix: prefix }))
     }
     for (const [name, fn] of Object.entries(raw.timers)) {
-      if (RESERVED_TIMER_NAMES.has(name)) throw new Error(t('serveur.game-timers-nom-reserve', { prefix: prefix, nom: name }))
-      if (typeof fn !== 'function') throw new Error(t('serveur.game-timers-nom-invalide', { prefix: prefix, nom: name, received: JSON.stringify(fn) }))
+      if (RESERVED_TIMER_NAMES.has(name)) throw new Error(t('mjs-server.game-timers-name-reserved', { prefix: prefix, name }))
+      if (typeof fn !== 'function') throw new Error(t('mjs-server.game-timers-name-invalid', { prefix: prefix, name, received: JSON.stringify(fn) }))
     }
   }
   if (raw.limits !== undefined) {
     if (typeof raw.limits !== 'object' || raw.limits === null || Array.isArray(raw.limits)) {
-      throw new Error(t('serveur.game-limits-invalide', { prefix: prefix }))
+      throw new Error(t('mjs-server.game-limits-invalid', { prefix: prefix }))
     }
     for (const k of Object.keys(raw.limits)) if (!KNOWN_LIMITS_KEYS.has(k)) throw keyUnknown(`${prefix}.limits`, k, KNOWN_LIMITS_KEYS)
     // `null` EXPLICITE = désactivation ASSUMÉE du quota (cf. DEFAULT_MOVES_LIMIT) — jamais
@@ -448,30 +448,30 @@ export function resolveGameDef(type: string, raw: MjsServerGameDef, log: MjsWsLo
     if (raw.limits.moves !== undefined && raw.limits.moves !== null) {
       const moves = raw.limits.moves as unknown
       if (!Array.isArray(moves) || moves.length !== 2 || !Number.isInteger(moves[0]) || moves[0] < 1 || typeof moves[1] !== 'number' || !Number.isFinite(moves[1]) || moves[1] <= 0) {
-        throw new Error(t('serveur.game-limits-moves-invalide', { prefix: prefix, received: receivedReadable(raw.limits.moves) }))
+        throw new Error(t('mjs-server.game-limits-moves-invalid', { prefix: prefix, received: receivedReadable(raw.limits.moves) }))
       }
     }
     // anti-triche — cf. MjsServerLimitsDef.moveIntervalMs
     if (raw.limits.moveIntervalMs !== undefined && (typeof raw.limits.moveIntervalMs !== 'number' || !Number.isFinite(raw.limits.moveIntervalMs) || raw.limits.moveIntervalMs <= 0)) {
-      throw new Error(t('serveur.game-limits-moveintervalms-invalide', { prefix: prefix, received: receivedValue(raw.limits.moveIntervalMs) }))
+      throw new Error(t('mjs-server.game-limits-moveintervalms-invalid', { prefix: prefix, received: receivedValue(raw.limits.moveIntervalMs) }))
     }
     if (raw.limits.moveWaitMs !== undefined && (typeof raw.limits.moveWaitMs !== 'number' || !Number.isFinite(raw.limits.moveWaitMs) || raw.limits.moveWaitMs <= 0 || raw.limits.moveWaitMs > MAX_TIMEOUT_MS)) {
-      throw new Error(t('serveur.game-limits-movewaitms-invalide', { prefix: prefix, received: receivedValue(raw.limits.moveWaitMs) }))
+      throw new Error(t('mjs-server.game-limits-movewaitms-invalid', { prefix: prefix, received: receivedValue(raw.limits.moveWaitMs) }))
     }
   }
   if (raw.emptyTtl !== undefined && (typeof raw.emptyTtl !== 'number' || !Number.isFinite(raw.emptyTtl) || raw.emptyTtl <= 0)) {
-    throw new Error(t('serveur.game-emptyttl-invalide', { prefix: prefix, received: receivedValue(raw.emptyTtl) }))
+    throw new Error(t('mjs-server.game-emptyttl-invalid', { prefix: prefix, received: receivedValue(raw.emptyTtl) }))
   }
   if (raw.endTtl !== undefined && (typeof raw.endTtl !== 'number' || !Number.isFinite(raw.endTtl) || raw.endTtl <= 0)) {
-    throw new Error(t('serveur.game-endttl-invalide', { prefix: prefix, received: receivedValue(raw.endTtl) }))
+    throw new Error(t('mjs-server.game-endttl-invalid', { prefix: prefix, received: receivedValue(raw.endTtl) }))
   }
   if (raw.hooks !== undefined) {
     if (typeof raw.hooks !== 'object' || raw.hooks === null || Array.isArray(raw.hooks)) {
-      throw new Error(t('serveur.game-hooks-invalide', { prefix: prefix }))
+      throw new Error(t('mjs-server.game-hooks-invalid', { prefix: prefix }))
     }
     for (const k of Object.keys(raw.hooks)) if (!KNOWN_HOOKS_KEYS.has(k)) throw keyUnknown(`${prefix}.hooks`, k, KNOWN_HOOKS_KEYS)
     for (const [name, fn] of Object.entries(raw.hooks)) {
-      if (fn !== undefined && typeof fn !== 'function') throw new Error(t('serveur.game-hooks-nom-invalide', { prefix: prefix, nom: name, received: JSON.stringify(fn) }))
+      if (fn !== undefined && typeof fn !== 'function') throw new Error(t('mjs-server.game-hooks-name-invalid', { prefix: prefix, name, received: JSON.stringify(fn) }))
     }
   }
 
@@ -479,44 +479,44 @@ export function resolveGameDef(type: string, raw: MjsServerGameDef, log: MjsWsLo
   // les appellerait jamais (cf. commentaires d'interface ci-dessus) ; deltas/space restent ORTHOGONAUX
   // (slowTick N'EST PAS dans la liste fermée d'interdits lockstep, cf. def.mode — reste autorisé)
   if (raw.intents !== undefined) {
-    if (mode === 'lockstep') throw new Error(t('serveur.game-intents-interdit-lockstep', { prefix: prefix }))
+    if (mode === 'lockstep') throw new Error(t('mjs-server.game-intents-forbidden-lockstep', { prefix: prefix }))
     if (typeof raw.intents !== 'object' || raw.intents === null || Array.isArray(raw.intents)) {
-      throw new Error(t('serveur.game-intents-invalide', { prefix: prefix }))
+      throw new Error(t('mjs-server.game-intents-invalid', { prefix: prefix }))
     }
-    if (tickHz === 0) throw new Error(t('serveur.game-intents-tick-requis', { prefix: prefix }))
+    if (tickHz === 0) throw new Error(t('mjs-server.game-intents-tick-required', { prefix: prefix }))
     for (const [name, fn] of Object.entries(raw.intents)) {
-      if (typeof fn !== 'function') throw new Error(t('serveur.game-intents-nom-invalide', { prefix: prefix, nom: name, received: JSON.stringify(fn) }))
-      if (raw.moves && name in raw.moves) throw new Error(t('serveur.game-intents-nom-collision', { prefix: prefix, nom: name }))
+      if (typeof fn !== 'function') throw new Error(t('mjs-server.game-intents-name-invalid', { prefix: prefix, name, received: JSON.stringify(fn) }))
+      if (raw.moves && name in raw.moves) throw new Error(t('mjs-server.game-intents-name-collision', { prefix: prefix, name }))
     }
   }
   if (raw.simulate !== undefined) {
-    if (mode === 'lockstep') throw new Error(t('serveur.game-simulate-interdit-lockstep', { prefix: prefix }))
-    if (typeof raw.simulate !== 'function') throw new Error(t('serveur.game-simulate-invalide', { prefix: prefix, received: JSON.stringify(raw.simulate) }))
-    if (tickHz === 0) throw new Error(t('serveur.game-simulate-tick-requis', { prefix: prefix }))
+    if (mode === 'lockstep') throw new Error(t('mjs-server.game-simulate-forbidden-lockstep', { prefix: prefix }))
+    if (typeof raw.simulate !== 'function') throw new Error(t('mjs-server.game-simulate-invalid', { prefix: prefix, received: JSON.stringify(raw.simulate) }))
+    if (tickHz === 0) throw new Error(t('mjs-server.game-simulate-tick-required', { prefix: prefix }))
   }
   if (raw.slowTick !== undefined) {
     if (typeof raw.slowTick !== 'object' || raw.slowTick === null || Array.isArray(raw.slowTick)) {
-      throw new Error(t('serveur.game-slowtick-invalide', { prefix: prefix }))
+      throw new Error(t('mjs-server.game-slowtick-invalid', { prefix: prefix }))
     }
     for (const k of Object.keys(raw.slowTick)) if (!KNOWN_SLOWTICK_KEYS.has(k)) throw keyUnknown(`${prefix}.slowTick`, k, KNOWN_SLOWTICK_KEYS)
     if (typeof raw.slowTick.hz !== 'number' || !Number.isFinite(raw.slowTick.hz) || raw.slowTick.hz <= 0) {
-      throw new Error(t('serveur.game-slowtick-hz-invalide', { prefix: prefix, received: JSON.stringify(raw.slowTick.hz) }))
+      throw new Error(t('mjs-server.game-slowtick-hz-invalid', { prefix: prefix, received: JSON.stringify(raw.slowTick.hz) }))
     }
-    if (typeof raw.slowTick.fn !== 'function') throw new Error(t('serveur.game-slowtick-fn-invalide', { prefix: prefix, received: JSON.stringify(raw.slowTick.fn) }))
-    if (tickHz === 0) throw new Error(t('serveur.game-slowtick-tick-requis', { prefix: prefix }))
+    if (typeof raw.slowTick.fn !== 'function') throw new Error(t('mjs-server.game-slowtick-fn-invalid', { prefix: prefix, received: JSON.stringify(raw.slowTick.fn) }))
+    if (tickHz === 0) throw new Error(t('mjs-server.game-slowtick-tick-required', { prefix: prefix }))
   }
   if (raw.deltas !== undefined) {
-    if (mode === 'lockstep') throw new Error(t('serveur.game-deltas-interdit-lockstep', { prefix: prefix }))
-    if (typeof raw.deltas !== 'boolean') throw new Error(t('serveur.game-deltas-invalide', { prefix: prefix, received: JSON.stringify(raw.deltas) }))
+    if (mode === 'lockstep') throw new Error(t('mjs-server.game-deltas-forbidden-lockstep', { prefix: prefix }))
+    if (typeof raw.deltas !== 'boolean') throw new Error(t('mjs-server.game-deltas-invalid', { prefix: prefix, received: JSON.stringify(raw.deltas) }))
   }
   if (raw.space !== undefined) {
-    if (mode === 'lockstep') throw new Error(t('serveur.game-space-interdit-lockstep', { prefix: prefix }))
+    if (mode === 'lockstep') throw new Error(t('mjs-server.game-space-forbidden-lockstep', { prefix: prefix }))
     if (typeof raw.space !== 'object' || raw.space === null || Array.isArray(raw.space)) {
-      throw new Error(t('serveur.game-space-invalide', { prefix: prefix }))
+      throw new Error(t('mjs-server.game-space-invalid', { prefix: prefix }))
     }
     for (const k of Object.keys(raw.space)) if (!KNOWN_SPACE_KEYS.has(k)) throw keyUnknown(`${prefix}.space`, k, KNOWN_SPACE_KEYS)
     if (typeof raw.space.cell !== 'number' || !Number.isFinite(raw.space.cell) || raw.space.cell <= 0) {
-      throw new Error(t('serveur.game-space-cell-invalide', { prefix: prefix, received: JSON.stringify(raw.space.cell) }))
+      throw new Error(t('mjs-server.game-space-cell-invalid', { prefix: prefix, received: JSON.stringify(raw.space.cell) }))
     }
   }
 
@@ -524,23 +524,23 @@ export function resolveGameDef(type: string, raw: MjsServerGameDef, log: MjsWsLo
   // lag serveur (cf. mjs-server/history.ts) ; ORTHOGONAL à deltas/space, mais exige tick > 0 (même
   // raison que intents/simulate/slowTick : sans boucle, aucun tick à historiser)
   if (raw.history !== undefined) {
-    if (mode === 'lockstep') throw new Error(t('serveur.game-histo-interdit-lockstep', { prefix: prefix }))
+    if (mode === 'lockstep') throw new Error(t('mjs-server.game-history-forbidden-lockstep', { prefix: prefix }))
     if (typeof raw.history !== 'object' || raw.history === null || Array.isArray(raw.history)) {
-      throw new Error(t('serveur.game-histo-invalide', { prefix: prefix }))
+      throw new Error(t('mjs-server.game-history-invalid', { prefix: prefix }))
     }
     for (const k of Object.keys(raw.history)) if (!KNOWN_HISTORY_KEYS.has(k)) throw keyUnknown(`${prefix}.history`, k, KNOWN_HISTORY_KEYS)
-    if (tickHz === 0) throw new Error(t('serveur.game-histo-tick-requis', { prefix: prefix }))
+    if (tickHz === 0) throw new Error(t('mjs-server.game-history-tick-required', { prefix: prefix }))
     if (!Number.isInteger(raw.history.ticks) || raw.history.ticks < 1) {
-      throw new Error(t('serveur.game-histo-ticks-invalide', { prefix: prefix, received: JSON.stringify(raw.history.ticks) }))
+      throw new Error(t('mjs-server.game-history-ticks-invalid', { prefix: prefix, received: JSON.stringify(raw.history.ticks) }))
     }
     if (raw.history.extract !== undefined && typeof raw.history.extract !== 'function') {
-      throw new Error(t('serveur.game-histo-extraire-invalide', { prefix: prefix, received: JSON.stringify(raw.history.extract) }))
+      throw new Error(t('mjs-server.game-history-extract-invalid', { prefix: prefix, received: JSON.stringify(raw.history.extract) }))
     }
     if (!raw.history.extract && !raw.space) {
-      throw new Error(t('serveur.game-histo-extraire-requis', { prefix: prefix }))
+      throw new Error(t('mjs-server.game-history-extract-required', { prefix: prefix }))
     }
     if (raw.history.interp !== undefined && (typeof raw.history.interp !== 'number' || !Number.isFinite(raw.history.interp) || raw.history.interp < 0)) {
-      throw new Error(t('serveur.game-histo-interp-invalide', { prefix: prefix, received: receivedValue(raw.history.interp) }))
+      throw new Error(t('mjs-server.game-history-interp-invalid', { prefix: prefix, received: receivedValue(raw.history.interp) }))
     }
   }
 
@@ -549,18 +549,18 @@ export function resolveGameDef(type: string, raw: MjsServerGameDef, log: MjsWsLo
   // space/history ci-dessus : un ORDRE lockstep reste un coup pour ces 3 gardes génériques, cf.
   // game.ts::_antiCheatGuard) — AUCUNE restriction de mode ici, volontairement.
   if (raw.suspect !== undefined && typeof raw.suspect !== 'function') {
-    throw new Error(t('serveur.game-suspect-invalide', { prefix: prefix, received: JSON.stringify(raw.suspect) }))
+    throw new Error(t('mjs-server.game-suspect-invalid', { prefix: prefix, received: JSON.stringify(raw.suspect) }))
   }
   if (raw.antiReplay !== undefined && raw.antiReplay !== true) {
-    throw new Error(t('serveur.game-antirejeu-invalide', { prefix: prefix, received: JSON.stringify(raw.antiReplay) }))
+    throw new Error(t('mjs-server.game-anti-replay-invalid', { prefix: prefix, received: JSON.stringify(raw.antiReplay) }))
   }
   if (raw.onSuspicion !== undefined && typeof raw.onSuspicion !== 'function') {
-    throw new Error(t('serveur.game-onsuspicion-invalide', { prefix: prefix, received: JSON.stringify(raw.onSuspicion) }))
+    throw new Error(t('mjs-server.game-onsuspicion-invalid', { prefix: prefix, received: JSON.stringify(raw.onSuspicion) }))
   }
   // anti-triche (spectateurs) — mode-agnostique, MÊME esprit que suspect/antiReplay/
   // onSuspicion ci-dessus (aucune restriction de mode ici, volontairement).
   if (raw.spectatorView !== undefined && typeof raw.spectatorView !== 'function') {
-    throw new Error(t('serveur.game-spectatorview-invalide', { prefix: prefix, received: JSON.stringify(raw.spectatorView) }))
+    throw new Error(t('mjs-server.game-spectatorview-invalid', { prefix: prefix, received: JSON.stringify(raw.spectatorView) }))
   }
 
   // vue sûre par défaut (anti-triche, AVERTISSEMENT SEUL — jamais un throw, rétro-compat
@@ -576,7 +576,7 @@ export function resolveGameDef(type: string, raw: MjsServerGameDef, log: MjsWsLo
     // ${message}` : le composer aurait doublé le tag ('[MJS-Server] [MJS-Server] game(...)'), MÊME
     // convention que les log('warn'/'error', …) internes de mjs-ws/core.ts (jamais auto-préfixés,
     // le tag vient TOUJOURS du seul wrapper defaultLog/onLog).
-    log('warn', t('serveur.game-view-absente-avertissement', { type: type }))
+    log('warn', t('mjs-server.game-view-missing-warning', { type: type }))
   }
 
   return {

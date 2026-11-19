@@ -147,7 +147,7 @@ describe('valeurs précises : objets que l\'enveloppe ne suit pas sûrement, la 
       if (!prod) {
         it('le cœur ne porte plus les contrôles de lecture des objets', () => {
           for (const nom of ['_mjsSimple', '_mjsControleTard', '_mjsReecrite']) assert.ok(!code.includes(nom), nom + ' encore dans le cœur')
-          assert.ok(code.includes('_mjsRelecture'), 'la relecture du développement manque')
+          assert.ok(code.includes('_mjsRereading'), 'la relecture du développement manque')
         })
         return
       }

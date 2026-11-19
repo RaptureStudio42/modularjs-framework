@@ -55,7 +55,7 @@ describe('motifs de *hologram : le thème seulement', function () {
         document.head.appendChild(css)
         const site = document.createElement('div')
         site.id = 'site'
-        site.innerHTML = styles.map((s) => `<span class="c" data-style="${s}" mjs-fx-layer="hologram" mjs-fx-hologram-card mjs-fx-hologram-style="${s}" mjs-fx-hologram-nu mjs-fx-hologram-open><b></b><i></i></span>`).join('')
+        site.innerHTML = styles.map((s) => `<span class="c" data-style="${s}" mjs-fx-layer="hologram" mjs-fx-hologram-card mjs-fx-hologram-style="${s}" mjs-fx-hologram-bare mjs-fx-hologram-open><b></b><i></i></span>`).join('')
         document.body.appendChild(site)
       }, STYLES)
     })
@@ -127,7 +127,7 @@ describe('motifs de *hologram : le thème seulement', function () {
           c.setAttribute('mjs-fx-hologram-card', '')
           c.setAttribute('mjs-fx-hologram-style', style)
           if (shine) c.setAttribute('mjs-fx-hologram-shine', shine)
-          if (nu) c.setAttribute('mjs-fx-hologram-nu', '')
+          if (nu) c.setAttribute('mjs-fx-hologram-bare', '')
           c.innerHTML = '<b></b><i></i>'
           site.appendChild(c)
           const dire = (el: Element, pseudo: string | null) => { const cs = getComputedStyle(el, pseudo); return [cs.backgroundImage, cs.backgroundSize, cs.backgroundPosition, cs.filter, cs.mixBlendMode, cs.opacity, cs.content].join(' ; ') }

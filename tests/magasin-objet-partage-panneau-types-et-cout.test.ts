@@ -95,11 +95,11 @@ describe('magasin — objet partagé par deux clés : panneau, types, coût', fu
     w.µ.console(true)
     const racine = w.document.querySelector('[data-mjs-devpanel]').shadowRoot
     const clic = (el: any) => el.dispatchEvent(new w.MouseEvent('click', { bubbles: true }))
-    clic(Array.from(racine.querySelectorAll('.ligne') as ArrayLike<any>).find((b: any) => /stores/.test(b.textContent)))
-    const chevron = Array.from(racine.querySelectorAll('.di-ligne') as ArrayLike<any>).find((l: any) => /^\W*cfg/.test(l.textContent))?.querySelector('.di-chevron')
+    clic(Array.from(racine.querySelectorAll('.line') as ArrayLike<any>).find((b: any) => /stores/.test(b.textContent)))
+    const chevron = Array.from(racine.querySelectorAll('.di-line') as ArrayLike<any>).find((l: any) => /^\W*cfg/.test(l.textContent))?.querySelector('.di-chevron')
     assert.ok(chevron, 'la clé cfg doit se déplier')
     clic(chevron)
-    const champ = racine.querySelector('input.di-valeur[data-di-key="quantite"]')
+    const champ = racine.querySelector('input.di-value[data-di-key="quantite"]')
     assert.ok(champ, 'la quantité de cfg doit être modifiable')
     champ.value = '7'
     champ.dispatchEvent(new w.Event('change', { bubbles: true }))

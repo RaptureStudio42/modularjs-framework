@@ -68,7 +68,7 @@ Ce que coûte et ce que voit la vérification :
 ## Ce que fait `µrefresh($x)`
 
 - Il redessine ce qui affiche `$x`, et ce qui affiche une autre variable du composant qui tient le même objet ; sur une valeur primitive, ce qui l'affiche ; une liste qui affiche `$x` relit toutes ses lignes, brutes comprises (marquées `µraw`, une à une ou par `µraw(liste, true)`) : c'est ainsi qu'une ligne brute changée sur place se montre. Sans `µrefresh`, cette écriture reste invisible.
-- `µrefresh($lignes)` ne fait pas relire les lignes brutes d'une liste affichée par un enfant qui reçoit `$lignes` en prop.
+- L'enfant qui reçoit `$lignes` en prop relit lui aussi toutes ses lignes, brutes comprises.
 - Il refait les valeurs dérivées qui lisent `$x` ; précises, elles repassent à l'horloge pour toujours : elles rendent toujours la bonne valeur, sans le gain de la précision.
 - Le signal reste sur l'objet que tient `$x` : ce qui affiche une valeur à l'horloge qui lit une variable qui le tient (`$x`, ou une autre variable qui tient le même objet) suit ensuite les écritures profondes du composant, même faites par une autre variable — un accesseur posé sur l'objet avant que `$x` le reçoive, qui lit une ligne que le composant change par `$ligne.prix = 20` ; une `Map`, l'instance d'une classe ou un objet gelé rangés dans l'objet de `$x` (`$x = {m: new Map(…)}`), que MJS ne voit pas à cette profondeur : l'écran suit à chaque écriture, sans un second `µrefresh`. Un changement fait hors de MJS, lui, en demande un à chaque fois ; un nouvel objet rangé dans `$x` n'a pas de signal.
 - Il ne relance aucun `µeffect` (ni `µeffect.before`), pas même un reffet qui lit une valeur dérivée de `$x` refaite par lui : pour relancer un effet, écrivez une nouvelle valeur (`$x = [...$x]`).

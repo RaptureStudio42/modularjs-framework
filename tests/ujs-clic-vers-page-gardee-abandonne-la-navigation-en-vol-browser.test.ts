@@ -21,6 +21,7 @@ import { join, extname, normalize } from 'node:path'
 import type { Browser, Page } from 'playwright'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
+import { playTogether } from './helpers/engines-together.js'
 
 // `µnav.active` affiché par la page elle-même, lisible aussi en production (où `µ` n'est pas exposé) : un composant
 // sans ombre, posé dans chaque page
@@ -101,7 +102,7 @@ describe('mjs_ujs navigateur réel, vrai projet — une page du cache suivie pen
   })
 
   for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
-    describe(`${nom}`, function () {
+    playTogether(describe(`${nom}`, function () {
       let browser: Browser | null = null
       let server: Server | null  = null
       let origin  = ''
@@ -326,6 +327,6 @@ describe('mjs_ujs navigateur réel, vrai projet — une page du cache suivie pen
         assert.deepEqual(await etat(p), repos('/p1', 'p1'), 'AVANT : la barre de navigation revenait à l\'écran avec la page quittée')
         assert.deepEqual(erreurs, [])
       })
-    })
+    }))
   }
 })

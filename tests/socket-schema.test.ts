@@ -9,7 +9,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mjsWs, list, bits } from '../src/mjs-ws/index.js'
 import { MemoryTransport } from '../src/mjs-ws/transport.js'
-import { creerRegistre, defSchema, encode, serialiserDefinitions } from '../src/schema/core.js'
+import { createRegistry, defineSchema, encode, serializeDefinitions } from '../src/schema/core.js'
 import type { MjsWsApp, MjsWsOptions } from '../src/mjs-ws/index.js'
 import { poserMessages } from './helpers/messages-stub.js'
 
@@ -139,12 +139,12 @@ describe('µ.schema — client (mjs_schema.ts, vrai serveur MJS-WS MemoryTranspo
     app.schema('pos', { x: 'i16', y: 'i16' })
 
     const µx = makeClient(transport)   // AUCUN µx.schema() — registre client vide au départ
-    assert.equal(µx._mjs_mjschemaRegistre, null, 'sanity — aucun registre local AVANT toute connexion')
+    assert.equal(µx._mjs_mjschemaRegistry, null, 'sanity — aucun registre local AVANT toute connexion')
     const sx = µx.socket('memory://x4', { auth: () => ({ id: 'x' }), reconnect: { enabled: false } })
     sx.connect()
     await tick()
 
-    assert.ok(µx._mjs_mjschemaRegistre, 'le registre client a dû être créé PENDANT le handshake (hello envoie quand même un hash — celui du registre vide — qui diffère du serveur, cf. test 3 ; le serveur pousse alors µ:schema juste après son welcome)')
+    assert.ok(µx._mjs_mjschemaRegistry, 'le registre client a dû être créé PENDANT le handshake (hello envoie quand même un hash — celui du registre vide — qui diffère du serveur, cf. test 3 ; le serveur pousse alors µ:schema juste après son welcome)')
 
     const got: any[] = []
     sx.on('pos', (p: any) => got.push(p))
@@ -281,7 +281,7 @@ describe('µ.schema — client (mjs_schema.ts, vrai serveur MJS-WS MemoryTranspo
       (e: any) => e && e.code === 'timeout',
       'sock.request() vers un type SANS schéma, en codec binary strict, finit par expirer — le serveur la rejette (µ:error) AVANT de router vers serve(), aucun µ:ack ne peut donc jamais arriver'
     )
-    assert.equal(app.stats().messages.texteRejete, 1, 'la requête JSON a bien été comptée REJETÉE côté serveur')
+    assert.equal(app.stats().messages.textRejected, 1, 'la requête JSON a bien été comptée REJETÉE côté serveur')
 
     // un type SCHÉMATISÉ, lui, passe très bien en pub/sub (send/on) — la limite porte sur request() à
     // id (toujours JSON, cf. mjs_schema.ts), pas sur les schémas en général.
@@ -301,12 +301,12 @@ describe('µ.schema — client (mjs_schema.ts, vrai serveur MJS-WS MemoryTranspo
 
     const µx = makeClient(transport)
     µx.schema('pos', { x: 'i16', y: 'i16' })
-    const registreAvant = µx._mjs_mjschemaRegistre
+    const registreAvant = µx._mjs_mjschemaRegistry
     const sx = µx.socket('memory://x9', { auth: () => ({ id: 'x' }), reconnect: { enabled: false } })
     sx.connect()
     await tick()
 
-    assert.equal(µx._mjs_mjschemaRegistre, registreAvant, 'même référence — jamais remplacé, les hash concordaient donc le serveur n\'a rien poussé')
+    assert.equal(µx._mjs_mjschemaRegistry, registreAvant, 'même référence — jamais remplacé, les hash concordaient donc le serveur n\'a rien poussé')
     await app.stop()
   })
 
@@ -321,8 +321,8 @@ describe('µ.schema — client (mjs_schema.ts, vrai serveur MJS-WS MemoryTranspo
     // simule le DÉBUT d'un remplacement de registre (comme le ferait µ._mjs_mjschemaOnPush juste avant de recharger)
     µx._mjs_mjschemaSwapping = true
 
-    const rServeur = creerRegistre()
-    defSchema(rServeur, 'pos', { x: 'i16', y: 'i16' })
+    const rServeur = createRegistry()
+    defineSchema(rServeur, 'pos', { x: 'i16', y: 'i16' })
     const trame = encode(rServeur, 'pos', { x: 3, y: 4 })
 
     µx._mjs_mjschemaOnBinary(sockFake, trame)
@@ -330,7 +330,7 @@ describe('µ.schema — client (mjs_schema.ts, vrai serveur MJS-WS MemoryTranspo
     assert.equal(µx._mjs_mjschemaBuffered.length, 1)
 
     // le remplacement « se termine » (µ:schema livre les MÊMES définitions que rServeur) — rejoue le tampon
-    const definitions = serialiserDefinitions(rServeur)
+    const definitions = serializeDefinitions(rServeur)
     µx._mjs_mjschemaOnPush(sockFake, { p: { version: definitions.hash, definitions: definitions } })
 
     assert.equal(dispatched.length, 1, 'la trame tamponnée doit avoir été rejouée après coup, pas perdue')

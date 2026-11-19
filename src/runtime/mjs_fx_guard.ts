@@ -38,7 +38,7 @@ function _mjsFxGuardMatrixZoomed() {
 
 // la matrice ne rend sûrement que le cas simple : un `transform-box` par défaut (view-box ; border-box pour un élément
 // de mise en page), et aucun ancêtre (ombre comprise) qui se transforme ou pose une perspective
-function _mjsFxGuardSure(el, cs) {
+function _mjsFxGuardSafe(el, cs) {
   var box = cs.getPropertyValue('transform-box');
   if (box && box !== 'view-box' && box !== 'border-box') return false;
   var a = el.parentNode || el.host;
@@ -192,7 +192,7 @@ function _mjsFxGuardSure(el, cs) {
       var moved = false;
       for (var i = 0; i < _MJS_FX_GUARD_MOVES.length; i++) if (cs.getPropertyValue(_MJS_FX_GUARD_MOVES[i]) !== 'none') moved = true;
       if (!moved) return plain;
-      if (typeof DOMMatrix !== 'function' || !_mjsFxGuardSure(el, cs)) return neutral(z);
+      if (typeof DOMMatrix !== 'function' || !_mjsFxGuardSafe(el, cs)) return neutral(z);
       var w = parseFloat(cs.width);
       var h = parseFloat(cs.height);
       if (isNaN(w) || isNaN(h)) return neutral(z);

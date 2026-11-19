@@ -39,12 +39,12 @@ const fonction = (nom: string, args: string) => tirer(SUIVI, new RegExp(`var ${n
 const CODES = {
   ombre:    tirer(DEPART, /µ\._mjs_shadowOf = function\(n\) \{[^\n]*\};/),
   point:    tirer(source('mjs_element_at.ts'), /µ\._mjs_elementAt = function\(x, y, root\) \{[\s\S]*?\n\};/),
-  suivi:    [['pathOf', 'n'], ['nodeAt', 'path'], ['floats', 'e, seul'], ['under', 'y']].map(([n, a]) => fonction(n, a)).join('\n'),
+  suivi:    [['pathOf', 'n'], ['nodeAt', 'path'], ['floats', 'e, alone'], ['under', 'y']].map(([n, a]) => fonction(n, a)).join('\n'),
   barre:    tirer(BARRE, /for \(var sh = a && [^\n]*\n/),
   marge:    tirer(BARRE, /var flows = function\(c\) \{[^\n]*\};/) + '\n' + tirer(BARRE, /var spill = function\(box, cs, r, top\) \{[\s\S]*?\n {4}\};/),
   pointeur: tirer(source('mjs_fx_pointer.ts'), /var n = tg \|\| [^\n]*\n\s*for \(var i = 0; n && i < 32; i\+\+\) \{[\s\S]*?\n\s*\}\n/),
   panneau:  tirer(PANNEAU, /function _dpActiveDeep\(\) \{[\s\S]*?\n\}\n/),
-  suivre:   tirer(PANNEAU, /function _dpMajSuivre\(\) \{[\s\S]*?\n\}\n/),
+  suivre:   tirer(PANNEAU, /function _dpUpdTrack\(\) \{[\s\S]*?\n\}\n/),
   depart:   tirer(DEPART, /function _mjsFlatParent\(n\) \{[\s\S]*?\n\}\n/),
   ancrage:  tirer(source('mjs_ujs.ts'), /focused = function\(e\) \{[\s\S]*?\n  \};/)
 }
@@ -69,7 +69,7 @@ const JEU = `async (codes, reel) => {
   const marge     = new Function('µ', 'dom', codes.marge + ';return spill;')(mu, mu._mjs_dom)
   const pointeur  = new Function('µ', 'tg', 'tx', 'ty', codes.pointeur + ';return n;')
   const panneau   = new Function('µ', codes.panneau + ';return _dpActiveDeep;')(mu)
-  const suivre    = (instances, obs, file) => new Function('µ', '_dpMajObs', '_dpMajFile', '_dpMajCible', '_dpMajEclairer', '_dpMajImage', codes.suivre + ';return _dpMajSuivre;')({ instances, _mjs_shadowOf: mu._mjs_shadowOf }, obs, file, m => m.target, () => {}, 0)
+  const suivre    = (instances, obs, file) => new Function('µ', '_dpUpdObs', '_dpUpdQueue', '_dpUpdTarget', '_dpUpdHighlight', '_dpUpdImage', codes.suivre + ';return _dpUpdTrack;')({ instances, _mjs_shadowOf: mu._mjs_shadowOf }, obs, file, m => m.target, () => {}, 0)
   const depart    = new Function('µ', codes.depart + ';return _mjsFlatParent;')(mu)
   const ancrage   = arret => new Function('µ', 'stop', 'var focused;\\n' + codes.ancrage + ';return focused;')(mu, arret)
   const ordinaire = (parent, ombre, clair, tag) => { const h = parent.appendChild(document.createElement(tag || 'x-o')); h._shadow = h.attachShadow({ mode: 'closed' }); h._shadow.innerHTML = ombre; h.innerHTML = clair; return h }

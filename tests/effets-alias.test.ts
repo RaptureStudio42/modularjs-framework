@@ -224,7 +224,7 @@ describe('alias d\'effets', function () {
     it('une appli sans alias n\'embarque rien de plus', async () => {
       const r = await construire('alias-aucun', { 'c.mjs': '<p *scramble(311)>A</p>\n<p *scramble(311)>B</p>' })
       assert.equal(r.erreurs, '')
-      assert.equal(compte(r.tout, /_mjs_al/g), 0)
+      assert.equal(compte(r.tout, /_mjs_alias/g), 0)
     })
   })
 
@@ -1098,7 +1098,7 @@ describe('l\'exemple de nom d\'alias est un alias livré', () => {
   const livres  = (effet: string): string[] => MJS_ALIASES.split('\n').filter((l) => l.startsWith(`*${effet}.`)).map((l) => l.slice(l.indexOf('.') + 1, l.indexOf(' ')))
   const exemple = (message: string): string => /\(\*filter\.([a-z_0-9]+)\)/.exec(message)?.[1] ?? ''
 
-  it('à l\'usage (effets.alias-nom) et à la déclaration (effets-fichier.alias-nom), en français et en anglais', () => {
+  it('à l\'usage (effects.alias-name) et à la déclaration (effects-file.alias-name), en français et en anglais', () => {
     for (const langue of ['fr', 'en'] as const) {
       setMessagesLang(langue)
       assert.throws(() => parseEffect('filter.Net', ''), (e: Error) => livres('filter').includes(exemple(e.message)) && !/verre/i.test(e.message), langue)

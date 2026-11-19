@@ -35,7 +35,7 @@
   # un pas nul ou négatif (step="0") divisait par zéro : il retombe sur le pas par défaut
   stepOf = -> if num($step, 1) > 0 then num($step, 1) else 1
 
-  borne = (v)->
+  bound = (v)->
     lo = num($min, 0)
     hi = num($max, 100)
     st = stepOf()
@@ -79,7 +79,7 @@
     µemit('change', now) if moved
 
   set = (v)->
-    v = borne(v)
+    v = bound(v)
     return if v is num($value, 0)
     before = num($value, 0) if before is undefined
     $value = v

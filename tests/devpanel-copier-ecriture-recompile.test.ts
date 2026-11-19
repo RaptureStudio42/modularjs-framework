@@ -73,7 +73,7 @@ describe('mjs_devpanel — « copier l\'écriture » se recompile', function () 
 
   const racine = () => window.document.querySelector('[data-mjs-devpanel]')?.shadowRoot
   const clic   = (el: any) => el.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
-  const bloc   = (effet: string) => Array.from(racine().querySelectorAll('.detail .fx') as ArrayLike<any>).find((b: any) => b.querySelector('.fx-nom')?.textContent === '*' + effet)
+  const bloc   = (effet: string) => Array.from(racine().querySelectorAll('.detail .fx') as ArrayLike<any>).find((b: any) => b.querySelector('.fx-name')?.textContent === '*' + effet)
 
   // le composant monté, le panneau sur son onglet Effets, le bouton « copier l'écriture » de l'effet cliqué : ce qui est copié
   async function copier(tag: string, sel: string, effet: string): Promise<string> {
@@ -84,10 +84,10 @@ describe('mjs_devpanel — « copier l\'écriture » se recompile', function () 
     await attendre(() => !!comp._shadow && !!comp._shadow.querySelector(sel))
     await new Promise((r) => setTimeout(r, 20))
     window.µ.console(tag)
-    clic(racine().querySelector('.onglet[data-onglet="effets"]'))
+    clic(racine().querySelector('.tab[data-tab="effects"]'))
     const b = bloc(effet)
     assert.ok(b, 'l\'effet *' + effet + ' attendu dans l\'onglet : ' + racine().querySelector('.detail').textContent)
-    clic(b.querySelector('[data-action="fx-copier"]'))
+    clic(b.querySelector('[data-action="fx-copy"]'))
     await attendre(() => copies.length > 0)
     assert.equal(copies.length, 1, 'une seule copie')
     return copies[0]

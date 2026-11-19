@@ -131,14 +131,14 @@ CAS.push(
 )
 
 // cas où la navigation ne prend pas le geste, ou le prend autrement : `verifie` dit ce qui doit se voir
-const COUPE_DOC   = poser('click', 'document', JOUE + '; e.stopPropagation()', true)
-const COUPE_PASSIF = "document.addEventListener('click', (e) => { window.__joues = 1; e.stopPropagation() }, { capture: true, passive: true })"
+const COUPE_DOC          = poser('click', 'document', JOUE + '; e.stopPropagation()', true)
+const COUPE_PASSIF       = "document.addEventListener('click', (e) => { window.__joues = 1; e.stopPropagation() }, { capture: true, passive: true })"
 const COUPE_PASSIF_ENVOI = "document.addEventListener('submit', (e) => { window.__joues = 1; e.stopPropagation() }, { capture: true, passive: true })"
 const COUPE_PUIS_PREVENT = poser('click', 'document', 'e.stopPropagation()', true) + ';' + poser('click', 'document', "try { e.preventDefault(); window.__erreur = 'aucune' } catch (erreur) { window.__erreur = String(erreur) }", true)
-const COMPTE_FORMDATA = "document.addEventListener('formdata', () => { window.__fd = (window.__fd || 0) + 1 })"
-const COUPE_PUIS_RETURN = (valeur: string) => poser('click', 'document', 'e.stopPropagation()', true) + ';' + poser('click', 'document', 'e.returnValue = ' + valeur + '; window.__lu = { dp: e.defaultPrevented, rv: e.returnValue }', true)
-const LIT = (type: string) => poser(type, 'document', 'window.__lu = { dp: e.defaultPrevented, rv: e.returnValue }', true)
-const COUPE_PUIS_LIT = (type: string) => poser(type, 'document', 'e.stopPropagation()', true) + ';' + LIT(type)
+const COMPTE_FORMDATA    = "document.addEventListener('formdata', () => { window.__fd = (window.__fd || 0) + 1 })"
+const COUPE_PUIS_RETURN  = (valeur: string) => poser('click', 'document', 'e.stopPropagation()', true) + ';' + poser('click', 'document', 'e.returnValue = ' + valeur + '; window.__read = { dp: e.defaultPrevented, rv: e.returnValue }', true)
+const LIT                = (type: string) => poser(type, 'document', 'window.__read = { dp: e.defaultPrevented, rv: e.returnValue }', true)
+const COUPE_PUIS_LIT     = (type: string) => poser(type, 'document', 'e.stopPropagation()', true) + ';' + LIT(type)
 
 type Extra = {
   nom:     string
@@ -170,7 +170,7 @@ const EXTRAS: Extra[] = [
     verifie: (ctx, e) => { assert.deepEqual(e.lu, { dp: false, rv: true }, 'defaultPrevented faux, returnValue vrai') } },
   { nom: 'returnValue suit defaultPrevented après la coupure (formulaire) : rien n\'est retenu', pose: COUPE_PUIS_LIT('submit'), objet: 'form', bouton: '.bouton',
     verifie: (ctx, e) => { assert.deepEqual(e.lu, { dp: false, rv: true }, 'defaultPrevented faux, returnValue vrai') } },
-  { nom: 'returnValue après preventDefault() de l\'auteur : false comme defaultPrevented', pose: poser('click', 'document', 'e.stopPropagation()', true) + ';' + poser('click', 'document', 'e.preventDefault(); window.__lu = { dp: e.defaultPrevented, rv: e.returnValue }', true), objet: 'lien', bouton: '.lk',
+  { nom: 'returnValue après preventDefault() de l\'auteur : false comme defaultPrevented', pose: poser('click', 'document', 'e.stopPropagation()', true) + ';' + poser('click', 'document', 'e.preventDefault(); window.__read = { dp: e.defaultPrevented, rv: e.returnValue }', true), objet: 'lien', bouton: '.lk',
     verifie: (ctx, e) => { assert.deepEqual(e.lu, { dp: true, rv: false }, 'defaultPrevented vrai, returnValue faux') } },
   { nom: 'returnValue = true après la coupure : ne retient rien, MJS prend le lien', pose: COUPE_PUIS_RETURN('true'), objet: 'lien', bouton: '.lk',
     verifie: (ctx, e) => { assert.deepEqual(e.lu, { dp: false, rv: true }, 'rien n\'est retenu'); assert.equal(e.chemin, '/page-b', 'MJS a pris le lien'); assert.equal(e.visites, 1, 'un seul passage de la navigation'); assert.equal(ctx.chargements.length, 1, 'aucun chargement natif') } },
@@ -356,7 +356,7 @@ for (const nomNavigateur of ['chromium', 'firefox', 'webkit'] as const) {
           await ctx.page.waitForTimeout(900)
           let e: any
           try {
-            e = await ctx.page.evaluate(() => { const w: any = window; return { visites: w.__visites, chemin: location.pathname + location.hash, erreur: w.__erreur, lu: w.__lu, fd: w.__fd || 0 } })
+            e = await ctx.page.evaluate(() => { const w: any = window; return { visites: w.__visites, chemin: location.pathname + location.hash, erreur: w.__erreur, lu: w.__read, fd: w.__fd || 0 } })
           } catch {
             e = { visites: 0, chemin: 'rechargée', erreur: undefined, lu: undefined }
           }

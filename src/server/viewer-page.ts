@@ -25,7 +25,7 @@ import { createHash } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { transpile } from '../transpiler/index.js'
 import { minifyJs } from '../bundler/minify.js'
-import { projeterBlocs } from '../bundler/index.js'
+import { projectBlocks } from '../bundler/index.js'
 import { writeHashedAsset } from './ssr-head.js'
 import { t, getMessagesLang, type MsgKey } from '../messages/index.js'
 import { resolveTrustProxy } from '../mjs-ws/trust-proxy.js'
@@ -68,14 +68,19 @@ function locateRuntimeDir(): string {
 // celle qui finit par `;` ; `fichier:nom` pour un nom déclaré dans un autre fichier du runtime), et le membre posé (sur `µ` ou sur
 // `µ.Element.prototype`), cherché dans le texte du cœur pour savoir s'il manque, puis dans la page pour ne jamais le poser deux fois.
 // Dans l'ordre du cœur. La liste suit le code compilé des visionneuses (tests/viewer-page-coeur-nu.test.ts le garde) ; rien n'entre
-// dans le cœur de l'application, seule la page de la visionneuse s'alourdit
-interface ViewerRuntimeEntry { file: string, member: string, on: 'µ' | 'µ.Element.prototype', block?: string, scope?: readonly string[] }
+// dans le cœur de l'application, seule la page de la visionneuse s'alourdit. `called` : l'entrée ne se joint qu'à la page dont le code
+// compilé écrit le nom de son membre (la suppression profonde, que l'atelier de thème appelle et qu'une construction de production retire
+// d'un cœur où aucune unité ne supprime : son bloc lit la portée de son fichier, la page joint donc le fichier entier)
+interface ViewerRuntimeEntry { file: string, member: string, on: 'µ' | 'µ.Element.prototype', block?: string, scope?: readonly string[], called?: true }
 export const VIEWER_RUNTIME: readonly ViewerRuntimeEntry[] = [
-  { file: 'mjs_init.ts',          member: '_mjs_safeAttr',         on: 'µ', block: 'attribut-filtre' },
-  { file: 'mjs_element.ts',       member: '_mjs_sigFree',          on: 'µ', block: 'libre-sans-signaux' },
-  { file: 'mjs_element.ts',       member: '_mjs_selVal',           on: 'µ', block: 'attribut-select' },
-  { file: 'mjs_element.ts',       member: '_mjs_updAttrNode',      on: 'µ', block: 'attribut-maj', scope: ['MJS_BOOLEAN_PROPS', '_mjs_clsBases', '_mjs_spCk'] },
-  { file: 'mjs_deep.ts',          member: '_mjs_deepSet',          on: 'µ', scope: ['mjs_init.ts:_mjsNatif'] },
+  { file: 'mjs_init.ts',          member: '_mjs_safeAttr',         on: 'µ', block: 'attr-filter' },
+  { file: 'mjs_init.ts',          member: '_mjs_snap',             on: 'µ', block: 'snapshot' },
+  { file: 'mjs_init.ts',          member: '_mjs_lis',              on: 'µ', block: 'longest-run' },
+  { file: 'mjs_element.ts',       member: '_mjs_sigFree',          on: 'µ', block: 'free-handler-no-signals' },
+  { file: 'mjs_element.ts',       member: '_mjs_selVal',           on: 'µ', block: 'attr-select' },
+  { file: 'mjs_element.ts',       member: '_mjs_updAttrNode',      on: 'µ', block: 'attr-upd', scope: ['MJS_BOOLEAN_PROPS', '_mjs_clsBases', '_mjs_spCk'] },
+  { file: 'mjs_deep.ts',          member: '_mjs_deepSet',          on: 'µ', scope: ['mjs_init.ts:_mjsNatFn'] },
+  { file: 'mjs_deep.ts',          member: '_mjs_deepDelete',       on: 'µ', scope: ['mjs_init.ts:_mjsNatFn'], called: true },
   { file: 'mjs_lifecycle.ts',     member: '_mjs_hook',             on: 'µ.Element.prototype' },
   { file: 'mjs_destroy_hooks.ts', member: '_mjs_destroyWithHooks', on: 'µ.Element.prototype' },
   { file: 'mjs_if.ts',            member: '_mjs_updIf',            on: 'µ.Element.prototype' },
@@ -103,8 +108,8 @@ function coreShortNames(coreText: string | null, dir: string): Record<string, st
   const file = join(dir, '.mangle-cache.json')
   if (!existsSync(file)) return null
   try {
-    const noms = JSON.parse(readFileSync(file, 'utf-8'))
-    return noms !== null && typeof noms === 'object' && !Array.isArray(noms) && typeof noms._mjs_mount === 'string' ? noms : null
+    const names = JSON.parse(readFileSync(file, 'utf-8'))
+    return names !== null && typeof names === 'object' && !Array.isArray(names) && typeof names._mjs_mount === 'string' ? names : null
   } catch {
     return null
   }
@@ -112,12 +117,19 @@ function coreShortNames(coreText: string | null, dir: string): Record<string, st
 
 // les fichiers que le cœur n'a pas : un membre posé par `.membre = function` ou `.membre ||= function` (ou `async function`, ou une fonction fléchée) dans le
 // texte du cœur y est, sous son nom court quand le cœur est minifié ; un membre absent de la table n'est pas dans le cœur
-function missingViewerRuntime(coreText: string | null, noms: Record<string, string | false> | null): ViewerRuntimeEntry[] {
+function missingViewerRuntime(coreText: string | null, names: Record<string, string | false> | null): ViewerRuntimeEntry[] {
   if (coreText === null) return [...VIEWER_RUNTIME]
   return VIEWER_RUNTIME.filter(e => {
-    const nom = noms === null ? e.member : noms[e.member]
-    return typeof nom !== 'string' || !new RegExp('\\.' + nom.replace(/[$]/g, '\\$') + '\\s*(?:\\|\\|)?=\\s*(?:async\\s+)?(?:function|\\([^()]*\\)\\s*=>|[\\w$]+\\s*=>)').test(coreText)
+    const name = names === null ? e.member : names[e.member]
+    return typeof name !== 'string' || !new RegExp('\\.' + name.replace(/[$]/g, '\\$') + '\\s*(?:\\|\\|)?=\\s*(?:async\\s+)?(?:function|\\([^()]*\\)\\s*=>|[\\w$]+\\s*=>)').test(coreText)
   })
+}
+
+// de ces fichiers, ceux que cette page joint : une entrée `called` seulement si le code compilé de la page écrit le nom de son membre, et
+// jamais quand une autre entrée apporte déjà son fichier entier (un fichier ne se joint qu'une fois) — sauf cœur introuvable, où chaque
+// fichier attend derrière son test de présence
+function joinedViewerRuntime(missing: readonly ViewerRuntimeEntry[], output: string, coreKnown: boolean): ViewerRuntimeEntry[] {
+  return missing.filter(e => !e.called || (output.includes(e.member) && !(coreKnown && missing.some(x => x !== e && x.block === undefined && x.file === e.file))))
 }
 
 const CORE_IMPORT_LINE_RE = /^import \{ µ \} from [^\n]*\n/
@@ -129,46 +141,46 @@ const CORE_IMPORT_LINE_RE = /^import \{ µ \} from [^\n]*\n/
 // (tests/viewer-page-coeur-nu.test.ts relève les noms que lisent les fichiers joints)
 export const VIEWER_CORE_SCOPE = 'var MJS_RESOLVED_DESTROY = Promise.resolve();'
 
-// les blocs balisés que la page joint sous leur autre forme (`// <sans-nom>`, cf. projeterBlocs) : la note des listes marquées avec leurs
-// lignes (`<lignes-brutes>`, `µraw(liste, true)`), qu'aucune visionneuse n'écrit et qu'une construction de production retire d'un cœur où
+// les blocs balisés que la page joint sous leur autre forme (`// <no-nom>`, cf. projectBlocks) : la note des listes marquées avec leurs
+// lignes (`<raw-lines>`, `µraw(liste, true)`), qu'aucune visionneuse n'écrit et qu'une construction de production retire d'un cœur où
 // aucune unité ne s'en sert ; telle quelle, la passe d'un `{for}` jointe lirait `µ._mjs_rawRows`, absent de ce cœur, et la page planterait
-const VIEWER_BLOCKS_OFF: Record<string, boolean> = { 'lignes-brutes': false }
+const VIEWER_BLOCKS_OFF: Record<string, boolean> = { 'raw-lines': false }
 
 // joint ces fichiers (ou leur bloc) juste après l'import du cœur, chacun derrière son test de présence, précédés des noms de la
 // portée du cœur qu'ils lisent, et les blocs de VIEWER_BLOCKS_OFF sous leur autre forme : la page les pose avant d'avoir le moindre
 // élément, et un cœur qui a déjà le membre n'est jamais redéfini. Sans l'import en tête, ou sans le bloc ou la ligne d'un nom dans
 // son fichier, erreur plutôt que rien joint
 export function withViewerRuntime(js: string, files: readonly ViewerRuntimeEntry[]): string {
-  if (!CORE_IMPORT_LINE_RE.test(js)) throw new Error(t('server.viewer-import-coeur-introuvable'))
-  const dir     = locateRuntimeDir()
-  const lus     = new Map<string, string>()
-  const lire    = (file: string): string => {
-    const deja = lus.get(file)
-    if (deja !== undefined) return deja
+  if (!CORE_IMPORT_LINE_RE.test(js)) throw new Error(t('server.viewer-import-core-not-found'))
+  const dir       = locateRuntimeDir()
+  const readNames = new Map<string, string>()
+  const read      = (file: string): string => {
+    const already = readNames.get(file)
+    if (already !== undefined) return already
     const path = join(dir, file)
-    if (!existsSync(path)) throw new Error(t('server.viewer-runtime-introuvable', { fichier: file, dossier: dir }))
-    const texte = readFileSync(path, 'utf-8')
-    lus.set(file, texte)
-    return texte
+    if (!existsSync(path)) throw new Error(t('server.viewer-runtime-not-found', { file, dir }))
+    const text = readFileSync(path, 'utf-8')
+    readNames.set(file, text)
+    return text
   }
-  const extrait = (file: string, motif: RegExp, morceau: string): string => {
-    const m = lire(file).match(motif)
-    if (!m) throw new Error(t('server.viewer-runtime-morceau-introuvable', { morceau, fichier: file, dossier: dir }))
+  const excerpt = (file: string, pattern: RegExp, piece: string): string => {
+    const m = read(file).match(pattern)
+    if (!m) throw new Error(t('server.viewer-runtime-chunk-not-found', { chunk: piece, file, dir }))
     return m[0]
   }
   // un nom de la portée du cœur, déclaré une fois par la page avec la valeur que sa déclaration lui donne dans le fichier (une ou plusieurs lignes, jusqu'au `;` final)
-  const portee  = new Map<string, string>()
+  const scope  = new Map<string, string>()
   for (const e of files) {
-    for (const ecrit of e.scope ?? []) {
-      const [fichier, nom] = ecrit.includes(':') ? ecrit.split(':') : [e.file, ecrit]
-      if (!portee.has(nom)) portee.set(nom, 'var ' + extrait(fichier, new RegExp('^(?:var )?' + nom + ' = (?:[^\\n]*\\n)*?[^\\n]*;$', 'm'), nom).replace(/^var /, ''))
+    for (const written of e.scope ?? []) {
+      const [file, name] = written.includes(':') ? written.split(':') : [e.file, written]
+      if (!scope.has(name)) scope.set(name, 'var ' + excerpt(file, new RegExp('^(?:var )?' + name + ' = (?:[^\\n]*\\n)*?[^\\n]*;$', 'm'), name).replace(/^var /, ''))
     }
   }
   const runtime = files.map(e => {
-    const code = e.block === undefined ? lire(e.file) : extrait(e.file, new RegExp('^// <' + e.block + '>\\n[\\s\\S]*?^// </' + e.block + '>$', 'm'), '<' + e.block + '>')
-    return 'if (!' + e.on + '.' + e.member + ') {\n' + projeterBlocs(code, VIEWER_BLOCKS_OFF) + '\n}'
+    const code = e.block === undefined ? read(e.file) : excerpt(e.file, new RegExp('^// <' + e.block + '>\\n[\\s\\S]*?^// </' + e.block + '>$', 'm'), '<' + e.block + '>')
+    return 'if (!' + e.on + '.' + e.member + ') {\n' + projectBlocks(code, VIEWER_BLOCKS_OFF) + '\n}'
   }).join('\n')
-  return js.replace(CORE_IMPORT_LINE_RE, imp => imp + [VIEWER_CORE_SCOPE, ...portee.values()].join('\n') + '\n' + runtime + '\n')
+  return js.replace(CORE_IMPORT_LINE_RE, imp => imp + [VIEWER_CORE_SCOPE, ...scope.values()].join('\n') + '\n' + runtime + '\n')
 }
 
 const CORE_IMPORT_RE = /const µCore = '([^']+)';/
@@ -209,24 +221,24 @@ export const THEME_VIEWER: ViewerSpec = { fileName: 'theme-viewer.mjs', moduleNa
 // cache MÉMOIRE PAR VISIONNEUSE (clé `spec.fileName`) : ouvrir l'atelier /__mjs/theme n'invalide
 // jamais le cache du journal, et réciproquement — sinon chaque aller-retour entre les deux
 // visionneuses recompilait l'autre à chaque fois.
-const cache = new Map<string, { corePath: string, csp: boolean, kit: string, noms: string, lang: string, js: string }>()
+const cache = new Map<string, { corePath: string, csp: boolean, kit: string, names: string, lang: string, js: string }>()
 
 // textes des visionneuses : `⟪cle⟫` dans leur source désigne `viewer.<cle>` du catalogue, dans la langue des messages —
-// littéral de chaîne dans le script, texte échappé dans le gabarit ; `⟪#langue⟫` donne la langue elle-même (règle du pluriel)
+// littéral de chaîne dans le script, texte échappé dans le gabarit ; `⟪#lang⟫` donne la langue elle-même (règle du pluriel)
 const TEXT_MARK_RE = /⟪(#?[a-z0-9.-]+)⟫/g
 
-function viewerText(cle: string): string {
-  return cle === '#langue' ? getMessagesLang() : t(('viewer.' + cle) as MsgKey) ?? cle
+function viewerText(key: string): string {
+  return key === '#lang' ? getMessagesLang() : t(('viewer.' + key) as MsgKey) ?? key
 }
 
 /** Source d'une visionneuse avec ses textes dans la langue des messages. Exportée pour test direct. */
 export function localizeViewerSource(source: string): string {
-  const fin      = source.indexOf('</script>')
-  const script   = fin === -1 ? '' : source.slice(0, fin)
-  const reste    = fin === -1 ? source : source.slice(fin)
-  const litteral = (s: string): string => "'" + s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n') + "'"
-  const html     = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/\{/g, '&#123;').replace(/\}/g, '&#125;')
-  return script.replace(TEXT_MARK_RE, (_m, cle: string) => litteral(viewerText(cle))) + reste.replace(TEXT_MARK_RE, (_m, cle: string) => html(viewerText(cle)))
+  const end     = source.indexOf('</script>')
+  const script  = end === -1 ? '' : source.slice(0, end)
+  const rest    = end === -1 ? source : source.slice(end)
+  const literal = (s: string): string => "'" + s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n') + "'"
+  const html    = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/\{/g, '&#123;').replace(/\}/g, '&#125;')
+  return script.replace(TEXT_MARK_RE, (_m, key: string) => literal(viewerText(key))) + rest.replace(TEXT_MARK_RE, (_m, key: string) => html(viewerText(key)))
 }
 
 const CSP_URL_MARKER = '\0mjs-viewer-src:'
@@ -238,7 +250,7 @@ const CSP_URL_MARKER = '\0mjs-viewer-src:'
  *  continue de tourner). */
 export async function getViewerScript(manifestPath: string | null, spec: ViewerSpec, outputDir?: string): Promise<string> {
   if (!manifestPath || !existsSync(manifestPath)) {
-    throw new Error(t('server.journal-viewer-manifest-absent'))
+    throw new Error(t('server.journal-viewer-manifest-missing'))
   }
   const manifestSrc = readFileSync(manifestPath, 'utf-8')
   const m = manifestSrc.match(CORE_IMPORT_RE)
@@ -252,27 +264,28 @@ export async function getViewerScript(manifestPath: string | null, spec: ViewerS
   // qui n'a NI la ligne `const µCore` NI un export (illisible/corrompu) garde l'erreur d'origine.
   const corePath = m ? m[1] : (/\bexport\s*\{/.test(manifestSrc) ? '/__mjs/bundle.js' : null)
   if (!corePath) {
-    throw new Error(t('server.journal-viewer-core-introuvable'))
+    throw new Error(t('server.journal-viewer-core-not-found'))
   }
   const csp = CSP_FLAG_RE.test(manifestSrc)
   // ce que le cœur chargé n'a pas (cœur nu) : la page l'apporte ; la clé du cache le suit, le cœur pouvant changer sous le même
   // chemin, et la table des noms courts aussi
   const coreText = readCoreText(manifestPath, manifestSrc, corePath, m !== null, outputDir)
-  const noms     = coreShortNames(coreText, outputDir ?? dirname(manifestPath))
-  const missing  = missingViewerRuntime(coreText, noms)
+  const names    = coreShortNames(coreText, outputDir ?? dirname(manifestPath))
+  const missing  = missingViewerRuntime(coreText, names)
   const kit      = missing.map(e => e.member).join(',')
-  const table    = noms === null ? '' : JSON.stringify(noms)
+  const table    = names === null ? '' : JSON.stringify(names)
   const cached   = cache.get(spec.fileName)
   const lang     = getMessagesLang()
-  if (cached && cached.corePath === corePath && cached.csp === csp && cached.kit === kit && cached.noms === table && cached.lang === lang) return cached.js
+  if (cached && cached.corePath === corePath && cached.csp === csp && cached.kit === kit && cached.names === table && cached.lang === lang) return cached.js
   const source = localizeViewerSource(readFileSync(locateViewerSource(spec.fileName), 'utf-8'))
   const { output } = await transpile(source, { moduleName: spec.moduleName })
   const withCore = output.replace("µ.asset('mjs_core.js')", JSON.stringify(corePath))
-  const page     = missing.length > 0 ? withViewerRuntime(withCore, missing) : withCore
+  const joints   = joinedViewerRuntime(missing, output, coreText !== null)
+  const page     = joints.length > 0 ? withViewerRuntime(withCore, joints) : withCore
   // cœur minifié : la page, fichiers joints compris, prend les noms courts de sa construction — sur une copie de la table, ses
   // noms à elle n'entrent jamais dans la construction — et ne fait que minifier (`dev`) : rien n'est retiré de son code
-  const short    = noms === null ? page : (await minifyJs(page, { force: true, dev: true, mangleCache: { ...noms }, filename: 'mjs_viewer_' + spec.moduleName + '.js' })).code
-  let js         = escapeScriptClose(short)
+  const short = names === null ? page : (await minifyJs(page, { force: true, dev: true, mangleCache: { ...names }, filename: 'mjs_viewer_' + spec.moduleName + '.js' })).code
+  let js      = escapeScriptClose(short)
   if (csp) {
     // (mode `csp`) — `<script type="module">` en ligne BLOQUÉ par `script-src` sans
     // 'unsafe-inline' (vérifié en navigateur). Sort en fichier servi : même trailer
@@ -289,7 +302,7 @@ export async function getViewerScript(manifestPath: string | null, spec: ViewerS
     const url = writeHashedAsset(outputDir, urlPrefix, 'mjs_viewer_' + spec.moduleName, '.js', full)
     js = CSP_URL_MARKER + url
   }
-  cache.set(spec.fileName, { corePath, csp, kit, noms: table, lang, js })
+  cache.set(spec.fileName, { corePath, csp, kit, names: table, lang, js })
   return js
 }
 
@@ -371,8 +384,8 @@ export function setViewerPageHeaders(res: ServerResponse, viewerCfg: boolean | s
  *  l'en-tête n'est pas lu. Décide `Secure` sur le cookie de la visionneuse. */
 export function isSecureRequest(req: IncomingMessage, trustProxy: unknown): boolean {
   if ((req.socket as any).encrypted) return true
-  const confiance = resolveTrustProxy(trustProxy)
-  if (confiance === null || !confiance.trusts(req.socket.remoteAddress)) return false
+  const trust = resolveTrustProxy(trustProxy)
+  if (trust === null || !trust.trusts(req.socket.remoteAddress)) return false
   const proto = req.headers['x-forwarded-proto']
   return (Array.isArray(proto) ? proto[0] : proto ?? '').split(',')[0].trim().toLowerCase() === 'https'
 }
@@ -385,6 +398,6 @@ export function isSecureRequest(req: IncomingMessage, trustProxy: unknown): bool
  *  d'entrée joignables (`mjs dev` → server/index.ts, `mjs serve` → render-server.ts). */
 export function warnIfJournalViewerOpenInProd(viewerCfg: boolean | string | undefined, env?: 'dev' | 'prod'): void {
   if (viewerCfg === true && isProdEnv(env)) {
-    console.error(t('server.journal-viewer-ignore-en-prod'))
+    console.error(t('server.journal-viewer-ignored-in-prod'))
   }
 }

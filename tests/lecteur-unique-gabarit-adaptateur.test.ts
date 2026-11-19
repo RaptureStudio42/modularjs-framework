@@ -5,7 +5,7 @@
 import { strict as assert } from 'node:assert'
 import { parse, type ParseDiag, type TagRef } from '../src/parser/index.js'
 import { commeFigee } from './helpers/lecture-figee.js'
-import { lireFichier, parcourir, type Noeud } from '../src/reader/index.js'
+import { readFile, traverse, type Node } from '../src/reader/index.js'
 
 interface Lu { arbre?: unknown, refs?: TagRef[], erreur?: string, console: string[] }
 
@@ -56,10 +56,7 @@ const BIEN_FORMES: string[] = [
   '{if $a}<@icone>{else}<@icone2>dehors{end}',
   '{for item in $liste by id}<li>{item.nom}</li>{end}{for i, x in $l}{i}{x}{end}{for index in $l}{index}{end}',
   '{for p in $items.filter((i) ->\n  i.ok)}<b>{p}</b>{end}',
-  '{await $promesse}attente{success val}ok {val}{error e}raté {e}{end}',
-  '{await $p *skeleton(lines: 3)}<p>attente</p>{success}<p>{$x}</p>{end}',
   '{await $p}{success}<div><h2>{$titre}</h2><p>{$texte}</p></div>{end}',
-  '{await.keep chercher($q, µsignal)}attente{success v}<b>{v}</b>{error e}{e}{end}',
   '{await.keep $p *skeleton(lines: 2)}{success}<p>{$x}</p>{end}',
   '{await.keep\n  charger($id)}<p>{µpending}</p>{success v}{v}{end}',
   '<div>{success}{error}</div>{key $id}<b>{$id}</b>{end}',
@@ -75,8 +72,13 @@ const BIEN_FORMES: string[] = [
 ]
 
 describe('le gabarit lu par l\'arbre unique : le même arbre de Node que l\'ancienne lecture', () => {
+  // un gabarit bien formé n'est pas refusé ; sa lecture est celle qui est figée
   for (const html of BIEN_FORMES) {
-    it(`lu par l'arbre : ${JSON.stringify(html.slice(0, 70))}`, () => comparer(html))
+    it(`lu par l'arbre : ${JSON.stringify(html.slice(0, 70))}`, () => {
+      const lu = lire(html)
+      assert.equal(lu.erreur, undefined, 'refusé')
+      commeFigee([html, {}], lu)
+    })
   }
 
   it('modèles en fichier, *guard d\'office, lignes du fichier : même arbre', () => {
@@ -119,6 +121,10 @@ describe('le gabarit lu par l\'arbre unique : le même arbre de Node que l\'anci
     '{await *skeleton}{success v}{v}{end}',
     '{await.keep *skeleton(lines: 2)}{success v}{v}{end}',
     '<div *fade (x)>a</div>',
+    // refusés : `e` est un nom réservé ; un squelette et une branche d'attente déjà écrite
+    '{await $promesse}attente{success val}ok {val}{error e}raté {e}{end}',
+    '{await $p *skeleton(lines: 3)}<p>attente</p>{success}<p>{$x}</p>{end}',
+    '{await.keep chercher($q, µsignal)}attente{success v}<b>{v}</b>{error e}{e}{end}',
   ]
   for (const html of FAUTES) {
     it(`faute : le même message, ${JSON.stringify(html)}`, () => {
@@ -137,18 +143,18 @@ describe('le gabarit lu par l\'arbre unique : le même arbre de Node que l\'anci
   })
 
   it('le lecteur lit les blocs comme le compilateur : le mot du bloc collé à l\'accolade, `{else}` et `{end}` écrits seuls', () => {
-    const f = lireFichier('{ if $a}a{end }{else }<p>{success}</p>', { gabarit: true })
+    const f = readFile('{ if $a}a{end }{else }<p>{success}</p>', { template: true })
     const sortes: string[] = []
-    parcourir(f, (n: Noeud) => { sortes.push(n.sorte) })
-    assert.deepEqual(sortes, ['fichier', 'expression', 'texte', 'expression', 'expression', 'balise', 'expression'])
+    traverse(f, (n: Node) => { sortes.push(n.kind) })
+    assert.deepEqual(sortes, ['file', 'expression', 'text', 'expression', 'expression', 'tag', 'expression'])
     assert.deepEqual(f.diagnostics, [])
   })
 
   it('le gabarit seul : ni section ni directive, et son code découpé sans être compilé', () => {
-    const f = lireFichier('<style>a { color: red }</style>\n@import x\n<p>{$a}</p>', { gabarit: true })
+    const f = readFile('<style>a { color: red }</style>\n@import x\n<p>{$a}</p>', { template: true })
     const sortes: string[] = []
-    parcourir(f, (n: Noeud) => { sortes.push(n.sorte) })
+    traverse(f, (n: Node) => { sortes.push(n.kind) })
     assert.ok(!sortes.includes('style') && !sortes.includes('directive'), sortes.join(' '))
-    assert.ok(f.codes.length > 0 && f.codes.every((c) => c.js === null && c.erreur === null))
+    assert.ok(f.codes.length > 0 && f.codes.every((c) => c.js === null && c.error === null))
   })
 })

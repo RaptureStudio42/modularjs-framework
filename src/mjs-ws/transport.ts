@@ -54,12 +54,12 @@ export const DEFAULT_MAX_PAYLOAD = 65536
 const IPV4_MAPPED_PREFIX = '::ffff:'
 export function normalizeRemoteAddress(address: string | undefined): string | undefined {
   if (address === undefined) return undefined
-  let forme = address
+  let shape = address
   if (isIP(address) === 6 && !address.includes('%')) {
-    try { forme = new SocketAddress({ address, family: 'ipv6' }).address }
+    try { shape = new SocketAddress({ address, family: 'ipv6' }).address }
     catch { /* adresse refusée par le système : laissée telle quelle */ }
   }
-  return forme.toLowerCase().indexOf(IPV4_MAPPED_PREFIX) === 0 ? forme.slice(IPV4_MAPPED_PREFIX.length) : forme
+  return shape.toLowerCase().indexOf(IPV4_MAPPED_PREFIX) === 0 ? shape.slice(IPV4_MAPPED_PREFIX.length) : shape
 }
 
 // adresse qui compte pour les limites PAR ADRESSE — plafond de connexions, débit partagé et mise au banc (core.ts),
@@ -67,23 +67,23 @@ export function normalizeRemoteAddress(address: string | undefined): string | un
 // reçoit souvent un entier (256 préfixes /64, des milliards d'adresses) qu'il ferait tourner pour multiplier ses
 // connexions et ses essais. IPv4 : l'adresse elle-même ; adresse inconnue : `undefined`
 export function addressForLimits(address: string | undefined): string | undefined {
-  const forme = normalizeRemoteAddress(address)
-  if (forme === undefined) return undefined
-  return isIP(forme) === 6 ? ipv6Prefix(forme, 56) : forme
+  const shape = normalizeRemoteAddress(address)
+  if (shape === undefined) return undefined
+  return isIP(shape) === 6 ? ipv6Prefix(shape, 56) : shape
 }
 
 // préfixe /56 ou /48 d'une IPv6 écrite sous n'importe quelle forme (abrégée, avec zone `%eth0`)
-export function ipv6Prefix(adresse: string, bits: 48 | 56): string {
-  const [tete, queue] = adresse.split('%')[0].split('::')
-  const groupes = tete ? tete.split(':') : []
+export function ipv6Prefix(address: string, bits: 48 | 56): string {
+  const [head, queue] = address.split('%')[0].split('::')
+  const groups = head ? head.split(':') : []
   if (queue !== undefined) {
-    const fin = queue ? queue.split(':') : []
-    while (groupes.length + fin.length < 8) groupes.push('0')
-    groupes.push(...fin)
+    const end = queue ? queue.split(':') : []
+    while (groups.length + end.length < 8) groups.push('0')
+    groups.push(...end)
   }
-  const valeurs = groupes.slice(0, 4).map(g => parseInt(g, 16) || 0)
-  const tete48  = valeurs.slice(0, 3).map(v => v.toString(16)).join(':')
-  return bits === 48 ? tete48 + '::/48' : tete48 + ':' + ((valeurs[3] ?? 0) & 0xff00).toString(16) + '::/56'
+  const values = groups.slice(0, 4).map(g => parseInt(g, 16) || 0)
+  const head48 = values.slice(0, 3).map(v => v.toString(16)).join(':')
+  return bits === 48 ? head48 + '::/48' : head48 + ':' + ((values[3] ?? 0) & 0xff00).toString(16) + '::/56'
 }
 
 /** Une connexion unique, côté serveur — quel que soit le transport réel. */
@@ -166,7 +166,7 @@ export class MemoryClientSocket {
   // trame binaire directement sur ce faux socket : le VRAI client µ.socket n'envoie que du texte
   // (JSON.stringify), ce paramètre élargi ne change donc rien pour lui (string reste toujours accepté).
   send(data: string | Uint8Array): void {
-    if (this.readyState !== MemoryClientSocket.OPEN) throw new Error(t('ws.transport.send-non-ouvert'))
+    if (this.readyState !== MemoryClientSocket.OPEN) throw new Error(t('ws.transport.send-not-open'))
     const server = this._server
     queueMicrotask(() => { if (server) server._receiveFromClient(data) })
   }
@@ -241,7 +241,7 @@ export class MemoryTransport implements MjsWsTransport {
     this._started = false
     const clients = this._clients
     this._clients = []
-    for (const c of clients) c.close(1001, t('ws.transport.arrete'))
+    for (const c of clients) c.close(1001, t('ws.transport.stopped'))
   }
 
   /**
@@ -252,7 +252,7 @@ export class MemoryTransport implements MjsWsTransport {
    * réseau — puis le client reçoit son `onopen`.
    */
   connect(opts: MemoryTransportConnectOpts = {}): MemoryClientSocket {
-    if (!this._started) throw new Error(t('ws.transport.connect-avant-start'))
+    if (!this._started) throw new Error(t('ws.transport.connect-before-start'))
     const client = new MemoryClientSocket(opts.url ?? 'memory://mjs-ws', opts.protocols)
     // `address` jamais posée ICI — harnais de test, aucune IP réelle à
     // exposer : cf. le commentaire de MjsWsRemoteInfo.address (jamais comptée/limitée par IP).

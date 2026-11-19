@@ -1,4 +1,4 @@
-// `mjs build --cache=verifier` sur place, avec un écart (un fichier du cache faussé à la main) et un composant changé : la commande sort en
+// `mjs build --cache=verify` sur place, avec un écart (un fichier du cache faussé à la main) et un composant changé : la commande sort en
 // code 1, et la sortie devient exactement celle de `mjs build` partie du même état — le .js d'un composant retiré purgé, pages
 // prérendues refaites — en développement comme en production
 
@@ -22,7 +22,7 @@ const SOURCES: Record<string, string> = {
   'libre.mjs':   '<p class="l">libre</p>\n',
 }
 
-describe('mjs build --cache=verifier : en écart, la sortie devient celle de la construction complète', function () {
+describe('mjs build --cache=verify : en écart, la sortie devient celle de la construction complète', function () {
   this.timeout(300_000)
 
   for (const mode of [[], ['--prod']]) {
@@ -47,7 +47,7 @@ describe('mjs build --cache=verifier : en écart, la sortie devient celle de la 
       const kept  = [...files(cache).keys()].find(f => /^pied-\w+\.js$/.test(f))
       assert.ok(kept !== undefined, init.out)
       appendFileSync(join(cache, kept), '\n// faussé à la main\n')
-      const checked = build(root, [...mode, '--cache=verifier'])
+      const checked = build(root, [...mode, '--cache=verify'])
       assert.equal(checked.status, 1, checked.out)
       assert.match(checked.out, /cache jeté/, checked.out)
       renameSync(pub, join(root, 'verifie'))

@@ -23,7 +23,7 @@ function monte(opts: any = {}) {
   const handlers: Record<string, (p: unknown, c: unknown) => void> = {}
   const app: any = { on(type: string, h: (p: unknown, c: unknown) => void) { handlers[type] = h }, stop: async () => {} }
   const pkg: any = heatmapPackage({ origins: [SITE], onLog: () => {}, ...opts })
-  pkg.installer(app)
+  pkg.install(app)
   const clients = new Map<string, any>()
   // `origin` null : une connexion sans en-tête Origin
   const recoit = (p: unknown, origin: string | null = SITE, qui = 'v') => {

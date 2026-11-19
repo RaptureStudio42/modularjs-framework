@@ -111,7 +111,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) playTogether(descr
       await page.waitForFunction(() => { const o: any = document.querySelector('mjs-ombre'); return !!document.querySelector('mjs-hote a.aucun') && !!(o && o._shadow && o._shadow.querySelector('a.aucun')) })
       const pret = await page.evaluate(([f, q]: [Forme, string]) => {
         const w: any = window
-        w.__meme = true
+        w.__unchanged = true
         if (f === 'synchrone') {
           w.µ.config.confirm = false
           w.confirm = (m: string) => { console.log(q + m); return true }
@@ -138,7 +138,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) playTogether(descr
       else await page.click(`mjs-hote a.${classe}`)
       await page.waitForTimeout(700)
       sortie.url  = page.url()
-      sortie.meme = await page.evaluate(() => (window as any).__meme === true).catch(() => false)
+      sortie.meme = await page.evaluate(() => (window as any).__unchanged === true).catch(() => false)
       return sortie
     }
     finally { await contexte.close() }

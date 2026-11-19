@@ -91,36 +91,36 @@ describe('theme-viewer.mjs — l\'atelier est rangé par source, et l\'écriture
   })
 
   it('une source = un groupe — les deux variantes d\'un même fichier comptent pour deux', () => {
-    const sources = c.findAll('.tete .source').map((n: any) => n.textContent)
+    const sources = c.findAll('.head .source').map((n: any) => n.textContent)
     assert.deepEqual(sources, ['app_theme', 'app_theme', 'carte'],
       'les thèmes passent avant les modules, et la variante sombre a son propre groupe')
-    assert.deepEqual(c.findAll('.tete .variante').map((n: any) => n.textContent), ['variante dark'])
+    assert.deepEqual(c.findAll('.head .variant').map((n: any) => n.textContent), ['variante dark'])
   })
 
   it('une variable déclarée deux fois apparaît dans les DEUX groupes, avec sa valeur et sa ligne', () => {
-    const groupes = c.findAll('.groupe')
+    const groupes = c.findAll('.group')
     assert.equal(groupes.length, 3)
     const clair  = groupes[0].querySelectorAll('.variable')
     const sombre = groupes[1].querySelectorAll('.variable')
     assert.equal(clair.length, 1)
     assert.equal(sombre.length, 1)
-    assert.equal(clair[0].querySelector('.nom').textContent, 'accent')
-    assert.equal(sombre[0].querySelector('.nom').textContent, 'accent')
-    assert.equal(clair[0].querySelector('.valeur').textContent, '#3b82f6')
-    assert.equal(sombre[0].querySelector('.valeur').textContent, '#60a5fa')
-    assert.equal(clair[0].querySelector('.emplacement').textContent, 'ligne 4')
-    assert.equal(sombre[0].querySelector('.emplacement').textContent, 'ligne 12')
+    assert.equal(clair[0].querySelector('.name').textContent, 'accent')
+    assert.equal(sombre[0].querySelector('.name').textContent, 'accent')
+    assert.equal(clair[0].querySelector('.value').textContent, '#3b82f6')
+    assert.equal(sombre[0].querySelector('.value').textContent, '#60a5fa')
+    assert.equal(clair[0].querySelector('.location').textContent, 'ligne 4')
+    assert.equal(sombre[0].querySelector('.location').textContent, 'ligne 12')
   })
 
   it('la couleur choisie dans le groupe sombre s\'écrit ligne 12 — pas ligne 4', async () => {
     // `checked=!{$write}` écoute « change » (generator/attributes) et lit `el.checked` : un clic
     // nu ne suffit pas sous happy-dom, on pose l'état PUIS on émet l'événement que le binding attend.
-    c.find('.bascule input').checked = true
-    await c.fire('.bascule input', 'change')
-    assert.ok(c.find('.precision.ecrit'), 'l\'interrupteur « Enregistrer dans le source » doit être allumé')
-    await c.type('.groupes section:nth-child(2) input.pastille', '#ff0000')
+    c.find('.toggle input').checked = true
+    await c.fire('.toggle input', 'change')
+    assert.ok(c.find('.precision.written'), 'l\'interrupteur « Enregistrer dans le source » doit être allumé')
+    await c.type('.groups section:nth-child(2) input.swatch', '#ff0000')
     // l'écriture part à la fin du choix (`change`), jamais à chaque `input` d'un glisser
-    await c.fire('.groupes section:nth-child(2) input.pastille', 'change')
+    await c.fire('.groups section:nth-child(2) input.swatch', 'change')
     assert.equal(ecritures.length, 1, 'un seul enregistrement, celui de la ligne touchée')
     assert.equal(ecritures[0].name, 'accent')
     assert.equal(ecritures[0].file, 'src/app.theme.mjs')
@@ -132,11 +132,11 @@ describe('theme-viewer.mjs — l\'atelier est rangé par source, et l\'écriture
   it('« Rétablir » vide bien les surcharges — `for … of` sur un objet ne les parcourait pas', async () => {
     // Avant : `for name of $edits` compilait en `for…of` sur un OBJET (TypeError au clic), le
     // bouton ne rétablissait rien. Le filet tient le comportement, pas la forme du code.
-    await c.type('.groupes section:nth-child(3) input.pastille', '#00ff00')
-    assert.match(c.find('.retablir-tout').textContent, /2 couleurs/)
-    await c.click('.retablir-tout')
-    assert.equal(c.find('.retablir-tout'), null, 'plus aucune surcharge : le bouton disparaît')
-    assert.equal(c.findAll('.groupes section')[1].querySelector('.valeur').textContent, '#60a5fa',
+    await c.type('.groups section:nth-child(3) input.swatch', '#00ff00')
+    assert.match(c.find('.restore-all').textContent, /2 couleurs/)
+    await c.click('.restore-all')
+    assert.equal(c.find('.restore-all'), null, 'plus aucune surcharge : le bouton disparaît')
+    assert.equal(c.findAll('.groups section')[1].querySelector('.value').textContent, '#60a5fa',
       'la ligne est revenue à la valeur de son source')
   })
 })

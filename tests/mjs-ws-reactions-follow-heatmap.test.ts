@@ -216,7 +216,7 @@ describe('mjs-ws — paquet CARTE DE CHALEUR', () => {
     assert.deepEqual(zone.pts, [[0.1, 0.1], [0.2, 0.2]], 'le compte 2 et l\'IP 9.9.9.9 ne comptent pas')
     assert.deepEqual(zone.ts, [5_000_000, 5_001_000], 'l\'heure de chaque point')
     const page = await (await fetch('http://127.0.0.1:' + port() + '/heatmap')).text()
-    assert.match(page, /id="recents"/)
+    assert.match(page, /id="recent"/)
     await app.stop()
   })
 

@@ -37,9 +37,9 @@
     if (heavy.size && dt > 0 && dt < 250 && ++count > 30) {
       sum += dt;
       if (count === 90) {
-        var lent = sum > 1680;
-        bad   = lent ? bad + 1 : 0;
-        good  = lent ? 0 : good + 1;
+        var slow = sum > 1680;
+        bad   = slow ? bad + 1 : 0;
+        good  = slow ? 0 : good + 1;
         count = 30;
         sum   = 0;
         if (bad > 1) µ._mjs_fxGoLite();

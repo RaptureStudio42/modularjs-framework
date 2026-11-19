@@ -94,14 +94,15 @@ export async function construire(mode: Mode, sources: Record<string, string>, ba
 
 export type Ouverture = { page: any, erreurs: string[], avis: string[], fermer: () => Promise<void> }
 
-// la page est servie par un faux serveur : le document, puis les fichiers de `out/` en production
-export async function charger(browser: any, cible: Cible, balise: string, variante = ''): Promise<Ouverture> {
+// la page est servie par un faux serveur : le document, puis les fichiers de `out/` en production ; de chaque avertissement, les `signes`
+// premiers signes sont gardés ; `avant` joue sur la page avant qu'elle ne s'ouvre (relais réseau d'un test, posé avant la première demande)
+export async function charger(browser: any, cible: Cible, balise: string, variante = '', signes = 200, avant?: (page: any) => Promise<void>): Promise<Ouverture> {
   const ctx  = await browser.newContext({ viewport: { width: 900, height: 700 } })
   const page = await ctx.newPage()
   const erreurs: string[] = []
   const avis: string[]    = []
   page.on('pageerror', (e: any) => erreurs.push(String(e.message ?? e).slice(0, 200)))
-  page.on('console', (m: any) => { if (m.type() === 'error' || m.type() === 'warning') avis.push(m.text().slice(0, 200)) })
+  page.on('console', (m: any) => { if (m.type() === 'error' || m.type() === 'warning') avis.push(m.text().slice(0, signes)) })
   await page.addInitScript('window.__name = (f) => f')
   await page.addInitScript(SONDE)
   await page.route('http://liaison.test/**', (route: any) => {
@@ -111,6 +112,7 @@ export async function charger(browser: any, cible: Cible, balise: string, varian
     if (chemin.startsWith('/out/') && existsSync(fichier)) return route.fulfill({ contentType: chemin.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'application/json', body: readFileSync(fichier) })
     return route.fulfill({ status: 404, body: '' })
   })
+  if (avant) await avant(page)
   await page.goto('http://liaison.test/', { waitUntil: 'load' })
   return { page, erreurs, avis, fermer: () => ctx.close() }
 }

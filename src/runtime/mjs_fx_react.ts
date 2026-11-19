@@ -67,7 +67,7 @@
     // aucune scène autour : celle de la page, avec les réglages du premier bouton, posée dès le bouton
     // (un visiteur qui n'a pas cliqué voit monter les émojis des autres) et gardée tant qu'un bouton
     // qui s'en sert est là ; le bouton est inscrit à la scène qu'il prend (elle le prévient quand elle repart)
-    var rejoint = function() {
+    var rejoin = function() {
       var st = _mjsReactFind(el);
       if (!st) st = µ._mjs_fxReactPage = _mjsReactStage(null, s, true, el, comp);
       st.users.add(me);
@@ -75,20 +75,20 @@
       return st;
     };
     // après les scènes posées dans le même rendu (<@document *react>, une zone autour)
-    var attente = setTimeout(rejoint, 0);
+    var wait = setTimeout(rejoin, 0);
     me.again = function() {
-      clearTimeout(attente);
-      attente = setTimeout(rejoint, 0);
+      clearTimeout(wait);
+      wait = setTimeout(rejoin, 0);
     };
     var onClick = function() {
-      var stage = rejoint();
+      var stage = rejoin();
       var e = s.emoji || (el.textContent || '').trim();
       if (!e) return;
       for (var i = 0; i < (s.count || 1); i++) stage.send(e);
     };
     µ._mjs_dom.addEventListener(el, 'click', onClick);
     var off = function() {
-      clearTimeout(attente);
+      clearTimeout(wait);
       µ._mjs_dom.removeEventListener(el, 'click', onClick);
       var lazy = µ._mjs_fxReactPage;
       if (lazy && lazy.users.delete(me) && lazy.users.size === 0) {
@@ -136,10 +136,10 @@ function _mjsReactStage(host, s, own, el, comp) {
     µ.error(µ._mjs_msg('reactNoCore', null, '*react : le module socket manque au cœur (réglage runtime)'));
     return { users: new Set(), send: function() {}, set: function() {}, destroy: function() {} };
   }
-  var page  = !host;
-  var nom   = µ._mjs_fxRoomName(s);
-  var sock  = null;
-  var salon = null;
+  var page = !host;
+  var name = µ._mjs_fxRoomName(s);
+  var sock = null;
+  var room = null;
   if (page) µ._mjs_fxAdopt(document, 'react');
   var restore = page ? function() {} : µ._mjs_fxRelative(host);
   var stage = document.createElement('div');
@@ -162,11 +162,11 @@ function _mjsReactStage(host, s, own, el, comp) {
     var w = stage.clientWidth || (page ? window.innerWidth : 300);
     var h = stage.clientHeight || (page ? window.innerHeight : 300);
     var long = (Math.abs(v.x) * w + Math.abs(v.y) * h) * (s.height || 60) / 100;
-    var cote = (Math.random() * 2 - 1) * (s.spread === void 0 ? 60 : s.spread);
+    var side = (Math.random() * 2 - 1) * (s.spread === void 0 ? 60 : s.spread);
     i.style.left = (50 - v.x * 47 + p.x * r).toFixed(1) + '%';
     i.style.top  = (50 - v.y * 47 + p.y * r).toFixed(1) + '%';
-    i.style.setProperty('--dx', Math.round(v.x * long + p.x * cote) + 'px');
-    i.style.setProperty('--dy', Math.round(v.y * long + p.y * cote) + 'px');
+    i.style.setProperty('--dx', Math.round(v.x * long + p.x * side) + 'px');
+    i.style.setProperty('--dy', Math.round(v.y * long + p.y * side) + 'px');
     i.style.setProperty('--mjs-fx-react-ease', _mjsReactEase(s.gravity === void 0 ? -1 : s.gravity));
     stage.appendChild(i);
     // arrivé, il s'en va ; filet large : sa durée a pu changer depuis la pose (variable CSS suivie)
@@ -174,18 +174,18 @@ function _mjsReactStage(host, s, own, el, comp) {
     setTimeout(function() { i.remove(); }, µ._mjs_fxMs(s.duration, 2500) * 4 + 100);
   };
   var unlink = µ._mjs_fxSock(s.sock, s.server, _mjsReactNoServer(), function(k) {
-    sock  = k;
-    nom   = µ._mjs_fxRoomName(s);
+    sock = k;
+    name = µ._mjs_fxRoomName(s);
     µ._mjs_fxPackage(sock, 'reactions:', '*react', 'reactionsPackage');
-    salon = µ._mjs_fxRoom(sock, 'reactions:' + nom);
+    room = µ._mjs_fxRoom(sock, 'reactions:' + name);
     var offFly = sock.on('reactions:send', function(m) {
-      if (m && m.room === nom && typeof m.e === 'string') fly(m.e, false);
+      if (m && m.room === name && typeof m.e === 'string') fly(m.e, false);
     });
     return function() {
       offFly();
-      salon.leave();
-      sock  = null;
-      salon = null;
+      room.leave();
+      sock = null;
+      room = null;
     };
   }, { read: µ._mjs_fxVar(el, 'react', comp), room: s.room ? null : function() { return µ._mjs_fxRoomName(s); } });
   return {
@@ -198,7 +198,7 @@ function _mjsReactStage(host, s, own, el, comp) {
       while (sent.length && now - sent[0] >= 1000) sent.shift();
       if (sent.length >= (s.rate || 5)) return;
       sent.push(now);
-      sock.send('reactions:send', { room: nom, e: e }, { volatile: true });
+      sock.send('reactions:send', { room: name, e: e }, { volatile: true });
       fly(e, true);
     },
     // un réglage de l'allure change sur place ; le serveur, le salon ou la scène : reposée

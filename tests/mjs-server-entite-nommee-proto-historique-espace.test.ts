@@ -11,7 +11,7 @@ import { createSpace } from '../src/mjs-server/space.js'
 describe('serveur de jeu — une entité nommée `__proto__` reste une entité comme une autre', () => {
   it('historique : la position poussée se retrouve au rembobinage, en clé propre, sans prototype changé', () => {
     const histo = createHistory(3)
-    histo.pousser(1, 1000, JSON.parse('{"__proto__":{"x":1,"y":2},"a":{"x":3,"y":4}}'))
+    histo.push(1, 1000, JSON.parse('{"__proto__":{"x":1,"y":2},"a":{"x":3,"y":4}}'))
     const vu = histo.rewind(1000, (positions: any) => ({
       cles:  Object.keys(positions).sort(),
       proto: Object.getPrototypeOf(positions) === Object.prototype,

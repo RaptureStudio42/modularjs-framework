@@ -56,7 +56,7 @@ window.__H = () => document.querySelector('mjs-hote')._shadow
 window.__boite = () => __H().querySelector('.defile')
 window.__val = (c) => __H().querySelector('.' + c).querySelector(':scope > input[type=hidden]').value
 window.__deep = () => { let a = document.activeElement; while (a && (a._shadow || a.shadowRoot) && (a._shadow || a.shadowRoot).activeElement) a = (a._shadow || a.shadowRoot).activeElement; if (!a) return 'rien'; const h = a.getRootNode().host; return (h && h.classList.length ? h.classList[0] + ' ' : '') + a.tagName.toLowerCase() + '.' + a.className }
-window.__avant = () => __H().querySelector('.avant').focus()
+window.__before = () => __H().querySelector('.avant').focus()
 `
 
 for (const moteur of ['chromium', 'firefox', 'webkit'] as const) {
@@ -73,7 +73,7 @@ for (const moteur of ['chromium', 'firefox', 'webkit'] as const) {
     // l'éditeur posé par un `{if}`, le focus d'abord sur le bouton « avant » (celui qui ouvre, dans une vraie page), le conteneur défilé à 185 px et
     // la page en haut ; la position du conteneur et celle de la page, une fois l'éditeur montré
     const poser = async (k: string): Promise<number[]> => {
-      await s.page.evaluate(`__avant(); __boite().scrollTop = 185; window.scrollTo(0, 0)`)
+      await s.page.evaluate(`__before(); __boite().scrollTop = 185; window.scrollTo(0, 0)`)
       assert.deepEqual(await s.page.evaluate(`[__boite().scrollTop, window.scrollY]`), [185, 0], 'position de départ')
       await s.page.evaluate(`__ouvrir('${k}')`)
       await s.page.waitForFunction(`!!__H().querySelector('.${k}')?._shadow?.querySelector('.surface p')`, null, { timeout: 10000 })

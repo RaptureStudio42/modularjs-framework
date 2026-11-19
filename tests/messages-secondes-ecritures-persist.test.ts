@@ -6,7 +6,7 @@ import { mock } from 'node:test'
 import { t, setMessagesLang } from '../src/messages/index.js'
 import { createPersistEngine, resolvePersistOption } from '../src/mjs-server/index.js'
 
-const CLES = ['serveur.persist-save-sans-reponse', 'serveur.persist-remove-sans-reponse', 'serveur.persist-flush-sans-reponse']
+const CLES = ['mjs-server.persist-save-no-response', 'mjs-server.persist-remove-no-response', 'mjs-server.persist-flush-no-response']
 
 describe('messages — secondes des écritures sans réponse', () => {
   afterEach(() => setMessagesLang('fr'))
@@ -14,18 +14,18 @@ describe('messages — secondes des écritures sans réponse', () => {
   it('en français : arrondi au dixième, virgule décimale, compte rond sans décimale', () => {
     setMessagesLang('fr')
     for (const cle of CLES) {
-      assert.match(t(cle, { id: 'g', delai: 1.001 }), / en 1 s /, `${cle} : 1.001 devient 1`)
-      assert.match(t(cle, { id: 'g', delai: 30.25 }), / en 30,3 s /, `${cle} : 30.25 devient 30,3 (virgule)`)
-      assert.match(t(cle, { id: 'g', delai: 30 }), / en 30 s /, `${cle} : 30 reste 30`)
-      assert.ok(!/\d\.\d/.test(t(cle, { id: 'g', delai: 1.001 })), `${cle} : aucun point décimal`)
+      assert.match(t(cle, { id: 'g', delay: 1.001 }), / en 1 s /, `${cle} : 1.001 devient 1`)
+      assert.match(t(cle, { id: 'g', delay: 30.25 }), / en 30,3 s /, `${cle} : 30.25 devient 30,3 (virgule)`)
+      assert.match(t(cle, { id: 'g', delay: 30 }), / en 30 s /, `${cle} : 30 reste 30`)
+      assert.ok(!/\d\.\d/.test(t(cle, { id: 'g', delay: 1.001 })), `${cle} : aucun point décimal`)
     }
   })
 
   it('en anglais : arrondi au dixième, point décimal', () => {
     setMessagesLang('en')
     for (const cle of CLES) {
-      assert.match(t(cle, { id: 'g', delai: 1.001 }), / within 1 s /, `${cle} : 1.001 becomes 1`)
-      assert.match(t(cle, { id: 'g', delai: 30.25 }), / within 30\.3 s /, `${cle} : 30.25 becomes 30.3`)
+      assert.match(t(cle, { id: 'g', delay: 1.001 }), / within 1 s /, `${cle} : 1.001 becomes 1`)
+      assert.match(t(cle, { id: 'g', delay: 30.25 }), / within 30\.3 s /, `${cle} : 30.25 becomes 30.3`)
     }
   })
 

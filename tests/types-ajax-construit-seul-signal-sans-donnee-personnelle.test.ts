@@ -208,7 +208,7 @@ describe('strict et valeur de départ', () => {
 
 describe('la marque de `strict` dans le code compilé', () => {
   it('ne se confond pas avec la clé d\'un attribut étalé, et se lit sur une règle stricte', () => {
-    const etale = "if(_mjs_spd) for (const _mjs_k in _mjs_spd) _mjs_vu[_mjs_k.indexOf('-') < 0 || /^(?:data|aria)-/.test(_mjs_k) ? _mjs_k : _mjs_k.toLowerCase()] = 1;"
+    const etale = "if(_mjs_spd) for (const _mjs_k in _mjs_spd) _mjs_seen[_mjs_k.indexOf('-') < 0 || /^(?:data|aria)-/.test(_mjs_k) ? _mjs_k : _mjs_k.toLowerCase()] = 1;"
     assert.ok(!scanCompiledFeatures(etale).has(TYPES_STRICT))
     assert.ok(scanCompiledFeatures(`µ._mjs_types = {${compileVars({ raw: '\n$v int 0..9 strict', startLine: 1 }, DEFS, false).vars.join(',')}};`).has(TYPES_STRICT))
   })
@@ -247,7 +247,7 @@ describe('valeur de départ : `nom = valeur règle`, la valeur avant la règle',
   })
 
   it('entre accolades : refusé, le message montre la forme en retrait à écrire, valeur de départ comprise', () => {
-    assert.throws(() => parseRule('{ id: int, price: int 0.. = 0 }', { bloc: '<vars>', ligne: 1 }), (e: any) => /\*\.types\.mjs/.test(e.message) && e.message.includes('price = 0  int 0..'))
+    assert.throws(() => parseRule('{ id: int, price: int 0.. = 0 }', { block: '<vars>', line: 1 }), (e: any) => /\*\.types\.mjs/.test(e.message) && e.message.includes('price = 0  int 0..'))
   })
 
   it('une variable du <vars> : sa valeur de départ s\'écrit dans le <script>, avant comme après la règle', () => {

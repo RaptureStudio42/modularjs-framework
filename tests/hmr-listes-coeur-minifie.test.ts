@@ -11,7 +11,7 @@ import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 
 const hotswap = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'runtime', 'mjs_hotswap.ts')
-const LISTES  = ['_mjsHotInternes', '_mjsHotReset', '_mjsHotKeep']
+const LISTES  = ['_mjsHotInternal', '_mjsHotReset', '_mjsHotKeep']
 
 // les clés d'une liste, dans l'ordre de la source
 function cles(nom: string): string[] {

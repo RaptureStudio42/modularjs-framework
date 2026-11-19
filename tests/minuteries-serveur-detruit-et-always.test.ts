@@ -149,6 +149,6 @@ describe('minuteries : `always: true` jamais défait', function () {
     await attendre(60)
     doc.body.appendChild(el)
     await attendre(40)
-    assert.equal(el._mjs_minuteries?.size, 1)
+    assert.equal(el._mjs_timers?.size, 1)
   })
 })

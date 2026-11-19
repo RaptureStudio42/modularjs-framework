@@ -122,7 +122,7 @@ describe('construction — les groupes de <@@sortable> suivent ce que les pages 
       ['une liste simple', { 'liste.mjs': SCRIPT + liste('value=!{$l}') }],
       ['une liste calculée (seul `sort`)', { 'liste.mjs': SCRIPT + liste('@sort={keep(e)}') }],
       ['avec une poignée', { 'liste.mjs': SCRIPT + liste('value=!{$l} handle=".p"') }],
-      ['l\'évènement nu : :group', { 'liste.mjs': SCRIPT + liste(':group') }],
+      ['l\'évènement nu : :group', { 'liste.mjs': SCRIPT.replace('</script>', '  group = (e)-> null\n</script>') + liste(':group') }],
       ['deux listes, aucune', { 'a.mjs': SCRIPT + liste('value=!{$l}'), 'b.mjs': SCRIPT + liste('value=!{$m}', '$m') }],
       ['deux listes dans un même fichier', { 'liste.mjs': SCRIPT + liste('value=!{$l}') + liste('value=!{$m}', '$m') }],
       ['une liste dans une ligne d\'une autre, sans `group`', { 'liste.mjs': '<@@sortable><section><@@sortable><div class="p">x</div></@@sortable></section></@@sortable>' }],

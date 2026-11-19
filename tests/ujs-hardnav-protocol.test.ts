@@ -1,6 +1,6 @@
 // (a) µ._mjs_navApplyJson calculait
 // `destOrigin` contre `window.location.href`, JAMAIS `document.baseURI` — `history.pushState` natif
-// résout pourtant contre baseURI (comme fetch/µ.ajax, cf. µ._mjajaxMemeOrigine, mjs_ajax.ts) :
+// résout pourtant contre baseURI (comme fetch/µ.ajax, cf. µ._mjajaxSameOrigin, mjs_ajax.ts) :
 // un `<base href>` tiers faisait juger "même origine" une URL relative qui partait RÉELLEMENT
 // ailleurs (confirmé sur Chromium réel : pushState réel lève
 // SecurityError malgré le garde-fou). (b) le repli `µ._mjs_hardNav(dest)` (destination hors origine) ne

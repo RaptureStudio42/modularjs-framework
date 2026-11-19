@@ -420,7 +420,7 @@ describe('mjs_modal — µ.modal.notify cliquable', function () {
       assert.match(css, /:where\(\.mjs-toast-action:active\)\{[^}]*background:var\(--mjs-toast-active-bg,/)
       assert.match(css, /:where\(\.mjs-toast-action:focus-visible\)\{[^}]*outline:[^;}]*var\(--mjs-toast-focus,/)
       assert.match(css, /:where\(\.mjs-toast-action ~ \.mjs-toast-close\)\{[^}]*position:relative/)
-      assert.match(css, /:where\(\.mjs-toast-action ~ \.mjs-toast-barre\)\{[^}]*pointer-events:none/)
+      assert.match(css, /:where\(\.mjs-toast-action ~ \.mjs-toast-bar\)\{[^}]*pointer-events:none/)
     })
 
     it('la structure de la couverture est en !important : une règle de balise de l\'appli (button, a) ne la défait pas', function () {

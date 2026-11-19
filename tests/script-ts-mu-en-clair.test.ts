@@ -33,7 +33,7 @@ describe('script TypeScript : µ et textes accentués écrits en clair dans le c
       ['µload', "$q = 'a'\n  $r = µload(`/api/s?q=${$q}`)", '<b>{$q}</b>', /µ\.load\(`\/api\/s\?q=\$\{\$\.q\}`,null,'[0-9a-f]{4}\.0'\)/],
       ['µ.modal', "$n = 1\n  const ouvrir = (): void => { µ.modal('m') }", '<b>{$n}</b>', /µ\.modal\((['"])m\1\)/],
       ['µlang', '$l = µlang', '<b>{$l}</b>', /µ\.store\.__mjsLang/],
-      ['µ$x', '$v = µ$x\n  const poser = (): void => { µ$x = k }', '<b>{$v}</b>', /µ_state = µ\.state\(/],
+      ['µ$x', '$v = µ$x\n  const poser = (): void => { µ$x = k }', '<b>{$v}</b>', /µ_state = \(?µ\._mjs_univ \?\?= µ\.state\(/],
     ]
     formes.forEach(([nom, corps, gabarit, attendu], i) => {
       it(`${nom} : \`µ\` écrit en clair, aucune forme échappée`, async () => {

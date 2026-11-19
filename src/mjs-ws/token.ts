@@ -31,19 +31,23 @@ function b64urlDecode(input: string): Buffer {
 
 // --- secret --------------------------------------------------------------------------------
 
-// longueur conseillée : en deçà, un secret se devine hors ligne à partir d'un seul jeton intercepté
+// longueur minimale, en octets : en deçà, un secret se devine hors ligne à partir d'un seul jeton intercepté
 const SECRET_MIN_LENGTH = 32
 let shortSecretWarned   = false
 
 // secret absent, qui n'est pas une chaîne, ou vide (variable d'environnement oubliée) : la clé HMAC vide
-// laisserait n'importe qui fabriquer un jeton valide, refusé en clair ; un secret court passe, avec un
-// avertissement unique pour tout le processus
+// laisserait n'importe qui fabriquer un jeton valide, refusé en clair ; un secret court (moins de 32 octets) est refusé
+// en production (NODE_ENV=production) et passe en développement, avec le même message, une fois pour tout le processus
 function checkSecret(secret: unknown, fn: string): void {
-  if (typeof secret !== 'string' || secret === '') throw new Error(t('ws.token.secret-manquant', { fn }))
-  if (secret.length < SECRET_MIN_LENGTH && !shortSecretWarned) {
-    shortSecretWarned = true
-    console.warn(t('ws.token.secret-court', { fn, length: secret.length, min: SECRET_MIN_LENGTH }))
-  }
+  if (typeof secret !== 'string' || secret === '') throw new Error(t('ws.token.secret-missing', { fn }))
+  const length = Buffer.byteLength(secret, 'utf8')
+  if (length >= SECRET_MIN_LENGTH) return
+  const production = process.env.NODE_ENV === 'production'
+  if (!production && shortSecretWarned) return
+  const message = t('ws.token.secret-short', { fn, length, min: SECRET_MIN_LENGTH })
+  if (production) throw new Error(message)
+  shortSecretWarned = true
+  console.warn(message)
 }
 
 // --- signature bas niveau ------------------------------------------------------------------
@@ -110,7 +114,7 @@ const VERIFY_KEYS: readonly string[] = ['audience', 'issuer', 'clockTolerance']
 export function checkClaimList(option: 'audience' | 'issuer', value: unknown, fn: string): string[] | null {
   if (value === undefined) return null
   const list = stringList(value)
-  if (!list) throw new Error(t(option === 'audience' ? 'ws.token.audience-invalide' : 'ws.token.issuer-invalide', { fn, received: shown(value) }))
+  if (!list) throw new Error(t(option === 'audience' ? 'ws.token.audience-invalid' : 'ws.token.issuer-invalid', { fn, received: shown(value) }))
   return list
 }
 
@@ -120,18 +124,18 @@ export function checkOptionKeys(opts: object, known: readonly string[], fn: stri
   for (const key of Object.keys(opts)) {
     if (known.includes(key)) continue
     const suggestion = suggestKey(key, known)
-    throw new Error(t('ws.token.option-inconnue', { fn, key, hint: suggestion ? t('ws.token.option-inconnue-suggestion', { suggestion }) : '', known: known.join(', ') }))
+    throw new Error(t('ws.token.option-unknown', { fn, key, hint: suggestion ? t('ws.token.option-unknown-suggestion', { suggestion }) : '', known: known.join(', ') }))
   }
 }
 
 // options de vérification, validées une fois : une clé inconnue ou une valeur invalide lève dès la construction
 function checkRules(opts: unknown, fn: string): TokenRules {
-  if (!opts || typeof opts !== 'object' || Array.isArray(opts)) throw new Error(t('ws.token.options-invalides', { fn, received: shown(opts) }))
+  if (!opts || typeof opts !== 'object' || Array.isArray(opts)) throw new Error(t('ws.token.options-invalid', { fn, received: shown(opts) }))
   checkOptionKeys(opts, VERIFY_KEYS, fn)
   const { audience, issuer, clockTolerance = 0 } = opts as Record<string, unknown>
   const audiences = checkClaimList('audience', audience, fn)
   const issuers   = checkClaimList('issuer', issuer, fn)
-  if (typeof clockTolerance !== 'number' || !Number.isFinite(clockTolerance) || clockTolerance < 0) throw new Error(t('ws.token.tolerance-invalide', { fn, received: shown(clockTolerance) }))
+  if (typeof clockTolerance !== 'number' || !Number.isFinite(clockTolerance) || clockTolerance < 0) throw new Error(t('ws.token.tolerance-invalid', { fn, received: shown(clockTolerance) }))
   return { audience: audiences, issuer: issuers, clockTolerance }
 }
 

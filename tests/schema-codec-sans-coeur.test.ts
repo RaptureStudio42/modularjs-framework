@@ -45,8 +45,8 @@ describe('µschema — le codec du navigateur chargé sans le cœur', () => {
     const µ: any = { error: () => {}, warn: () => {} }
     const interne = charger(µ)
     µ.schema('pos', { x: 'i16', y: 'i16', nom: 'str8' })
-    const octets = interne.encoder(µ._mjs_mjschemaRegistre, 'pos', { x: -3, y: 7, nom: 'é' })
-    assert.deepEqual(interne.decoder(µ._mjs_mjschemaRegistre, octets).objet, { x: -3, y: 7, nom: 'é' })
+    const octets = interne.encoder(µ._mjs_mjschemaRegistry, 'pos', { x: -3, y: 7, nom: 'é' })
+    assert.deepEqual(interne.decoder(µ._mjs_mjschemaRegistry, octets).object, { x: -3, y: 7, nom: 'é' })
   })
 
   it('sans table des messages : une valeur hors plage à l\'envoi s\'écrit dans le journal, l\'envoi repasse en JSON', () => {

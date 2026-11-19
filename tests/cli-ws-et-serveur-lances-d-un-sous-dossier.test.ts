@@ -1,5 +1,5 @@
-// `mjs ws` et `mjs serveur` lancés depuis un sous-dossier du projet trouvaient bien `../mjs.config.json`, mais cherchaient `ws.entry`,
-// `serveur.entry` et leurs défauts (`ws.js`, `serveur.js`) dans le sous-dossier : « introuvable ». Les chemins de la configuration et
+// `mjs ws` et `mjs server` lancés depuis un sous-dossier du projet trouvaient bien `../mjs.config.json`, mais cherchaient `ws.entry`,
+// `server.entry` et leurs défauts (`ws.js`, `game.js`) dans le sous-dossier : « introuvable ». Les chemins de la configuration et
 // les défauts se lisent depuis le dossier de mjs.config.json, comme pour `mjs dev` et `mjs build` ; `--entry` reste relatif au
 // dossier courant
 
@@ -40,7 +40,7 @@ function lancer(dossier: string, args: string[]): Promise<{ demarre: boolean, li
   })
 }
 
-describe('mjs ws et mjs serveur lancés depuis un sous-dossier du projet', function () {
+describe('mjs ws et mjs server lancés depuis un sous-dossier du projet', function () {
   this.timeout(60000)
 
   it('mjs ws : ws.entry de la configuration trouvé depuis app/', async () => {
@@ -53,12 +53,12 @@ describe('mjs ws et mjs serveur lancés depuis un sous-dossier du projet', funct
     assert.ok(r.demarre, r.lignes.join('\n'))
   })
 
-  it('mjs serveur : défaut serveur.js trouvé depuis app/', async () => {
+  it('mjs server : défaut game.js trouvé depuis app/', async () => {
     const p = mjsTmp('serveur-sous-dossier')
     mkdirSync(join(p, 'app'), { recursive: true })
     writeFileSync(join(p, 'mjs.config.json'), JSON.stringify({}))
-    writeFileSync(join(p, 'serveur.js'), 'export default {\n  setup(app) {}\n}\n')
-    const r = await lancer(join(p, 'app'), ['serveur', '--port', String(portAuHasard())])
+    writeFileSync(join(p, 'game.js'), 'export default {\n  setup(app) {}\n}\n')
+    const r = await lancer(join(p, 'app'), ['server', '--port', String(portAuHasard())])
     assert.ok(r.demarre, r.lignes.join('\n'))
   })
 

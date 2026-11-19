@@ -2,7 +2,9 @@
 // refus, cité à sa ligne, reste l'erreur. Le relevé des images la préparait avant le refus : son image était copiée pour rien, et un
 // fichier absent arrêtait la construction sur « fichier introuvable » au lieu du refus. Bloc simple, et blocs où une section posée en
 // milieu de ligne (`<vars>`, `<types>`, `<routes>`), un `</style>` cité dans un commentaire Sass ou une fermante citée dans une chaîne
-// pourraient égarer le relevé ; image de l'exemple présente puis absente. Les images écrites hors du <@head> restent préparées
+// pourraient égarer le relevé ; image de l'exemple présente puis absente. Les images écrites hors du <@head> restent préparées. Un
+// <@head> se lit comme le reste du gabarit : la fermante d'une section posée en milieu de ligne y est orpheline, avec le refus du reste
+// du gabarit, et l'image seulement citée dans son texte n'y est pas refusée comme une image de l'en-tête
 
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
@@ -21,6 +23,10 @@ const CAS: Array<[string, string, number, string]> = [
   ['31337-js', 'js', 18, '<p>a</p> <style>\n  /* </style> */\n</style>\r\n<p title=\'<@@img src="a0.png" alt="x">\'>t</p>\n<div>\n<!-- a --> <!-- b --><script lang="coffee">\n  fin = \'</script>\'\n  fin = \'</script>\'\n  a = \'{\'\n</script>\n</div>\n<@@img src="t1.png" alt="x">\n<p title="<script>">t</p>\n<@@img src="t2.png" alt="x">\n<@head>\nx <style lang="sass">\n  // fin </style> ici\n  // <@@img src="e3.png" alt="x">\n  a\n    content: \'</style >\'\n</style>\n</@head>\r<@@img src="z4.png" alt="x">\n'],
   ['4242-civet', 'civet', 14, '<div><@@img src="t0.png" alt="x"></div>\n<p>"</p>\r\n<p>a {b} c</p><p title="<!--">t</p>\n<title>\n<!-- <@@img src="c1.png" alt="x"> --><script lang="js">\n  a = \'{\'\n  // voir </script>\n  /* </script> */\n</script>\n</title>\n<@head>\n<!-- c --><vars>\n  b: \'</vars >\'\n  d: \'<@@img src="e2.png" alt="x">\'\n</vars>\n</@head>\r\n<@@img src="z3.png" alt="x">\n']
 ]
+
+// les cas dont le <@head> porte une fermante orpheline (section ouverte en milieu de ligne, U+2028 et U+2029 compris) : le refus du
+// reste du gabarit
+const ORPHELINE: Record<string, string> = { '2026-ts': '</vars>', '31337-coffee': '</types>', '31337-ts': '</routes>', '31337-civet': '</vars>' }
 
 describe('<@@img> dans un <@head> : jamais préparée, le refus reste l\'erreur', function () {
   this.timeout(120000)
@@ -49,7 +55,7 @@ describe('<@@img> dans un <@head> : jamais préparée, le refus reste l\'erreur'
           Object.assign(console, garde)
         }
         assert.equal(erreurs.length, 1, erreurs.join('\n'))
-        assert.match(erreurs[0], new RegExp(`<@head> ligne ${ligne} : une image <@@img> n'a pas sa place dans <@head>`))
+        assert.match(erreurs[0], ORPHELINE[nom] ? new RegExp(`un ${ORPHELINE[nom]} orphelin traîne`) : new RegExp(`<@head> ligne ${ligne} : une image <@@img> n'a pas sa place dans <@head>`))
         const copiees = existsSync(out) ? readdirSync(out).filter(f => /^e\d-.*\.png$/.test(f)) : []
         assert.deepEqual(copiees, [], 'aucune image du <@head> copiée')
       })

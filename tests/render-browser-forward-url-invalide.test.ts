@@ -56,7 +56,7 @@ describe('render-browser — un forwardedUrl invalide ne perd jamais l\'emplacem
       const first = await renderer.renderPage('mjs-simple', { forwardedUrl: 'not a url at all' })
       assert.match(first.html, /OK/, 'un forwardedUrl invalide doit être traité comme absent, pas planter le rendu')
       // BUG confirmé si absent : renderToString.ts (happy-dom) avertit déjà sur le MÊME scénario
-      // (server.ssr-forward-url-invalide) — render-browser.ts, lui, avalait l'échec en silence
+      // (server.ssr-forward-url-invalid) — render-browser.ts, lui, avalait l'échec en silence
       // (catch vide), aucun signal nulle part qu'une URL de renvoi fournie a été ignorée.
       assert.ok(first.warnings.some(w => /forwardedUrl invalide/.test(w)), `avertissement attendu sur forwardedUrl invalide, warnings obtenus : ${JSON.stringify(first.warnings)}`)
       // 2e rendu, MÊME pool de taille 1, borné dans le temps : AVANT le fix, ce rendu ne se

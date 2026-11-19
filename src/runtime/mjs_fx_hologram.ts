@@ -193,7 +193,7 @@ var _mjsFxHoloSheet = function() {
   // gravée ni masque — ses découpes (c) valent dès qu'il n'y a pas de masque, le reste (le motif du style
   // à sa taille, ses dosages) dès qu'il n'y a pas d'image
   // `tag` : une valeur du réglage `shine` — les règles ne valent alors que pour cet éclat (le style sans éclat écrit prend la base)
-  var style = function(names, def, nu, tag) {
+  var style = function(names, def, bareFlag, tag) {
     var list = names.split(' ');
     var emit = function(d, extra) {
       for (var box in d) {
@@ -215,20 +215,20 @@ var _mjsFxHoloSheet = function() {
       }
     };
     emit(def, '');
-    if (nu) {
+    if (bareFlag) {
       var bare = {};
       var open = {};
-      for (var bx in nu) {
-        if (nu[bx] === 0) {
+      for (var bx in bareFlag) {
+        if (bareFlag[bx] === 0) {
           bare[bx] = 0;
           continue;
         }
-        for (var kk in nu[bx]) {
+        for (var kk in bareFlag[bx]) {
           var to = kk === 'c' ? open : bare;
-          (to[bx] || (to[bx] = {}))[kk] = nu[bx][kk];
+          (to[bx] || (to[bx] = {}))[kk] = bareFlag[bx][kk];
         }
       }
-      emit(bare, '[mjs-fx-hologram-nu]');
+      emit(bare, '[mjs-fx-hologram-bare]');
       emit(open, '[mjs-fx-hologram-open]');
     }
     // les styles de carte que la feuille connaît : c'est d'après cette table que l'effet choisit son chemin
@@ -618,7 +618,7 @@ var _mjsFxHoloCard = function(el, s, style) {
     layer.setAttribute('mjs-fx-hologram-card', '');
     layer.setAttribute('aria-hidden', 'true');
     layer.setAttribute('mjs-fx-hologram-style', style);
-    if (!foil) layer.setAttribute('mjs-fx-hologram-nu', '');
+    if (!foil) layer.setAttribute('mjs-fx-hologram-bare', '');
     if (!mask) layer.setAttribute('mjs-fx-hologram-open', '');
     if (s.shine) layer.setAttribute('mjs-fx-hologram-shine', s.shine);
     if (edge) layer.setAttribute('mjs-fx-hologram-radius', '');

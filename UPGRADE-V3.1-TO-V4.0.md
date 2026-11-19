@@ -239,6 +239,8 @@ Une balise du langage (`<@slot>`, `<@view>`, `<@head>`…) écrite dans le repli
 
 Une chaîne écrite sur plusieurs lignes dans un script, qui porte un `#`, donne maintenant un avertissement `[lint.multilineString]` : suivez le message (une chaîne à trois guillemets, des chaînes d'une ligne ajoutées l'une à l'autre, ou `\x23` à la place du `#`), ou coupez-le par `"lint": { "multilineString": false }` dans `mjs.config.json`.
 
+Dans la 4.1.0, cet avertissement est retiré : une chaîne écrite sur plusieurs lignes est lue correctement, son `#` reste du texte ; la clé `"multilineString"` de `"lint"` reste acceptée et ne fait plus rien.
+
 Nouveau, sur demande : `mjs build --cache` ne recompile que les fichiers changés (sortie identique à l'octet, production comprise), et `mjs build --cache=verifier` le vérifie à l'octet ; dans un script de publication, ne publiez que si la commande sort en code 0. Le cache vit dans `node_modules/.cache/mjs/build/` du projet : un `npm ci` le vide, et la construction suivante est complète.
 
 Un dossier de sortie bâti avant la 4.0 peut garder la feuille d'une déclinaison `<style name>` retirée depuis : elle reste prise pour une feuille déposée à la main, et le cœur garde le module des déclinaisons. À faire une fois : videz le dossier de sortie, ou retirez cette feuille.
@@ -282,7 +284,7 @@ Une ligne `@import …` placée dans le texte d'un élément du gabarit s'affich
 
 Une entrée serveur refuse `@import $x 'chemin'`, comme un composant : importez le nom sans `$`. L'avertissement de dépréciation de CoffeeScript a disparu : rien à faire.
 
-Renommez chaque `.civet` / `.coffee` qui se sert de µ, déclare une rune (`µ$$x`…), écrit une directive (`@import`…) ou le dialecte de MJS (commentaire `#` en Civet, `for … in`, affectation sans déclaration) en `.civet.mjs` / `.coffee.mjs`, et réécrivez ses imports (`@import x 'outils/a.civet'` → `'outils/a.civet.mjs'`) ; la construction nomme chaque fichier à renommer.
+Renommez chaque `.civet` / `.coffee` qui se sert de µ, déclare une rune (`µ$$x`…), écrit une directive (`@import`…) ou le dialecte de MJS (commentaire `#` en Civet, `for … in`, affectation sans déclaration en Civet — CoffeeScript déclare lui-même ses variables) en `.civet.mjs` / `.coffee.mjs`, et réécrivez ses imports (`@import x 'outils/a.civet'` → `'outils/a.civet.mjs'`) ; la construction nomme chaque fichier à renommer, même quand un commentaire ou une chaîne y cite µ, et une affectation à un nom jamais déclaré avec ce nom ; un global du navigateur affecté par son nom (`location = …`) fait aussi refuser le fichier, sans que son nom soit cité. Exception : dans un fichier dont le code contient un nom écrit avec µ (`µt := …`, une propriété `µx`), la construction ne voit ni commentaire `#`, ni `for … in`, ni `isnt`, ni interpolation `#{…}` : cherchez-les vous-même dans ces fichiers.
 
 ## La grammaire js du gabarit est retirée
 
@@ -297,6 +299,10 @@ Les propriétés internes `_mjs_ids`, `_mjs_eo` et `_mjs_row` des balises n'exis
 ## Les minuteries
 
 `setTimeout` et `setInterval` arrêtent la construction dans un composant (`<script>`, gestionnaires, accolades du gabarit, `:attach`), écrits nus ou lus sur l'objet global (`window.`, `globalThis.`, `self.`, `top.`, `parent.`, `frames.`, `document.defaultView.`, `ownerDocument.defaultView.`, nom assemblé de morceaux fixes comme `document['default' + 'View']['set' + 'Timeout']`, décomposition ; dans `:attach`, le nom écrit en clair seulement) : `setTimeout (-> f()), 500` → `µafter 500, -> f()` ; `t = setTimeout …` puis `clearTimeout t` → `t = µafter …` puis `t()` ; `setInterval (-> f()), 1000` → `µevery 1000, immediate: false, -> f()` ; `await new Promise (r) -> setTimeout r, 300` → `await µafter 300` ; une action qui doit partir même après la disparition du composant → `µafter 2000, always: true, -> …`. Restent libres : `<script module>`, modules, magasins (un délai qui doit courir au rendu serveur s'y pose).
+
+Une poignée gardée pour arrêter une minuterie s'initialise à `null`, pas à `0` : `clearTimeout 0` ne faisait rien, alors qu'en Civet l'arrêt `t?()` d'une main de `µafter` ou de `µevery` devient `t?.()` et lève quand `t` vaut `0` (un nombre ne s'appelle pas). Écrivez `t = null`, puis `t = µafter …` et `t?()`.
+
+Un délai qui n'est pas un nombre supérieur ou égal à 0 (`NaN` d'un `Date.parse` sur une date invalide, `undefined`, une chaîne comme `'300'`) ne pose plus rien, avec un avertissement en développement, là où `setTimeout` partait aussitôt (ou lisait la chaîne comme un nombre) : vérifiez le calcul du délai ; si un tir immédiat vous convient, ramenez-le vous-même à 0.
 
 Un `µeffect` qui posait un `µafter` ou un `µevery` à chaque passage les empilait : le passage suivant arrête désormais ceux du passage d'avant, et l'arrêt du reffet par sa main aussi. Pour garder un tir par passage, posez la minuterie hors du reffet (gestionnaire, méthode appelée par un événement), ou avec `always: true` si le tir doit partir même composant disparu.
 
@@ -319,6 +325,8 @@ Un `µeffect` laissé au premier niveau du fichier d'un magasin ne tournait pas 
 À l'inverse, dans un module ou le fichier d'un magasin, un `µeffect` sans propriétaire — dans une fonction appelée plus tard, ou dans le corps d'un reffet de magasin — ne tourne plus ; l'avertissement de développement dit où l'écrire : dans le composant, ou au premier niveau du fichier du magasin ou du module. Au premier niveau d'un module `.civet` ou `.coffee`, même sans magasin, il appartient au module et tourne.
 
 Un reffet suit ce qu'il lit vraiment pendant son passage. Avant, `µeffect -> console.log(if $mode then $a else $b)` repartait à chaque écriture de `$b` ; maintenant il ne repart pas tant que `$mode` est vrai : lisez dans le reffet ce qui doit le relancer. À l'inverse, un reffet qui lit `$x` par une fonction (`outils.lire()`) repart désormais quand `$x` change. Une lecture faite après un `await` ou dans un rappel le relance comme avant. De même pour les clés du magasin : `µeffect -> console.log(if $mode then $$a else $$b)` ne repart plus sur `$$b` tant que `$mode` est vrai. Un `µeffect` au premier niveau du `<script module>`, autrefois refusé, passe une fois à l'import du composant, et tourne aussi au rendu serveur.
+
+**Un composant redessiné par `µurl` (ou `µnav`, `µonline`, un `µ$$x`, un `µStore`, un contexte `§§x`) ne fait passer que ses reffets qui ont lu cet état, et ceux pour qui MJS ne peut pas le savoir.** Un reffet qui comptait sur la navigation pour repartir sans lire `µurl` — il lit un titre, une mesure, un élément de la page — doit le lire : ajoutez `µurl.href` dans son corps. Si un reffet cesse de repartir après la montée de version, `"reffets": "all"` dans `mjs.config.json` rend l'ancien comportement (tous les reffets du composant repassent), le temps de lui faire lire l'état ; relancez `mjs dev` après avoir changé la clé ([03 · Réactivité](docs/03-reactivite.md)).
 
 Un reffet qui écrit une variable puis la lit dans le même passage (`µeffect -> $c = 5 ; console.log $c`) passe une fois, là où la 3.1 le faisait passer deux fois : le second passage ne changeait rien. Rien à changer, sauf si votre code compte les passages.
 

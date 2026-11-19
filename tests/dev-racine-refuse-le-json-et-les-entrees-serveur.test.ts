@@ -1,6 +1,6 @@
 // `mjs dev` sans bloc `render` sert la racine du projet. Y sortaient encore tout `.json` posé à la racine même (`secrets.json`,
-// `credentials.json`) et les entrées serveur dont le nom ne porte pas `.server.` : `ws.js` et `serveur.js` (cherchées par `mjs ws`
-// et `mjs serveur`), le `server.mjs` d'une appli Node, et une entrée déclarée dans la configuration (`ws.entry`, `serveur.entry`,
+// `credentials.json`) et les entrées serveur dont le nom ne porte pas `.server.` : `ws.js` et `game.js` (cherchées par `mjs ws`
+// et `mjs server`), `serveur.js` et le `server.mjs` d'une appli Node, et une entrée déclarée dans la configuration (`ws.entry`, `server.entry`,
 // `render.entry`) sous un autre nom. Refusés comme les autres secrets (404), par le chemin demandé comme par le chemin réel.
 // Reste servi ce que la page charge : la page, un script client à la racine, feuilles, médias, JSON rangé dans un dossier, sorties
 // du build (traductions comprises).
@@ -26,8 +26,8 @@ function get(port: number, path: string): Promise<{ status: number, body: string
 }
 
 // entrées déclarées sous un autre nom : rangées dans un dossier quelconque, ou à la racine
-const CONFIG  = { ws: { entry: 'lib/temps-reel.mjs' }, serveur: { entry: './partie.js' }, render: { entry: 'outils/pages.mjs' } } as any
-const REFUSES = ['/secrets.json', '/credentials.json', '/package.json', '/mjs.config.json', '/server.mjs', '/server.js', '/ws.js', '/serveur.js', '/lib/temps-reel.mjs', '/partie.js', '/outils/pages.mjs']
+const CONFIG  = { ws: { entry: 'lib/temps-reel.mjs' }, server: { entry: './partie.js' }, render: { entry: 'outils/pages.mjs' } } as any
+const REFUSES = ['/secrets.json', '/credentials.json', '/package.json', '/mjs.config.json', '/server.mjs', '/server.js', '/ws.js', '/game.js', '/serveur.js', '/lib/temps-reel.mjs', '/partie.js', '/outils/pages.mjs']
 const SERVIS  = ['/app.js', '/public/styles/base.css', '/public/favicon.png', '/public/donnees/villes.json', '/public/ws.js', '/lib/carte.mjs', '/dist/assets/i18n/fr/accueil.json']
 
 describe('mjs dev — racine du projet : ni JSON à la racine même, ni entrée serveur', () => {
@@ -80,7 +80,7 @@ describe('garde de la racine du projet — JSON et entrées serveur posés à la
   const seg = (p: string): string[] => p.split('/').filter(Boolean)
 
   it('à la racine : tout JSON et les entrées serveur refusés, quelle que soit leur écriture', () => {
-    const noms = ['/secrets.json', '/Secrets.JSON', '/credentials.json.', '/manifest.json', '/ws.js', '/WS.JS', '/serveur.js', '/server.mjs', '/Server.MJS', '/server.js', '/ws.js ']
+    const noms = ['/secrets.json', '/Secrets.JSON', '/credentials.json.', '/manifest.json', '/ws.js', '/WS.JS', '/game.js', '/Game.JS', '/serveur.js', '/server.mjs', '/Server.MJS', '/server.js', '/ws.js ']
     assert.deepEqual(noms.filter(p => isBrowserResource(seg(p))), [])
   })
 

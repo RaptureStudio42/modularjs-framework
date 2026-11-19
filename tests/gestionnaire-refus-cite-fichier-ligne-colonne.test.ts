@@ -4,14 +4,14 @@
 import assert from 'node:assert/strict'
 import { transpile } from '../src/transpiler/index.js'
 import { setMessagesLang, t } from '../src/messages/index.js'
-import { LETTRES_RESERVEES } from '../src/reader/disguise.js'
+import { RESERVED_LETTERS } from '../src/reader/disguise.js'
 
 const SCRIPT = '<script>\n$x = 1\n$z = 2\n</script>\n'
 
 // gestionnaire écrit à la ligne 5, son accolade à la colonne 16 → raison du refus en français
 const CAS: [string, RegExp][] = [
   ['<button @click={µread: 1}>a</button>', /rune écrite en clé d'objet/],
-  [`<button @click={$x = ${LETTRES_RESERVEES['§']}y + §z}>a</button>`, /caractère réservé par ModularJS/]
+  [`<button @click={$x = ${RESERVED_LETTERS['§']}y + §z}>a</button>`, /caractère réservé par ModularJS/]
 ]
 
 async function refus(gabarit: string): Promise<string> {
@@ -33,7 +33,7 @@ describe('refus d\'un gestionnaire : le nom du composant et la place du gestionn
       setMessagesLang('fr')
       const m = await refus(gabarit)
       assert.ok(m.includes('main.mjs:5:17'), m)
-      assert.ok(m.includes(t('generator.hint-dans-module', { moduleName: 'main' })), m)
+      assert.ok(m.includes(t('generator.hint-in-module', { moduleName: 'main' })), m)
       assert.match(m, raison)
     })
 
@@ -41,7 +41,7 @@ describe('refus d\'un gestionnaire : le nom du composant et la place du gestionn
       setMessagesLang('en')
       const m = await refus(gabarit)
       assert.ok(m.includes('main.mjs:5:17'), m)
-      assert.ok(m.includes(t('generator.hint-dans-module', { moduleName: 'main' })), m)
+      assert.ok(m.includes(t('generator.hint-in-module', { moduleName: 'main' })), m)
       assert.match(m, /cannot read it/)
     })
   })

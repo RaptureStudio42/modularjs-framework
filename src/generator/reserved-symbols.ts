@@ -51,8 +51,8 @@ function checkPattern(pattern: any, js: string, moduleName: string | undefined, 
     const lineStart = js.lastIndexOf('\n', id.start) + 1
     const nextNl = js.indexOf('\n', id.start)
     const lineEnd = nextNl === -1 ? js.length : nextNl
-    const extrait = clampRaw(js.slice(lineStart, lineEnd).trim())
-    throw new Error(t('transpiler.symbole-reserve-declare', { moduleName: moduleName ?? '?', section, nom: id.name, extrait }))
+    const excerpt = clampRaw(js.slice(lineStart, lineEnd).trim())
+    throw new Error(t('transpiler.symbol-reserved-declared', { moduleName: moduleName ?? '?', section, name: id.name, excerpt: excerpt }))
   }
 }
 

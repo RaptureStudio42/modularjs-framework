@@ -20,24 +20,24 @@
   var css = function(v) {
     return v.replace(/\$([A-Za-z_][\w-]*)/g, function(_, p) { return 'var(--mjs-' + name + '-' + p + ',' + (dflt[p] === void 0 ? '' : dflt[p]) + ')'; });
   };
-  var bloc = function(list) { return list.map(function(x) { return x[0] + ':' + css(x[1]); }).join(';'); };
-  var anim = d.keyframes.length > 0;
-  var sel  = '[mjs-fx~="' + name + '"]';
-  var feuille;
+  var block = function(list) { return list.map(function(x) { return x[0] + ':' + css(x[1]); }).join(';'); };
+  var anim  = d.keyframes.length > 0;
+  var sel   = '[mjs-fx~="' + name + '"]';
+  var sheet;
   if (anim) {
-    feuille = '@keyframes mjs-fx-' + name + '{' + d.keyframes.map(function(k) { return k[0] + '{' + bloc(k[1]) + '}'; }).join('') + '}'
-      + sel + '{' + (d.decls.length ? bloc(d.decls) + ';' : '') + 'animation:var(--mjs-fx-' + name + '-go,mjs-fx-' + name + ') var(--mjs-' + name + '-duration,1s) var(--mjs-' + name + '-easing,ease) var(--mjs-' + name + '-delay,0s) var(--mjs-fx-' + name + '-times,infinite)}';
+    sheet = '@keyframes mjs-fx-' + name + '{' + d.keyframes.map(function(k) { return k[0] + '{' + block(k[1]) + '}'; }).join('') + '}'
+      + sel + '{' + (d.decls.length ? block(d.decls) + ';' : '') + 'animation:var(--mjs-fx-' + name + '-go,mjs-fx-' + name + ') var(--mjs-' + name + '-duration,1s) var(--mjs-' + name + '-easing,ease) var(--mjs-' + name + '-delay,0s) var(--mjs-fx-' + name + '-times,infinite)}';
   }
   else {
     var props = d.decls.map(function(x) { return x[0]; }).join(',');
-    feuille = sel + '{transition-property:' + props + ';transition-duration:var(--mjs-' + name + '-duration,400ms);transition-timing-function:var(--mjs-' + name + '-easing,ease);transition-delay:var(--mjs-' + name + '-delay,0s)}'
-      + sel + '[mjs-fx-on~="' + name + '"]{' + bloc(d.decls) + '}';
+    sheet = sel + '{transition-property:' + props + ';transition-duration:var(--mjs-' + name + '-duration,400ms);transition-timing-function:var(--mjs-' + name + '-easing,ease);transition-delay:var(--mjs-' + name + '-delay,0s)}'
+      + sel + '[mjs-fx-on~="' + name + '"]{' + block(d.decls) + '}';
   }
-  feuille += '@media (prefers-reduced-motion:reduce){' + sel + '{animation:none!important;transition:none!important}}';
+  sheet   += '@media (prefers-reduced-motion:reduce){' + sel + '{animation:none!important;transition:none!important}}';
   var vars = { duration: '', delay: '', easing: '' };
   for (var p in dflt) vars[p] = '';
   µ._mjs_fxDefs[name] = {
-    css: feuille,
+    css: sheet,
     vars: vars,
     // ses réglages et leur défaut, une animation ou non : relus par l'onglet « Effets » du panneau
     params: d.params,
@@ -52,18 +52,18 @@
       };
       var cam = function(q) { return q.replace(/-([a-z])/g, function(_, c) { return c.toUpperCase(); }); };
       // images et options de l'animation sans prototype : le navigateur y lit aussi les membres absents (composite, iterations…)
-      var etat = function(list) {
+      var state = function(list) {
         var o = Object.create(null);
         for (var j = 0; j < list.length; j++) o[cam(list[j][0])] = val(list[j][1]);
         return o;
       };
       var opts = { duration: µ._mjs_fxMs(s.duration, anim ? 1000 : 400), delay: µ._mjs_fxMs(s.delay, 0), easing: typeof s.easing === 'string' ? s.easing : 'ease' };
-      var jouer = function(node, sens) {
+      var play = function(node, direction) {
         if (typeof node.animate !== 'function' || µ._mjs_fxCalm()) return Promise.resolve();
         var st   = node._mjs_transition_state;
         var rate = 1;
         var a;
-        var fin;
+        var end;
         var t;
         // l'animation posée en cours de route (reprise d'une autre transition, retour sur ses pas) reçoit ici son heure de départ, calée
         // sur l'heure de l'image en cours : celle que le navigateur lui donnerait après coup est parfois plus tardive sur une page
@@ -76,44 +76,44 @@
         };
         // la balise remise pendant sa sortie, ou retirée pendant son entrée : l'animation en cours revient sur ses pas, depuis là où elle
         // en est ; une autre, jouée par-dessus, laisserait la balise figée à sa fin
-        if (st && st.back && st.direction !== sens) return st.back();
+        if (st && st.back && st.direction !== direction) return st.back();
         // une transition du moteur dans l'autre sens (une sortie `*fade` interrompue par le retour de la balise) : arrêtée là où elle en
         // est, celle-ci part de cette position, pas de son début
-        if (st && st.direction !== sens) {
+        if (st && st.direction !== direction) {
           t = st.tValue();
           st.abort();
         }
         if (anim) {
           var frames = [];
           d.keyframes.forEach(function(k) {
-            k[0].split(/\s*,\s*/).forEach(function(etape) {
-              var f = etat(k[1]);
-              f.offset = etape === 'from' ? 0 : etape === 'to' ? 1 : parseFloat(etape) / 100;
+            k[0].split(/\s*,\s*/).forEach(function(step) {
+              var f = state(k[1]);
+              f.offset = step === 'from' ? 0 : step === 'to' ? 1 : parseFloat(step) / 100;
               frames.push(f);
             });
           });
           frames.sort(function(x, y) { return x.offset - y.offset; });
-          a = µ._mjs_animate(node, frames, Object.assign(Object.create(null), opts, { direction: sens === 'in' ? 'normal' : 'reverse', fill: sens === 'in' ? 'both' : 'forwards' }));
+          a = µ._mjs_animate(node, frames, Object.assign(Object.create(null), opts, { direction: direction === 'in' ? 'normal' : 'reverse', fill: direction === 'in' ? 'both' : 'forwards' }));
         }
         else {
           // l'état caché : départ de l'entrée, arrivée de la sortie, l'autre bout étant l'état de la balise ; l'image est placée à son
           // bout — seule et sans place, le navigateur la met à la fin, et l'entrée se jouait à l'envers, puis sautait
-          var e = etat(d.decls);
-          a = sens === 'in'
+          var e = state(d.decls);
+          a = direction === 'in'
             ? µ._mjs_animate(node, [Object.assign(e, { offset: 0 })], Object.assign(Object.create(null), opts, { fill: 'both' }))
             : µ._mjs_animate(node, [Object.assign(e, { offset: 1 })], Object.assign(Object.create(null), opts, { fill: 'forwards' }));
         }
         if (t !== void 0) {
-          a.currentTime = opts.delay + (sens === 'in' ? t : 1 - t) * opts.duration;
+          a.currentTime = opts.delay + (direction === 'in' ? t : 1 - t) * opts.duration;
           pin();
         }
         // l'état de la transition, lu par le moteur (`tValue`, `abort`) et par le retour d'une sortie (`back`, cf. µ._mjs_txBack) ; une
         // sortie finie le garde, pour revenir de son image de fin
         st = node._mjs_transition_state = {
-          direction: sens,
+          direction: direction,
           tValue: function() {
             var p = Math.min(Math.max(((a.currentTime ?? 0) - opts.delay) / Math.max(opts.duration, 1), 0), 1);
-            return sens === 'in' ? p : 1 - p;
+            return direction === 'in' ? p : 1 - p;
           },
           abort: function() {
             a.cancel();
@@ -129,24 +129,24 @@
             rate = -rate;
             if (c != null) a.currentTime = c;
             pin();
-            p = a.finished.then(fin, fin);
+            p = a.finished.then(end, end);
             if (st.direction === 'in' && a.playState === 'finished') a.cancel();
             return p;
           }
         };
         // l'entrée, remplie des deux côtés, est rendue ici, à sa fin constatée : remplie vers l'arrière seulement, WebKit relisait la balise à
         // une position de mi-course (son dernier style calculé) entre la fin de l'animation et l'image qui la traite
-        fin = function() {
+        end = function() {
           if (st.direction === 'in' && node._mjs_transition_state === st) {
             node._mjs_transition_state = null;
             a.cancel();
           }
         };
-        return a.finished.then(fin, fin);
+        return a.finished.then(end, end);
       };
       return {
-        intro: function(node) { return jouer(node, 'in'); },
-        outro: function(node) { return jouer(node, 'out'); }
+        intro: function(node) { return play(node, 'in'); },
+        outro: function(node) { return play(node, 'out'); }
       };
     }
   };

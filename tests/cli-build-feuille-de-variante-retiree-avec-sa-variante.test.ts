@@ -1,6 +1,6 @@
 // une feuille `<module>.<nom>.css` que la construction écrit pour un `<style name>` part avec sa variante : six étapes construites sur
 // place (un composant changé, la variante retirée, un composant supprimé, un thème changé, rien de changé), dans les trois modes `css`,
-// donnent chacune à l'octet la sortie d'une construction neuve des mêmes sources — `mjs build` comme `mjs build --cache=verifier`, qui
+// donnent chacune à l'octet la sortie d'une construction neuve des mêmes sources — `mjs build` comme `mjs build --cache=verify`, qui
 // ne signale aucun écart. Restée sur place, la feuille passait pour une feuille déposée à la main : le cœur gardait le module des
 // variantes, et tout ce qui l'importe changeait de nom
 
@@ -40,13 +40,13 @@ describe('mjs build sur place : la feuille d\'une variante retirée part, la sor
   this.timeout(300_000)
 
   for (const css of ['bundle', 'split', 'lazy']) {
-    it(`css: '${css}' : six étapes, sans le cache et sous --cache=verifier`, function () {
+    it(`css: '${css}' : six étapes, sans le cache et sous --cache=verify`, function () {
       const checked = project('variante-retiree-verifier', css)
       const plain   = project('variante-retiree-sans', css)
       for (const [i, [step, change]] of STEPS.entries()) {
         change(checked)
         change(plain)
-        const served = build(checked, i === 0 ? ['--cache'] : ['--cache=verifier'])
+        const served = build(checked, i === 0 ? ['--cache'] : ['--cache=verify'])
         assert.equal(served.status, 0, `${step} : ${served.out}`)
         if (i > 0) assert.match(served.out, /^cache vérifié : /m, `${step} : ${served.out}`)
         const again = build(plain, [])
@@ -57,7 +57,7 @@ describe('mjs build sur place : la feuille d\'une variante retirée part, la sor
         cpSync(join(plain, 'mjs.config.json'), join(fresh, 'mjs.config.json'))
         const ref = build(fresh, [])
         assert.equal(ref.status, 0, `${step} : ${ref.out}`)
-        assert.deepEqual(gaps(join(checked, 'public'), join(fresh, 'public')), [], `${step} (--cache=verifier) : ${served.out}`)
+        assert.deepEqual(gaps(join(checked, 'public'), join(fresh, 'public')), [], `${step} (--cache=verify) : ${served.out}`)
         assert.deepEqual(gaps(join(plain, 'public'), join(fresh, 'public')), [], `${step} (sans le cache) : ${again.out}`)
         // la feuille retirée est annoncée comme les autres retraits
         if (step === 'la variante retirée') for (const out of [served.out, again.out]) assert.match(out, /^ {3}– titre\.bandeau\.css$/m, out)

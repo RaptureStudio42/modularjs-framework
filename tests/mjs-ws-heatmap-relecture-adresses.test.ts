@@ -30,7 +30,7 @@ function relit(pages: unknown[]) {
   const journal: Array<[string, string]> = []
   const app: any = { on() {}, stop: async () => {} }
   const pkg: any = heatmapPackage({ origins: [SITE], file, onLog: (niveau: string, message: string) => journal.push([niveau, message]) })
-  pkg.installer(app)
+  pkg.install(app)
   return { app, dir, journal, urls: () => (app.heatmap().pages as Array<{ url: string }>).map((p) => p.url).sort() }
 }
 

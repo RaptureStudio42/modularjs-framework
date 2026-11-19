@@ -6,14 +6,14 @@
 import { strict as assert } from 'node:assert'
 import { cleanJsExpr } from '../src/generator/utils.js'
 import { readFileSync as lireFige } from 'node:fs'
-import { compteursExpressions } from '../src/reader/expression.js'
+import { expressionCounters } from '../src/reader/expression.js'
 
 type LectureDesExpressions = 'ancienne' | 'arbre'
 // sorties et messages de l'ancienne lecture des expressions, relevés avant son retrait
 // (dans l'ordre des lectures du test : une même écriture se lit autrement dans une branche de {await})
 const ANCIENNE = (JSON.parse(lireFige(new URL('./fixtures/expressions-ancienne-lecture.json', import.meta.url), 'utf-8')) as Record<string, { expr: string, externes: string[] }[]>)['expressions-runes-et-fautes-lues-par-l-arbre']
 let rang = 0
-import { LETTRES_RESERVEES } from '../src/reader/disguise.js'
+import { RESERVED_LETTERS } from '../src/reader/disguise.js'
 
 function lire(expr: string, lecture: LectureDesExpressions, externes: string[]): { texte: string, relues: number } {
   if (lecture === 'ancienne') {
@@ -21,16 +21,16 @@ function lire(expr: string, lecture: LectureDesExpressions, externes: string[]):
     if (!fige || fige.expr !== expr || JSON.stringify(fige.externes) !== JSON.stringify(externes)) throw new Error(`sortie de l'ancienne lecture non relevée : ${expr}`)
     return { ...fige, arbre: 0, relues: 0, raison: '' } as any
   }
-  const relues = compteursExpressions.relues
+  const relues = expressionCounters.reread
   try {
-    return { texte: cleanJsExpr(expr, externes, 'essai'), relues: compteursExpressions.relues - relues }
+    return { texte: cleanJsExpr(expr, externes, 'essai'), relues: expressionCounters.reread - relues }
   }
   catch (e) {
-    return { texte: `ERREUR ${(e as Error).message}`, relues: compteursExpressions.relues - relues }
+    return { texte: `ERREUR ${(e as Error).message}`, relues: expressionCounters.reread - relues }
   }
 }
 
-const lettre = LETTRES_RESERVEES['§']
+const lettre = RESERVED_LETTERS['§']
 
 const CAS: [string, string[]][] = [
   ['µread $x', []],
@@ -75,8 +75,13 @@ describe('runes à forme, comparaison chaînée, clé, paramètre, lettre écrit
     for (const [expr, externes] of CAS) {
       const a = lire(expr, 'ancienne', externes)
       const b = lire(expr, 'arbre', externes)
+      // un paramètre nommé `$x` est refusé (`$` est réservé à l'état) ; l'ancienne lecture écrivait l'état à chaque appel
+      if (expr === '($x) -> $x') {
+        assert.match(b.texte, /^ERREUR .*ne nommez pas un paramètre « \$x »/, expr)
+        continue
+      }
       assert.equal(b.texte, a.texte, expr)
-      assert.equal(b.relues, 0, `${expr} : lue par l'arbre (raison du refus : ${compteursExpressions.derniere})`)
+      assert.equal(b.relues, 0, `${expr} : lue par l'arbre (raison du refus : ${expressionCounters.last})`)
     }
   })
 })

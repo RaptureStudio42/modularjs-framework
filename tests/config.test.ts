@@ -327,20 +327,20 @@ describe('findConfig', () => {
     assert.throws(() => findConfig(root), /render\.cible : clé inconnue/)
   })
 
-  it('accepte serveur.antiCheat.codePerIp : [n entier ≥ 1, fenêtreMs > 0]', () => {
+  it('accepte server.antiCheat.codePerIp : [n entier ≥ 1, fenêtreMs > 0]', () => {
     const root = mjsTmp('cfg')
     writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({
-      serveur: { antiCheat: { codePerIp: [5, 30000] } },
+      server: { antiCheat: { codePerIp: [5, 30000] } },
     }))
     const found = findConfig(root)
     assert.ok(found, 'devrait trouver et VALIDER le config')
-    assert.deepEqual((found!.config.serveur as any).antiCheat.codePerIp, [5, 30000])
+    assert.deepEqual((found!.config.server as any).antiCheat.codePerIp, [5, 30000])
   })
 
-  it('throw sur serveur.antiCheat.codePerIp malformé', () => {
+  it('throw sur server.antiCheat.codePerIp malformé', () => {
     const root = mjsTmp('cfg')
     writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({
-      serveur: { antiCheat: { codePerIp: [0, 30000] } },
+      server: { antiCheat: { codePerIp: [0, 30000] } },
     }))
     assert.throws(() => findConfig(root), /codePerIp/)
   })

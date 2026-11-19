@@ -48,8 +48,8 @@ const LECTEUR_REACTIF = `<script>
 // (`parentNode` lu par `Object.getOwnPropertyDescriptor(Node.prototype, …).get`) ne passe pas par lui et ne compte pas
 const COMPTER = `(() => {
   const f = document.querySelector('mjs-hote')._shadow.querySelector('form')
-  window.__lu = {}
-  const note = (k) => { __lu[k] = (__lu[k] || 0) + 1 }
+  window.__read = {}
+  const note = (k) => { __read[k] = (__read[k] || 0) + 1 }
   for (const k of ['parentNode', 'parentElement', 'host', 'getRootNode']) {
     let P = f, d
     while (P && !(d = Object.getOwnPropertyDescriptor(P, k))) P = Object.getPrototypeOf(P)
@@ -120,7 +120,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lire un 
     const vu = await page.evaluate(`(() => {
       const h = document.querySelector('mjs-hote')._shadow
       const textes = (sel, c) => Array.from(new Set(Array.from(h.querySelectorAll(sel)).map((x) => x._shadow.querySelector(c).textContent)))
-      return { lu: __lu, theme: textes('mjs-lecteur', '.t'), absent: textes('mjs-lecteur', '.a'), reglage: textes('mjs-lecteur-reactif', '.t') }
+      return { lu: __read, theme: textes('mjs-lecteur', '.t'), absent: textes('mjs-lecteur', '.a'), reglage: textes('mjs-lecteur-reactif', '.t') }
     })()`)
     assert.deepEqual(vu.theme, ['sombre'], JSON.stringify(vu))
     assert.deepEqual(vu.reglage, ['doux'], JSON.stringify(vu))

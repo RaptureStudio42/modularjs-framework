@@ -77,6 +77,6 @@ describe('attache sans minuterie : construction et marche sans le module des min
     const n = win.__attTirs ?? 0
     await attendre(200)
     assert.equal((win.__attTirs ?? 0) - n, 0, 'plus aucun tir une fois la balise détachée')
-    assert.equal(el._mjs_minuteries?.size ?? 0, 0, 'registre vide')
+    assert.equal(el._mjs_timers?.size ?? 0, 0, 'registre vide')
   })
 })

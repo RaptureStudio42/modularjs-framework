@@ -13,6 +13,7 @@ import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { findConfig, resolveBundlerOpts } from '../src/bundler/config.js'
 import { createRenderHandler } from '../src/server/render-request.js'
+import { playTogether } from './helpers/engines-together.js'
 
 const ENVS    = ['dev', 'prod'] as const
 const MOTEURS = ['chromium', 'firefox', 'webkit'] as const
@@ -126,7 +127,7 @@ after(async () => {
   await terminateSharedWorkerPool()
 })
 
-for (const nom of MOTEURS) for (const env of ENVS) describe(`réveil d'une instance paresseuse reprise en markers, contenu glissé d'un composant léger gardé : ${nom}, ${env}`, function () {
+for (const nom of MOTEURS) for (const env of ENVS) playTogether(describe(`réveil d'une instance paresseuse reprise en markers, contenu glissé d'un composant léger gardé : ${nom}, ${env}`, function () {
   this.timeout(180000)
   let present = false
   let browser: any
@@ -228,4 +229,4 @@ for (const nom of MOTEURS) for (const env of ENVS) describe(`réveil d'une insta
     if (!present) this.skip()
     await cas('/leger-paresseux')
   })
-})
+}))

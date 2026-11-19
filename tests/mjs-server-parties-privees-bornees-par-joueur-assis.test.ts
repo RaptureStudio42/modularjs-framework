@@ -146,7 +146,7 @@ describe('MJS-Server — parties privées en cours bornées par joueur assis, cr
 
   it('le refus a son message en français et en anglais, au vouvoiement', () => {
     const vars = { max: 5 }
-    assert.match((fr as any)['serveur.matchmaking-parties-privees-siege-limite'](vars), SIEGES)
-    assert.match((en as any)['serveur.matchmaking-parties-privees-siege-limite'](vars), /you already have a seat in 5 private games in progress/)
+    assert.match((fr as any)['mjs-server.matchmaking-games-private-seat-limit'](vars), SIEGES)
+    assert.match((en as any)['mjs-server.matchmaking-games-private-seat-limit'](vars), /you already have a seat in 5 private games in progress/)
   })
 })

@@ -16,21 +16,21 @@ describe('parser — raccourci-dev <@nom> → <mjs-nom>', () => {
     const refs: TagRef[] = []
     const root = parse('<@panier/>', refs)
     assert.equal(root.children[0].name, 'mjs-panier')
-    assert.deepEqual(refs, [{ name: 'panier', kind: 'raccourci-dev' }])
+    assert.deepEqual(refs, [{ name: 'panier', kind: 'shortcut-dev' }])
   })
 
   it('forme ouvrante+fermante <@panier></@panier> → même réécriture', () => {
     const refs: TagRef[] = []
     const root = parse('<@panier></@panier>', refs)
     assert.equal(root.children[0].name, 'mjs-panier')
-    assert.deepEqual(refs, [{ name: 'panier', kind: 'raccourci-dev' }])
+    assert.deepEqual(refs, [{ name: 'panier', kind: 'shortcut-dev' }])
   })
 
   it('multi-tiret <@rt-x/> → mjs-rt-x, tagRef name "rt-x"', () => {
     const refs: TagRef[] = []
     const root = parse('<@rt-x/>', refs)
     assert.equal(root.children[0].name, 'mjs-rt-x')
-    assert.deepEqual(refs, [{ name: 'rt-x', kind: 'raccourci-dev' }])
+    assert.deepEqual(refs, [{ name: 'rt-x', kind: 'shortcut-dev' }])
   })
 
   it('sans tableau tagRefs (usage historique, 1 seul argument) : aucun crash', () => {
@@ -45,7 +45,7 @@ describe('parser — bibliothèque cœur <@@nom> → <mjs-core-nom>', () => {
     const refs: TagRef[] = []
     const root = parse('<@@select></@@select>', refs)
     assert.equal(root.children[0].name, 'mjs-core-select')
-    assert.deepEqual(refs, [{ name: 'select', kind: 'raccourci-coeur', attrs: { names: [], spread: false, texts: {} } }])
+    assert.deepEqual(refs, [{ name: 'select', kind: 'shortcut-core', attrs: { names: [], spread: false, texts: {} } }])
   })
 
   it('imbriqués : <@@select><@@option>a</@@option></@@select>', () => {
@@ -53,7 +53,7 @@ describe('parser — bibliothèque cœur <@@nom> → <mjs-core-nom>', () => {
     const root = parse('<@@select><@@option value="a">a</@@option></@@select>', refs)
     assert.equal(root.children[0].name, 'mjs-core-select')
     assert.equal(root.children[0].children[0].name, 'mjs-core-option')
-    assert.deepEqual(refs, [{ name: 'select', kind: 'raccourci-coeur', attrs: { names: [], spread: false, texts: {} } }, { name: 'option', kind: 'raccourci-coeur', attrs: { names: ['value'], spread: false, texts: { value: 'a' } } }])
+    assert.deepEqual(refs, [{ name: 'select', kind: 'shortcut-core', attrs: { names: [], spread: false, texts: {} } }, { name: 'option', kind: 'shortcut-core', attrs: { names: ['value'], spread: false, texts: { value: 'a' } } }])
   })
 
   it('forme nue <@@option value="a"> sans fermante : vide, ses frères restent au niveau du parent', () => {
@@ -65,14 +65,14 @@ describe('parser — bibliothèque cœur <@@nom> → <mjs-core-nom>', () => {
     const refs: TagRef[] = []
     const root = parse('<@@code-bloc/>', refs)
     assert.equal(root.children[0].name, 'mjs-core-code-bloc')
-    assert.deepEqual(refs, [{ name: 'code-bloc', kind: 'raccourci-coeur', attrs: { names: [], spread: false, texts: {} } }])
+    assert.deepEqual(refs, [{ name: 'code-bloc', kind: 'shortcut-core', attrs: { names: [], spread: false, texts: {} } }])
   })
 
   it('<@select> (un seul @) reste un composant du projet : mjs-select, raccourci-dev', () => {
     const refs: TagRef[] = []
     const root = parse('<@select></@select>', refs)
     assert.equal(root.children[0].name, 'mjs-select')
-    assert.deepEqual(refs, [{ name: 'select', kind: 'raccourci-dev' }])
+    assert.deepEqual(refs, [{ name: 'select', kind: 'shortcut-dev' }])
   })
 })
 
@@ -81,14 +81,14 @@ describe('parser — <@mjs-nom> RETIRÉE → erreur de migration (raccourci-mjs-
     const refs: TagRef[] = []
     const root = parse('<@mjs-tst/>', refs)
     assert.equal(root.children[0].name, 'mjs-tst')
-    assert.deepEqual(refs, [{ name: 'tst', kind: 'raccourci-mjs-retire' }])
+    assert.deepEqual(refs, [{ name: 'tst', kind: 'shortcut-mjs-removed' }])
   })
 
   it('<@mjs-rt-x/> (nom multi-tiret) → mjs-rt-x, tagRef name "rt-x"', () => {
     const refs: TagRef[] = []
     const root = parse('<@mjs-rt-x/>', refs)
     assert.equal(root.children[0].name, 'mjs-rt-x')
-    assert.deepEqual(refs, [{ name: 'rt-x', kind: 'raccourci-mjs-retire' }])
+    assert.deepEqual(refs, [{ name: 'rt-x', kind: 'shortcut-mjs-removed' }])
   })
 })
 
@@ -97,21 +97,21 @@ describe('parser — balises littérales mjs-*/mjs-core-* (écrites à la main, 
     const refs: TagRef[] = []
     const root = parse('<mjs-panier></mjs-panier>', refs)
     assert.equal(root.children[0].name, 'mjs-panier')
-    assert.deepEqual(refs, [{ name: 'panier', kind: 'litteral-dev' }])
+    assert.deepEqual(refs, [{ name: 'panier', kind: 'literal-dev' }])
   })
 
   it('<mjs-core-x></mjs-core-x> → name INCHANGÉ + tagRef litteral-coeur', () => {
     const refs: TagRef[] = []
     const root = parse('<mjs-core-x></mjs-core-x>', refs)
     assert.equal(root.children[0].name, 'mjs-core-x')
-    assert.deepEqual(refs, [{ name: 'x', kind: 'litteral-coeur', attrs: { names: [], spread: false, texts: {} } }])
+    assert.deepEqual(refs, [{ name: 'x', kind: 'literal-core', attrs: { names: [], spread: false, texts: {} } }])
   })
 
   it('balise ordinaire (div) : jamais de tagRef ; élément personnalisé nu (my-widget) : relevé `balise-nue`, jamais réécrit', () => {
     const refs: TagRef[] = []
     const ast = parse('<div><my-widget layout="x"></my-widget></div>', refs)
     // le bundler n'avertit que si un composant du projet porte ce nom (écrit sans préfixe, il resterait vide)
-    assert.deepEqual(refs, [{ name: 'my-widget', kind: 'balise-nue' }])
+    assert.deepEqual(refs, [{ name: 'my-widget', kind: 'bare-tag' }])
     assert.equal(ast.children[0].children[0].name, 'my-widget')
   })
 })

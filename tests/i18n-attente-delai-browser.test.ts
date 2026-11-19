@@ -73,14 +73,14 @@ async function bati(): Promise<Construction> {
 // l'instant où le module paraît AVEC son contenu (une boîte de rendu et son titre), et son titre brut à chaque image où il est visible
 const SONDE = () => {
   const w = window as any
-  w.__vu = 0
+  w.__seenMark = 0
   w.__titres = []
   const tick = () => {
     const h: any = document.querySelector('mjs-att-wait')
     const o      = h && (h._shadow || h.shadowRoot)
     const t      = o && o.querySelector('h1.t')
     const vu     = !!h && h.getClientRects().length > 0 && getComputedStyle(h).visibility !== 'hidden' && !!t
-    if (vu && !w.__vu) w.__vu = performance.now()
+    if (vu && !w.__seenMark) w.__seenMark = performance.now()
     if (vu && w.__titres[w.__titres.length - 1] !== t.textContent) w.__titres.push(t.textContent)
     requestAnimationFrame(tick)
   }
@@ -112,8 +112,8 @@ describe('délai de secours réglé — dans de vrais navigateurs', function () 
         await page.addInitScript(SONDE)
         try {
           await page.goto(c.base + '/attente', { waitUntil: 'load' })
-          await page.waitForFunction(() => (window as any).__vu > 0, null, { timeout: 20000 })
-          const vu: number = await page.evaluate(() => (window as any).__vu)
+          await page.waitForFunction(() => (window as any).__seenMark > 0, null, { timeout: 20000 })
+          const vu: number = await page.evaluate(() => (window as any).__seenMark)
           const titres: string[] = await page.evaluate(() => (window as any).__titres)
           assert.ok(vu >= 350, `pas avant le délai réglé (paru à ${Math.round(vu)} ms)`)
           assert.ok(vu < 2500, `bien avant les 3 s du défaut (paru à ${Math.round(vu)} ms)`)

@@ -9,8 +9,8 @@
 // byte-identique — rien de spécifique à ce correctif ne l'a introduit.
 //
 // Remède : la queue vit désormais DANS chaque fermeture `swap`/`_swapXxx`, appelée en
-// DERNIÈRE ligne (nom local `_apresSwap`/`_finPopCache`/`_finPopNet`/`_finClickCache`/`_finClickNet`/
-// `_finSubmit` selon le site) — sans transition de vue (`_mjs_vtWrapSwap` absent, ou son gate
+// DERNIÈRE ligne (nom local `_afterSwap`/`_finPopCache`/`_finPopNet`/`_finClickCache`/`_finClickNet`/
+// `_endSubmit` selon le site) — sans transition de vue (`_mjs_vtWrapSwap` absent, ou son gate
 // `Router._mjs_vtEnabled()` faux, ou sa résolution `_mjs_vtResolvePage` fausse) `_mjs_vtWrapSwap` appelle `swap()`
 // SYNCHRONEMENT (cf. ses 2 `return swap()` précoces) : l'ordre observable reste IDENTIQUE à avant ce
 // correctif. La valeur de retour de `Router.navigate(...)`, autrefois parfois propagée jusqu'à l'appelant du

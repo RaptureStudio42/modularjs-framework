@@ -204,14 +204,14 @@ function _mjsFxInk(el, rect) {
     var sy = oh > 0 ? rect.height / oh : 1;
     var tf = cs.transform;
     var mx = tf && tf !== 'none' ? /^matrix\(([^)]+)\)$/.exec(tf) : null;
-    var sure = true;
+    var safe = true;
     if (tf && tf !== 'none') {
       var mv = mx ? mx[1].split(',').map(num) : null;
       // matrix3d ou rotation : la boîte lue à l'écran n'est plus celle du repère de la balise
-      sure = !!mv && Math.abs(mv[1]) < 1e-6 && Math.abs(mv[2]) < 1e-6 && Math.abs(mv[0] * ow - rect.width) < 1 && Math.abs(mv[3] * oh - rect.height) < 1;
+      safe = !!mv && Math.abs(mv[1]) < 1e-6 && Math.abs(mv[2]) < 1e-6 && Math.abs(mv[0] * ow - rect.width) < 1 && Math.abs(mv[3] * oh - rect.height) < 1;
     }
-    else sure = Math.abs(rect.width - ow) < 1 && Math.abs(rect.height - oh) < 1;
-    if (sure) {
+    else safe = Math.abs(rect.width - ow) < 1 && Math.abs(rect.height - oh) < 1;
+    if (safe) {
       var g = document.createRange();
       g.selectNodeContents(el);
       var q = g.getBoundingClientRect();
@@ -597,7 +597,7 @@ function _mjsFxHolder(el, id) {
   return { svg: svg, filter: f };
 }
 
-var _mjsFxFilN = 0;
+var _mjsFxFilterN = 0;
 
 // les racines (document ou shadow root) qui portent des balises filtrées de WebKit, chacune avec UN observateur
 // partagé : un changement de classe ou de style sur un nœud, ou le survol d'un nœud, relit l'encre des seules
@@ -971,7 +971,7 @@ function _mjsFxSpot(el, cur) {
     wy = +((gy - box.h / box.sy / 2) * k).toFixed(1);
     if (!drift && !wx && !wy) return;
     if (!drift) {
-      var id  = 'mjs-fx-filter-' + (++_mjsFxFilN);
+      var id  = 'mjs-fx-filter-' + (++_mjsFxFilterN);
       var svg = µ._mjs_fxSvgDefs(el);
       svg.innerHTML = µ._mjs_th('<filter id="' + id + '" color-interpolation-filters="sRGB" x="-1" y="-1" width="3" height="3"><feOffset/></filter>');
       drift = { svg: svg, off: svg.firstChild.firstChild };
@@ -1462,7 +1462,7 @@ function _mjsFxSpot(el, cur) {
   vars: { duration: '', easing: '' },
   setup: function(el, s) {
     var cur    = Object.create(null);
-    var id     = 'mjs-fx-filter-' + (++_mjsFxFilN);
+    var id     = 'mjs-fx-filter-' + (++_mjsFxFilterN);
     var holder = null;
     var watch  = null;
     var last   = '';

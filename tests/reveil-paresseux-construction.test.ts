@@ -89,14 +89,14 @@ describe('@wake à la construction', function () {
     const dev = (await transpile(src, { moduleName: 'page', devWarnings: true } as any)).output
     const prod = (await transpile(src, { moduleName: 'page' } as any)).output
     assert.equal(dev.split('_mjs_wakeLost').length, 2, 'une fois par composant')
-    assert.match(dev, /« :wake » sur <\{balise\}> : sans effet, le composant se réveille dès le démarrage\. Sa page du serveur n'existe plus quand il démarre/)
+    assert.match(dev, /« :wake » sur <\{tag\}> : sans effet, le composant se réveille dès le démarrage\. Sa page du serveur n'existe plus quand il démarre/)
     assert.ok(!prod.includes('_mjs_wakeLost'), 'absent en production')
     // le texte de l'élément que la vue n'a pas à sa place (`interaction`) : pour interaction seulement, une fois par composant
     assert.ok(!dev.includes('_mjs_wakeMiss'), 'absent avec view seul')
     const devI = (await transpile('<@carte :wake=interaction></@carte>\n<@carte :wake=interaction nom="a"></@carte>\n', { moduleName: 'page', devWarnings: true } as any)).output
     const prodI = (await transpile('<@carte :wake=interaction></@carte>\n', { moduleName: 'page' } as any)).output
     assert.equal(devI.split('_mjs_wakeMiss').length, 2, 'une fois par composant')
-    assert.match(devI, /« :wake=interaction » sur <\{balise\}> : au réveil, la vue du composant n'a pas reçu ce que l'utilisateur avait fait dans la page du serveur/)
+    assert.match(devI, /« :wake=interaction » sur <\{tag\}> : au réveil, la vue du composant n'a pas reçu ce que l'utilisateur avait fait dans la page du serveur/)
     assert.ok(!prodI.includes('_mjs_wakeMiss'), 'absent en production')
   })
 
@@ -121,7 +121,7 @@ describe('@wake à la construction', function () {
     const sans = await coeur('', env)
     const vue  = await coeur('view', env)
     const avec = await coeur('interaction', env)
-    for (const marque of ['_mjs_wakeHold', '_mjs_wakeNew', '_mjs_wakeLater', '<reveil>']) assert.ok(!sans.includes(marque), `${marque} absent du cœur sans @wake`)
+    for (const marque of ['_mjs_wakeHold', '_mjs_wakeNew', '_mjs_wakeLater', '<wake-up>']) assert.ok(!sans.includes(marque), `${marque} absent du cœur sans @wake`)
     for (const coeurAvec of [vue, avec]) for (const marque of ['_mjs_wakeHold', '_mjs_wakeNew', '_mjs_wakeLater', 'IntersectionObserver']) assert.ok(coeurAvec.includes(marque), `${marque} présent dans le cœur avec @wake`)
     // le réveil ne demande pas le repos du navigateur : pas un requestIdleCallback de plus dans le cœur avec @wake que sans
     for (const coeurAvec of [vue, avec]) assert.equal(coeurAvec.split('requestIdleCallback').length, sans.split('requestIdleCallback').length, 'requestIdleCallback : pas un de plus avec @wake')

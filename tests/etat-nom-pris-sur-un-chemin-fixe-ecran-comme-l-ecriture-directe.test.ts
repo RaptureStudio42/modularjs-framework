@@ -103,10 +103,10 @@ for (const [nom, opts] of REGLAGES) describe(`nom pris sur un chemin fixe : le m
     const n = await ecran('ma', 'mjs-vn', (el) => el.nom(5)), d = await ecran('ma', 'mjs-vn', (el) => el.direct(5))
     assert.deepEqual([n.vu, d.vu], [['5', '{"b":{"c":5}}'], ['5', '{"b":{"c":5}}']])
   })
-  it('deux enfants tiennent $o.a, l\'un écrit t := $item.b ; t.c = 5 : le même écran que son écriture directe', async () => {
+  it('deux enfants tiennent $o.a, l\'un écrit t := $item.b ; t.c = 5 : le même écran que son écriture directe, que le parent et le frère montrent (sans enveloppe, ni l\'un ni l\'autre)', async () => {
     const n = await ecran('sb', 'mjs-vs', (el) => tous(el, 'MJS-VS')[0].nomE(5)), d = await ecran('sb', 'mjs-vs', (el) => tous(el, 'MJS-VS')[0].directE(5))
     assert.deepEqual(n.vu, d.vu)
-    assert.deepEqual(d.vu, ['0', '{"b":{"c":5}}', '{"b":{"c":0}}'])
+    assert.deepEqual(d.vu, opts.proxy === false ? ['0', '{"b":{"c":5}}', '{"b":{"c":0}}'] : ['5', '{"b":{"c":5}}', '{"b":{"c":5}}'])
   })
   it('objet remplacé entre la prise du nom et l\'écriture : l\'ancien reçoit 5, le neuf reste intact', async () => {
     const r = await ecran('lo', 'mjs-vn', (el) => el.remplace(5))

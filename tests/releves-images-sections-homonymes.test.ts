@@ -66,7 +66,7 @@ describe('relevés d\'images — balises homonymes d\'une section, lignes de tex
   it('relevés directs : <routes-nav>, <vars-panel>, <types-list>, ligne de racine en @', () => {
     const nav = '<nav>\n  <routes-nav>\n    <@@img src="a.png" alt="">\n  </routes-nav>\n  <vars-panel>\n    <div *blend(image: \'b.png\')></div>\n  </vars-panel>\n  <types-list>\n    <@@img src="c.png" alt="">\n  </types-list>\n</nav>\n'
     assert.deepEqual(scanImgTags(nav).map(t => t.src), ['a.png', 'c.png'])
-    assert.deepEqual(scanEffectImages(nav).map(e => e.chemin), ['b.png'])
+    assert.deepEqual(scanEffectImages(nav).map(e => e.path), ['b.png'])
     assert.deepEqual(scanImgTags('<p>Suivez :</p>\n@rapturestudio <@@img src="d.png" alt="">\n').map(t => t.src), ['d.png'])
   })
 })

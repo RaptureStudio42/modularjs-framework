@@ -69,14 +69,14 @@ export function findUnreachableCode(ast: acorn.Node | null): UnreachableCode[] {
  *  générée, carte de source muette) — rien n'est dit alors. `fichier` : le nom cité. Imprimé ici,
  *  comme les autres avertissements de compilation (printDiagnostic compte aussi dans un thread de
  *  travail) ; `lint.unreachable: false` coupe avant même la lecture de l'arbre. */
-export function warnUnreachableCode(ast: acorn.Node | null, lineOf: (offset: number) => number | null, fichier: string, lint?: LintToggles, colorsEnabled = false): void {
+export function warnUnreachableCode(ast: acorn.Node | null, lineOf: (offset: number) => number | null, file: string, lint?: LintToggles, colorsEnabled = false): void {
   if (!ast || lint?.unreachable === false) return
   const said = new Set<number>()
   for (const code of findUnreachableCode(ast)) {
-    const ligne = lineOf(code.offset)
-    if (ligne === null || said.has(ligne)) continue
-    said.add(ligne)
-    const line = typedLine('unreachable', t('transpiler.code-inaccessible', { fichier, ligne, mot: code.keyword }), lint)
+    const lineNo = lineOf(code.offset)
+    if (lineNo === null || said.has(lineNo)) continue
+    said.add(lineNo)
+    const line = typedLine('unreachable', t('transpiler.code-inaccessible', { file: file, line: lineNo, word: code.keyword }), lint)
     if (line !== null) printDiagnostic(line, colorsEnabled)
   }
 }

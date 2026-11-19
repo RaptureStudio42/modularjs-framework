@@ -122,7 +122,7 @@ describe('`type: Reward` dans un verbe', function () {
 
   it('un type déclaré que rien ne lie dans le fichier : la construction s\'arrête et montre la forme courte ; un nom lié reste une donnée', () => {
     // le nom se cherche sur le code compilé du fichier (ici écrit à la main)
-    const verifier = (src: string, js: string): void => checkAjaxVerbNames(js, compileAjaxTypes(src, DEFS, true, 1).aLier)
+    const verifier = (src: string, js: string): void => checkAjaxVerbNames(js, compileAjaxTypes(src, DEFS, true, 1).toBind)
     assert.throws(() => verifier("µajax.get '/app/rewards', type: Reward, (r) -> $x = r", "µ.ajax.get('/app/rewards', { type: Reward }, (r) => r)"), (e: any) => /ligne 1/.test(e.message) && e.message.includes("µajax '/url', type: Reward "))
     assert.throws(() => verifier("x = 1\nµajax.post '/x', {type: Reward}, f", "var x; x = 1; µ.ajax.post('/x', { type: Reward }, f)"), (e: any) => /ligne 2/.test(e.message) && e.message.includes("method: 'POST'"))
     for (const src of ["Reward = 'cadeau'\nµajax.get '/x', type: Reward, f", "envoyer = (Reward) -> µajax.post '/x', {type: Reward}, f", "µajax.get '/x', type: kind, f", "µajax.get '/x', type: Inconnu, f", "µajax.get '/x', (r) ->\n  x = type: Reward"]) assert.equal(compileAjaxTypes(src, DEFS, true, 1).code, src, src)
@@ -171,7 +171,7 @@ describe('un gestionnaire qui lève', () => {
 
 describe('accolades : refusées, valeur de départ comprise, renvoi à la forme en retrait', () => {
   it('`=` avant ou après les deux-points : le message renvoie au type nommé et montre la forme à écrire', () => {
-    for (const r of ['{ price = 0 int 0.. }', '{ price: = 0 int 0.. }', '{ price = 0: int 0.. }']) assert.throws(() => parseRule(r, { bloc: '<vars>', ligne: 1 }), (e: any) => /\*\.types\.mjs/.test(e.message) && e.message.includes('price = 0  int 0..'), r)
+    for (const r of ['{ price = 0 int 0.. }', '{ price: = 0 int 0.. }', '{ price = 0: int 0.. }']) assert.throws(() => parseRule(r, { block: '<vars>', line: 1 }), (e: any) => /\*\.types\.mjs/.test(e.message) && e.message.includes('price = 0  int 0..'), r)
   })
 
   it('le texte d\'un objet imbriqué qui a une valeur de départ se relit tel quel : jamais une écriture refusée', () => {

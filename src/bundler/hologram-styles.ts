@@ -35,11 +35,11 @@ export const hologramClient: FxClient = {
     const written = new Set<string>()
     const out = text.replace(REGEX_STYLE_CALL, (m, list: string) => {
       const kept = list.split(' ').filter((n) => wanted.has(n))
-      if (kept.length === 0) throw new Error(t('bundler.hologram-styles.appel-sans-style', { fichier: HOLOGRAM_FILE, noms: list }))
+      if (kept.length === 0) throw new Error(t('bundler.hologram-styles.call-no-style', { file: HOLOGRAM_FILE, names: list }))
       for (const n of kept) written.add(n)
       return `style('${kept.join(' ')}'`
     })
-    for (const s of wanted) if (!written.has(s)) throw new Error(t('bundler.hologram-styles.style-sans-section', { fichier: HOLOGRAM_FILE, style: s }))
+    for (const s of wanted) if (!written.has(s)) throw new Error(t('bundler.hologram-styles.style-no-section', { file: HOLOGRAM_FILE, style: s }))
     return out
   }
 }

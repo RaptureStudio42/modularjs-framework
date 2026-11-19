@@ -11,7 +11,7 @@
 };
 if (µ.Element) {
   µ.Element.prototype._mjs_on = function(eventName, selectorOrHandler, handlerOrNone) {
-    var comp = this, handler, off, root, selector, wrapper, livrer;
+    var comp = this, handler, off, root, selector, wrapper, deliver;
     if (typeof selectorOrHandler === 'function') {
       handler = selectorOrHandler;
       selector = null;
@@ -19,7 +19,7 @@ if (µ.Element) {
       selector = selectorOrHandler;
       handler = handlerOrNone;
     }
-    livrer = (e) => {
+    deliver = (e) => {
       var delegatedTarget, realTarget;
       if (!selector) {
         return handler.call(this, e);
@@ -53,10 +53,10 @@ if (µ.Element) {
     // fin) ; sans le graphe des signaux, `µ._mjs_sigCur` n'existe pas et rien ne change
     wrapper = (e) => {
       var sig = µ._mjs_sigCur;
-      if (!sig) return livrer(e);
+      if (!sig) return deliver(e);
       µ._mjs_sigCur = null;
       try {
-        return livrer(e);
+        return deliver(e);
       } finally {
         µ._mjs_sigCur = sig;
       }

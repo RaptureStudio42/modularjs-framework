@@ -1,4 +1,4 @@
-// `mjs ws` / `mjs serveur` en rechargement à chaud : l'ancien serveur était arrêté AVANT le
+// `mjs ws` / `mjs server` en rechargement à chaud : l'ancien serveur était arrêté AVANT le
 // `setup()` du nouveau. Un fichier d'entrée remplacé dont le `setup()` jette (variable
 // d'environnement manquante, faute de frappe) laissait le processus vivant sans plus rien
 // écouter — aucun superviseur ne relance un processus vivant. Le `setup()` du nouveau tourne
@@ -11,7 +11,7 @@ import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { runWsCommand } from '../src/cli/ws.js'
-import { runServeurCommand } from '../src/cli/server.js'
+import { runServerCommand } from '../src/cli/server.js'
 
 const sonde = (port: number) => new Promise<boolean>(r => {
   const c = net.connect({ host: '127.0.0.1', port }, () => { c.destroy(); r(true) })
@@ -26,7 +26,7 @@ async function attendreQue(cond: () => boolean | Promise<boolean>, ms = 5000) {
 
 for (const [nom, lancer, fichier] of [
   ['mjs ws', runWsCommand, 'ws.js'],
-  ['mjs serveur', runServeurCommand, 'serveur.js'],
+  ['mjs server', runServerCommand, 'game.js'],
 ] as const) {
   describe(`${nom} — un setup() qui jette au rechargement garde l'ancien serveur`, function () {
     this.timeout(30000)

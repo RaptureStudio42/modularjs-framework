@@ -3,7 +3,8 @@
 // `data-id`, `aria-label`…, l'écriture compilée le dit au runtime (dernier argument `1`), qui pose la valeur sans le filtre ;
 // `class` et un `aria-*` à `false` ne le traversent plus non plus. Un nom à risque (`href`, `src`, `xlink:href`, `action`,
 // `formaction`, `poster`, `ping`, `background`, `data`, `codebase`, `srcdoc`, `on…`), quelle que soit sa casse, et un nom
-// calculé (étalement `{...attrs}`) gardent le filtre : même sûreté, en développement comme en production.
+// calculé (étalement `{...attrs}`) gardent le filtre : même sûreté, en développement comme en production. Un `on…` calculé écrit sur une
+// balise (`onclick={$o}`) est refusé dès la construction : l'étalement, nom calculé, en apporte encore un au filtre.
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs'
@@ -19,12 +20,11 @@ $c = 'actif'
 $d = 7
 $a = 'etiquette'
 $t = 'titre'
-$o = 'alert(2)'
 $s = '<script>alert(3)</script>'
 $lignes = [{id: 1, u: 'javascript:alert(4)', d: 8, c: 'ligne'}]
 $etale = {onclick: 'alert(5)', 'data-x': 'x'}
 </script>
-<a id="lien" href={$u} class={$c} data-id={$d} aria-label={$a} title={$t} onclick={$o} onMouseOver={$o} srcdoc={$s} formaction={$u} poster={$u} ping={$u} background={$u}>x</a>
+<a id="lien" href={$u} class={$c} data-id={$d} aria-label={$a} title={$t} srcdoc={$s} formaction={$u} poster={$u} ping={$u} background={$u}>x</a>
 <img class="image" src={$u} alt={$t}>
 <object class="objet" data={$u} codebase={$u}></object>
 <p class="etale" {...$etale}>e</p>
@@ -32,7 +32,7 @@ $etale = {onclick: 'alert(5)', 'data-x': 'x'}
 `
 
 const SURS     = ['data-id', 'aria-label', 'title', 'alt']
-const A_RISQUE = ['href', 'onclick', 'onMouseOver', 'srcdoc', 'formaction', 'poster', 'ping', 'background', 'src', 'data', 'codebase']
+const A_RISQUE = ['href', 'srcdoc', 'formaction', 'poster', 'ping', 'background', 'src', 'data', 'codebase']
 
 async function construire(prefixe: string, prod: boolean): Promise<{ code: string, composant: string }> {
   const root   = mjsTmp(prefixe)
@@ -71,7 +71,6 @@ async function monter(code: string, prod: boolean, espion?: string[]) {
 function verifierPage(sh: any): void {
   const a = sh.querySelector('#lien')
   for (const nom of ['href', 'formaction', 'ping']) assert.notEqual(a.getAttribute(nom), 'javascript:alert(1)', nom + ' : adresse javascript: refusée')
-  for (const nom of ['onclick', 'onmouseover']) assert.notEqual(a.getAttribute(nom), 'alert(2)', nom + ' : gestionnaire refusé')
   assert.notEqual(a.getAttribute('srcdoc'), '<script>alert(3)</script>', 'srcdoc refusé')
   assert.notEqual(sh.querySelector('img').getAttribute('src'), 'javascript:alert(1)')
   assert.notEqual(sh.querySelector('object').getAttribute('data'), 'javascript:alert(1)', 'data d\'un <object> : adresse refusée')

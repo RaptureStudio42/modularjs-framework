@@ -66,7 +66,7 @@ function _mjsHeatmapTones() {
       return c || 'zone';
     };
     var frac = function(v) { return v < 0 ? 0 : v > 1 ? 1 : Math.round(v * 10000) / 10000; };
-    var box  = function(nom, r, x, y) { return [nom, frac(r.width ? (x - r.left) / r.width : 0), frac(r.height ? (y - r.top) / r.height : 0), Math.round(r.width), Math.round(r.height)]; };
+    var box  = function(name, r, x, y) { return [name, frac(r.width ? (x - r.left) / r.width : 0), frac(r.height ? (y - r.top) / r.height : 0), Math.round(r.width), Math.round(r.height)]; };
     // la balise la plus profonde sous le point, jusque dans les composants (µ.elementAt)
     var deep = function(x, y, fallback) { return µ.elementAt(x, y) || fallback; };
     // la place du point : la souris, le doigt ; sinon le centre de la balise qui a reçu l'événement
@@ -80,17 +80,17 @@ function _mjsHeatmapTones() {
     // la chaleur dessinée sur la zone : les points de cette visite (en px de la page, ou en fractions
     // de la zone) — tous (`show: true`), ou les N plus récents (`show: N`, une variable le change sur
     // place) ; le calque vient et part avec `show`
-    var layer = null;
-    var pts   = [];
-    var raf   = 0;
-    var ro    = null;
+    var layer   = null;
+    var pts     = [];
+    var raf     = 0;
+    var ro      = null;
     var restore = function() {};
-    var host  = page ? document.body : µ._mjs_fxInner(el) || el;
-    var combien = function() {
+    var host    = page ? document.body : µ._mjs_fxInner(el) || el;
+    var howMany = function() {
       if (typeof s.show === 'number' && s.show > 0) return Math.min(pts.length, Math.floor(s.show));
       return s.show === true ? pts.length : 0;
     };
-    var montre = function() {
+    var show = function() {
       if (!s.show) {
         if (!layer) return;
         if (ro) ro.disconnect();
@@ -127,7 +127,7 @@ function _mjsHeatmapTones() {
           ro.observe(el);
         }
       }
-      layer.setAttribute('mjs-fx-heatmap-n', String(combien()));
+      layer.setAttribute('mjs-fx-heatmap-n', String(howMany()));
       redraw();
     };
     var draw = function() {
@@ -142,7 +142,7 @@ function _mjsHeatmapTones() {
       var r  = Math.max(24, Math.round(Math.max(w, h) / 30));
       var sx = page ? window.scrollX : 0;
       var sy = page ? window.scrollY : 0;
-      for (var i = pts.length - combien(); i < pts.length; i++) {
+      for (var i = pts.length - howMany(); i < pts.length; i++) {
         var x = page ? pts[i][0] - sx : pts[i][0] * w;
         var y = page ? pts[i][1] - sy : pts[i][1] * h;
         if (x < -r || y < -r || x > w + r || y > h + r) continue;
@@ -175,7 +175,7 @@ function _mjsHeatmapTones() {
       sock = k;
       out  = _mjsHeatmapOut(k);
       µ._mjs_fxPackage(sock, 'heatmap:', '*heatmap', 'heatmapPackage', 'heatmapPackage({ origins: [\'https://monsite.fr\'] })');
-      montre();
+      show();
       return function() {
         // l'effet part, ou la connexion : ce qui attend ne meurt pas avec lui, il part à l'ouverture (borné dans le temps)
         var left = out;
@@ -221,7 +221,7 @@ function _mjsHeatmapTones() {
       // une longue visite : les plus anciens points s'oublient (le dessin ne montre que les plus récents)
       if (pts.length > 20000) pts.splice(0, pts.length - 20000);
       if (layer) {
-        layer.setAttribute('mjs-fx-heatmap-n', String(combien()));
+        layer.setAttribute('mjs-fx-heatmap-n', String(howMany()));
         redraw();
       }
     };
@@ -232,13 +232,13 @@ function _mjsHeatmapTones() {
       µ._mjs_dom.removeEventListener(target, on, onEvent, { capture: true });
       if (raf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf);
       s.show = false;
-      montre();
+      show();
     };
     // `show` tenu par une variable : le calque suit sans reposer l'effet (ni reperdre les points)
     stop.set = function(k, v) {
       if (k !== 'show') return false;
       s.show = v;
-      if (sock) montre();
+      if (sock) show();
     };
     return stop;
   }
@@ -497,7 +497,7 @@ var _mjsHeatmapPlain = function(s) {
   var long  = /\d|[A-Za-z]{5}/.test(s);
   var words = 0;
   // les lettres des sigles
-  var sigle = 0;
+  var acronym = 0;
   for (var i = 0; i < t.length; i++) {
     var w = t[i];
     if (w === '-' || w === '_') continue;
@@ -512,7 +512,7 @@ var _mjsHeatmapPlain = function(s) {
     if (sa && sb && w.length <= 4 && (w.length > 1 || /[aeiouy]/i.test(w))) {
       if (w.length > 1 && !_mjsHeatmapSays(w)) {
         if (w.length > 3 && !long) return false;
-        sigle += w.length;
+        acronym += w.length;
       }
       continue;
     }
@@ -525,7 +525,7 @@ var _mjsHeatmapPlain = function(s) {
     }
     return false;
   }
-  return words >= 2 && words * 100 <= s.length * 31 && sigle * 5 < s.length;
+  return words >= 2 && words * 100 <= s.length * 31 && acronym * 5 < s.length;
 };
 
 // une clé : trois groupes ou plus de 4 à 6 lettres ou chiffres, tous de la même longueur, séparés par `-` ou `_`, au bout du texte, seule ou

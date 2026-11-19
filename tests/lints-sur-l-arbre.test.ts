@@ -23,20 +23,20 @@ describe('contrôles et relevés du gabarit lus sur l\'arbre', () => {
   })
 
   it('a11y : la vraie balise qui suit l\'expression reste contrôlée, à sa ligne', () => {
-    const attendu = [t('transpiler.a11y-img-alt-manquant', { moduleName: 'suite', ligne: 3 })]
+    const attendu = [t('transpiler.a11y-img-alt-missing', { moduleName: 'suite', line: 3 })]
     assert.deepEqual(checkA11y('<p>{\'<b>\'}</p>\n<p>texte</p>\n<img src="a.png">\n', 'suite'), attendu)
   })
 
   it('<form> : une balise écrite dans une chaîne d\'une expression ou dans un <textarea> n\'est pas un formulaire', () => {
     assert.deepEqual(checkUjsForm('<p>{$modele or \'<form>\'}</p>\n', 'expression'), [])
     assert.deepEqual(checkUjsForm('<textarea name="x"><form></textarea>\n', 'zone'), [])
-    assert.deepEqual(checkUjsForm('<p>{\'<b>\'}</p>\n<form></form>\n', 'suite'), [t('transpiler.lint.ujs-form', { file: 'suite', ligne: 2 })])
+    assert.deepEqual(checkUjsForm('<p>{\'<b>\'}</p>\n<form></form>\n', 'suite'), [t('transpiler.lint.ujs-form', { file: 'suite', line: 2 })])
   })
 
   it('effets : un réglage d\'image écrit dans une chaîne d\'une expression n\'est pas relevé', () => {
     assert.deepEqual(scanEffectImages('<p>{$fond or \'<div *behind("a.jpg")>\'}</p>\n'), [])
     const vrai = scanEffectImages('<p>{\'<b>\'}</p>\n<div *behind(\'a.jpg\')></div>\n')
-    assert.deepEqual(vrai.map(e => [e.effet, e.chemin]), [['behind', 'a.jpg']])
+    assert.deepEqual(vrai.map(e => [e.effect, e.path]), [['behind', 'a.jpg']])
   })
 
   it('<@@img> : une balise écrite dans une chaîne d\'une expression n\'est pas relevée', () => {

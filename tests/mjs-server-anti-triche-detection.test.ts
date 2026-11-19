@@ -348,7 +348,7 @@ describe('MJS-Server — anti-triche (détection par coup : def.suspect/antiReje
       })
       const avant = app.stats()
       assert.equal(avant.game.suspectMoves, 0)
-      assert.ok(avant.connexions, 'le reste du registre MJS-WS (connexions, garde, messages…) doit toujours être présent — greffe ADDITIVE, rien retiré')
+      assert.ok(avant.connections, 'le reste du registre MJS-WS (connexions, garde, messages…) doit toujours être présent — greffe ADDITIVE, rien retiré')
       const s = await connecter(transport, 'x')
       const rep = await s.request('µgame:play', { type: 'stats-1', code: true })
       await assert.rejects(s.request('µgame:move', { game: rep.game, move: 'inc' }))

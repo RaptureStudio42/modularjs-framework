@@ -120,7 +120,7 @@ const size = (v: unknown): number | null => typeof v === 'number' && isFinite(v)
 const EV_RE   = /^[a-z][a-z0-9:_-]{0,39}$/
 const ZONE_RE = /^[a-z][a-z0-9._#-]{0,119}$/
 // au plus 50 points par trame (le client en envoie 20 au plus)
-const MAX_LOT = 50
+const MAX_BATCH = 50
 
 // un texte (un segment de chemin, déjà décodé) qui ressemble à un jeton ou à une donnée personnelle : un UUID (avec ou sans tirets, entre
 // accolades), un JWT (`eyJ…`, trois à cinq parties base64url, ou trois parties de 8 caractères au moins), un e-mail, un nombre de 6 chiffres
@@ -213,7 +213,7 @@ const isPlain = (s: string): boolean => {
   const long = /\d|[A-Za-z]{5}/.test(s)
   let words  = 0
   // les lettres des sigles
-  let sigle  = 0
+  let acronym  = 0
   for (let i = 0; i < t.length; i++) {
     const w = t[i]
     if (w === '-' || w === '_') continue
@@ -228,7 +228,7 @@ const isPlain = (s: string): boolean => {
     if (sa && sb && w.length <= 4 && (w.length > 1 || /[aeiouy]/i.test(w))) {
       if (w.length > 1 && !says(w)) {
         if (w.length > 3 && !long) return false
-        sigle += w.length
+        acronym += w.length
       }
       continue
     }
@@ -241,7 +241,7 @@ const isPlain = (s: string): boolean => {
     }
     return false
   }
-  return words >= 2 && words * 100 <= s.length * 31 && sigle * 5 < s.length
+  return words >= 2 && words * 100 <= s.length * 31 && acronym * 5 < s.length
 }
 // une clé : trois groupes ou plus de 4 à 6 lettres ou chiffres, tous de la même longueur, séparés par `-` ou `_`, au bout du texte, seule ou
 // derrière des mots (`xxxxx-xxxxx-xxxxx`, `XXXX_XXXX_XXXX_XXXX`, `key-xxxxx-xxxxx-xxxxx`, `order-1234-5678-9012`) ; capitales et minuscules se
@@ -353,14 +353,14 @@ export function cleanPoint(p: unknown, origin?: string): MjsWsHeatmapPoint | nul
   const z: MjsWsHeatmapPoint['z'] = []
   for (const e of r.z) {
     if (!Array.isArray(e) || e.length !== 5) return null
-    const [nom, x, y, w, h] = e
-    if (typeof nom !== 'string' || !ZONE_RE.test(nom)) return null
+    const [name, x, y, w, h] = e
+    if (typeof name !== 'string' || !ZONE_RE.test(name)) return null
     const fx = frac(x)
     const fy = frac(y)
     const sw = size(w)
     const sh = size(h)
     if (fx === null || fy === null || sw === null || sh === null) return null
-    z.push([nom, fx, fy, sw, sh])
+    z.push([name, fx, fy, sw, sh])
   }
   const url = u.origin + maskPath(u.pathname) + route
   // la limite porte sur l'adresse GARDÉE : l'encodage d'une adresse brute sous la limite peut la multiplier par six (`é` : `%C3%A9`),
@@ -399,81 +399,81 @@ const errText = (err: unknown): string => err instanceof Error ? err.message : S
 /** paquet CARTE DE CHALEUR — `app.use(heatmapPackage(opts))` (cf. tête de fichier). */
 export function heatmapPackage(opts: MjsWsHeatmapOptions): MjsPackage {
   // appelé sans réglages (JavaScript, ou `as any`) : le même message clair que sans `origins`
-  if (!opts || typeof opts !== 'object') throw new Error(t('ws.heatmap.origins-manquantes'))
+  if (!opts || typeof opts !== 'object') throw new Error(t('ws.heatmap.origins-missing'))
   const unit = opts.unit ?? 'day'
-  if (!Object.prototype.hasOwnProperty.call(UNITS, unit)) throw new Error(t('ws.heatmap.unit-inconnue', { unit: String(unit), liste: Object.keys(UNITS).join(', ') }))
+  if (!Object.prototype.hasOwnProperty.call(UNITS, unit)) throw new Error(t('ws.heatmap.unit-unknown', { unit: String(unit), list: Object.keys(UNITS).join(', ') }))
   const maxAge = opts.maxAge ?? 7
-  if (typeof maxAge !== 'number' || !isFinite(maxAge) || maxAge <= 0) throw new Error(t('ws.heatmap.maxage-invalide', { valeur: String(maxAge) }))
+  if (typeof maxAge !== 'number' || !isFinite(maxAge) || maxAge <= 0) throw new Error(t('ws.heatmap.maxage-invalid', { value: String(maxAge) }))
   let   file  = opts.file
-  if (file !== undefined && (typeof file !== 'string' || file === '')) throw new Error(t('ws.heatmap.file-invalide', { valeur: JSON.stringify(file) }))
+  if (file !== undefined && (typeof file !== 'string' || file === '')) throw new Error(t('ws.heatmap.file-invalid', { value: JSON.stringify(file) }))
   const saveEvery = opts.saveEvery ?? 60_000
-  if (typeof saveEvery !== 'number' || !isFinite(saveEvery) || saveEvery <= 0) throw new Error(t('ws.heatmap.saveevery-invalide', { valeur: String(saveEvery) }))
+  if (typeof saveEvery !== 'number' || !isFinite(saveEvery) || saveEvery <= 0) throw new Error(t('ws.heatmap.saveevery-invalid', { value: String(saveEvery) }))
   // la liste blanche des origines : sans elle, le paquet ne démarre pas
-  if (!Array.isArray(opts.origins) || opts.origins.length === 0) throw new Error(t('ws.heatmap.origins-manquantes'))
+  if (!Array.isArray(opts.origins) || opts.origins.length === 0) throw new Error(t('ws.heatmap.origins-missing'))
   const originSet = new Set<string>()
   for (const o of opts.origins) {
     const n = normalizeOrigin(o)
-    if (n === null) throw new Error(t('ws.heatmap.origine-invalide', { valeur: String(JSON.stringify(o)) }))
+    if (n === null) throw new Error(t('ws.heatmap.origin-invalid', { value: String(JSON.stringify(o)) }))
     originSet.add(n)
   }
-  const ttl     = maxAge * UNITS[unit]
-  const now     = opts.now ?? Date.now
-  const rate    = opts.rateLimit?.rate ?? 10
-  const burst   = opts.rateLimit?.burst ?? 20
-  const onLog   = opts.onLog ?? defaultLogOf('heatmap')
-  const plafond = (nom: string, v: unknown, dflt: number): number => {
+  const ttl   = maxAge * UNITS[unit]
+  const now   = opts.now ?? Date.now
+  const rate  = opts.rateLimit?.rate ?? 10
+  const burst = opts.rateLimit?.burst ?? 20
+  const onLog = opts.onLog ?? defaultLogOf('heatmap')
+  const cap   = (name: string, v: unknown, dflt: number): number => {
     if (v === undefined || v === null) return dflt
-    if (typeof v !== 'number' || !isFinite(v) || v < 1) throw new Error(t('ws.heatmap.plafond-invalide', { nom, valeur: String(v) }))
+    if (typeof v !== 'number' || !isFinite(v) || v < 1) throw new Error(t('ws.heatmap.cap-invalid', { name: name, value: String(v) }))
     return Math.floor(v)
   }
-  const maxPoints = plafond('maxPoints', opts.maxPoints, 1_000_000)
-  const maxPages  = plafond('maxPages', opts.maxPages, 1000)
-  const maxZones  = plafond('maxZones', opts.maxZones, 64)
+  const maxPoints = cap('maxPoints', opts.maxPoints, 1_000_000)
+  const maxPages  = cap('maxPages', opts.maxPages, 1000)
+  const maxZones  = cap('maxZones', opts.maxZones, 64)
   // page → (événement, zone) → ses points ; les deux tables dans l'ordre de leur dernier point : la première est la moins récente
   const pages   = new Map<string, Map<string, Zone>>()
   // les points gardés en tout
   let total     = 0
   // chaque plafond atteint n'est dit qu'une fois (un journal inondé ne sert à personne)
-  const dits    = new Set<string>()
-  const plafondAtteint = (quoi: 'points' | 'pages' | 'zones', vars: Record<string, string>): void => {
-    if (dits.has(quoi)) return
-    dits.add(quoi)
-    onLog('warn', quoi === 'points' ? t('ws.heatmap.plafond-points', vars) : quoi === 'pages' ? t('ws.heatmap.plafond-pages', vars) : t('ws.heatmap.plafond-zones', vars))
+  const told       = new Set<string>()
+  const capReached = (what: 'points' | 'pages' | 'zones', vars: Record<string, string>): void => {
+    if (told.has(what)) return
+    told.add(what)
+    onLog('warn', what === 'points' ? t('ws.heatmap.cap-points', vars) : what === 'pages' ? t('ws.heatmap.cap-pages', vars) : t('ws.heatmap.cap-zones', vars))
   }
   const buckets = new WeakMap<MjsWsClient, TokenBucket>()
   // un seau par adresse, que se partagent ses connexions — dans l'ordre de leur dernier jeton : un seau oublié depuis le temps de se
   // remplir (burst / rate) est plein, comme un neuf, il part (mémoire bornée sans minuterie)
-  const parAdresse = opts.addressRateLimit === false ? null : { rate: opts.addressRateLimit?.rate ?? 100, burst: opts.addressRateLimit?.burst ?? 200 }
-  if (parAdresse) for (const cle of ['rate', 'burst'] as const) {
-    const v = parAdresse[cle]
-    if (typeof v !== 'number' || !isFinite(v) || v <= 0) throw new Error(t('ws.heatmap.debit-adresse-invalide', { cle, valeur: String(v) }))
+  const byAddress = opts.addressRateLimit === false ? null : { rate: opts.addressRateLimit?.rate ?? 100, burst: opts.addressRateLimit?.burst ?? 200 }
+  if (byAddress) for (const key of ['rate', 'burst'] as const) {
+    const v = byAddress[key]
+    if (typeof v !== 'number' || !isFinite(v) || v <= 0) throw new Error(t('ws.heatmap.rate-address-invalid', { key: key, value: String(v) }))
   }
-  const seauxAdresse = new Map<string, { seau: TokenBucket; at: number }>()
-  const jetonAdresse = (client: MjsWsClient): boolean => {
-    const adresse = parAdresse ? addressForLimits(client.meta?.address) : undefined
-    if (!parAdresse || adresse === undefined) return true
-    const maintenant = Date.now()
-    const plein = parAdresse.burst / parAdresse.rate * 1000
-    for (const [cle, e] of seauxAdresse) {
-      if (maintenant - e.at < plein) break
-      seauxAdresse.delete(cle)
+  const addressBuckets   = new Map<string, { bucket: TokenBucket; at: number }>()
+  const takeAddressToken = (client: MjsWsClient): boolean => {
+    const address = byAddress ? addressForLimits(client.meta?.address) : undefined
+    if (!byAddress || address === undefined) return true
+    const nowMs = Date.now()
+    const fullMs = byAddress.burst / byAddress.rate * 1000
+    for (const [key, e] of addressBuckets) {
+      if (nowMs - e.at < fullMs) break
+      addressBuckets.delete(key)
     }
-    let e = seauxAdresse.get(adresse)
-    if (e) seauxAdresse.delete(adresse)
-    else e = { seau: new TokenBucket(parAdresse.burst, parAdresse.rate), at: 0 }
-    e.at = maintenant
-    seauxAdresse.set(adresse, e)
-    return e.seau.take()
+    let e = addressBuckets.get(address)
+    if (e) addressBuckets.delete(address)
+    else e = { bucket: new TokenBucket(byAddress.burst, byAddress.rate), at: 0 }
+    e.at = nowMs
+    addressBuckets.set(address, e)
+    return e.bucket.take()
   }
-  let recus     = 0
+  let received     = 0
   // des points pas encore écrits dans `file`
   let dirty     = false
 
   // les points trop vieux d'une zone s'effacent ; rend le nombre qui reste. Le tassement remplace les tableaux au lieu de
   // les retailler : une lecture en cours garde ceux de son instant (cf. vue) et ne le retarde jamais — un client du pont
   // qui ne lisait plus empêchait sinon tout tassement, et la mémoire suivait l'arrivée des points au lieu de `maxPoints`
-  const trim = (z: Zone, limite: number): number => {
-    while (z.head < z.ts.length && z.ts[z.head] < limite) {
+  const trim = (z: Zone, limit: number): number => {
+    while (z.head < z.ts.length && z.ts[z.head] < limit) {
       z.head++
       total--
     }
@@ -484,18 +484,18 @@ export function heatmapPackage(opts: MjsWsHeatmapOptions): MjsPackage {
     }
     return z.ts.length - z.head
   }
-  const sweep = (limite = now() - ttl): void => {
+  const sweep = (limit = now() - ttl): void => {
     for (const [url, zones] of pages) {
-      for (const [k, z] of zones) if (trim(z, limite) === 0) zones.delete(k)
+      for (const [k, z] of zones) if (trim(z, limit) === 0) zones.delete(k)
       if (zones.size === 0) pages.delete(url)
     }
   }
   // au-delà de `maxPoints` : les plus anciens partent — l'heure qui en garde 90 %, cherchée par
   // dichotomie sur les heures de chaque zone (déjà dans l'ordre)
   const evict = (): void => {
-    plafondAtteint('points', { max: String(maxPoints) })
-    const cible = Math.floor(maxPoints * 0.9)
-    const avant = (t0: number): number => {
+    capReached('points', { max: String(maxPoints) })
+    const target = Math.floor(maxPoints * 0.9)
+    const before = (t0: number): number => {
       let n = 0
       for (const zones of pages.values()) {
         for (const z of zones.values()) {
@@ -521,7 +521,7 @@ export function heatmapPackage(opts: MjsWsHeatmapOptions): MjsPackage {
     hi += 1
     while (hi - lo > 1) {
       const mid = Math.floor((lo + hi) / 2)
-      if (total - avant(mid) > cible) lo = mid
+      if (total - before(mid) > target) lo = mid
       else hi = mid
     }
     sweep(hi)
@@ -542,7 +542,7 @@ export function heatmapPackage(opts: MjsWsHeatmapOptions): MjsPackage {
   // seulement s'il y a du nouveau ; un échec le redira à la prochaine fois, les points restent là.
   // À l'arrêt : d'un seul trait (une écriture de fond en cours n'a pas encore mis le fichier à jour)
   const save = (): void => {
-    if (!file || (!dirty && !fond)) return
+    if (!file || (!dirty && !background)) return
     const tmp = file + '.tmp'
     try {
       mkdirSync(dirname(file), { recursive: true })
@@ -551,7 +551,7 @@ export function heatmapPackage(opts: MjsWsHeatmapOptions): MjsPackage {
       dirty = false
     }
     catch (err) {
-      onLog('error', t('ws.heatmap.file-ecriture', { file }), { err: errText(err) })
+      onLog('error', t('ws.heatmap.file-write', { file }), { err: errText(err) })
       try { unlinkSync(tmp) }
       catch { /* jamais écrit */ }
     }
@@ -561,19 +561,19 @@ export function heatmapPackage(opts: MjsWsHeatmapOptions): MjsPackage {
   // points, le texte par morceaux de points, l'écriture en tâche de fond — à 1 million de points (le plafond
   // par défaut), d'un seul trait, elle le gelait plus de 200 ms à chaque fois. Même fichier. Arrêté
   // (`arrete`), elle est abandonnée sans rien laisser : `save()` a écrit d'un seul trait
-  const MORCEAU = 20000
-  let fond: Promise<void> | null = null
-  let arrete = false
+  const CHUNK = 20000
+  let background: Promise<void> | null = null
+  let stops = false
   const pause = (): Promise<void> => new Promise(ok => setImmediate(ok))
   // la carte de l'instant, SANS copier ses points (la copie d'un million de points tenait la boucle à chaque
   // requête) : chaque zone garde ses tableaux de l'instant et leurs bornes, [de, a[ — les points arrivés ensuite
   // sont au-delà de `a`, et un tassement pose d'autres tableaux dans la zone sans toucher ceux-ci (cf. trim)
-  interface ZoneVue { zone: string; ev: string; n: number; w: number; h: number; pts: Array<[number, number]>; ts: number[]; de: number; a: number }
-  interface PageVue { url: string; n: number; zones: ZoneVue[] }
-  const vue = (): PageVue[] => {
+  interface ZoneView { zone: string; ev: string; n: number; w: number; h: number; pts: Array<[number, number]>; ts: number[]; from: number; a: number }
+  interface PageView { url: string; n: number; zones: ZoneView[] }
+  const view = (): PageView[] => {
     sweep()
     return [...pages.entries()].map(([url, zones]) => {
-      const zs = [...zones.values()].map(z => ({ zone: z.zone, ev: z.ev, n: z.ts.length - z.head, w: z.w, h: z.h, pts: z.pts, ts: z.ts, de: z.head, a: z.ts.length }))
+      const zs = [...zones.values()].map(z => ({ zone: z.zone, ev: z.ev, n: z.ts.length - z.head, w: z.w, h: z.h, pts: z.pts, ts: z.ts, from: z.head, a: z.ts.length }))
       return { url, n: zs.reduce((a, z) => z.zone === 'document' ? a + z.n : a, 0) || zs.reduce((m, z) => Math.max(m, z.n), 0), zones: zs.sort((a, b) => b.n - a.n) }
     }).sort((a, b) => b.n - a.n)
   }
@@ -583,20 +583,20 @@ export function heatmapPackage(opts: MjsWsHeatmapOptions): MjsPackage {
   // points, 54 Mo de JSON gelaient la boucle plus de 600 ms à chaque requête. Une promesse rendue par `envoi`
   // (un flux plein qui attend sa vidange) est attendue avant le morceau de points suivant ; `envoi` qui lève
   // arrête la lecture
-  const pagesText = async (pages: PageVue[], envoi: (txt: string) => void | Promise<void>): Promise<void> => {
+  const pagesText = async (pages: PageView[], send: (txt: string) => void | Promise<void>): Promise<void> => {
     let cur = '['
-    let attente: void | Promise<void>
+    let wait: void | Promise<void>
     const add = (txt: string): void => {
       cur += txt
       if (cur.length >= 524288) {
-        const prete = cur
+        const ready = cur
         cur = ''
-        attente = envoi(prete)
+        wait = send(ready)
       }
     }
-    const suite = async (): Promise<void> => {
-      const a = attente
-      attente = undefined
+    const rest = async (): Promise<void> => {
+      const a = wait
+      wait    = undefined
       if (a) await a
       else await pause()
     }
@@ -604,13 +604,13 @@ export function heatmapPackage(opts: MjsWsHeatmapOptions): MjsPackage {
     for (const { zones, ...page } of pages) {
       add((p++ ? ',' : '') + JSON.stringify(page).slice(0, -1) + ',"zones":[')
       let k = 0
-      for (const { pts, ts, de, a, ...zone } of zones) {
+      for (const { pts, ts, from, a, ...zone } of zones) {
         add((k++ ? ',' : '') + JSON.stringify(zone).slice(0, -1))
-        for (const [cle, xs] of [['pts', pts], ['ts', ts]] as Array<[string, unknown[]]>) {
-          add(',"' + cle + '":[')
-          for (let i = de; i < a; i += MORCEAU) {
-            add((i > de ? ',' : '') + JSON.stringify(xs.slice(i, Math.min(i + MORCEAU, a))).slice(1, -1))
-            await suite()
+        for (const [key, xs] of [['pts', pts], ['ts', ts]] as Array<[string, unknown[]]>) {
+          add(',"' + key + '":[')
+          for (let i = from; i < a; i += CHUNK) {
+            add((i > from ? ',' : '') + JSON.stringify(xs.slice(i, Math.min(i + CHUNK, a))).slice(1, -1))
+            await rest()
           }
           add(']')
         }
@@ -618,38 +618,38 @@ export function heatmapPackage(opts: MjsWsHeatmapOptions): MjsPackage {
       }
       add(']}')
     }
-    await suite()
-    await envoi(cur + ']')
+    await rest()
+    await send(cur + ']')
   }
   const saveLater = (): Promise<void> => {
-    if (!file || !dirty || fond || arrete) return fond ?? Promise.resolve()
-    dirty = false
-    const pages  = vue()
-    const tmp    = file + '.fond.tmp'
-    const oublie = (): void => {
+    if (!file || !dirty || background || stops) return background ?? Promise.resolve()
+    dirty           = false
+    const pages     = view()
+    const tmp       = file + '.fond.tmp'
+    const forgotten = (): void => {
       try { unlinkSync(tmp) }
       catch { /* jamais écrit */ }
     }
-    fond = (async () => {
+    background = (async () => {
       try {
-        const textes = ['{"v":1,"pages":']
-        await pagesText(pages, txt => { textes.push(txt) })
-        if (arrete) return
+        const texts = ['{"v":1,"pages":']
+        await pagesText(pages, txt => { texts.push(txt) })
+        if (stops) return
         mkdirSync(dirname(file), { recursive: true })
-        await writeFile(tmp, textes.join('') + '}')
-        if (arrete) oublie()
+        await writeFile(tmp, texts.join('') + '}')
+        if (stops) forgotten()
         else renameSync(tmp, file)
       }
       catch (err) {
         dirty = true
-        onLog('error', t('ws.heatmap.file-ecriture', { file }), { err: errText(err) })
-        oublie()
+        onLog('error', t('ws.heatmap.file-write', { file }), { err: errText(err) })
+        forgotten()
       }
       finally {
-        fond = null
+        background = null
       }
     })()
-    return fond
+    return background
   }
   // les fichiers temporaires d'une écriture interrompue (arrêt brutal, coupure) : personne ne les reprend, ils partent
   // au démarrage — comme celui d'une écriture de fond que l'arrêt coupe (`flush`)
@@ -661,7 +661,7 @@ export function heatmapPackage(opts: MjsWsHeatmapOptions): MjsPackage {
     }
   }
   const flush = (): void => {
-    arrete = true
+    stops = true
     save()
     // une écriture de fond en cours ne finira pas : son fichier à moitié écrit part avec elle
     if (file) {
@@ -734,10 +734,10 @@ export function heatmapPackage(opts: MjsWsHeatmapOptions): MjsPackage {
       if (zones.size > 0) read.set(url, zones)
     }
     // dans l'ordre de leur dernier point (celui des pages, celui des zones de chaque page) : la première est la moins récente
-    const dernier = (z: Zone): number => z.ts.length ? z.ts[z.ts.length - 1] : -Infinity
-    const recence = (zones: Map<string, Zone>): number => Math.max(...[...zones.values()].map(dernier))
-    for (const [url, zones] of [...read].sort((a, b) => recence(a[1]) - recence(b[1]))) {
-      pages.set(url, new Map([...zones].sort((a, b) => dernier(a[1]) - dernier(b[1]))))
+    const last    = (z: Zone): number => z.ts.length ? z.ts[z.ts.length - 1] : -Infinity
+    const recency = (zones: Map<string, Zone>): number => Math.max(...[...zones.values()].map(last))
+    for (const [url, zones] of [...read].sort((a, b) => recency(a[1]) - recency(b[1]))) {
+      pages.set(url, new Map([...zones].sort((a, b) => last(a[1]) - last(b[1]))))
     }
     total = n
     sweep()
@@ -750,15 +750,15 @@ export function heatmapPackage(opts: MjsWsHeatmapOptions): MjsPackage {
     let raw: string
     try { raw = readFileSync(file, 'utf8') }
     catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') onLog('error', t('ws.heatmap.file-lecture', { file }), { err: errText(err) })
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') onLog('error', t('ws.heatmap.file-read', { file }), { err: errText(err) })
       return
     }
     try {
       const { n, badUrl, otherOrigin, extraPages, extraZones } = restore(JSON.parse(raw))
-      onLog('info', t('ws.heatmap.file-relu', { file, n: String(n) }))
-      if (badUrl > 0) onLog('warn', t('ws.heatmap.file-adresses-ecartees', { file, n: String(badUrl) }))
-      if (otherOrigin > 0) onLog('warn', t('ws.heatmap.file-origines-ecartees', { file, n: String(otherOrigin) }))
-      if (extraPages > 0 || extraZones > 0) onLog('warn', t('ws.heatmap.file-plafonds-ecartes', { file, pages: String(extraPages), zones: String(extraZones), maxPages: String(maxPages), maxZones: String(maxZones) }))
+      onLog('info', t('ws.heatmap.file-reread', { file, n: String(n) }))
+      if (badUrl > 0) onLog('warn', t('ws.heatmap.file-addresses-discarded', { file, n: String(badUrl) }))
+      if (otherOrigin > 0) onLog('warn', t('ws.heatmap.file-origins-discarded', { file, n: String(otherOrigin) }))
+      if (extraPages > 0 || extraZones > 0) onLog('warn', t('ws.heatmap.file-caps-discarded', { file, pages: String(extraPages), zones: String(extraZones), maxPages: String(maxPages), maxZones: String(maxZones) }))
     }
     catch {
       // illisible : mis de côté, jamais écrasé par la prochaine écriture
@@ -766,22 +766,22 @@ export function heatmapPackage(opts: MjsWsHeatmapOptions): MjsPackage {
       const aside = file + '.bad-' + Date.now()
       try {
         renameSync(file, aside)
-        onLog('error', t('ws.heatmap.file-illisible', { file, aside }))
+        onLog('error', t('ws.heatmap.file-unreadable', { file, aside }))
       }
       catch (err) {
-        onLog('error', t('ws.heatmap.file-intouchable', { file }), { err: errText(err) })
+        onLog('error', t('ws.heatmap.file-untouchable', { file }), { err: errText(err) })
         file = undefined
       }
     }
   }
 
   // qui ne compte pas : son IP (la connexion, ou la première de X-Forwarded-For), son compte
-  const exclu = (client: MjsWsClient): boolean => {
+  const isExcluded = (client: MjsWsClient): boolean => {
     const ex = opts.exclude
     if (!ex) return false
     if (typeof ex === 'function') {
       try { return ex(client) === true }
-      catch (err) { onLog('error', t('ws.heatmap.exclude-a-leve'), { err: err instanceof Error ? err.message : String(err) }); return false }
+      catch (err) { onLog('error', t('ws.heatmap.exclude-threw'), { err: err instanceof Error ? err.message : String(err) }); return false }
     }
     const h   = client.meta?.headers ?? {}
     const fwd = h['x-forwarded-for']
@@ -796,19 +796,19 @@ export function heatmapPackage(opts: MjsWsHeatmapOptions): MjsPackage {
     // pour le pont : la carte écrite au fil de sa sérialisation — son JSON, ou la page d'admin autour (`page`, chaque morceau échappé
     // pour <script>) —, chaque morceau donné à `envoi` dès qu'il est prêt : un flux plein fait attendre la suite (sa vidange), la carte
     // entière n'est jamais gardée en texte
-    const ecrire = async (page: boolean, envoi: (txt: string) => void | Promise<void>): Promise<void> => {
-      const json = page ? (txt: string) => envoi(escapeJsonForScript(txt)) : envoi
-      if (page) await envoi(PAGE_HEAD)
+    const write = async (page: boolean, send: (txt: string) => void | Promise<void>): Promise<void> => {
+      const json = page ? (txt: string) => send(escapeJsonForScript(txt)) : send
+      if (page) await send(PAGE_HEAD)
       await json('{"pages":')
-      await pagesText(vue(), json)
+      await pagesText(view(), json)
       await json('}')
-      if (page) await envoi(PAGE_TAIL)
+      if (page) await send(PAGE_TAIL)
     }
-    ;(app as any)._heatmapWrite = ecrire
+    ;(app as any)._heatmapWrite = write
     // la même carte, en morceaux rendus d'un coup
     ;(app as any)._heatmapPieces = async (page: boolean): Promise<string[]> => {
       const out: string[] = []
-      await ecrire(page, txt => { out.push(txt) })
+      await write(page, txt => { out.push(txt) })
       return out
     }
     if (file) {
@@ -833,47 +833,47 @@ export function heatmapPackage(opts: MjsWsHeatmapOptions): MjsPackage {
     const accept = (point: MjsWsHeatmapPoint): void => {
       if (opts.onPoint) {
         try { opts.onPoint(point) }
-        catch (err) { onLog('error', t('ws.heatmap.onpoint-a-leve'), { err: errText(err) }) }
+        catch (err) { onLog('error', t('ws.heatmap.onpoint-threw'), { err: errText(err) }) }
       }
-      const quand = now()
+      const when = now()
       // la page et la zone touchées passent en dernier : la première de chaque table est la moins récente, celle qui part au plafond
       let zones = pages.get(point.url)
       if (zones) pages.delete(point.url)
       else {
         if (pages.size >= maxPages) {
-          plafondAtteint('pages', { max: String(maxPages) })
-          const [url, partie] = pages.entries().next().value!
-          for (const z of partie.values()) total -= z.ts.length - z.head
+          capReached('pages', { max: String(maxPages) })
+          const [url, part] = pages.entries().next().value!
+          for (const z of part.values()) total -= z.ts.length - z.head
           pages.delete(url)
         }
         zones = new Map()
       }
       pages.set(point.url, zones)
-      for (const [nom, x, y, w, h] of point.z) {
-        const k = point.ev + ' ' + nom
+      for (const [name, x, y, w, h] of point.z) {
+        const k = point.ev + ' ' + name
         let z = zones.get(k)
         if (z) zones.delete(k)
         else {
           if (zones.size >= maxZones) {
-            plafondAtteint('zones', { max: String(maxZones), url: point.url })
-            const [cle, partie] = zones.entries().next().value!
-            total -= partie.ts.length - partie.head
-            zones.delete(cle)
+            capReached('zones', { max: String(maxZones), url: point.url })
+            const [key, part] = zones.entries().next().value!
+            total -= part.ts.length - part.head
+            zones.delete(key)
           }
-          z = { zone: nom, ev: point.ev, w, h, pts: [], ts: [], head: 0 }
+          z = { zone: name, ev: point.ev, w, h, pts: [], ts: [], head: 0 }
         }
         zones.set(k, z)
         z.w = w
         z.h = h
         z.pts.push([x, y])
-        z.ts.push(quand)
+        z.ts.push(when)
         total++
-        trim(z, quand - ttl)
+        trim(z, when - ttl)
       }
       if (total > maxPoints) evict()
       dirty = true
       // les pages que plus personne ne visite s'effacent aussi, de temps en temps
-      if (++recus % 500 === 0) sweep()
+      if (++received % 500 === 0) sweep()
     }
     app.on('heatmap:point', (p, client) => {
       // une connexion sans Origin n'est pas une page de navigateur ; l'en-tête se falsifie par un script, d'où
@@ -882,16 +882,18 @@ export function heatmapPackage(opts: MjsWsHeatmapOptions): MjsPackage {
       if (!origin || !originSet.has(origin)) return
       // une trame : un point (la forme d'avant) ou plusieurs (`pts`), 50 au plus
       const rawPts = (p as { pts?: unknown } | null | undefined)?.pts
-      const batch  = Array.isArray(rawPts) ? rawPts.slice(0, MAX_LOT) : [p]
+      const batch  = Array.isArray(rawPts) ? rawPts.slice(0, MAX_BATCH) : [p]
       let excluded: boolean | undefined
-      for (const un of batch) {
-        const point = cleanPoint(un, origin)
-        if (!point) continue
-        if (excluded === undefined) excluded = exclu(client)
-        if (excluded) return
+      for (const one of batch) {
+        // le seau d'abord, un jeton par point, même écarté : une trame refusée ne juge aucune adresse
         let b = buckets.get(client)
         if (!b) { b = new TokenBucket(burst, rate); buckets.set(client, b) }
-        if (!b.take() || !jetonAdresse(client)) return
+        if (!b.take()) return
+        const point = cleanPoint(one, origin)
+        if (!point) continue
+        if (excluded === undefined) excluded = isExcluded(client)
+        if (excluded) return
+        if (!takeAddressToken(client)) return
         accept(point)
       }
     })
@@ -926,24 +928,24 @@ h1{font-size:16px;font-weight:600;margin:0 0 4px}
 .zone[aria-pressed="true"]{border-color:#7aa2ff;background:#1b2233}
 .zone span:last-child{color:#999;font-variant-numeric:tabular-nums}
 main{padding:18px;overflow:auto}
-.vide{color:#777}
+.empty{color:#777}
 .scene{position:relative;display:inline-block;border:1px solid #262626;border-radius:8px;overflow:hidden;background:#0b0b0b}
-.cadre{position:absolute;left:0;top:0;width:1280px;border:0;transform:scale(.5);transform-origin:0 0;pointer-events:none;background:#fff}
+.frame{position:absolute;left:0;top:0;width:1280px;border:0;transform:scale(.5);transform-origin:0 0;pointer-events:none;background:#fff}
 canvas{position:relative;display:block}
-.legende{margin:10px 0 0;color:#888;font-size:12px}
-.recents{display:flex;align-items:center;gap:10px;margin:0 0 10px;color:#aaa;font-size:12px}
-.recents input{flex:1;max-width:420px}
+.legend{margin:10px 0 0;color:#888;font-size:12px}
+.recent{display:flex;align-items:center;gap:10px;margin:0 0 10px;color:#aaa;font-size:12px}
+.recent input{flex:1;max-width:420px}
 `.trim()
 
 const SCRIPT = `
 var D = window.__HEATMAP__ || { pages: [] }
-var liste = document.getElementById('liste'), scene = document.getElementById('scene'), titre = document.getElementById('titre'), legende = document.getElementById('legende'), recents = document.getElementById('recents'), depuis = document.getElementById('depuis')
+var list = document.getElementById('list'), scene = document.getElementById('scene'), title = document.getElementById('title'), legend = document.getElementById('legend'), recent = document.getElementById('recent'), since = document.getElementById('since')
 function ramp(a) {
   var s = [[0, 0, 255], [0, 200, 120], [255, 220, 0], [255, 30, 30]]
   var x = Math.min(0.999, a) * (s.length - 1), i = Math.floor(x), k = x - i
   return [0, 1, 2].map(function(j) { return Math.round(s[i][j] + (s[i + 1][j] - s[i][j]) * k) })
 }
-function chauffer(c, pts) {
+function heat(c, pts) {
   var w = c.width, h = c.height, g = c.getContext('2d')
   g.clearRect(0, 0, w, h)
   var r = Math.max(10, Math.round(Math.min(w, h) / 22))
@@ -963,45 +965,45 @@ function chauffer(c, pts) {
   }
   g.putImageData(img, 0, 0)
 }
-function voir(page, zone, bouton) {
-  document.querySelectorAll('.zone').forEach(function(b) { b.setAttribute('aria-pressed', b === bouton ? 'true' : 'false') })
+function show(page, zone, button) {
+  document.querySelectorAll('.zone').forEach(function(b) { b.setAttribute('aria-pressed', b === button ? 'true' : 'false') })
   scene.textContent = ''
-  titre.textContent = zone.zone + ' · ' + zone.ev + ' — ' + page.url
-  var larg = 640, haut = zone.w > 0 ? Math.round(larg * zone.h / zone.w) : 360
+  title.textContent = zone.zone + ' · ' + zone.ev + ' — ' + page.url
+  var width = 640, height = zone.w > 0 ? Math.round(width * zone.h / zone.w) : 360
   if (zone.zone === 'document') {
     var f = document.createElement('iframe')
-    f.className = 'cadre'
+    f.className = 'frame'
     f.src = page.url
     f.title = page.url
     f.setAttribute('sandbox', 'allow-scripts allow-same-origin')
-    f.setAttribute('height', String(haut * 2))
+    f.setAttribute('height', String(height * 2))
     scene.appendChild(f)
   }
   var c = document.createElement('canvas')
-  c.width = larg
-  c.height = Math.min(haut, 4000)
+  c.width = width
+  c.height = Math.min(height, 4000)
   scene.appendChild(c)
   // les N points les plus récents : le curseur va du plus récent seul à tous
-  var dessine = function() {
-    var k = Math.max(1, Math.min(zone.pts.length, Number(recents.value) || zone.pts.length))
-    chauffer(c, zone.pts.slice(-k))
+  var draw = function() {
+    var k = Math.max(1, Math.min(zone.pts.length, Number(recent.value) || zone.pts.length))
+    heat(c, zone.pts.slice(-k))
     var t0 = zone.ts && zone.ts[zone.ts.length - k]
-    depuis.textContent = k + ' / ' + zone.pts.length + (t0 ? ' — depuis le ' + new Date(t0).toLocaleString('fr-FR') : '')
+    since.textContent = k + ' / ' + zone.pts.length + (t0 ? ' — depuis le ' + new Date(t0).toLocaleString('fr-FR') : '')
   }
-  recents.max = String(Math.max(1, zone.pts.length))
-  recents.value = recents.max
-  recents.oninput = dessine
-  dessine()
-  legende.textContent = zone.n + ' point' + (zone.n > 1 ? 's' : '') + ' (' + zone.ev + ') — ' + (zone.zone === 'document' ? 'la page entière, à demi-taille' : 'la boîte du composant, à ses proportions (' + zone.w + ' × ' + zone.h + ' px)')
+  recent.max = String(Math.max(1, zone.pts.length))
+  recent.value = recent.max
+  recent.oninput = draw
+  draw()
+  legend.textContent = zone.n + ' point' + (zone.n > 1 ? 's' : '') + ' (' + zone.ev + ') — ' + (zone.zone === 'document' ? 'la page entière, à demi-taille' : 'la boîte du composant, à ses proportions (' + zone.w + ' × ' + zone.h + ' px)')
 }
-if (D.pages.length === 0) liste.innerHTML = '<p class="vide">Aucun point pour l\\'instant.</p>'
+if (D.pages.length === 0) list.innerHTML = '<p class="empty">Aucun point pour l\\'instant.</p>'
 D.pages.forEach(function(page, i) {
-  var bloc = document.createElement('div')
-  bloc.className = 'page'
+  var block = document.createElement('div')
+  block.className = 'page'
   var u = document.createElement('span')
   u.className = 'url'
   u.textContent = page.url
-  bloc.appendChild(u)
+  block.appendChild(u)
   page.zones.forEach(function(zone, j) {
     var b = document.createElement('button')
     b.className = 'zone'
@@ -1011,19 +1013,19 @@ D.pages.forEach(function(page, i) {
     c.textContent = String(zone.n)
     b.appendChild(n)
     b.appendChild(c)
-    b.addEventListener('click', function() { voir(page, zone, b) })
-    bloc.appendChild(b)
-    if (i === 0 && j === 0) setTimeout(function() { voir(page, zone, b) }, 0)
+    b.addEventListener('click', function() { show(page, zone, b) })
+    block.appendChild(b)
+    if (i === 0 && j === 0) setTimeout(function() { show(page, zone, b) }, 0)
   })
-  liste.appendChild(bloc)
+  list.appendChild(block)
 })
 `
 
 // la page d'admin autour du texte JSON de la carte (chaque morceau de ce texte échappé pour <script>)
 const PAGE_HEAD = '<!doctype html>\n<html lang="fr">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>MJS-WS — carte de chaleur</title>\n'
   + '<style>' + CSS + '</style>\n</head>\n<body>\n'
-  + '<aside><h1>Carte de chaleur</h1><p class="sub">Par page (adresse complète), puis par composant et par événement.</p><div id="liste"></div></aside>\n'
-  + '<main><h1 id="titre"></h1><label class="recents">Les plus récents <input type="range" id="recents" min="1" max="1" value="1"><span id="depuis"></span></label><div class="scene" id="scene"></div><p class="legende" id="legende"></p></main>\n'
+  + '<aside><h1>Carte de chaleur</h1><p class="sub">Par page (adresse complète), puis par composant et par événement.</p><div id="list"></div></aside>\n'
+  + '<main><h1 id="title"></h1><label class="recent">Les plus récents <input type="range" id="recent" min="1" max="1" value="1"><span id="since"></span></label><div class="scene" id="scene"></div><p class="legend" id="legend"></p></main>\n'
   + '<script>window.__HEATMAP__ = '
 const PAGE_TAIL = ';\n' + SCRIPT + '</script>\n</body>\n</html>\n'
 

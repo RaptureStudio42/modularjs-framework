@@ -50,10 +50,10 @@ const COMPTEURS = () => {
   w.__detail   = {}
   const ra = w.requestAnimationFrame.bind(w)
   w.requestAnimationFrame = (f: any) => ra((t: number) => { w.__enImage++; try { return f(t) } finally { w.__enImage-- } })
-  // `__vu(nom, cible)` : un test y met sa propre oreille (qui lit quoi, hors des images aussi)
+  // `__seenMark(nom, cible)` : un test y met sa propre oreille (qui lit quoi, hors des images aussi)
   const note = (nom: string, cible: any) => {
     if (w.__enImage > 0) { w.__lectures++; w.__detail[nom] = (w.__detail[nom] || 0) + 1 }
-    if (w.__vu) w.__vu(nom, cible)
+    if (w.__seenMark) w.__seenMark(nom, cible)
   }
   const surveille = (cible: any, nom: string) => {
     for (let o = cible; o; o = Object.getPrototypeOf(o)) {
@@ -295,7 +295,7 @@ describe('*sticky (navigateurs réels) — aucune lecture de la mise en page dan
             const w = window as any
             const scene = w.__trouve('.scene')
             w.__rects = 0
-            w.__vu = (nom: string, cible: any) => { if (nom === 'getBoundingClientRect' && cible === scene) w.__rects++ }
+            w.__seenMark = (nom: string, cible: any) => { if (nom === 'getBoundingClientRect' && cible === scene) w.__rects++ }
           })
           const rects = () => page.evaluate(() => (window as any).__rects)
           for (const y of [100, 300, 600, 200]) {
@@ -322,7 +322,7 @@ describe('*sticky (navigateurs réels) — aucune lecture de la mise en page dan
             const w = window as any
             const scene = w.__trouve('.scene')
             w.__hauteurs = 0
-            w.__vu = (nom: string, cible: any) => { if ((nom === 'scrollHeight' || nom === 'clientHeight') && cible === scene) w.__hauteurs++ }
+            w.__seenMark = (nom: string, cible: any) => { if ((nom === 'scrollHeight' || nom === 'clientHeight') && cible === scene) w.__hauteurs++ }
           })
           for (const y of [510, 520, 540, 560, 600, 580]) { await boiteA(page, y); await page.waitForTimeout(100) }
           assert.equal(await page.evaluate(() => (window as any).__hauteurs), 0, 'ni la hauteur du contenu ni celle de la boîte ne sont relues pendant le geste')

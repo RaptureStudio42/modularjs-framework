@@ -17,6 +17,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox' | 'webkit'): Promise<boolean> {
   try {
@@ -224,7 +225,7 @@ describe('*scrub (navigateur réel) — vidéo, suite d\'images, survol, repos',
 
   after(async () => { await terminateSharedWorkerPool() })
 
-  for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(nom, function () {
+  for (const nom of ['chromium', 'firefox', 'webkit'] as const) playTogether(describe(nom, function () {
     let present = false
     let browser: any = null
 
@@ -864,5 +865,5 @@ describe('*scrub (navigateur réel) — vidéo, suite d\'images, survol, repos',
         assert.equal(await rangEn(6), 6)
       }, {}, IMAGES)
     })
-  })
+  }))
 })

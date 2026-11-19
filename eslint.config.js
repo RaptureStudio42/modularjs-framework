@@ -14,8 +14,8 @@ const RUNTIME_GLOBALS = Object.fromEntries(['µ', 'window', 'document', 'navigat
 
 // globales de concaténation : le build assemble tous les fichiers du runtime en UN script, les
 // fonctions déclarées dans l'un sont donc visibles des autres (le module qui les définit est
-// toujours livré avec ceux qui les appellent : µsocket avec jeu/salon/chat/comptes, schéma avec ajax, le magasin avec le cœur, les types avec la liaison d'une <@@select> à une variable de règle ; la page des visionneuses, qui joint des fichiers du runtime hors du cœur, déclare ceux qu'ils lisent : `scope` de VIEWER_RUNTIME, src/server/viewer-page.ts)
-const RUNTIME_SHARED = Object.fromEntries(['hasProp', '_mjs_spCk', '_mjs_clsBases', 'MJS_RESOLVED_DESTROY', '_mjsCompte', '_mjsNatif', '_mjsSorti', '_mjsCarnet', 'MjsSocket', '_mjs_safeKey', 'mjschemaEncode', 'mjschemaDecode', 'mjschemaHashRegistre', 'mjschemaChargerDefinitions', '_mjsTAt', '_mjsTChk', '_mjsTRepr', '_mjsTMsg', '_mjsTDev', '_mjsTSignal'].map(n => [n, 'readonly']))
+// toujours livré avec ceux qui les appellent : µsocket avec jeu/salon/chat/comptes, schéma avec ajax, le magasin avec le cœur, les types avec la liaison d'une <@@select> à une variable de règle, le cœur avec le réveil paresseux, qui lit ses places d'élément et sa saisie d'avant le démarrage (blocs `<places-serveur>`, `<places-champs>` et `<saisie-serveur>` de mjs_element.ts, retirés ensemble quand ils ne servent pas) ; la page des visionneuses, qui joint des fichiers du runtime hors du cœur, déclare ceux qu'ils lisent : `scope` de VIEWER_RUNTIME, src/server/viewer-page.ts)
+const RUNTIME_SHARED = Object.fromEntries(['hasProp', '_mjs_spCk', '_mjs_clsBases', 'MJS_RESOLVED_DESTROY', '_mjsCount', '_mjsNatFn', '_mjsExited', '_mjsLedger', 'MjsSocket', '_mjs_safeKey', 'mjschemaEncode', 'mjschemaDecode', 'mjschemaHashRegistry', 'mjschemaLoadDefinitions', '_mjsTAt', '_mjsTChk', '_mjsTRepr', '_mjsTMsg', '_mjsTDev', '_mjsTSignal', '_MJS_WK_OUTSIDE', '_mjsWkHost', '_mjsWkPath', '_mjsWkAt', '_mjsWkSig', '_mjsTypedTake', '_mjsTypedNo'].map(n => [n, 'readonly']))
 
 export default tseslint.config(
   {

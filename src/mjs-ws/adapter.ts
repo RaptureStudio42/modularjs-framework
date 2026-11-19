@@ -16,7 +16,7 @@
 //   - set/removeLease/listLeases       — bail de vie à expiration (présence fusionnée, rooms.ts)
 // MemoryAdapter simule les deux sur un bus en mémoire (compteur partagé, horloge injectable
 // pour tester un bail expiré SANS vrai délai) ; adapter-redis.ts les traduit en INCR / SET EX /
-// GET / DEL / KEYS Redis (cf. son commentaire de tête pour le détail du protocole RESP).
+// DEL / SCAN Redis (cf. son commentaire de tête pour le détail du protocole RESP).
 
 import { randomBytes } from 'node:crypto'
 import type { MjsWsLogFn } from './core.js'
@@ -150,7 +150,7 @@ export class MemoryAdapter implements MjsWsAdapter {
     const seen = this._ignored.get(channel)
     if (seen && now - seen.at < IGNORED_WARN_MS) { seen.n++; return }
     this._ignored.set(channel, { n: 0, at: now })
-    this._onLog('warn', t('ws.adapter.rappel-a-leve', { channel, n: (seen?.n ?? 0) + 1, cause }))
+    this._onLog('warn', t('ws.adapter.callback-threw', { channel, n: (seen?.n ?? 0) + 1, cause }))
   }
 
   async incr(key: string): Promise<number> {

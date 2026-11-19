@@ -12,7 +12,7 @@ import assert from 'node:assert/strict'
 import { writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { runWsCommand } from '../src/cli/ws.js'
-import { runServeurCommand } from '../src/cli/server.js'
+import { runServerCommand } from '../src/cli/server.js'
 import { MemoryTransport } from '../src/mjs-ws/transport.js'
 import { mjsTmp } from './helpers/tmp.js'
 
@@ -90,7 +90,7 @@ describe("cli/server — arrêter le serveur PENDANT un rechargement à chaud EN
     writeFileSync(entryPath, `export default {\n  setup(app) {\n    app.serve('version', () => 'v1')\n  },\n}\n`)
     const transport = new MemoryTransport()
     const boot = patchConsole()
-    const handle = await runServeurCommand({ root, entry: 'serveur.mjs' }, undefined, { transport: transport as any })
+    const handle = await runServerCommand({ root, entry: 'serveur.mjs' }, undefined, { transport: transport as any })
     boot.restore()
 
     writeFileSync(entryPath, `await new Promise(r => setTimeout(r, 300))\nexport default {\n  setup(app) {\n    app.serve('version', () => 'v2')\n  },\n}\n`)

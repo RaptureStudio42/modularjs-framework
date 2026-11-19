@@ -16,7 +16,9 @@ var _chrNice  = [1, 2, 2.5, 5, 10];
 var _chrFine  = [1, 2, 2.5, 3, 4, 5, 6, 8];
 var _chrSteps = ['auto', 'day', 'week', 'month', 'year'];
 var _chrIntl  = {};
-var _chrWalls = {};
+var _chrWalls = Object.create(null);
+// chaque jour ou instant déjà écrit pour l'écran, par axe, langue et forme (20 000 au plus) : un graphique recalculé au survol ne les récrit pas
+var _chrDates = new Map();
 
 // une mesure écrite en texte, comme la lit le serveur (Float de Ruby) : blancs ASCII autour, un signe, des décimales (« 12 », « .5 »,
 // « 5. », « 1e3 ») ou de l'hexadécimal (« 0x1A », « 0x1.8p1 »), un souligné seul entre deux chiffres (« 1_000 ») ; ni binaire (« 0b101 »),
@@ -248,7 +250,9 @@ function _chrLabelPicks(fractions, texts, options) {
   if (count === 0) return [];
   var o = options || {};
   if (o.width > 0) return _chrLabelsFit(fractions, texts, o);
-  var longest = Math.max.apply(null, texts.map(function(t) { return String(t).length; }));
+  // boucle, pas `Math.max.apply` : au-delà de 100 000 libellés, la pile ne tient pas la liste en arguments (RangeError)
+  var longest = 0;
+  for (var j = 0; j < texts.length; j++) if (String(texts[j]).length > longest) longest = String(texts[j]).length;
   var gap = Math.min(0.5, Math.max(0.14, longest * 0.017));
   var shown = [0];
   for (var i = 1; i < count; i++) if (fractions[i] - fractions[shown[shown.length - 1]] >= gap) shown.push(i);
@@ -552,12 +556,20 @@ function _chrStatsText(figures, lang, places) {
 // cf. _chrWallTime), un nombre, ou le libellé tel quel ; `short` : sans l'année
 function _chrFormatX(kind, text, lang, short, utc) {
   if (kind === 'date' || kind === 'datetime') {
+    var key = kind + '|' + lang + '|' + (short ? 1 : 0) + (utc ? 1 : 0) + '|' + text;
+    var out = _chrDates.get(key);
+    if (out !== undefined) return out;
+    if (_chrDates.size >= 20000) _chrDates.clear();
     var stamp = _chrParseX(kind, text);
-    if (stamp === null) return String(text);
-    var options = kind === 'date' || utc ? { day: 'numeric', month: 'short', timeZone: 'UTC' } : { day: 'numeric', month: 'short' };
-    if (kind === 'datetime') Object.assign(options, { hour: '2-digit', minute: '2-digit' });
-    if (!short) options.year = 'numeric';
-    return _chrFormat(lang, options, true).format(stamp);
+    if (stamp === null) out = String(text);
+    else {
+      var options = kind === 'date' || utc ? { day: 'numeric', month: 'short', timeZone: 'UTC' } : { day: 'numeric', month: 'short' };
+      if (kind === 'datetime') Object.assign(options, { hour: '2-digit', minute: '2-digit' });
+      if (!short) options.year = 'numeric';
+      out = _chrFormat(lang, options, true).format(stamp);
+    }
+    _chrDates.set(key, out);
+    return out;
   }
   if (kind === 'number') return _chrFormatNumber(_chrParseX('number', text), lang);
   return String(text);

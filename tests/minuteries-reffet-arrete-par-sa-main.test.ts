@@ -37,7 +37,7 @@ const REP  = (k: string) => '  µevery 20, immediate: false, -> ' + UN(k)
 const DEP  = ['$dep = 0', 'window.__changer = -> $dep++']
 const S    = (...l: string[]) => ['<p>{$x}</p>', '<script lang="coffee">', '$x = 0', ...l, 'window.__retirer = -> arret()', '</script>'].join('\n')
 const N    = (w: any, k: string): number => w[k] ?? 0
-const T    = (el: any): number => el._mjs_minuteries?.size ?? 0
+const T    = (el: any): number => el._mjs_timers?.size ?? 0
 const tirs = async (w: any, k: string, ms: number): Promise<number> => {
   const a = N(w, k)
   await attendre(ms)

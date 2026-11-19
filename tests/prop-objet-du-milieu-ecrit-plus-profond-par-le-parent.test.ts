@@ -157,9 +157,9 @@ for (const [nom, opts] of REGLAGES) describe(`objet du milieu d'un chemin tenu p
     assert.deepEqual(await suite('ep-magasin', [5, 6, 6, 7]), ['0', '5', '6', '6', '7'])
   })
 
-  // règle des props (docs/04-props.md, « Modifier un objet reçu ») : le parent n'est pas prévenu de ce que l'enfant modifie dans un objet
-  // reçu par une prop simple, le développement le dit
-  it('l\'enfant qui écrit lui-même plus bas dans ce qu\'il tient se redessine ; le parent n\'en est pas prévenu, le développement le dit', async () => {
+  // règle des props (docs/04-props.md, « Modifier un objet reçu ») : avec l'enveloppe, le parent qui tient l'objet suit ce que l'enfant y
+  // modifie (registre des détenteurs) ; sans elle (`proxy: false`), il n'en est pas prévenu. Le développement déconseille la manière
+  it('l\'enfant qui écrit lui-même plus bas dans ce qu\'il tient se redessine, et le parent avec lui (sans enveloppe, le parent n\'en est pas prévenu) ; le développement le dit', async () => {
     const { win, el } = await appli('ep-remonte')
     const enf  = ombre(el).querySelector('mjs-ve-ecrit')
     const etat = () => ombre(el).querySelector('b').textContent + ' ' + vus(el)
@@ -170,7 +170,7 @@ for (const [nom, opts] of REGLAGES) describe(`objet du milieu d'un chemin tenu p
     enf.ecrireBas(6)
     await tic()
     vu.push(etat())
-    assert.deepEqual(vu, ['0/0 0/0', '0/0 5/0', '0/0 5/6'])
+    assert.deepEqual(vu, opts.proxy === false ? ['0/0 0/0', '0/0 5/0', '0/0 5/6'] : ['0/0 0/0', '5/0 5/0', '5/6 5/6'])
     const dits = win.__avis.filter((a: string) => a.includes('modifie un objet que <@ep-remonte> lui a passé par sa prop « item »'))
     if (opts.env === 'prod') assert.deepEqual(win.__avis, [], 'aucun avertissement en production')
     else assert.ok(dits.length > 0 && dits.length === win.__avis.length, 'avertissement de la prop modifiée : ' + json(win.__avis))

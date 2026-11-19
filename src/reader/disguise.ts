@@ -6,7 +6,7 @@
 
 // écriture de MJS → lettre ; `@@` devient deux lettres, `@import` (en tête de ligne d'un script) une lettre suivie
 // du nom de la directive
-export const LETTRES_RESERVEES: Readonly<Record<string, string>> = Object.freeze({
+export const RESERVED_LETTERS: Readonly<Record<string, string>> = Object.freeze({
   '§':       'Ꞩ',                  // Ꞩ, S barré en oblique
   '@@':      'Ꜳ',                  // Ꜳ, ligature AA
   '#':       'Ꞥ',                  // Ꞥ, N barré en oblique
@@ -14,49 +14,49 @@ export const LETTRES_RESERVEES: Readonly<Record<string, string>> = Object.freeze
   '@import': 'Ꜷ',                  // Ꜷ, ligature AU
 })
 
-const PARAGRAPHE  = LETTRES_RESERVEES['§']
-const AROBASE     = LETTRES_RESERVEES['@@']
-const DIESE       = LETTRES_RESERVEES['#']
-const ESPERLUETTE = LETTRES_RESERVEES['&']
-const DIRECTIVE   = LETTRES_RESERVEES['@import']
+const SECTION_SIGN = RESERVED_LETTERS['§']
+const AROBASE      = RESERVED_LETTERS['@@']
+const HASH         = RESERVED_LETTERS['#']
+const ESPERLUETTE  = RESERVED_LETTERS['&']
+const DIRECTIVE    = RESERVED_LETTERS['@import']
 
 // lettre déguisée → écriture rendue (un caractère chacune)
-const RENDU: Readonly<Record<string, string>> = { [PARAGRAPHE]: '§', [AROBASE]: '@', [DIESE]: '#', [ESPERLUETTE]: '&', [DIRECTIVE]: '@' }
+const RESTORED: Readonly<Record<string, string>> = { [SECTION_SIGN]: '§', [AROBASE]: '@', [HASH]: '#', [ESPERLUETTE]: '&', [DIRECTIVE]: '@' }
 
-export const RE_LETTRE_RESERVEE = new RegExp(`[${Object.values(LETTRES_RESERVEES).join('')}]`, 'g')
+export const RE_RESERVED_LETTER = new RegExp(`[${Object.values(RESERVED_LETTERS).join('')}]`, 'g')
 
 // directives qu'un script écrit en tête de ligne ; lues par Civet comme un appel `Ꜷimport(…)`
 const DIRECTIVES_SCRIPT = /^([ \t]*)@(import|i18n|persist|preload)(?=[ \t]+[^=\s])/gm
 
 // déguise un morceau de code ; `=:` (valeur figée) devient `:=`, que la passe relit à la même position
 // `#` collé à une lettre seulement s'il n'en suit pas un autre : `###Note` ouvre un bloc, `####Titre` est une bannière
-export function deguiser(code: string): string {
+export function disguise(code: string): string {
   return code
-    .replace(/§/g, PARAGRAPHE)
+    .replace(/§/g, SECTION_SIGN)
     .replace(/@@/g, AROBASE + AROBASE)
-    .replace(/(?<!#)#(?=[A-Za-z_])/g, DIESE)
+    .replace(/(?<!#)#(?=[A-Za-z_])/g, HASH)
     .replace(/(?<![\w$&)\]])&(?=[A-Za-z_])/g, ESPERLUETTE)
     .replace(/(?<=[\w$\]) ])=:(?=[ \t])/g, ':=')
     .replace(DIRECTIVES_SCRIPT, `$1${DIRECTIVE}$2`)
 }
 
-// rend les raccourcis déguisés d'un texte ; `seules` : ne rendre que ces lettres (celles écrites telles quelles dans
+// rend les raccourcis déguisés d'un texte ; `only` : ne rendre que ces lettres (celles écrites telles quelles dans
 // le texte brut d'une chaîne, et non par un échappement `Ꞩ`)
-export function rendre(texte: string, seules?: Set<string>): string {
-  return texte.replace(RE_LETTRE_RESERVEE, (l) => !seules || seules.has(l) ? RENDU[l] : l)
+export function reveal(text: string, only?: Set<string>): string {
+  return text.replace(RE_RESERVED_LETTER, (l) => !only || only.has(l) ? RESTORED[l] : l)
 }
 
-export function lettresPresentes(texte: string): Set<string> {
-  return new Set(texte.match(RE_LETTRE_RESERVEE) ?? [])
+export function presentLetters(text: string): Set<string> {
+  return new Set(text.match(RE_RESERVED_LETTER) ?? [])
 }
 
 // indices des lettres réservées déjà présentes dans une source (une source qui en contient est refusée)
-export function lettresReserveesDe(source: string): number[] {
-  return [...source.matchAll(RE_LETTRE_RESERVEE)].map((m) => m.index)
+export function reservedLettersOf(source: string): number[] {
+  return [...source.matchAll(RE_RESERVED_LETTER)].map((m) => m.index)
 }
 
 // message de refus d'une lettre réservée, avec la correction
-export function messageLettreReservee(lettre: string): string {
-  const code = lettre.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')
-  return `la lettre « ${lettre} » (U+${code}) est réservée à la lecture des raccourcis de ModularJS : écrivez-la \\u${code} dans une chaîne du code, ou &#x${code}; dans le texte du gabarit`
+export function reservedLetterMessage(letter: string): string {
+  const code = letter.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')
+  return `la lettre « ${letter} » (U+${code}) est réservée à la lecture des raccourcis de ModularJS : écrivez-la \\u${code} dans une chaîne du code, ou &#x${code}; dans le texte du gabarit`
 }

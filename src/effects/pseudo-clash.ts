@@ -8,11 +8,11 @@ import { t } from '../messages/index.js'
 import { typedLine, type LintToggles } from '../diagnostics.js'
 
 type Pseudo = 'before' | 'after'
-type Reglages = Record<string, unknown>
+type Settings = Record<string, unknown>
 
 // les pseudo-éléments de la balise que prend chaque effet, selon ses réglages fixes (`f`) et tenus par une variable (`d`), et les effets
 // écrits sur la même balise (`noms`) ; null : on ne sait pas au build
-const PSEUDOS: Record<string, (f: Reglages, d: Reglages, kids: any[], noms: string[]) => Pseudo[] | null> = {
+const PSEUDOS: Record<string, (f: Settings, d: Settings, kids: any[], names: string[]) => Pseudo[] | null> = {
   shine:     (f, d) => 'where' in d ? null : f.where === 'text' ? [] : ['after'],
   noise:     () => ['after'],
   underline: () => ['after'],
@@ -20,7 +20,7 @@ const PSEUDOS: Record<string, (f: Reglages, d: Reglages, kids: any[], noms: stri
   tilt:      (f, d) => 'glare' in d ? null : f.glare === true ? ['after'] : [],
   spotlight: () => ['before', 'after'],
   // le dégradé posé avec *spotlight, qui garde ceux de la balise : il dessine dans les pseudo-éléments d'un calque
-  border:    (f, d, _kids, noms) => noms.includes('spotlight') ? [] : 'style' in d ? null : (f.style ?? 'gradient') === 'gradient' ? ['before', 'after'] : [],
+  border:    (f, d, _kids, names) => names.includes('spotlight') ? [] : 'style' in d ? null : (f.style ?? 'gradient') === 'gradient' ? ['before', 'after'] : [],
   iso:       () => ['before', 'after'],
   glitch:    () => ['before', 'after'],
   split:     () => ['before', 'after'],
@@ -47,8 +47,8 @@ export function pseudoClashWarnings(html: string, lint?: LintToggles): string[] 
   const check = (n: any) => {
     const fx = (n.attrs ?? []).filter((a: any) => a.type === 'static' && /^\*[a-z]/i.test(a.name ?? ''))
     if (fx.length < 2) return
-    const pris: Record<Pseudo, string[]> = { before: [], after: [] }
-    const lus: { a: any, p: any, nom: string }[] = []
+    const taken: Record<Pseudo, string[]> = { before: [], after: [] }
+    const reads: { a: any, p: any, name: string }[] = []
     for (const a of fx) {
       let p: any
       try {
@@ -57,18 +57,18 @@ export function pseudoClashWarnings(html: string, lint?: LintToggles): string[] 
       catch {
         continue
       }
-      lus.push({ a, p, nom: String(p.base ?? a.name.slice(1)).split('.')[0] })
+      reads.push({ a, p, name: String(p.base ?? a.name.slice(1)).split('.')[0] })
     }
-    const noms = lus.map(l => l.nom)
-    for (const { a, p, nom } of lus) {
-      if (!Object.hasOwn(PSEUDOS, nom)) continue
-      for (const w of PSEUDOS[nom](p.fixed ?? {}, p.dynamic ?? {}, n.children ?? [], noms) ?? []) pris[w].push(a.name)
+    const names = reads.map(l => l.name)
+    for (const { a, p, name } of reads) {
+      if (!Object.hasOwn(PSEUDOS, name)) continue
+      for (const w of PSEUDOS[name](p.fixed ?? {}, p.dynamic ?? {}, n.children ?? [], names) ?? []) taken[w].push(a.name)
     }
-    const doubles = (['before', 'after'] as Pseudo[]).filter(w => pris[w].length > 1)
+    const doubles = (['before', 'after'] as Pseudo[]).filter(w => taken[w].length > 1)
     if (doubles.length === 0) return
-    const liste = doubles.map(w => `::${w} (${pris[w].join(', ')})`).join(' ; ')
-    const ligne = typedLine('collision', t('effets.pseudo-partage', { balise: n.name ?? '', liste }), lint)
-    if (ligne !== null) out.push(ligne)
+    const list = doubles.map(w => `::${w} (${taken[w].join(', ')})`).join(' ; ')
+    const line = typedLine('collision', t('effects.pseudo-shared', { tag: n.name ?? '', list: list }), lint)
+    if (line !== null) out.push(line)
   }
   const walk = (n: any) => {
     if (!n || typeof n !== 'object') return

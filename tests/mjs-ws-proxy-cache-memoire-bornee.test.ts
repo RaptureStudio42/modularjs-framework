@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import v8 from 'node:v8'
 import { runInNewContext } from 'node:vm'
-import { creerProxyDecision } from '../src/mjs-ws/proxy.js'
+import { createProxyDecision } from '../src/mjs-ws/proxy.js'
 
 const SECRET = 'secret-du-cache-de-decision-assez-long'
 const BACK   = 'http://127.0.0.1:9/decide'
@@ -41,7 +41,7 @@ describe('proxy de décisions : mémoire du cache bornée', function () {
 
   it('1000 hellos distincts de 60 Ko retiennent moins de 2 Mo, et le cache sert toujours', async () => {
     await withFakeBack(async (calls) => {
-      const decide = creerProxyDecision({ url: BACK, secret: SECRET, cache: { ttl: 60000 } }, 'connect', (json: any) => !!(json && json.ok), () => {})
+      const decide = createProxyDecision({ url: BACK, secret: SECRET, cache: { ttl: 60000 } }, 'connect', (json: any) => !!(json && json.ok), () => {})
       await decide({ hello: { protocol: 1, chauffe: true } })
       const before = heapAfterGc()
       const pad    = 'x'.repeat(60000)
@@ -62,7 +62,7 @@ describe('proxy de décisions : mémoire du cache bornée', function () {
       await withFakeBack(async (calls) => {
         // chaque décision porte un tableau qui lui est propre, ~100 Ko (une chaîne 'x'.repeat() partagerait ses morceaux)
         let n = 0
-        const decide = creerProxyDecision({ url: BACK, secret: SECRET, cache: { ttl: 1000 } }, 'connect', () => ({ lest: new Array(12500).fill(n++) }), () => {})
+        const decide = createProxyDecision({ url: BACK, secret: SECRET, cache: { ttl: 1000 } }, 'connect', () => ({ lest: new Array(12500).fill(n++) }), () => {})
         await decide({ k: 'chauffe' })
         const before = heapAfterGc()
         await decide({ k: 'A' })

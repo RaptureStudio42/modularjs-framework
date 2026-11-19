@@ -140,7 +140,7 @@ describe('signaux — le module part avec une valeur dérivée précise ou un re
     for (const [texte, nom] of [[SANS, 'sig-ecr-prod-s'], [HORLOGE, 'sig-ecr-prod-h']]) {
       const s  = await construire(texte, nom, { env: 'prod', minify: false })
       const cs = coeur(s.outDir, s.fichiers)
-      for (const trace of ['_mjs_sigWrite', '_mjs_sigBoxes', '_mjs_sigRead', '// <signaux>']) {
+      for (const trace of ['_mjs_sigWrite', '_mjs_sigBoxes', '_mjs_sigRead', '// <signals>']) {
         assert.ok(!cs.includes(trace), `aucune trace « ${trace} » dans le cœur d'une appli sans valeur dérivée précise ni reffet (${nom})`)
       }
     }

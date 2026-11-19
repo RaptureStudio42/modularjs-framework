@@ -744,10 +744,10 @@ describe('µload — un appel ne montre jamais la donnée d\'un autre ; une dér
     assert.equal(avis().length, 4, avis().join('\n'))
     w.close()
     // production, minifiée ou non, au niveau de console qui garde les avertissements : ni l'avertissement ni le code qui surveille, au cœur
-    // comme au manifeste
+    // comme au manifeste ; `_mjsLdIn` en mot entier : `__mjsLdInv`, le relais de `_mjs_invalidate`, reste au cœur
     for (const [i, extra] of [{}, { minify: false }].entries()) {
       const b = await construireTout('load-gabarit-prod-' + i, GABARIT, { env: 'prod', js: 'split', urlPrefix: '/out', logLevel: 'log', ...extra })
-      assert.doesNotMatch((b.coeur + b.manifeste).replace(/^[ \t]*\/\/.*$/gm, ''), /loadPlace|_mjsLdHors|_mjsLdVeiller|_mjsLdDans|_mjsLdEnvelopper/, JSON.stringify(extra))
+      assert.doesNotMatch((b.coeur + b.manifeste).replace(/^[ \t]*\/\/.*$/gm, ''), /loadPlace|_mjsLdOutside|_mjsLdWatch|_mjsLdIn\b|_mjsLdWrap/, JSON.stringify(extra))
     }
   })
 
@@ -778,7 +778,7 @@ describe('µload — un appel ne montre jamais la donnée d\'un autre ; une dér
 
   it('aucune construction de production n\'emporte le code qui surveille les appels écrits hors de la racine : minifiée ou non, à tout niveau de console', async () => {
     const prod = { env: 'prod', js: 'split', urlPrefix: '/out' }
-    const veille = /_mjs_safeRenderStruct'|loadPlace|_mjsLdVeiller|_mjsLdHors|_mjs_ldB/
+    const veille = /_mjs_safeRenderStruct'|loadPlace|_mjsLdWatch|_mjsLdOutside|_mjs_ldB/
     for (const [i, extra] of [{}, { minify: false }, { logLevel: 'log' }, { minify: false, logLevel: 'log' }].entries()) {
       const b = await construireTout('load-veille-' + i, { 'moi.mjs': MOI }, { ...prod, ...extra })
       assert.match(b.coeur, /µ\.load = |\.load=/, JSON.stringify(extra) + ' : µload est au cœur')
@@ -831,7 +831,7 @@ describe('µload — le gabarit prévenu à l\'arrivée sans lire, une dérivée
       assert.equal(texte(el, '.v'), 'k100', 'la frappe faite dans la passe d\'une variable : le gabarit redessiné à l\'arrivée de la donnée')
       assert.ok(rendus() <= 200, 'deux rendus par frappe au plus — ' + rendus())
       assert.ok(!el._mjs_ldH || el._mjs_ldH.size === 0, 'le composant ne lit aucune poignée de son gabarit — ' + (el._mjs_ldH && el._mjs_ldH.size))
-      assert.ok(w._mjsLdEntrees.size <= 51 && w._mjsLdLibres.size <= 50, `cache borné : ${w._mjsLdEntrees.size} entrées, ${w._mjsLdLibres.size} au cache`)
+      assert.ok(w._mjsLdEntries.size <= 51 && w._mjsLdFree.size <= 50, `cache borné : ${w._mjsLdEntries.size} entrées, ${w._mjsLdFree.size} au cache`)
       for (const tour of [1, 2]) {
         const avant = rendus()
         assert.deepEqual(await envoyer(w, [chemin]), [chemin + '?q=k100'], `envoi nº ${tour} : seule l'adresse affichée est relue, une fois`)
@@ -938,7 +938,7 @@ describe('µload — le gabarit ne boucle jamais ; refresh() rangé reste une va
     assert.equal(vus.length, 55)
     assert.equal(vus.filter((x: string) => x === 'att').length, 0, 'chaque rang sa donnée')
     assert.equal(vus[0] + ' ' + vus[54], 'n1 n55')
-    assert.equal(w._mjsLdEntrees.size, 55, 'les 55 adresses affichées restent')
+    assert.equal(w._mjsLdEntries.size, 55, 'les 55 adresses affichées restent')
     w.close()
   })
 
@@ -953,7 +953,7 @@ describe('µload — le gabarit ne boucle jamais ; refresh() rangé reste une va
     assert.equal(textes(el), 'ea|eb')
     el.remove()
     await pause(60)
-    assert.ok(!w._mjsLdEntrees.has('/api/ge/a') && !w._mjsLdEntrees.has('/api/ge/b'), 'les adresses en échec partent avec le composant')
+    assert.ok(!w._mjsLdEntries.has('/api/ge/a') && !w._mjsLdEntries.has('/api/ge/b'), 'les adresses en échec partent avec le composant')
     w.document.body.insertAdjacentHTML('beforeend', '<mjs-gerr></mjs-gerr>')
     await pause(100)
     assert.deepEqual(lues(w, 0), ['/api/ge/a', '/api/ge/b', '/api/ge/a', '/api/ge/b'], 'un composant neuf redemande')
@@ -1005,7 +1005,7 @@ describe('µload — le gabarit ne boucle jamais ; refresh() rangé reste une va
     el.basculer(false)
     await pause(60)
     assert.ok(!enfant.isConnected, 'enfant parti')
-    const tient = (u: string) => { const e = w._mjsLdEntrees.get(u); return !!(e && e.o && e.o.has(enfant)) }
+    const tient = (u: string) => { const e = w._mjsLdEntries.get(u); return !!(e && e.o && e.o.has(enfant)) }
     assert.ok(!tient('/api/gp/lu') && !tient('/api/gp/seul'), 'les entrées lâchent le composant à son départ')
     await repondre(w, 'GET /api/gp/lu', 200, { n: 'lu' })
     await repondre(w, 'GET /api/gp/seul', 200, { n: 'seul' })

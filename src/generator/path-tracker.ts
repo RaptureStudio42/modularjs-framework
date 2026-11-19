@@ -25,13 +25,12 @@
 // Une clé calculée, après l'élément ou la racine, se lit comme JavaScript la lit (`$$taches.find(f)[k]` rend
 // `Object.prototype` pour `k` valant `__proto__`, la fonction `Object` pour `constructor`) : l'aide d'écriture refuse
 // ensuite d'écrire dans un prototype ou dans une fonction, comme elle refuse un nom réservé pour la clé écrite
-// (mjs_store_globals.ts, _mjsStoreRefus) — aucun coût à la lecture ; un objet relu (`+=`, `++`) ou testé (`?.`) est
+// (mjs_store_globals.ts, _mjsStoreReject) — aucun coût à la lecture ; un objet relu (`+=`, `++`) ou testé (`?.`) est
 // tenu par un paramètre local (cf. bindings), aucune case partagée. La valeur d'une variable suivie reste une lecture
 // nue, comme en JavaScript
 //
 // Pour les escapes (function call, push, throw, yield, alias non trackable),
-// le compilateur injecte automatiquement un wrap `µ._mjs_makeDeepProxy(_mjsThis, path)`
-// pour que la réactivité reste préservée à travers la frontière non trackée.
+// la passe ne pose aucun wrap (l'ancien `µ._mjs_makeDeepProxy(_mjsThis, path)` est retiré).
 //
 // Innovation algorithmique : zéro Proxy sur ~95% du code, Proxy ciblé sur les
 // 5% restants. Vue/Svelte font Proxy partout (lent), Solid abandonne la
@@ -57,7 +56,7 @@ import * as walk from 'acorn-walk'
 import MagicString from 'magic-string'
 import { passResult, type PassResult } from './pass-map.js'
 import { COMPOUND_OPS, forEachPatternLeaf, isStoreRoot, parseModule } from './ast-helpers.js'
-import { asiGuard, closeRhs, emitAssign, emitPattern, emitUpdate, instructionSeule, poserBloc, rhsStart, writeValueUnused, type WriteTarget } from './emit-write.js'
+import { asiGuard, closeRhs, emitAssign, emitPattern, emitUpdate, loneStatement, setBlock, rhsStart, writeValueUnused, type WriteTarget } from './emit-write.js'
 import { selfWriteError, SELF_WRITE_STORE } from '../sigils.js'
 
 /** Segment dynamique (`$.x[k]` → valeur runtime de `k`). Marqueur OBJET :
@@ -65,7 +64,7 @@ import { selfWriteError, SELF_WRITE_STORE } from '../sigils.js'
  *  `$.x["__dyn:alert(1)"]` → code émis brut dans le path. */
 // `effet` : clé faite d'une expression qui agit (appel, `++`, affectation, `await`…) — relue par une écriture qui lit sa cible
 // (`+=`, `++`), elle passe par un paramètre (cf. pathTarget), évaluée une fois
-type DynSegment = { dyn: string, effet?: true }
+type DynSegment = { dyn: string, effect?: true }
 type Path = (string | number | DynSegment)[]
 
 /** Statisation $$ — `origin` distingue une racine `$.x` ('local', state du
@@ -84,12 +83,12 @@ interface AliasEntry {
   origin: PathOrigin
   /** chemin d'un ÉLÉMENT de liste (variable d'une boucle `{for}`, paramètre d'un rappel, cf. elemAlias) : `test` relit ce chemin au
    *  moment de l'écriture et vérifie qu'il mène encore à cet objet — l'appel compilé seulement alors, l'écriture telle qu'écrite sinon */
-  guard?: Garde
+  guard?: Guard
 }
 
 // garde d'un élément de liste (cf. AliasEntry.guard) : `racine` la variable de la liste, `params` les paramètres à poser aux rappels
 // (le sien, ceux des rappels qui l'entourent) la première fois qu'une écriture s'en sert
-interface Garde { test: string, racine: string, params: (() => void)[] }
+interface Guard { test: string, root: string, params: (() => void)[] }
 
 // opérateurs composés (`+=` etc., COMPOUND_OPS d'ast-helpers.ts), `++`, `--` et cibles d'un motif sur un chemin profond : lecture
 // et écriture explicites, pour le magasin (`$$obj.a += v`, qui n'a aucun filet : `µ.store.obj` rend l'objet BRUT) comme pour l'état
@@ -116,26 +115,26 @@ const ALL_MUTATIVE = new Set([
 
 // réglage `proxy: false` (cf. avis) : méthodes appelées sans que leur valeur soit lue qui ne modifient pas l'objet (lecture d'une
 // liste ou d'une chaîne, promesse, élément du DOM) — aucun avertissement ; `forEach` a sa propre règle (rappel venu d'ailleurs)
-const SANS_ECRITURE = new Set(['forEach', 'map', 'filter', 'some', 'every', 'find', 'findIndex', 'findLast', 'findLastIndex', 'flatMap', 'reduce', 'reduceRight', 'includes', 'indexOf', 'lastIndexOf', 'join', 'slice', 'concat', 'at', 'flat', 'keys', 'values', 'entries', 'get', 'has', 'toString', 'toLocaleString', 'valueOf', 'then', 'catch', 'finally', 'focus', 'blur', 'click', 'scrollIntoView', 'addEventListener', 'removeEventListener', 'dispatchEvent', 'postMessage', 'play', 'pause', 'abort', 'close', 'send'])
+const NO_WRITE = new Set(['forEach', 'map', 'filter', 'some', 'every', 'find', 'findIndex', 'findLast', 'findLastIndex', 'flatMap', 'reduce', 'reduceRight', 'includes', 'indexOf', 'lastIndexOf', 'join', 'slice', 'concat', 'at', 'flat', 'keys', 'values', 'entries', 'get', 'has', 'toString', 'toLocaleString', 'valueOf', 'then', 'catch', 'finally', 'focus', 'blur', 'click', 'scrollIntoView', 'addEventListener', 'removeEventListener', 'dispatchEvent', 'postMessage', 'play', 'pause', 'abort', 'close', 'send'])
 
 // fonctions qui ne modifient pas ce qu'elles reçoivent (cf. avis) : leur appel ne fait jamais avertir
-const SANS_ECRITURE_FN = /^(?:console\.\w+|JSON\.\w+|Object\.(?:keys|values|entries|freeze|isFrozen|getPrototypeOf|getOwnPropertyNames)|Array\.(?:isArray|from)|String|Number|Boolean|structuredClone|alert|µ[\w$.]*|_mjs[\w$.]*)$/
+const NO_WRITE_FN = /^(?:console\.\w+|JSON\.\w+|Object\.(?:keys|values|entries|freeze|isFrozen|getPrototypeOf|getOwnPropertyNames)|Array\.(?:isArray|from)|String|Number|Boolean|structuredClone|alert|µ[\w$.]*|_mjs[\w$.]*)$/
 
 // méthodes qui définissent un accesseur sur l'objet qui les appelle (`o.__defineGetter__(k, f)`) : appelées par un objet du magasin atteint
 // sans chemin, elles passent son aide gardée, qui refuse un prototype ou une fonction du navigateur (cf. CallExpression)
-const DEFINIT_L_OBJET = new Set(['__defineGetter__', '__defineSetter__'])
+const DEFINES_OBJECT = new Set(['__defineGetter__', '__defineSetter__'])
 
 // fonctions qui modifient leur premier argument (cf. avis)
-const ECRIT_LE_PREMIER = /^(?:Object\.(?:assign|defineProperty|defineProperties|setPrototypeOf)|Reflect\.(?:set|deleteProperty|defineProperty|setPrototypeOf))$/
+const WRITES_FIRST = /^(?:Object\.(?:assign|defineProperty|defineProperties|setPrototypeOf)|Reflect\.(?:set|deleteProperty|defineProperty|setPrototypeOf))$/
 
 // fonctions qui figent leur premier argument : aucune valeur ne change (aucun avertissement), mais l'objet reçu passe la même garde
-// (cf. premierGarde) — `Object.freeze($l.find(f)[k])` ne fige ni `Object` ni `Object.prototype`
-const FIGE_LE_PREMIER = /^(?:Object\.(?:freeze|seal|preventExtensions)|Reflect\.preventExtensions)$/
+// (cf. firstGuard) — `Object.freeze($l.find(f)[k])` ne fige ni `Object` ni `Object.prototype`
+const FREEZES_FIRST = /^(?:Object\.(?:freeze|seal|preventExtensions)|Reflect\.preventExtensions)$/
 
 /** avertissement du réglage `proxy: false` : une écriture de l'état que le compilateur ne voit pas (`forme` : 1 par un alias,
  *  2 par une fonction qui modifie son premier argument, 3 par une méthode inconnue, 4 l'objet passé à une fonction, 5 les éléments
  *  passés à un rappel venu d'ailleurs) ; `at` : position dans le code reçu par la passe, `racine` : la variable à rafraîchir */
-export interface AvisInvisible { at: number, forme: number, nom: string, racine: string }
+export interface InvisibleNotice { at: number, shape: number, name: string, root: string }
 
 // méthodes qui rendent un ÉLÉMENT de la collection (liste, Map) : l'objet rendu est celui que le magasin range, une
 // écriture à travers lui est une écriture du magasin (cf. findRoot)
@@ -147,12 +146,12 @@ const POP_METHODS = new Set(['pop', 'shift'])
 
 // méthodes qui modifient la collection et dont la valeur sort BRUTE de l'état local, la méthode compilée (`µ._mjs_deepCall`) l'appelant
 // sur l'objet brut, avec l'enveloppe comme avec le réglage `proxy: false` : élément retiré (`pop`, `shift`), liste des éléments retirés
-// (`splice`), la collection elle-même (RENDU_MEME) — une écriture qui part d'elle passe par l'aide gardée (cf. renduBrut, racineGardee)
-const RENDU_BRUT = new Set(['pop', 'shift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin', 'set', 'add'])
+// (`splice`), la collection elle-même (RETURNS_SAME) — une écriture qui part d'elle passe par l'aide gardée (cf. returnsRaw, keptRoot)
+const RETURNS_RAW = new Set(['pop', 'shift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin', 'set', 'add'])
 
 // celles qui rendent la collection même : avec l'enveloppe, en tête de la chaîne d'une écriture (`$.l.sort(f)[0].x = v`), relue par
-// l'enveloppe (`µ._mjs_deepMeme`, mjs_deep.ts), l'écran suit l'écriture (cf. boundChain)
-const RENDU_MEME = new Set(['sort', 'reverse', 'fill', 'copyWithin', 'set', 'add'])
+// l'enveloppe (`µ._mjs_deepSame`, mjs_deep.ts), l'écran suit l'écriture (cf. boundChain)
+const RETURNS_SAME = new Set(['sort', 'reverse', 'fill', 'copyWithin', 'set', 'add'])
 
 // méthodes qui reçoivent un rappel → rang du paramètre qui tient l'ÉLÉMENT (le `forEach` d'une Map ou d'un Set compris) :
 // un objet du magasin quand la liste en est un, ou une copie qui garde ses objets (cf. noteStore) ; aussi écrites en clé
@@ -177,22 +176,22 @@ const LOGICAL_ASSIGN = new Set(['||=', '&&=', '??='])
 const isFunction = (n: any) => n.type === 'FunctionDeclaration' || n.type === 'FunctionExpression' || n.type === 'ArrowFunctionExpression'
 
 /**
- * Transforme le code JS pour utiliser le path-tracking et insérer des wraps
- * Proxy automatiquement aux points d'escape détectés.
+ * Transforme le code JS pour utiliser le path-tracking ; aux points d'escape
+ * détectés, aucun wrap Proxy n'est posé (cf. l'en-tête du fichier).
  *
  * Doit être appelé APRÈS transformReactiveWrites (qui gère les `$.x = y`
  * top-level) pour ne traiter que les mutations profondes.
  */
-export function applyPathTracking(js: string, opts: { sansProxy?: boolean } = {}): string {
+export function applyPathTracking(js: string, opts: { withoutProxy?: boolean } = {}): string {
   return applyPathTrackingMapped(js, opts).code
 }
 
 /** réglage `proxy: false` : variables de l'état local que le compilateur SAIT simples — chacune de leurs écritures (`µ._set(_mjsThis,
- *  'x', v)` ou `µwrite $x, v`, dans le script et dans les gestionnaires, cf. `codes`) pose une valeur simple (cf. valeurSimple). Une écriture par une
+ *  'x', v)` ou `µwrite $x, v`, dans le script et dans les gestionnaires, cf. `codes`) pose une valeur simple (cf. simpleValue). Une écriture par une
  *  clé calculée (`$[k] = v`) ou un code illisible : aucune. Rien ne modifie une valeur simple en place — elle n'avertit pas */
-export function etatSimple(codes: string[]): Set<string> {
-  const ecrites = new Map<string, any[]>()
-  let doute     = false
+export function simpleState(codes: string[]): Set<string> {
+  const written = new Map<string, any[]>()
+  let doubt     = false
   for (const code of codes) {
     if (!code || !/µ\._set\(|µ\._mjs_rawWrite\(/.test(code)) continue
     let ast: any
@@ -200,7 +199,7 @@ export function etatSimple(codes: string[]): Set<string> {
       ast = parseModule(code)
     }
     catch {
-      doute = true
+      doubt = true
       continue
     }
     walk.simple(ast, {
@@ -208,36 +207,36 @@ export function etatSimple(codes: string[]): Set<string> {
         const c = n.callee
         if (c.type !== 'MemberExpression' || c.computed || c.object.type !== 'Identifier' || c.object.name !== 'µ' || c.property.name !== '_set') return
         const k = n.arguments[1]
-        if (k?.type !== 'Literal' || typeof k.value !== 'string') doute = true
-        else ecrites.set(k.value, [...ecrites.get(k.value) ?? [], n.arguments[2]])
+        if (k?.type !== 'Literal' || typeof k.value !== 'string') doubt = true
+        else written.set(k.value, [...written.get(k.value) ?? [], n.arguments[2]])
       },
       // `µwrite $x, v` : la case brute, sans `µ._set` (cf. sigils.ts) — une écriture du composant comme une autre
       AssignmentExpression(n: any) {
         const l = n.left
         const c = l.type === 'MemberExpression' && l.object.type === 'CallExpression' ? l.object.callee : null
         if (c?.type !== 'MemberExpression' || c.object.type !== 'Identifier' || c.object.name !== 'µ' || c.property.name !== '_mjs_rawWrite') return
-        if (l.computed || l.property.type !== 'Identifier') doute = true
-        else ecrites.set(l.property.name, [...ecrites.get(l.property.name) ?? [], n.right])
+        if (l.computed || l.property.type !== 'Identifier') doubt = true
+        else written.set(l.property.name, [...written.get(l.property.name) ?? [], n.right])
       },
     })
   }
-  const simples = new Set<string>(doute ? [] : ecrites.keys())
+  const simpleNames = new Set<string>(doubt ? [] : written.keys())
   // une variable qui reçoit une valeur non simple sort, et avec elle celles qui recopiaient sa valeur
-  for (let sortie = true; sortie;) {
-    sortie = false
-    for (const [k, vals] of ecrites) {
-      if (simples.has(k) && !vals.every((v) => valeurSimple(v, simples))) {
-        simples.delete(k)
-        sortie = true
+  for (let output = true; output;) {
+    output = false
+    for (const [k, vals] of written) {
+      if (simpleNames.has(k) && !vals.every((v) => simpleValue(v, simpleNames))) {
+        simpleNames.delete(k)
+        output = true
       }
     }
   }
-  return simples
+  return simpleNames
 }
 
 // valeur toujours simple (chaîne, nombre, booléen, BigInt, null, undefined) : littéral, gabarit, opération (`a * 2`, `!a`, `typeof a`),
 // `++` (forme compilée comprise), `String(x)`, `Number(x)`, variable de l'état encore simple ; dans le doute, non
-function valeurSimple(v: any, simples: Set<string>): boolean {
+function simpleValue(v: any, simpleNames: Set<string>): boolean {
   if (!v) return true
   switch (v.type) {
     case 'Literal': return !v.regex
@@ -245,14 +244,77 @@ function valeurSimple(v: any, simples: Set<string>): boolean {
     case 'UnaryExpression':
     case 'BinaryExpression':
     case 'UpdateExpression': return true
-    case 'LogicalExpression': return valeurSimple(v.left, simples) && valeurSimple(v.right, simples)
-    case 'ConditionalExpression': return valeurSimple(v.consequent, simples) && valeurSimple(v.alternate, simples)
-    case 'SequenceExpression': return valeurSimple(v.expressions[v.expressions.length - 1], simples)
+    case 'LogicalExpression': return simpleValue(v.left, simpleNames) && simpleValue(v.right, simpleNames)
+    case 'ConditionalExpression': return simpleValue(v.consequent, simpleNames) && simpleValue(v.alternate, simpleNames)
+    case 'SequenceExpression': return simpleValue(v.expressions[v.expressions.length - 1], simpleNames)
     case 'Identifier': return v.name === 'undefined' || v.name === 'NaN' || v.name === 'Infinity' || v.name === '_mjs_n'
-    case 'MemberExpression': return v.object.type === 'Identifier' && v.object.name === '$' && !v.computed && simples.has(v.property.name)
+    case 'MemberExpression': return v.object.type === 'Identifier' && v.object.name === '$' && !v.computed && simpleNames.has(v.property.name)
     case 'CallExpression': return (v.callee.type === 'ArrowFunctionExpression' && v.callee.body.type === 'UpdateExpression') || (v.callee.type === 'Identifier' && /^(?:String|Number|Boolean|parseInt|parseFloat)$/.test(v.callee.name))
     default: return false
   }
+}
+
+/** réglage `proxy: false` : les variables de l'état local qui prennent un objet atteint par une autre (`$sel = $rows[i]`, `$sel = $o.a.b`,
+ *  `$sel = $rows.find(f)`, `findLast`, `at` ; en tête du script, une valeur dérivée, comme dans une fonction du script ou dans un gestionnaire,
+ *  cf. `codes`) en sont un autre nom — sans l'enveloppe, rien d'autre ne le dit au cœur. Rend, par variable, celles dont elle prend ainsi un
+ *  objet, de proche en proche (`$a = $rows[0]` puis `$b = $a.sub` : `{ a: ['rows'], b: ['a', 'rows'] }`, `_mjs_otherNames`, mjs_element.ts).
+ *  L'objet rendu par un autre appel (`choisir($rows)`, `$rows.filter(f)[0]`) ou atteint par une clé calculée de l'état (`$[k][0]`) n'est pas
+ *  noté ; un code illisible n'en note aucun */
+export function stateAliases(codes: string[]): Record<string, string[]> {
+  const out = new Map<string, string[]>()
+  for (const code of codes) {
+    if (!code || !/µ\._(?:set|mjs_setComputed)\(/.test(code)) continue
+    let ast: any
+    try {
+      ast = parseModule(code)
+    }
+    catch {
+      continue
+    }
+    walk.ancestor(ast, {
+      CallExpression(n: any, _s: any, anc: any[]) {
+        const c = n.callee, k = n.arguments[1]
+        const f = c.type === 'MemberExpression' && !c.computed && c.object.type === 'Identifier' && c.object.name === 'µ' ? c.property.name : null
+        if ((f !== '_set' && f !== '_mjs_setComputed') || k?.type !== 'Literal' || typeof k.value !== 'string') return
+        let v = n.arguments[2]
+        // valeur dérivée (`$sel = $rows[1]` en tête du script) : ce que rend sa flèche
+        if (f === '_mjs_setComputed') v = v?.type !== 'ArrowFunctionExpression' ? null : v.body.type !== 'BlockStatement' ? v.body : v.body.body.length === 1 && v.body.body[0].type === 'ReturnStatement' ? v.body.body[0].argument : null
+        // valeur lue (`return $sel = $rows[i]`, dernière ligne d'une fonction CoffeeScript ou Civet) : écrite par le paramètre de la
+        // flèche qui la reçoit (transform-reactive.ts)
+        else if (v?.type === 'Identifier') {
+          let a: any = null
+          for (let i = anc.length - 2; i >= 0 && a === null; i--) if (anc[i].type === 'CallExpression' && anc[i].callee.type === 'ArrowFunctionExpression') a = anc[i]
+          const p = a ? a.callee.params.findIndex((x: any) => x.type === 'Identifier' && x.name === v.name) : -1
+          v = p === -1 ? null : a.arguments[p]
+        }
+        const y = rootReached(v)
+        if (y === null || y === k.value) return
+        const l = out.get(k.value) ?? []
+        if (!l.includes(y)) out.set(k.value, [...l, y])
+      },
+    })
+  }
+  // de proche en proche : l'autre nom d'un autre nom
+  const nearby = (x: string): string[] => {
+    const l = [...out.get(x)!]
+    for (let i = 0; i < l.length; i++) for (const z of out.get(l[i]) ?? []) if (z !== x && !l.includes(z)) l.push(z)
+    return l
+  }
+  return Object.fromEntries([...out.keys()].map((x) => [x, nearby(x)]))
+}
+
+// la variable de l'état local dont un chemin d'au moins un pas mène à la valeur (`$.rows[i]`, `$.o.a.b`, `$.rows?.[i]`), ou dont une
+// liste rend l'élément par une méthode (`$.rows.find(f)`, `$.o.l.findLast(f)`, `$.rows.at(-1)`) ; sinon null
+function rootReached(v: any): string | null {
+  let t = v?.type === 'ChainExpression' ? v.expression : v
+  if (t?.type === 'CallExpression' && t.callee.type === 'MemberExpression' && !t.callee.computed && /^(?:find|findLast|at)$/.test(t.callee.property.name)) {
+    const l = t.callee.object
+    if (l.type === 'MemberExpression' && !l.computed && l.object.type === 'Identifier' && l.object.name === '$' && l.property.type === 'Identifier') return l.property.name
+    t = l
+  }
+  let m = t
+  while (m?.type === 'MemberExpression' && m.object?.type === 'MemberExpression') m = m.object
+  return m !== t && m.object?.type === 'Identifier' && m.object.name === '$' && !m.computed && m.property?.type === 'Identifier' ? m.property.name : null
 }
 
 // clé d'un nom qui lit plusieurs clés du magasin (cf. noteStore) : jamais celle d'une lecture, qui est un identifiant
@@ -263,26 +325,31 @@ const NO_KEY = '?'
 // JavaScript et refuse seulement un prototype du langage ou l'une de ses fonctions — aucune clé prévenue
 const SOFT = '~'
 
-// « clé » d'un objet de l'état LOCAL que la passe ne compile pas, avec le réglage `proxy: false` (cf. racineGardee) : la variable précédée
+// « clé » d'un objet de l'état LOCAL que la passe ne compile pas, avec le réglage `proxy: false` (cf. keptRoot) : la variable précédée
 // de `#`, qu'aucune clé du magasin ne porte (une clé est un identifiant) — son écriture passe par l'aide gardée du composant
 // (`µ._mjs_deepSetOn`…, mjs_deep.ts), qui écrit comme JavaScript, ne prévient personne et refuse un prototype ou une fonction du navigateur ;
 // avec l'enveloppe aussi, pour ce qu'elle ne garde pas (prototype lu par `Object.getPrototypeOf`, élément du rappel de `sort`)
 const LOCALE = '#'
 
+// `$` suivi d'une clé entre crochets, comme la passe le lit (`$[k]`, `$?.[k]`, `($)[k]`, blancs et commentaires compris) : le filtre
+// d'avant l'analyse — un faux positif (`a$[k]`, un texte) ne coûte que l'analyse, un oubli laisserait une lecture sans garde
+const STATE_ROOT = /\$(?:[\s)]|\/\*[\s\S]*?\*\/|\/\/.*)*(?:\?\.(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*)?\[/
+
 // Variante qui rend AUSSI la carte de source de cette passe — cf. pass-map.ts.
 // `storeOnly` : module autonome (`.civet`/`.coffee` importé), sans état de composant — seules les racines
 // `µ.store.x` sont suivies, un `$.x` y est un identifiant ordinaire (jQuery, par exemple) laissé tel quel.
-// `sansProxy` : réglage `proxy: false` (mjs.config.json), objets de l'état rangés sans enveloppe — la passe relève alors les écritures
+// `withoutProxy` : réglage `proxy: false` (mjs.config.json), objets de l'état rangés sans enveloppe — la passe relève alors les écritures
 // de l'état qu'elle ne voit pas (alias, fonction qui modifie son argument, méthode inconnue, cf. AvisInvisible), rendues dans `avis`
 // pour l'avertissement de construction. Le code produit est le même avec ou sans lui
-export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean, sansProxy?: boolean } = {}): PassResult & { avis?: AvisInvisible[] } {
+export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean, withoutProxy?: boolean } = {}): PassResult & { notice?: InvisibleNotice[] } {
   const storeOnly = !!opts.storeOnly
-  const sansProxy = !!opts.sansProxy
-  const avis: AvisInvisible[] = []
+  const withoutProxy = !!opts.withoutProxy
+  const notice: InvisibleNotice[] = []
   // Statisation $$ — `µ.store.` déclenche aussi le tracking (`$$obj.a.b`
   // compile déjà en `µ.store.obj.a.b` à ce stade, cf. lexer/generator/utils).
-  // `$[` aussi (composant seulement) : `$[k].x = v`, `delete $[k]`, `$[k].push(…)` sans aucun `$.`
-  if (!js || (!js.includes('$.') && !js.includes('µ.store.') && (storeOnly || !js.includes('$[')))) return { code: js }
+  // `$[` aussi (composant seulement, `$?.[` compris, cf. STATE_ROOT) : `$[k].x = v`, `delete $[k]`, `$[k].push(…)`, `x = $?.[k]` sans aucun `$.`
+  // `µ.store[` aussi : `µ.store[k].x = v` sans aucun `µ.store.`
+  if (!js || (!js.includes('$.') && !js.includes('µ.store') && (storeOnly || !STATE_ROOT.test(js)))) return { code: js }
 
   let ast: acorn.Node
   try {
@@ -493,7 +560,7 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
 
   // tête de l'aide qui écrit un objet atteint (`Set`, `Call`, `Delete`) : gardée, la clé prévenue, ou douce (cf. SOFT) ; objet de l'état
   // local que la passe ne compile pas (cf. LOCALE) : l'aide gardée du composant
-  const onHead = (aide: string, root: string) => root[0] === LOCALE ? `µ._mjs_deep${aide}On(${JSON.stringify(root.slice(1))}, ` : root === SOFT ? `µ._mjs_soft${aide}On(` : `µ._mjs_store${aide}On(${keyArg(root)}, `
+  const onHead = (helper: string, root: string) => root[0] === LOCALE ? `µ._mjs_deep${helper}On(${JSON.stringify(root.slice(1))}, ` : root === SOFT ? `µ._mjs_soft${helper}On(` : `µ._mjs_store${helper}On(${keyArg(root)}, `
 
   // fin de l'appel d'une de ces aides : `)` ; `ctor`, `constructor` écrit dans l'objet de l'écriture (cf. ctorWritten) : l'aide du magasin
   // reçoit `ctor` à 1 en dernier argument (`a` à 0), et l'avertissement d'une fonction du navigateur atteinte nomme ce `constructor` écrit
@@ -509,20 +576,20 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
       else if (node.type === 'CallExpression') node = node.callee
       else if (node.type !== 'MemberExpression') return false
       else {
-        const k   = node.property
-        const nom = !node.computed ? k.name : k.type === 'Literal' ? k.value : k.type === 'TemplateLiteral' && k.expressions.length === 0 ? k.quasis[0].value.cooked : undefined
-        if (nom === 'constructor') return true
-        if (nom === undefined) return false
+        const k    = node.property
+        const name = !node.computed ? k.name : k.type === 'Literal' ? k.value : k.type === 'TemplateLiteral' && k.expressions.length === 0 ? k.quasis[0].value.cooked : undefined
+        if (name === 'constructor') return true
+        if (name === undefined) return false
         node = node.object
       }
     }
     return false
   }
 
-  // aide qui lit une clé calculée de la chaîne d'une écriture gardée (cf. boundChain) : `µ._mjs_storeCle` pour un objet du magasin
-  // (mjs_store_globals.ts ; sa clé, ou `#$` devant elle, cf. premierGarde), `µ._mjs_deepCle` pour un objet de l'état local (cf. LOCALE),
+  // aide qui lit une clé calculée de la chaîne d'une écriture gardée (cf. boundChain) : `µ._mjs_keyStore` pour un objet du magasin
+  // (mjs_store_globals.ts ; sa clé, ou `#$` devant elle, cf. firstGuard), `µ._mjs_deepKey` pour un objet de l'état local (cf. LOCALE),
   // aucune pour l'aide douce (cf. SOFT)
-  const aideCle = (root: string) => root.startsWith(LOCALE + '$') ? 'µ._mjs_storeCle' : root[0] === LOCALE ? 'µ._mjs_deepCle' : root === SOFT ? null : 'µ._mjs_storeCle'
+  const keyHelper = (root: string) => root.startsWith(LOCALE + '$') ? 'µ._mjs_keyStore' : root[0] === LOCALE ? 'µ._mjs_deepKey' : root === SOFT ? null : 'µ._mjs_keyStore'
 
   // clé de deux valeurs possibles d'un nom : l'une ou l'autre, NO_KEY quand ce sont deux clés différentes
   const both = (a: string | null, b: string | null) => a === null ? b : b === null || a === b ? a : NO_KEY
@@ -545,7 +612,8 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
         if (storeOnly) return null
         if (tail) return { path: [tail], origin: 'local' }
         if (tailComputed !== null) return { path: [tailComputed], origin: 'local' }
-        return null
+        // clé faite d'une expression à la racine (`$[c.nom].valeur = v`) : un chemin, comme plus bas (`$.o[c.nom]`) — l'aide refuse une clé réservée
+        return expr.computed && expr.property.type !== 'PrivateIdentifier' ? { path: [exprSegment(expr.property)], origin: 'local' } : null
       }
       // `µ.store.x` → ['x'] (origin='store'). Clé racine DYNAMIQUE
       // (`µ.store[expr]`) non trackée (conservateur, même limite que `$[cle]`).
@@ -556,12 +624,12 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
       // Récursif : `$.x.y`, `µ.store.x.y`, `$.x[i]`, etc.
       const headPath = getPath(head, alias)
       if (headPath) {
-        const suite = { origin: headPath.origin, guard: headPath.guard }
-        if (tail) return { path: [...headPath.path, tail], ...suite }
-        if (tailComputed !== null) return { path: [...headPath.path, tailComputed], ...suite }
+        const rest = { origin: headPath.origin, guard: headPath.guard }
+        if (tail) return { path: [...headPath.path, tail], ...rest }
+        if (tailComputed !== null) return { path: [...headPath.path, tailComputed], ...rest }
         // clé faite d'une expression (`$.l[$.i]`, `$.l[i + 1]`, `$.l[$.l.length]`) : l'état local seulement, le magasin garde son
         // écriture par l'objet (cf. findRoot)
-        if (headPath.origin === 'local' && expr.property.type !== 'PrivateIdentifier') return { path: [...headPath.path, exprSegment(expr.property)], ...suite }
+        if (headPath.origin === 'local' && expr.property.type !== 'PrivateIdentifier') return { path: [...headPath.path, exprSegment(expr.property)], ...rest }
       }
     }
     return null
@@ -570,16 +638,16 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
   // segment d'une clé faite d'une expression : son texte DÉJÀ RÉÉCRIT (une écriture réécrite dedans survit), entre parenthèses pour
   // une expression à virgule, qu'une liste de clés couperait sinon ; `effet` quand elle agit (cf. DynSegment)
   function exprSegment(k: any): DynSegment {
-    const texte = k.type === 'SequenceExpression' ? `(${ms.slice(k.start, k.end)})` : ms.slice(k.start, k.end)
-    let effet = false
+    const text = k.type === 'SequenceExpression' ? `(${ms.slice(k.start, k.end)})` : ms.slice(k.start, k.end)
+    let effect = false
     walk.full(k, (n: any) => {
-      if (/^(?:Call|New|Update|Assignment|Await|Yield|TaggedTemplate|Import|Function|ArrowFunction|Class)Expression$/.test(n.type) || (n.type === 'UnaryExpression' && n.operator === 'delete')) effet = true
+      if (/^(?:Call|New|Update|Assignment|Await|Yield|TaggedTemplate|Import|Function|ArrowFunction|Class)Expression$/.test(n.type) || (n.type === 'UnaryExpression' && n.operator === 'delete')) effect = true
     })
-    return effet ? { dyn: texte, effet: true } : { dyn: texte }
+    return effect ? { dyn: text, effect: true } : { dyn: text }
   }
 
   // le chemin a une clé qui agit (cf. DynSegment.effet)
-  const agit = (tp: AliasEntry) => tp.path.some((p) => typeof p === 'object' && p.effet)
+  const acts = (tp: AliasEntry) => tp.path.some((p) => typeof p === 'object' && p.effect)
 
   // clé racine du magasin quand l'objet `expr` est un objet du magasin : élément trouvé (`µ.store.t.find(f)`,
   // `µ.store.m.get(k).meta`, `alias.find(f)`), variable de foundMap ou de travail, ou chaîne partie d'une racine
@@ -602,14 +670,15 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
   // `nom` : la valeur d'un nom (déclaration, affectation, cf. noteStore et track) — une expression qui peut rendre deux
   // clés différentes (`$$a.get(k) or $$b[0]`, ternaire, `||=`) n'en prévient aucune (NO_KEY), et `await` rend la valeur
   // attendue (l'objet même, quand le magasin ne tient pas une promesse)
-  function findRoot(expr: any, nom = false): string | null {
+  function findRoot(expr: any, name = false): string | null {
     for (let e = expr; e; ) {
       if (e.type === 'Identifier') {
         // la valeur d'un nom ne prend jamais SOFT : une variable qui ne tient pas d'objet du magasin n'en donne aucun
         const k = workIds.get(e) ?? (tainted.has(e.name) ? null : foundMap.get(e.name)) ?? storeKey(e)
-        return nom && k === SOFT ? null : k
+        return name && k === SOFT ? null : k
       }
-      if (e.type === 'MemberExpression' && isStoreRoot(e.object)) return e.computed ? null : e.property.name
+      // clé calculée à la racine (`µ.store[k].x = v`) : aucune clé à prévenir, mais l'objet atteint passe par l'aide gardée, qui refuse un prototype
+      if (e.type === 'MemberExpression' && isStoreRoot(e.object)) return e.computed ? NO_KEY : e.property.name
       if (e.type === 'MemberExpression') {
         // élément d'une copie qui garde les objets du magasin (`$$l.filter(f)[0]`, `ref[i]` d'une boucle CoffeeScript)
         const c = copyRoot(e.object)
@@ -635,15 +704,15 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
       // prototype d'un objet du magasin (`Object.getPrototypeOf($$o.m)`, `Reflect.getPrototypeOf`) : la valeur reste celle
       // de JavaScript (lecture nue), une écriture par elle passe par les aides, qui refusent un prototype
       else if (isProtoOf(e)) e = e.arguments[0]
-      else if (e.type === 'LogicalExpression') return nom ? both(findRoot(e.left, true), findRoot(e.right, true)) : pick(findRoot(e.left), findRoot(e.right))
-      else if (e.type === 'ConditionalExpression') return nom ? both(findRoot(e.consequent, true), findRoot(e.alternate, true)) : pick(findRoot(e.consequent), findRoot(e.alternate))
+      else if (e.type === 'LogicalExpression') return name ? both(findRoot(e.left, true), findRoot(e.right, true)) : pick(findRoot(e.left), findRoot(e.right))
+      else if (e.type === 'ConditionalExpression') return name ? both(findRoot(e.consequent, true), findRoot(e.alternate, true)) : pick(findRoot(e.consequent), findRoot(e.alternate))
       else if (e.type === 'AssignmentExpression') {
-        if (e.operator === '=') return findRoot(e.right, nom)
-        return nom ? both(findRoot(e.left, true), findRoot(e.right, true)) : pick(findRoot(e.left), findRoot(e.right))
+        if (e.operator === '=') return findRoot(e.right, name)
+        return name ? both(findRoot(e.left, true), findRoot(e.right, true)) : pick(findRoot(e.left), findRoot(e.right))
       }
       else if (e.type === 'SequenceExpression') e = e.expressions[e.expressions.length - 1]
       else if (e.type === 'ChainExpression') e = e.expression
-      else if (nom && e.type === 'AwaitExpression') e = e.argument
+      else if (name && e.type === 'AwaitExpression') e = e.argument
       else return null
     }
     return null
@@ -675,8 +744,8 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
     const name = e.callee.property.name
     const args = e.arguments
     if (o.type === 'Identifier' && (o.name === 'Object' || o.name === 'Array')) {
-      const copie = o.name === 'Object' ? name === 'values' || name === 'entries' : name === 'from'
-      return copie && args.length === 1 && args[0].type !== 'SpreadElement' ? itemsRoot(args[0]) : null
+      const copy = o.name === 'Object' ? name === 'values' || name === 'entries' : name === 'from'
+      return copy && args.length === 1 && args[0].type !== 'SpreadElement' ? itemsRoot(args[0]) : null
     }
     // copie retournée ou triée sur place (`$$l.slice().reverse()`) : la même copie ; liste du magasin elle-même (`$$l.sort(f)`,
     // `reverse()`, `fill(v)`) : ses éléments ; ceux qu'elle retire (`$$l.splice(i, 1)`) n'y sont plus, écrits sans prévenir de clé (SOFT)
@@ -721,7 +790,7 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
 
   // texte DÉJÀ RÉÉCRIT entre `a` et `b`, ou null quand une borne tombe dans un morceau que la passe a réécrit d'un bloc (méthode de
   // l'état compilée, `$.l.pop()` → `µ._mjs_deepCall(…)`) : ce morceau ne se coupe plus, il se lit entier
-  function morceau(a: number, b: number): string | null {
+  function piece(a: number, b: number): string | null {
     try {
       return ms.slice(a, b)
     }
@@ -732,46 +801,46 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
 
   // appel de la chaîne déjà réécrit d'un bloc par la passe (`$.l.pop()`, `$.l.splice(i, 1)`, cf. morceau) : ses maillons et ses clés
   // sont ceux du chemin compilé, la chaîne de l'écriture repart de lui
-  const reecrit = (x: any) => x.type === 'CallExpression' && morceau(x.callee.end, x.end) === null
+  const rewritten = (x: any) => x.type === 'CallExpression' && piece(x.callee.end, x.end) === null
 
   // objet `o` d'une écriture par un objet du magasin ou de l'état (élément trouvé, variable suivie, racine) : chaque maillon `?.` de
-  // sa chaîne est testé une fois, son objet lié à un paramètre local (aucune case partagée). `lire` : l'aide des clés (cf. aideCle) —
-  // une clé calculée de la chaîne, ni littérale ni écrite en clair, est lue par `µ._mjs_deepCle` (objet de l'état local, mjs_deep.ts) ou
-  // `µ._mjs_storeCle` (objet du magasin, mjs_store_globals.ts), qui refusent une clé réservée que l'objet lu n'a pas en
+  // sa chaîne est testé une fois, son objet lié à un paramètre local (aucune case partagée). `lire` : l'aide des clés (cf. keyHelper) —
+  // une clé calculée de la chaîne, ni littérale ni écrite en clair, est lue par `µ._mjs_deepKey` (objet de l'état local, mjs_deep.ts) ou
+  // `µ._mjs_keyStore` (objet du magasin, mjs_store_globals.ts), qui refusent une clé réservée que l'objet lu n'a pas en
   // propre — la chaîne est jugée comme par l'enveloppe et le chemin compilé, pas seulement l'objet atteint (`$l.find(f)[k].isAdmin = v`,
   // `k` = `'constructor'`, mène à une classe de l'appli), `?.[k]` compris. Rend les liaisons, le texte de l'objet, `cles` (une clé
-  // ainsi lue) et `meme` (la tête relue par l'enveloppe, cf. RENDU_MEME) ; un appel déjà réécrit (cf. reecrit) devient la tête, lu entier
+  // ainsi lue) et `meme` (la tête relue par l'enveloppe, cf. RETURNS_SAME) ; un appel déjà réécrit (cf. reecrit) devient la tête, lu entier
   // (`$.l.pop().fait = true`) ; null quand le texte ne se lit pas
-  function boundChain(o: any, lire: string | null = null): { binds: Binding[], object: string, cles: boolean, meme: boolean } | null {
+  function boundChain(o: any, read: string | null = null): { binds: Binding[], object: string, keys: boolean, same: boolean } | null {
     let { head, segs } = chainOf(o)
     const binds: Binding[] = []
     let i = segs.length - 1
-    while (i >= 0 && !reecrit(segs[i])) i--
+    while (i >= 0 && !rewritten(segs[i])) i--
     if (i >= 0) [head, segs] = [segs[i], segs.slice(i + 1)]
     // tête faite d'une expression (`($$o[k] || {})[k2]`, cf. findRoot) : ses parenthèses, qu'acorn laisse hors du nœud
-    const tete = morceau(head.start, head.end)
-    if (tete === null) return null
-    let object = head.type === 'Identifier' || head.type === 'ThisExpression' ? tete : `(${tete})`
-    let cles   = false
-    // avec l'enveloppe, la collection que rend `sort` & co. en tête de l'écriture (cf. RENDU_MEME) : relue par l'enveloppe, l'écran suit
-    const meme = !sansProxy && head.type === 'CallExpression' && RENDU_MEME.has(head.callee.property?.name) ? renduBrut(head) : null
-    if (meme) object = `µ._mjs_deepMeme(_mjsThis, ${tete}, ${JSON.stringify(meme)})`
+    const headText = piece(head.start, head.end)
+    if (headText === null) return null
+    let object = head.type === 'Identifier' || head.type === 'ThisExpression' ? headText : `(${headText})`
+    let keys   = false
+    // avec l'enveloppe, la collection que rend `sort` & co. en tête de l'écriture (cf. RETURNS_SAME) : relue par l'enveloppe, l'écran suit
+    const same = !withoutProxy && head.type === 'CallExpression' && RETURNS_SAME.has(head.callee.property?.name) ? returnsRaw(head) : null
+    if (same) object = `µ._mjs_deepSame(_mjsThis, ${headText}, ${JSON.stringify(same)})`
     for (const s of segs) {
       if (s.type === 'MemberExpression' && s.optional) {
         const param = `_mjs_o${binds.length + 1}`
         binds.push({ param, value: object, test: param })
         object = param
       }
-      if (lire && s.type === 'MemberExpression' && s.computed && s.property.type !== 'Literal' && !(s.property.type === 'TemplateLiteral' && s.property.expressions.length === 0)) {
-        object = `${lire}(${object}, ${keyText(s)})`
-        cles   = true
+      if (read && s.type === 'MemberExpression' && s.computed && s.property.type !== 'Literal' && !(s.property.type === 'TemplateLiteral' && s.property.expressions.length === 0)) {
+        object = `${read}(${object}, ${keyText(s)})`
+        keys   = true
         continue
       }
-      const texte = morceau(s.type === 'CallExpression' ? s.callee.end : js.lastIndexOf(s.optional ? '?.' : s.computed ? '[' : '.', s.property.start), s.end)
-      if (texte === null) return null
-      object += texte
+      const text = piece(s.type === 'CallExpression' ? s.callee.end : js.lastIndexOf(s.optional ? '?.' : s.computed ? '[' : '.', s.property.start), s.end)
+      if (text === null) return null
+      object += text
     }
-    return { binds, object, cles, meme: meme !== null }
+    return { binds, object, keys, same: same !== null }
   }
 
   // liaisons posées autour d'une écriture (cf. Binding) : `((p) => p == null ? vide : CORPS)(valeur)`, une fonction
@@ -806,18 +875,18 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
   // morceaux d'une cible `objet.clé` qui passe par un objet du magasin : l'objet (texte DÉJÀ RÉÉCRIT de sa source,
   // `ms.slice` : une écriture réécrite dans le prédicat survit ; maillons `?.`, cf. boundChain), la clé
   // (littéral d'un nom, ou texte d'une clé calculée), son accès, et la position du `.`, `?.` ou `[` qui suit l'objet
-  // `cles` : l'aide qui lit les clés calculées de la chaîne (cf. aideCle, boundChain)
-  function foundParts(m: any, cles: string | null = null): { binds: Binding[], obj: string, key: string, acc: string, sep: number } | null {
+  // `cles` : l'aide qui lit les clés calculées de la chaîne (cf. keyHelper, boundChain)
+  function foundParts(m: any, keys: string | null = null): { binds: Binding[], obj: string, key: string, acc: string, sep: number } | null {
     const k = m.property
     if (k.type === 'PrivateIdentifier') return null
     const key = keyText(m)
     const sep = js.lastIndexOf(m.optional ? '?.' : m.computed ? '[' : '.', k.start)
-    const chaine = boundChain(m.object, cles)
+    const chain = boundChain(m.object, keys)
     // aucun maillon ni clé lue (cf. boundChain) : l'objet tel quel, ses parenthèses comprises ; texte qui ne se lit pas : l'écriture reste
     // telle qu'écrite
-    const obj = chaine?.binds.length || chaine?.cles || chaine?.meme ? chaine.object : morceau(m.start, sep)
-    if (!chaine || obj === null) return null
-    return { binds: chaine.binds, obj, key, acc: m.computed ? `[${key}]` : `.${k.name}`, sep }
+    const obj = chain?.binds.length || chain?.keys || chain?.same ? chain.object : piece(m.start, sep)
+    if (!chain || obj === null) return null
+    return { binds: chain.binds, obj, key, acc: m.computed ? `[${key}]` : `.${k.name}`, sep }
   }
 
   // cible d'écriture d'un objet du magasin (cf. emit-write.ts) : `µ._mjs_storeSetOn` rend la valeur écrite, sa forme
@@ -827,9 +896,9 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
   // clé simple se relisent telles quelles. `?.` n'est jamais dans une cible d'affectation : Civet et CoffeeScript
   // l'écrivent par une variable de travail
   function foundTarget(m: any, root: string, read: boolean, wait = false): WriteTarget | null {
-    const p = foundParts(m, aideCle(root))
+    const p = foundParts(m, keyHelper(root))
     if (!p || p.binds.length) return null
-    if (root[0] === LOCALE) p.obj = objetGarde(root, m.object, p.obj)
+    if (root[0] === LOCALE) p.obj = guardedObject(root, m.object, p.obj)
     const head = onHead('Set', root)
     const tail = onTail(root, ctorWritten(m.object))
     const k    = m.property
@@ -872,7 +941,7 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
   // d'écriture). Miroir de `collectStateTargets` (transform-reactive.ts), en
   // plus général : celle-ci ne sait matcher QUE `$.x` (depth 1, comparaison de
   // nom en dur) ; ici on délègue à `getPath` (déjà capable de la profondeur
-  // ET des deux origines) et on RETIENT le magasin et l'état local profond ($.o.k, profondeur ≥ 2, cf. parLesAides) — les
+  // ET des deux origines) et on RETIENT le magasin et l'état local profond ($.o.k, profondeur ≥ 2, cf. byHelpers) — les
   // cibles `$.x` (profondeur 1, déjà réécrites par transformReactiveWrites qui tourne AVANT) sont laissées telles quelles.
   // Une feuille sans chemin qui passe par un objet du magasin (`[da[k1][k2]] = v` par une variable suivie, `[$$o.a[k +
   // ''][k2]] = v`, cf. findRoot) reçoit l'écriture de cet objet (`µ._mjs_storeSetOn`, cf. foundTarget) : la clé racine
@@ -882,11 +951,11 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
       if (leaf.type !== 'MemberExpression') return
       const tp = getPath(leaf)
       if (tp) {
-        if (parLesAides(tp)) out.push({ node: leaf, set: pathTarget(tp, '').set })
+        if (byHelpers(tp)) out.push({ node: leaf, set: pathTarget(tp, '').set })
         return
       }
-      // objet de l'état local que la passe ne compile pas (réglage `proxy: false`, cf. racineGardee) : l'aide gardée, averti
-      const root = findRoot(leaf.object) ?? racineGardee(leaf.object)
+      // objet de l'état local que la passe ne compile pas (réglage `proxy: false`, cf. keptRoot) : l'aide gardée, averti
+      const root = findRoot(leaf.object) ?? keptRoot(leaf.object)
       const t    = root && !suspension(leaf) ? foundTarget(leaf, root, false) : null
       if (t) out.push({ node: leaf, set: t.set, tail: t.tail })
       if (t && root![0] === LOCALE) invisible(leaf.object, leaf.start)
@@ -901,7 +970,7 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
 
   // `++`, `--`, affectation composée ou logique, cible d'un motif, sur un chemin : celui du magasin passe toujours par les aides,
   // celui de l'état local aussi (profondeur 2 et plus, `$.x` à la racine reste à transformReactiveWrites), avec ou sans l'enveloppe
-  function parLesAides(tp: AliasEntry): boolean {
+  function byHelpers(tp: AliasEntry): boolean {
     return tp.origin === 'store' || tp.path.length > 1
   }
 
@@ -910,11 +979,11 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
   // une fois et dans l'ordre de JavaScript (clés, relecture, valeur de droite) — le chemin et la relecture lisent le paramètre.
   // `wait` : la valeur de droite attend (`await`)
   function pathTargetRead(tp: AliasEntry, target: any, wait = false): WriteTarget {
-    if (tp.origin !== 'local' || !agit(tp)) return pathTarget(tp, js.slice(target.start, target.end))
+    if (tp.origin !== 'local' || !acts(tp)) return pathTarget(tp, js.slice(target.start, target.end))
     const params: string[] = []
     const values: string[] = []
     const path: Path = tp.path.map((p) => {
-      if (typeof p !== 'object' || !p.effet) return p
+      if (typeof p !== 'object' || !p.effect) return p
       params.push(`_mjs_k${params.length + 1}`)
       values.push(p.dyn)
       return { dyn: params[params.length - 1] }
@@ -977,17 +1046,17 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
     ;(byName ? storeNames : paramNames).add(id.name)
     return true
   }
-  let encore = true
+  let again = true
   // motif lié à une valeur (`{ a } := $$prefs`, `[t] = $$liste`, `for { meta } of $$fiches`) : chacun de ses noms en tient
   // une partie, ou sa valeur par défaut (`{ a = $$o.b } = …`, `(t = $$o.a) ->`). `part` : le nom tient une partie de
   // `init` (élément d'une boucle, d'un rappel, d'un motif) ; sinon `init` même, qui peut être une copie (cf. copyBindings)
   const notePattern = (p: any, init: any, part = false, byName = false): void => {
     if (!p) return
     if (p.type === 'Identifier') {
-      if (init && noteStore(p, init, part, byName)) encore = true
+      if (init && noteStore(p, init, part, byName)) again = true
       if (init && !part && noteBinding(copyBindings, p, copyRoot(init))) {
         copyNames.add(p.name)
-        encore = true
+        again = true
       }
     }
     else if (p.type === 'AssignmentPattern') {
@@ -1005,8 +1074,8 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
   const noteLoop = (n: any) => notePattern(n.left.type === 'VariableDeclaration' ? n.left.declarations[0].id : n.left, n.right, true)
   // `Array.prototype.forEach` (une méthode à rappel d'une liste), objet de `.call(l, f)`
   const isArrayMethod = (m: any) => m.type === 'MemberExpression' && !m.computed && m.object.type === 'MemberExpression' && !m.object.computed && m.object.object.type === 'Identifier' && m.object.object.name === 'Array' && m.object.property.name === 'prototype' && CALLBACK_METHODS.has(m.property.name)
-  while (encore) {
-    encore = false
+  while (again) {
+    again = false
     walk.simple(ast, {
       // un nom déclaré ou affecté (`=`) : suivi aussi par son nom (cf. storeNames)
       VariableDeclarator(n: any) {
@@ -1024,20 +1093,20 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
       // méthode écrite en clé littérale (`$$l['forEach'](f)`), rappel de `Array.from(l, f)` (second argument) et méthode
       // d'une liste appelée sur `l` (`Array.prototype.forEach.call(l, f)`)
       CallExpression(n: any) {
-        const c   = n.callee
-        const nom = c.type !== 'MemberExpression' ? null : !c.computed ? c.property.name : c.property.type === 'Literal' && typeof c.property.value === 'string' ? c.property.value : null
-        let i     = nom === null ? undefined : CALLBACK_METHODS.get(nom)
-        let liste = c.object
-        let f     = n.arguments[0]
-        if (nom === 'from' && !c.computed && c.object.type === 'Identifier' && c.object.name === 'Array') [i, liste, f] = [0, n.arguments[0], n.arguments[1]]
-        else if (nom === 'call' && !c.computed && isArrayMethod(c.object)) [i, liste, f] = [CALLBACK_METHODS.get(c.object.property.name), n.arguments[0], n.arguments[1]]
-        if (i !== undefined && liste && liste.type !== 'SpreadElement' && f && isFunction(f)) {
-          notePattern(f.params[i], liste, true, false)
+        const c    = n.callee
+        const name = c.type !== 'MemberExpression' ? null : !c.computed ? c.property.name : c.property.type === 'Literal' && typeof c.property.value === 'string' ? c.property.value : null
+        let i      = name === null ? undefined : CALLBACK_METHODS.get(name)
+        let list   = c.object
+        let f      = n.arguments[0]
+        if (name === 'from' && !c.computed && c.object.type === 'Identifier' && c.object.name === 'Array') [i, list, f] = [0, n.arguments[0], n.arguments[1]]
+        else if (name === 'call' && !c.computed && isArrayMethod(c.object)) [i, list, f] = [CALLBACK_METHODS.get(c.object.property.name), n.arguments[0], n.arguments[1]]
+        if (i !== undefined && list && list.type !== 'SpreadElement' && f && isFunction(f)) {
+          notePattern(f.params[i], list, true, false)
           // `reduce` et `reduceRight` sans valeur de départ : l'accumulateur part du premier élément
-          if (i === 1 && n.arguments.length === (nom === 'call' ? 2 : 1)) notePattern(f.params[0], liste, true, false)
+          if (i === 1 && n.arguments.length === (name === 'call' ? 2 : 1)) notePattern(f.params[0], list, true, false)
         }
         // rappel de comparaison (`$$l.sort((a, b) => …)`, `toSorted`) : ses deux paramètres sont des éléments
-        else if (nom !== null && !c.computed && SORT_METHODS.has(nom) && f && isFunction(f)) for (const p of f.params.slice(0, 2)) notePattern(p, liste, true, false)
+        else if (name !== null && !c.computed && SORT_METHODS.has(name) && f && isFunction(f)) for (const p of f.params.slice(0, 2)) notePattern(p, list, true, false)
       },
     })
   }
@@ -1045,7 +1114,7 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
   // ── Éléments de liste de l'état (cf. elemAlias) ─────────────────────────────────────────────────────────────────────────
   // seule valeur d'une variable : déclarée avec elle, ou déclarée sans valeur puis affectée une fois (`=`), jamais liée autrement
   // (paramètre, `++`, motif, variable d'une boucle) — sinon null
-  const seuleValeur = (id: any): any => {
+  const singleValue = (id: any): any => {
     const b = bindingOf(id)
     let v: any = null
     let n = 0
@@ -1058,104 +1127,104 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
     return n === 1 ? v : null
   }
   // paramètre jamais lié ailleurs dans sa portée (ni affecté, ni `++`)
-  const jamaisRelie = (id: any): boolean => (occs.get(id.name) ?? []).every((o) => o.role === 'ref' || o.id === id || bindingOf(o.id) !== bindingOf(id))
+  const neverLinked = (id: any): boolean => (occs.get(id.name) ?? []).every((o) => o.role === 'ref' || o.id === id || bindingOf(o.id) !== bindingOf(id))
   // liste dont le chemin est connu : chemin de l'état local (`$.l`, `$.o.items`) ou partie d'un élément déjà suivi (`row.cells`),
   // sans clé qui agit
-  const cheminDeListe = (e: any): AliasEntry | null => {
+  const listPath = (e: any): AliasEntry | null => {
     const tp = getPath(e, true)
-    return tp && tp.origin === 'local' && !agit(tp) ? tp : null
+    return tp && tp.origin === 'local' && !acts(tp) ? tp : null
   }
   // garde lue AU MOMENT de l'écriture, par le chemin même que suivra l'aide (chaque maillon après `$` par `?.`) : il mène encore à
   // cet objet — sinon (liste remplacée, réordonnée ou vidée, `await` passé entre-temps, collection à soi dont le rappel ne reçoit pas
   // l'indice) l'écriture telle qu'écrite, celle de JavaScript. Comparés bruts : une enveloppe et l'objet qu'elle tient sont le même
-  const lectureSure = (path: Path) => '$' + path.map((p, k) => {
-    const cle = typeof p === 'object' ? `[${p.dyn}]` : typeof p === 'number' ? `[${p}]` : /^[A-Za-z_$][\w$]*$/.test(p) ? p : `[${JSON.stringify(p)}]`
-    return (k ? '?.' : cle[0] === '[' ? '' : '.') + cle
+  const safeRead = (path: Path) => '$' + path.map((p, k) => {
+    const key = typeof p === 'object' ? `[${p.dyn}]` : typeof p === 'number' ? `[${p}]` : /^[A-Za-z_$][\w$]*$/.test(p) ? p : `[${JSON.stringify(p)}]`
+    return (k ? '?.' : key[0] === '[' ? '' : '.') + key
   }).join('')
-  const ajouteElement = (id: any, liste: AliasEntry, idx: string, params?: () => void) => {
-    const path: Path = [...liste.path, { dyn: idx }]
-    const guard = { test: `µ._mjs_toRaw(${lectureSure(path)}) === µ._mjs_toRaw(${id.name})`, racine: String(liste.path[0]), params: [...(liste.guard?.params ?? []), ...(params ? [params] : [])] }
+  const addElement = (id: any, list: AliasEntry, idx: string, params?: () => void) => {
+    const path: Path = [...list.path, { dyn: idx }]
+    const guard = { test: `µ._mjs_toRaw(${safeRead(path)}) === µ._mjs_toRaw(${id.name})`, root: String(list.path[0]), params: [...(list.guard?.params ?? []), ...(params ? [params] : [])] }
     elemAlias.set(bindingOf(id), { path, origin: 'local', guard })
   }
   // variable de TRAVAIL (cf. work) qui tient une partie de l'état local par son chemin : `(base = $.o).n || (base.n = 1)`, que
   // CoffeeScript écrit pour `$o.n or= 1` (et `?=`, `and=`). Ses écritures suivent ce chemin, gardées comme celles d'un élément de
-  // liste (cf. parGarde) : l'écran suit, avec ou sans l'enveloppe, comme pour `||=` de Civet — une fonction de l'appli rangée dans
+  // liste (cf. byGuard) : l'écran suit, avec ou sans l'enveloppe, comme pour `||=` de Civet — une fonction de l'appli rangée dans
   // l'état comprise (`$format.appels or= 1`)
   if (!storeOnly) {
     for (const [a, w] of work) {
       const tp = !w.others.length && a.right.type === 'MemberExpression' ? getPath(a.right) : null
-      if (tp?.origin === 'local' && !agit(tp)) elemAlias.set(bindingOf(a.left), { path: tp.path, origin: 'local', guard: { test: `µ._mjs_toRaw(${lectureSure(tp.path)}) === µ._mjs_toRaw(${a.left.name})`, racine: String(tp.path[0]), params: [] } })
+      if (tp?.origin === 'local' && !acts(tp)) elemAlias.set(bindingOf(a.left), { path: tp.path, origin: 'local', guard: { test: `µ._mjs_toRaw(${safeRead(tp.path)}) === µ._mjs_toRaw(${a.left.name})`, root: String(tp.path[0]), params: [] } })
     }
   }
   // les noms que lisent les clés du chemin (`$$liste[slot]`) désignent, partout où le nom est lu ou écrit, la variable qu'ils désignaient
   // là où il a été pris : sinon la garde lirait une autre variable, ou un nom hors de portée (ReferenceError)
-  const clesEnPortee = (o: Occ, v: any): boolean => {
-    const b           = bindingOf(o.id)
-    const noms: any[] = []
+  const keysInScope = (o: Occ, v: any): boolean => {
+    const b            = bindingOf(o.id)
+    const names: any[] = []
     for (let m = v; m?.type === 'MemberExpression'; m = m.object) {
-      if (m.computed) walk.full(m.property, (n: any) => { if (n.type === 'Identifier') noms.push(n) })
+      if (m.computed) walk.full(m.property, (n: any) => { if (n.type === 'Identifier') names.push(n) })
     }
-    return noms.length === 0 || (occs.get(o.id.name) ?? []).every((r) => bindingOf(r.id) !== b || noms.every((n) => bindingOf({ type: 'Identifier', name: n.name, start: r.id.start, end: r.id.end }) === bindingOf(n)))
+    return names.length === 0 || (occs.get(o.id.name) ?? []).every((r) => bindingOf(r.id) !== b || names.every((n) => bindingOf({ type: 'Identifier', name: n.name, start: r.id.start, end: r.id.end }) === bindingOf(n)))
   }
-  // gardes des noms pris sur un chemin fixe de l'état local : la valeur qui agit y est évaluée avant la garde (cf. parGarde)
-  const gardesDeNom = new WeakSet<object>()
+  // gardes des noms pris sur un chemin fixe de l'état local : la valeur qui agit y est évaluée avant la garde (cf. byGuard)
+  const nameGuards = new WeakSet<object>()
   // la valeur agit (appel, `new`, `++`, affectation, gabarit étiqueté, `delete`) : elle peut remplacer ou déplacer l'objet du chemin
-  const valeurAgit = (e: any): boolean => {
+  const valueActs = (e: any): boolean => {
     let a = false
     walk.full(e, (n: any) => { if (/^(?:Call|New|Update|Assignment|TaggedTemplate|Import)Expression$/.test(n.type) || (n.type === 'UnaryExpression' && n.operator === 'delete')) a = true })
     return a
   }
-  // nom pris sur un chemin fixe de l'état local (`t := $o.a.b`, `t = $o.a.b` de CoffeeScript), réglage `proxy: false` : sa seule valeur (cf. seuleValeur), un chemin
-  // sans clé qui agit. Ses écritures suivent ce chemin, gardées comme celles d'un élément de liste (cf. parGarde) : le chemin relu au
+  // nom pris sur un chemin fixe de l'état local (`t := $o.a.b`, `t = $o.a.b` de CoffeeScript), réglage `proxy: false` : sa seule valeur (cf. singleValue), un chemin
+  // sans clé qui agit. Ses écritures suivent ce chemin, gardées comme celles d'un élément de liste (cf. byGuard) : le chemin relu au
   // moment de l'écriture mène encore à cet objet, sinon l'écriture telle qu'écrite. Avec l'enveloppe, elle voit déjà ces écritures
-  if (sansProxy && !storeOnly) {
+  if (withoutProxy && !storeOnly) {
     for (const [, list] of occs) {
       for (const o of list) {
         const v  = o.role === 'decl' ? o.node.init : o.role === 'assign' && o.node.operator === '=' ? o.node.right : null
-        const tp = v?.type === 'MemberExpression' && !elemAlias.has(bindingOf(o.id)) && seuleValeur(o.id) === v ? getPath(v) : null
-        if (tp?.origin === 'local' && tp.path.length > 1 && !agit(tp) && clesEnPortee(o, v)) {
-          const guard = { test: `µ._mjs_toRaw(${lectureSure(tp.path)}) === µ._mjs_toRaw(${o.id.name})`, racine: String(tp.path[0]), params: [] }
-          gardesDeNom.add(guard)
+        const tp = v?.type === 'MemberExpression' && !elemAlias.has(bindingOf(o.id)) && singleValue(o.id) === v ? getPath(v) : null
+        if (tp?.origin === 'local' && tp.path.length > 1 && !acts(tp) && keysInScope(o, v)) {
+          const guard = { test: `µ._mjs_toRaw(${safeRead(tp.path)}) === µ._mjs_toRaw(${o.id.name})`, root: String(tp.path[0]), params: [] }
+          nameGuards.add(guard)
           elemAlias.set(bindingOf(o.id), { path: tp.path, origin: 'local', guard })
         }
       }
     }
   }
   // nom pris sur un chemin du magasin (`t := $$o.a.b`, `sheet = $$liste[slot]` de CoffeeScript), avec ou sans l'enveloppe : sa seule
-  // valeur (cf. seuleValeur), un chemin sans clé qui agit. Son écriture simple (`t.c = v`) suit ce chemin quand, relu au moment de
-  // l'écriture, il mène encore à cet objet (cf. cheminMagasin)
-  const cheminsMagasin = new Map<string, Path>()
+  // valeur (cf. singleValue), un chemin sans clé qui agit. Son écriture simple (`t.c = v`) suit ce chemin quand, relu au moment de
+  // l'écriture, il mène encore à cet objet (cf. storePath)
+  const storePaths = new Map<string, Path>()
   if (!storeOnly) {
     for (const [, list] of occs) {
       for (const o of list) {
         const v  = o.role === 'decl' ? o.node.init : o.role === 'assign' && o.node.operator === '=' ? o.node.right : null
-        const tp = v?.type === 'MemberExpression' && seuleValeur(o.id) === v ? getPath(v) : null
-        if (tp?.origin === 'store' && !agit(tp) && clesEnPortee(o, v)) cheminsMagasin.set(bindingOf(o.id), tp.path)
+        const tp = v?.type === 'MemberExpression' && singleValue(o.id) === v ? getPath(v) : null
+        if (tp?.origin === 'store' && !acts(tp) && keysInScope(o, v)) storePaths.set(bindingOf(o.id), tp.path)
       }
     }
   }
   // `t.c = v` → `(µ.store.o?.a?.b === t ? µ._mjs_storeDeepSet("o", ["a", "b", "c"], v) : µ._mjs_storeSetOn("o", t, "c", v))` ; valeur
   // lue (`return t.c = v`, dernière ligne d'une fonction Civet) : par un paramètre qui la rend. Sinon rien : l'écriture d'aujourd'hui
-  function cheminMagasin(node: any, ancestors: any[]): boolean {
-    const t     = node.left
-    const path  = t.object.type === 'Identifier' && !t.computed && node.operator === '=' ? cheminsMagasin.get(bindingOf(t.object)) : undefined
+  function storePath(node: any, ancestors: any[]): boolean {
+    const t    = node.left
+    const path = t.object.type === 'Identifier' && !t.computed && node.operator === '=' ? storePaths.get(bindingOf(t.object)) : undefined
     if (!path || suspension(node.right)) return false
     const k     = JSON.stringify(path[0])
     const o     = t.object.name
-    const nu    = writeValueUnused(ancestors)
-    const agitV = valeurAgit(node.right)
-    const forme = (obj: string, v: string) => `${obj} != null && µ.store${lectureSure(path).slice(1)} === ${obj} ? µ._mjs_storeDeepSet(${k}, ${pathToJsLiteral([...path.slice(1), t.property.name])}, ${v}) : µ._mjs_storeSetOn(${k}, ${obj}, ${JSON.stringify(t.property.name)}, ${v})`
+    const bare  = writeValueUnused(ancestors)
+    const actsV = valueActs(node.right)
+    const shape = (obj: string, v: string) => `${obj} != null && µ.store${safeRead(path).slice(1)} === ${obj} ? µ._mjs_storeDeepSet(${k}, ${pathToJsLiteral([...path.slice(1), t.property.name])}, ${v}) : µ._mjs_storeSetOn(${k}, ${obj}, ${JSON.stringify(t.property.name)}, ${v})`
     // valeur qui n'agit pas, non lue : la garde en ligne, la valeur écrite dans chaque branche (une seule est évaluée) ; toute l'écriture
     // est remplacée, parenthèses de la valeur comprises (acorn les compte dans `node.end`), celles d'une expression à virgule gardées
-    if (nu && !agitV) {
+    if (bare && !actsV) {
       const v = node.right.type === 'SequenceExpression' ? `(${ms.slice(node.right.start, node.right.end)})` : ms.slice(node.right.start, node.right.end)
-      ms.overwrite(node.start, node.end, `${asiGuard(ancestors)}(${forme(o, v)})`)
+      ms.overwrite(node.start, node.end, `${asiGuard(ancestors)}(${shape(o, v)})`)
       return true
     }
     // valeur lue, ou valeur qui agit (`t.c = f()`) : par un paramètre ; quand elle agit, le nom puis la valeur d'abord (l'ordre de
     // JavaScript), le chemin relu ensuite — une valeur qui remplace ou déplace l'objet n'envoie pas l'écriture ailleurs
     const start = rhsStart(js, node)
-    ms.overwrite(node.start, start, `${asiGuard(ancestors)}((${agitV ? '_mjs_o, ' : ''}_mjs_v) => (${forme(agitV ? '_mjs_o' : o, '_mjs_v')}${nu ? '' : ', _mjs_v'}))(${agitV ? o + ', ' : ''}`)
+    ms.overwrite(node.start, start, `${asiGuard(ancestors)}((${actsV ? '_mjs_o, ' : ''}_mjs_v) => (${shape(actsV ? '_mjs_o' : o, '_mjs_v')}${bare ? '' : ', _mjs_v'}))(${actsV ? o + ', ' : ''}`)
     closeRhs(ms, node, start, ')')
     return true
   }
@@ -1168,44 +1237,44 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
       const v = o.role === 'decl' ? o.node.init : o.role === 'assign' && o.node.operator === '=' ? o.node.right : null
       const m = v?.type === 'MemberExpression' && v.object.type === 'Identifier' ? /^_mjs_ra_(\d+)$/.exec(v.object.name) : null
       if (!m) continue
-      const pose = (d: Occ) => (d.role === 'decl' || d.role === 'assign') && d.fn === o.fn
-      const rj   = (occs.get(`_mjs_rj_${m[1]}`) ?? []).some(pose) ? `_mjs_rj_${m[1]}` : null
+      const sets = (d: Occ) => (d.role === 'decl' || d.role === 'assign') && d.fn === o.fn
+      const rj   = (occs.get(`_mjs_rj_${m[1]}`) ?? []).some(sets) ? `_mjs_rj_${m[1]}` : null
       const idx  = rj ?? (!v.computed && v.property.name === '_mjs_it' ? `_mjs_ra_${m[1]}._mjs_ix` : v.computed && v.property.type === 'Identifier' && v.property.name === `_mjs_ri_${m[1]}` ? `_mjs_ri_${m[1]}` : null)
-      if (!idx || seuleValeur(o.id) !== v) continue
-      const rl    = (occs.get(`_mjs_rl_${m[1]}`) ?? []).find(pose)
-      const lv    = rl ? seuleValeur(rl.id) : null
-      const liste = lv ? cheminDeListe(lv) : null
-      if (liste) ajouteElement(o.id, liste, idx)
+      if (!idx || singleValue(o.id) !== v) continue
+      const rl   = (occs.get(`_mjs_rl_${m[1]}`) ?? []).find(sets)
+      const lv   = rl ? singleValue(rl.id) : null
+      const list = lv ? listPath(lv) : null
+      if (list) addElement(o.id, list, idx)
     }
   }
   // paramètre d'un rappel de liste écrit sur place (`$.l.forEach((x) => x.n++)`, `map`, `filter`… cf. CALLBACK_METHODS) : l'indice est
   // le paramètre qui suit l'élément, ajouté au rappel (`_mjs_iN`) à sa première écriture compilée.
   // Dans l'ordre du texte : un rappel dans un rappel (`r.cells.forEach(…)`) part de l'élément du premier
-  const rappels: any[] = []
+  const callbacks: any[] = []
   walk.simple(ast, {
     CallExpression(n: any) {
       const c = n.callee
-      if (c.type === 'MemberExpression' && !c.computed && !c.optional && !n.optional && CALLBACK_METHODS.has(c.property.name) && n.arguments[0] && isFunction(n.arguments[0])) rappels.push(n)
+      if (c.type === 'MemberExpression' && !c.computed && !c.optional && !n.optional && CALLBACK_METHODS.has(c.property.name) && n.arguments[0] && isFunction(n.arguments[0])) callbacks.push(n)
     },
   })
-  for (const n of rappels.sort((a, b) => a.start - b.start)) {
-    const rang       = CALLBACK_METHODS.get(n.callee.property.name)!
-    const f          = n.arguments[0]
-    const [el, ix, ar] = [f.params[rang], f.params[rang + 1], f.params[rang + 2]]
-    const liste      = f.params.length <= rang + 3 ? cheminDeListe(n.callee.object) : null
-    if (!liste || el?.type !== 'Identifier' || [ix, ar].some((p) => p && p.type !== 'Identifier') || ![el, ix, ar].every((p) => !p || jamaisRelie(p))) continue
+  for (const n of callbacks.sort((a, b) => a.start - b.start)) {
+    const rank         = CALLBACK_METHODS.get(n.callee.property.name)!
+    const f            = n.arguments[0]
+    const [el, ix, ar] = [f.params[rank], f.params[rank + 1], f.params[rank + 2]]
+    const list         = f.params.length <= rank + 3 ? listPath(n.callee.object) : null
+    if (!list || el?.type !== 'Identifier' || [ix, ar].some((p) => p && p.type !== 'Identifier') || ![el, ix, ar].every((p) => !p || neverLinked(p))) continue
     const idx = ix ? ix.name : `_mjs_i${elemAlias.size}`
-    let pose  = !!ix
-    ajouteElement(el, liste, idx, () => {
-      if (pose) return
-      pose = true
-      const dernier = f.params[f.params.length - 1]
-      const ajout   = `, ${idx}`
+    let sets  = !!ix
+    addElement(el, list, idx, () => {
+      if (sets) return
+      sets       = true
+      const last = f.params[f.params.length - 1]
+      const add  = `, ${idx}`
       // `x => …` sans parenthèses : elles viennent avec les paramètres
-      if (js.slice(dernier.end).trimStart()[0] === ')') ms.appendLeft(dernier.end, ajout)
+      if (js.slice(last.end).trimStart()[0] === ')') ms.appendLeft(last.end, add)
       else {
-        ms.prependRight(dernier.start, '(')
-        ms.appendLeft(dernier.end, `${ajout})`)
+        ms.prependRight(last.start, '(')
+        ms.appendLeft(last.end, `${add})`)
       }
     })
   }
@@ -1216,7 +1285,7 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
   // garde sans son propre point-virgule (`emit` reçoit des ancêtres où une parenthèse la sort de la tête). Une clé qui agit
   // (`x.t[k++] = 1`, `x.t[($l.reverse(), 0)] = 1`) garde toujours l'écriture telle qu'écrite : la garde se lirait avant son effet, qui
   // peut déplacer l'objet dans la liste (l'écriture irait à un autre), et sa cible liée (`+=`, `++`) poserait son point-virgule dans la garde
-  function parGarde(node: any, ancestors: any[], tp: AliasEntry, emit: (anc: any[]) => void): boolean {
+  function byGuard(node: any, ancestors: any[], tp: AliasEntry, emit: (anc: any[]) => void): boolean {
     const g = tp.guard
     if (!g) {
       emit(ancestors)
@@ -1224,141 +1293,141 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
     }
     const asi = asiGuard(ancestors)
     // valeur ou argument qui attend (`x.n = await f()`) : la garde se lirait avant l'attente, la liste a pu changer depuis
-    const attend = node.type === 'AssignmentExpression' ? suspension(node.right) : node.type === 'CallExpression' && node.arguments.some((a: any) => suspension(a))
-    const tete   = asi !== '' && !writeValueUnused(ancestors)
-    if ((tete && !sansProxy) || agit(tp) || attend) return false
-    // la branche telle qu'écrite, avec le réglage `proxy: false` : par l'aide gardée (cf. ecritureGardee) — l'élément déplacé atteint
+    const pends = node.type === 'AssignmentExpression' ? suspension(node.right) : node.type === 'CallExpression' && node.arguments.some((a: any) => suspension(a))
+    const head   = asi !== '' && !writeValueUnused(ancestors)
+    if ((head && !withoutProxy) || acts(tp) || pends) return false
+    // la branche telle qu'écrite, avec le réglage `proxy: false` : par l'aide gardée (cf. keptWrite) — l'élément déplacé atteint
     // peut-être un prototype ou une fonction du navigateur par une clé venue de l'extérieur
-    // nom pris sur un chemin fixe (cf. gardesDeNom) dont la valeur agit : `t.c = f()` — la valeur d'abord, par un paramètre, puis la garde,
+    // nom pris sur un chemin fixe (cf. nameGuards) dont la valeur agit : `t.c = f()` — la valeur d'abord, par un paramètre, puis la garde,
     // le chemin relu APRÈS elle ; écriture composée ou méthode (`t.n += f()`, `t.l.push(f())`) : l'écriture telle qu'écrite
-    const agitV = gardesDeNom.has(g) && (node.type === 'AssignmentExpression' ? valeurAgit(node.right) : node.type === 'CallExpression' && node.arguments.some(valeurAgit))
-    if (agitV && !(node.type === 'AssignmentExpression' && node.operator === '=')) return false
-    let hisse = ''
-    if (agitV) {
-      hisse = node.right.type === 'SequenceExpression' ? `(${ms.slice(node.right.start, node.right.end)})` : ms.slice(node.right.start, node.right.end)
+    const actsV = nameGuards.has(g) && (node.type === 'AssignmentExpression' ? valueActs(node.right) : node.type === 'CallExpression' && node.arguments.some(valueActs))
+    if (actsV && !(node.type === 'AssignmentExpression' && node.operator === '=')) return false
+    let hoisted = ''
+    if (actsV) {
+      hoisted = node.right.type === 'SequenceExpression' ? `(${ms.slice(node.right.start, node.right.end)})` : ms.slice(node.right.start, node.right.end)
       ms.overwrite(node.right.start, node.right.end, '_mjs_v')
     }
-    const orig = (sansProxy && texteGarde(node, ancestors)) || ms.slice(node.start, node.end)
-    emit(tete ? [...ancestors.slice(0, -1), { type: 'ParenthesizedExpression', start: node.start - 1, end: node.end + 1, expression: node }, node] : ancestors)
+    const orig = (withoutProxy && keptText(node, ancestors)) || ms.slice(node.start, node.end)
+    emit(head ? [...ancestors.slice(0, -1), { type: 'ParenthesizedExpression', start: node.start - 1, end: node.end + 1, expression: node }, node] : ancestors)
     // préfixe posé À DROITE de `node.start` : il reste dans le texte de l'écriture quand elle est la valeur d'une autre (`t.n = t.z = 6`)
-    ms.prependRight(node.start, hisse ? `${asi}((_mjs_v) => (${g.test} ? ` : `${asi}(${g.test} ? `)
-    ms.appendLeft(node.end, hisse ? ` : ${orig}))(${hisse})` : ` : ${orig})`)
+    ms.prependRight(node.start, hoisted ? `${asi}((_mjs_v) => (${g.test} ? ` : `${asi}(${g.test} ? `)
+    ms.appendLeft(node.end, hoisted ? ` : ${orig}))(${hoisted})` : ` : ${orig})`)
     for (const f of g.params) f()
     return true
   }
 
   // ── Réglage `proxy: false` : les écritures que la passe ne voit pas (cf. AvisInvisible) ────────────────────────────────────
   // variable de l'état local que tient `e` : chemin de l'état, élément trouvé ou retiré (`$.l.find(f)`, `$.l.at(-1)`, `$.l.pop()`),
-  // élément de liste suivi (cf. elemAlias), nom qui tient l'un d'eux (cf. aliasLocaux) — sinon null
-  const aliasLocaux = new Map<string, string>()
-  function racineLocale(e: any): string | null {
+  // élément de liste suivi (cf. elemAlias), nom qui tient l'un d'eux (cf. localAliases) — sinon null
+  const localAliases = new Map<string, string>()
+  function localRoot(e: any): string | null {
     if (storeOnly || !e) return null
-    if (e.type === 'ChainExpression') return racineLocale(e.expression)
-    if (e.type === 'Identifier') return elemAlias.get(bindingOf(e))?.guard?.racine ?? aliasLocaux.get(bindingOf(e)) ?? null
+    if (e.type === 'ChainExpression') return localRoot(e.expression)
+    if (e.type === 'Identifier') return elemAlias.get(bindingOf(e))?.guard?.root ?? localAliases.get(bindingOf(e)) ?? null
     // champ de l'instance qui en tient une partie (`@t = $l.find(f)` de CoffeeScript, `this.t`, cf. lie)
-    if (e.type === 'MemberExpression' && e.object.type === 'ThisExpression' && !e.computed && e.property.type === 'Identifier') return aliasLocaux.get('this.' + e.property.name) ?? null
+    if (e.type === 'MemberExpression' && e.object.type === 'ThisExpression' && !e.computed && e.property.type === 'Identifier') return localAliases.get('this.' + e.property.name) ?? null
     // prototype d'une partie de l'état local (`Object.getPrototypeOf($.l.find(f))`, cf. isProtoOf) : l'aide gardée le refuse
-    if (e.type === 'CallExpression' && isProtoOf(e)) return racineLocale(e.arguments[0])
+    if (e.type === 'CallExpression' && isProtoOf(e)) return localRoot(e.arguments[0])
     // valeur lue par `Reflect.get(o, k)` (celle de `o[k]`), élément trouvé par `Array.prototype.find.call(l, f)`
-    if (isReflectGet(e)) return racineLocale(e.arguments[0]) ?? racineCopie(e.arguments[0])
-    if (e.type === 'CallExpression' && appelDeListe(e, FIND_METHODS)) return racineDesElements(e.arguments[0])
+    if (isReflectGet(e)) return localRoot(e.arguments[0]) ?? copiedRoot(e.arguments[0])
+    if (e.type === 'CallExpression' && listCall(e, FIND_METHODS)) return elementsRoot(e.arguments[0])
     // champ d'un objet fait par étalement (`({ ...$.o }).a`) : une partie de `$.o`
-    if (e.type === 'MemberExpression') return e.object.type === 'Identifier' && e.object.name === '$' ? (e.computed ? null : e.property.name) : racineLocale(e.object) ?? (e.computed || e.object.type === 'ObjectExpression' ? racineCopie(e.object) : null)
-    if (e.type === 'CallExpression') return e.callee.type === 'MemberExpression' && !e.callee.computed && (FIND_METHODS.has(e.callee.property.name) || POP_METHODS.has(e.callee.property.name)) ? racineLocale(e.callee.object) ?? racineCopie(e.callee.object) : null
-    if (e.type === 'LogicalExpression') return racineLocale(e.left) ?? racineLocale(e.right)
-    if (e.type === 'ConditionalExpression') return racineLocale(e.consequent) ?? racineLocale(e.alternate)
+    if (e.type === 'MemberExpression') return e.object.type === 'Identifier' && e.object.name === '$' ? (e.computed ? null : e.property.name) : localRoot(e.object) ?? (e.computed || e.object.type === 'ObjectExpression' ? copiedRoot(e.object) : null)
+    if (e.type === 'CallExpression') return e.callee.type === 'MemberExpression' && !e.callee.computed && (FIND_METHODS.has(e.callee.property.name) || POP_METHODS.has(e.callee.property.name)) ? localRoot(e.callee.object) ?? copiedRoot(e.callee.object) : null
+    if (e.type === 'LogicalExpression') return localRoot(e.left) ?? localRoot(e.right)
+    if (e.type === 'ConditionalExpression') return localRoot(e.consequent) ?? localRoot(e.alternate)
     return null
   }
   // variable de l'état local dont `e` tient les ÉLÉMENTS : une liste de l'état (cf. racineLocale), ou une liste calculée qui garde ses
   // objets (`$.l.filter(f)`, `$.l.slice(1)`, cf. COPY_METHODS, nom qui en tient une) — la copie elle-même n'en est pas une partie, ses
   // éléments si (`$.l.filter(f)[0]`, `c.find(g)`)
-  function racineDesElements(e: any): string | null {
-    return racineCopie(e) ?? racineLocale(e)
+  function elementsRoot(e: any): string | null {
+    return copiedRoot(e) ?? localRoot(e)
   }
   // nom qui tient une copie gardant les objets de l'état local (`c = $.l.filter(f)`) → la variable de la liste ; copie faite par
   // `Object.values`, `Object.entries` (ses paires), `Array.from` ou l'étalement (`[...$.l]`), comme pour le magasin (cf. copyRoot)
   const copiesLocales = new Map<string, string>()
-  function racineCopie(e: any): string | null {
+  function copiedRoot(e: any): string | null {
     if (e?.type === 'ChainExpression') e = e.expression
     // étalement d'une liste ou d'un objet (`[...$.l]`, `({ ...$.o })`)
     if (e?.type === 'ArrayExpression' || e?.type === 'ObjectExpression') {
       let r: string | null = null
-      for (const el of e.elements ?? e.properties) if (el?.type === 'SpreadElement') r ??= racineDesElements(el.argument)
+      for (const el of e.elements ?? e.properties) if (el?.type === 'SpreadElement') r ??= elementsRoot(el.argument)
       return r
     }
     const c = e?.type === 'CallExpression' ? e.callee : null
     const a = c?.type === 'MemberExpression' && !c.computed && c.object.type === 'Identifier' && e.arguments[0]?.type !== 'SpreadElement' ? e.arguments[0] : null
-    if (a && ((c.object.name === 'Object' && (c.property.name === 'values' || c.property.name === 'entries')) || (c.object.name === 'Array' && c.property.name === 'from'))) return racineDesElements(a)
+    if (a && ((c.object.name === 'Object' && (c.property.name === 'values' || c.property.name === 'entries')) || (c.object.name === 'Array' && c.property.name === 'from'))) return elementsRoot(a)
     // `concat` : les éléments de la liste et ceux des listes qu'il reçoit (`[].concat($.l)`) ; `Array.of(...$.l)`
     if (c?.type === 'MemberExpression' && !c.computed && (c.property.name === 'concat' || (c.object.type === 'Identifier' && c.object.name === 'Array' && c.property.name === 'of'))) {
-      let r = c.property.name === 'concat' ? racineDesElements(c.object) : null
-      for (const x of e.arguments) r ??= x.type === 'SpreadElement' ? racineDesElements(x.argument) : c.property.name === 'concat' ? racineDesElements(x) : null
+      let r = c.property.name === 'concat' ? elementsRoot(c.object) : null
+      for (const x of e.arguments) r ??= x.type === 'SpreadElement' ? elementsRoot(x.argument) : c.property.name === 'concat' ? elementsRoot(x) : null
       if (r) return r
     }
-    if (c?.type === 'MemberExpression' && !c.computed && COPY_METHODS.has(c.property.name)) return racineDesElements(c.object)
+    if (c?.type === 'MemberExpression' && !c.computed && COPY_METHODS.has(c.property.name)) return elementsRoot(c.object)
     // liste retournée, triée ou remplie sur place (`$.l.slice().reverse()`, `c.sort(f)`), Map ou Set rendu par `set` ou `add` : la même
     // collection, ses éléments ; `splice` : la liste des éléments retirés ; `map(f)` et `flatMap(f)` : leur rappel peut rendre les objets
     // mêmes (`$.l.map((t) => t)`), écrits alors par l'aide gardée
-    if (c?.type === 'MemberExpression' && !c.computed && (RENDU_BRUT.has(c.property.name) || c.property.name === 'map' || c.property.name === 'flatMap') && !POP_METHODS.has(c.property.name)) return racineDesElements(c.object)
+    if (c?.type === 'MemberExpression' && !c.computed && (RETURNS_RAW.has(c.property.name) || c.property.name === 'map' || c.property.name === 'flatMap') && !POP_METHODS.has(c.property.name)) return elementsRoot(c.object)
     return e?.type === 'Identifier' ? copiesLocales.get(bindingOf(e)) ?? null : null
   }
   // nom (ou noms d'un motif : `{ constructor: c } = $.l.find(f)`) qui reçoit une partie de l'état local, ou une copie qui en garde les objets
-  // `affecte` : motif d'une affectation (`({ [k]: c } = $.o)`), dont un nom posé par la passe est un champ (cf. motifsCles)
-  function lie(cible: any, valeur: any, affecte = false): void {
+  // `affecte` : motif d'une affectation (`({ [k]: c } = $.o)`), dont un nom posé par la passe est un champ (cf. patternKeyMap)
+  function bound(target: any, value: any, assigns = false): void {
     // motif de liste sur une liste écrite (`[t] = [$.l.find(f)]`) : chaque nom reçoit sa valeur
-    if (cible.type === 'ArrayPattern' && valeur.type === 'ArrayExpression') {
-      cible.elements.forEach((c: any, i: number) => {
-        const v = valeur.elements[i]
-        if (c && v && v.type !== 'SpreadElement' && c.type !== 'RestElement') lie(c.type === 'AssignmentPattern' ? c.left : c, v, affecte)
+    if (target.type === 'ArrayPattern' && value.type === 'ArrayExpression') {
+      target.elements.forEach((c: any, i: number) => {
+        const v = value.elements[i]
+        if (c && v && v.type !== 'SpreadElement' && c.type !== 'RestElement') bound(c.type === 'AssignmentPattern' ? c.left : c, v, assigns)
       })
       return
     }
-    const r = racineLocale(valeur)
-    if (cible.type === 'MemberExpression') {
-      if (r && cible.object.type === 'ThisExpression' && !cible.computed && cible.property.type === 'Identifier') aliasLocaux.set('this.' + cible.property.name, r)
+    const r = localRoot(value)
+    if (target.type === 'MemberExpression') {
+      if (r && target.object.type === 'ThisExpression' && !target.computed && target.property.type === 'Identifier') localAliases.set('this.' + target.property.name, r)
       return
     }
     // motif sur une copie qui garde les objets (`const [a] = $.l.splice(0, 1)`, `[x, y] = c`) : ses noms en tiennent une partie
-    if (cible.type !== 'Identifier') {
-      lieMotif(cible, r ?? racineCopie(valeur), affecte)
+    if (target.type !== 'Identifier') {
+      bindPattern(target, r ?? copiedRoot(value), assigns)
       return
     }
-    const c = r ? null : racineCopie(valeur)
-    if (r) aliasLocaux.set(bindingOf(cible), r)
-    else if (c) copiesLocales.set(bindingOf(cible), c)
+    const c = r ? null : copiedRoot(value)
+    if (r) localAliases.set(bindingOf(target), r)
+    else if (c) copiesLocales.set(bindingOf(target), c)
   }
   // nom qui tient une partie de l'état local (`t = $.o`, `const it = $.l.find(f)`, `t ??= $.l.find(f)`) ; deux tours pour une chaîne
   // (`b = a`). Motif (`for (const { constructor: c } of $.l)`, `({ constructor: c }) => …`) : chacun de ses noms
-  const lieMotif = (p: any, r: string | null, affecte = false) => {
+  const bindPattern = (p: any, r: string | null, assigns = false) => {
     if (!r) return
-    forEachPatternLeaf(p, (f: any) => { if (f.type === 'Identifier') aliasLocaux.set(bindingOf(f), r) })
-    clesDeMotif(p, affecte)
+    forEachPatternLeaf(p, (f: any) => { if (f.type === 'Identifier') localAliases.set(bindingOf(f), r) })
+    patternKeys(p, assigns)
   }
-  // clé calculée d'un motif qui lit une partie de l'état (`const { [k]: c } = $.l.find(f)`) : jugée par `µ._mjs_deepNom` et
-  // `µ._mjs_deepNomLu` (mjs_deep.ts), qui refusent une clé réservée menant à une fonction ou à un prototype — le motif lit alors une clé
-  // absente (cf. motifsCles, posé après la passe) ; propriété du motif → vrai dans un motif d'affectation (cf. lie)
-  const motifsCles = new Map<any, boolean>()
-  function clesDeMotif(p: any, affecte = false): void {
+  // clé calculée d'un motif qui lit une partie de l'état (`const { [k]: c } = $.l.find(f)`) : jugée par `µ._mjs_deepName` et
+  // `µ._mjs_deepNameRead` (mjs_deep.ts), qui refusent une clé réservée menant à une fonction ou à un prototype — le motif lit alors une clé
+  // absente (cf. patternKeyMap, posé après la passe) ; propriété du motif → vrai dans un motif d'affectation (cf. lie)
+  const patternKeyMap = new Map<any, boolean>()
+  function patternKeys(p: any, assigns = false): void {
     if (p?.type === 'ObjectPattern') {
       for (const q of p.properties) {
         if (q.type === 'RestElement') continue
-        if (q.computed && q.key.type !== 'Literal' && !(q.key.type === 'TemplateLiteral' && q.key.expressions.length === 0)) motifsCles.set(q, affecte)
-        clesDeMotif(q.value, affecte)
+        if (q.computed && q.key.type !== 'Literal' && !(q.key.type === 'TemplateLiteral' && q.key.expressions.length === 0)) patternKeyMap.set(q, assigns)
+        patternKeys(q.value, assigns)
       }
     }
-    else if (p?.type === 'ArrayPattern') for (const q of p.elements) clesDeMotif(q, affecte)
-    else if (p?.type === 'AssignmentPattern') clesDeMotif(p.left, affecte)
-    else if (p?.type === 'RestElement') clesDeMotif(p.argument, affecte)
+    else if (p?.type === 'ArrayPattern') for (const q of p.elements) patternKeys(q, assigns)
+    else if (p?.type === 'AssignmentPattern') patternKeys(p.left, assigns)
+    else if (p?.type === 'RestElement') patternKeys(p.argument, assigns)
   }
   // méthode d'une liste appelée sur `l` (`Array.prototype.find.call(l, f)`) dont le nom est dans `noms`
-  const appelDeListe = (e: any, noms: Set<string> | Map<string, number>) => e.callee.type === 'MemberExpression' && !e.callee.computed && e.callee.property.name === 'call' && isArrayMethod(e.callee.object) && noms.has(e.callee.object.property.name) && e.arguments.length > 0 && e.arguments[0].type !== 'SpreadElement'
-  // noms qui tiennent la valeur de `pop` & co. (cf. renduBrut, lieBrut) : avec l'enveloppe, ceux d'aliasLocaux, posés seulement pour
-  // ces valeurs ; avec le réglage `proxy: false`, à part (aliasLocaux y tient toute partie de l'état), lus par racineGardee
-  const brutsNoms = sansProxy ? new Map<string, string>() : aliasLocaux
+  const listCall = (e: any, names: Set<string> | Map<string, number>) => e.callee.type === 'MemberExpression' && !e.callee.computed && e.callee.property.name === 'call' && isArrayMethod(e.callee.object) && names.has(e.callee.object.property.name) && e.arguments.length > 0 && e.arguments[0].type !== 'SpreadElement'
+  // noms qui tiennent la valeur de `pop` & co. (cf. returnsRaw, lieBrut) : avec l'enveloppe, ceux d'localAliases, posés seulement pour
+  // ces valeurs ; avec le réglage `proxy: false`, à part (localAliases y tient toute partie de l'état), lus par keptRoot
+  const rawNames = withoutProxy ? new Map<string, string>() : localAliases
   // valeurs que tient une liste ou un objet écrits (`[0, t]`, `{ t }`, `[...l]`, `{ ...o }`) ou que garde une copie (`Object.values(o)`,
   // `Object.entries(o)`, `Object.fromEntries(l)`, `Object.assign({}, o)`, `Array.from(l)`, `Array.of(t)`, `l.concat(t)`) : ses parties
   // sont les leurs (cf. racineBrute) ; sinon null
-  function sourcesDeCopie(e: any): any[] | null {
+  function copySources(e: any): any[] | null {
     if (e.type === 'ArrayExpression') return e.elements.filter(Boolean).map((x: any) => x.type === 'SpreadElement' ? x.argument : x)
     if (e.type === 'ObjectExpression') return e.properties.map((p: any) => p.type === 'SpreadElement' ? p.argument : p.kind === 'init' && !p.method ? p.value : null).filter(Boolean)
     const c = e.type === 'CallExpression' ? e.callee : null
@@ -1377,410 +1446,410 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
     const v = bindingOf(b)
     return v.startsWith(':') ? null : v
   }
-  // variable de l'état local d'une valeur que la méthode compilée laisse brute : la méthode qui l'a rendue (cf. renduBrut), le nom qui la
-  // tient (cf. brutsNoms), une liste, un objet ou une copie qui la tient (cf. sourcesDeCopie), le prototype d'une partie de l'état, ou une
+  // variable de l'état local d'une valeur que la méthode compilée laisse brute : la méthode qui l'a rendue (cf. returnsRaw), le nom qui la
+  // tient (cf. rawNames), une liste, un objet ou une copie qui la tient (cf. copySources), le prototype d'une partie de l'état, ou une
   // chaîne qui part d'eux (`$.l.pop().tags`, `t.find(f)`, `Object.values($.l.pop())[0]`) ; sinon null
-  function racineBrute(e: any): string | null {
+  function rawRoot(e: any): string | null {
     for (let x = e; x;) {
-      const r = renduBrut(x)
+      const r = returnsRaw(x)
       if (r) return r
-      const s = sourcesDeCopie(x)
+      const s = copySources(x)
       if (s) {
         for (const y of s) {
-          const q = racineBrute(y)
+          const q = rawRoot(y)
           if (q) return q
         }
         return null
       }
-      if (x.type === 'Identifier') return brutsNoms.get(bindingOf(x)) ?? null
-      if (x.type === 'MemberExpression' && x.object.type === 'ThisExpression' && !x.computed && x.property.type === 'Identifier') return brutsNoms.get('this.' + x.property.name) ?? null
-      if (x.type === 'ConditionalExpression' || x.type === 'LogicalExpression') return racineBrute(x.type === 'LogicalExpression' ? x.left : x.consequent) ?? racineBrute(x.type === 'LogicalExpression' ? x.right : x.alternate)
-      if (x.type === 'CallExpression' && isProtoOf(x)) return racineLocale(x)
+      if (x.type === 'Identifier') return rawNames.get(bindingOf(x)) ?? null
+      if (x.type === 'MemberExpression' && x.object.type === 'ThisExpression' && !x.computed && x.property.type === 'Identifier') return rawNames.get('this.' + x.property.name) ?? null
+      if (x.type === 'ConditionalExpression' || x.type === 'LogicalExpression') return rawRoot(x.type === 'LogicalExpression' ? x.left : x.consequent) ?? rawRoot(x.type === 'LogicalExpression' ? x.right : x.alternate)
+      if (x.type === 'CallExpression' && isProtoOf(x)) return localRoot(x)
       x = x.type === 'MemberExpression' ? x.object : x.type === 'CallExpression' ? x.callee : x.type === 'ChainExpression' ? x.expression : x.type === 'AwaitExpression' ? x.argument : x.type === 'SequenceExpression' ? x.expressions[x.expressions.length - 1] : null
     }
     return null
   }
-  // appel compilé (`µ._mjs_deepCall`) d'une méthode de RENDU_BRUT sur un chemin de l'état local (`$.l.pop()`, `$.o.l.splice(i, 1)`,
+  // appel compilé (`µ._mjs_deepCall`) d'une méthode de RETURNS_RAW sur un chemin de l'état local (`$.l.pop()`, `$.o.l.splice(i, 1)`,
   // élément suivi `t.tags.sort(f)`) : la variable de l'état ; sinon null
-  function renduBrut(e: any): string | null {
+  function returnsRaw(e: any): string | null {
     if (storeOnly || e?.type !== 'CallExpression') return null
     const c = e.callee
-    if (c.type !== 'MemberExpression' || c.computed || !RENDU_BRUT.has(c.property.name)) return null
+    if (c.type !== 'MemberExpression' || c.computed || !RETURNS_RAW.has(c.property.name)) return null
     const tp = getPath(c.object, true)
     return tp?.origin === 'local' && typeof tp.path[0] === 'string' ? tp.path[0] : null
   }
   // fonction écrite dans ce code et jamais réaffectée qu'un nom désigne (`function cmp(a, b) {…}`, `const cmp = (a, b) => …`) : ses
   // paramètres reçoivent ce que reçoit le nom passé en rappel (`$.l.sort(cmp)`) ; sinon null
-  let fonctions: Map<string, any> | null = null
-  function fonctionLocale(id: any): any {
+  let functions: Map<string, any> | null = null
+  function localFunction(id: any): any {
     if (id?.type !== 'Identifier' || tainted.has(id.name)) return isFunction(id ?? {}) ? id : null
-    if (!fonctions) {
-      fonctions = new Map()
+    if (!functions) {
+      functions = new Map()
       walk.simple(ast, {
         FunctionDeclaration(n: any) {
-          if (n.id) fonctions!.set(bindingOf(n.id), n)
+          if (n.id) functions!.set(bindingOf(n.id), n)
         },
         VariableDeclarator(n: any) {
-          if (n.id.type === 'Identifier' && n.init && isFunction(n.init)) fonctions!.set(bindingOf(n.id), n.init)
+          if (n.id.type === 'Identifier' && n.init && isFunction(n.init)) functions!.set(bindingOf(n.id), n.init)
         },
         // variable déclarée sans valeur, affectée une seule fois (cf. once) : `cmp = (a, b) -> …` de CoffeeScript
         AssignmentExpression(n: any) {
-          if (once.has(n) && n.left.type === 'Identifier' && isFunction(n.right)) fonctions!.set(bindingOf(n.left), n.right)
+          if (once.has(n) && n.left.type === 'Identifier' && isFunction(n.right)) functions!.set(bindingOf(n.left), n.right)
         },
       })
     }
-    return fonctions.get(bindingOf(id)) ?? null
+    return functions.get(bindingOf(id)) ?? null
   }
   // tours jusqu'à ce qu'aucun nom neuf ne se lie (`c3 = b3`, `b3 = a3`, `a3 = $.l.find(f)`, écrits dans cet ordre), huit au plus
-  if (sansProxy && !storeOnly) {
-    for (let tour = 0, taille = -1; tour < 8 && taille !== aliasLocaux.size + copiesLocales.size; tour++) {
-      taille = aliasLocaux.size + copiesLocales.size
+  if (withoutProxy && !storeOnly) {
+    for (let turn = 0, size = -1; turn < 8 && size !== localAliases.size + copiesLocales.size; turn++) {
+      size = localAliases.size + copiesLocales.size
       walk.simple(ast, {
         VariableDeclarator(n: any) {
-          if (n.init) lie(n.id, n.init)
+          if (n.init) bound(n.id, n.init)
         },
         AssignmentExpression(n: any) {
-          if (n.operator === '=' || LOGICAL_ASSIGN.has(n.operator)) lie(n.left, n.right, true)
+          if (n.operator === '=' || LOGICAL_ASSIGN.has(n.operator)) bound(n.left, n.right, true)
         },
         // variable d'une boucle `for … of` sur une liste de l'état, calculée ou non (`for (const y of $.l.filter(f))`)
         ForOfStatement(n: any) {
-          const r  = racineDesElements(n.right)
-          let id   = n.left.type === 'VariableDeclaration' ? n.left.declarations[0]?.id : n.left
-          const c  = n.right.type === 'CallExpression' ? n.right.callee : null
+          const r = elementsRoot(n.right)
+          let id  = n.left.type === 'VariableDeclaration' ? n.left.declarations[0]?.id : n.left
+          const c = n.right.type === 'CallExpression' ? n.right.callee : null
           // paire rendue par `entries()` (`for (const [i, y] of $.l.entries())`) : l'élément en est le second
           if (id?.type === 'ArrayPattern' && c?.type === 'MemberExpression' && !c.computed && c.property.name === 'entries') id = id.elements[1]
-          if (id?.type !== 'MemberExpression') lieMotif(id, r, n.left.type !== 'VariableDeclaration')
+          if (id?.type !== 'MemberExpression') bindPattern(id, r, n.left.type !== 'VariableDeclaration')
         },
         // paramètres d'un rappel écrit en place sur une liste de l'état, calculée ou non : l'élément, et la liste reçue en 3e
         // (`$.l.forEach((x, i, arr) => { arr[i].n = 1 })`) ; les deux éléments d'un rappel de comparaison (`$.l.sort((a, b) => …)`)
         // méthode appelée sur `l` (`Array.prototype.forEach.call(l, f)`) ; `reduce` et `reduceRight` sans valeur de départ :
         // l'accumulateur part du premier élément
         CallExpression(n: any) {
-          const call = appelDeListe(n, CALLBACK_METHODS)
+          const call = listCall(n, CALLBACK_METHODS)
           const c    = call ? n.callee.object : n.callee
           const args = call ? n.arguments.slice(1) : n.arguments
-          const nom  = c.type === 'MemberExpression' && !c.computed ? c.property.name : null
-          const rang = nom === null ? undefined : CALLBACK_METHODS.get(nom)
-          const a0   = rang === undefined && !SORT_METHODS.has(nom ?? '') ? null : args[0]
-          // rappel nommé : la fonction écrite dans ce code (cf. fonctionLocale) ; un rappel que la passe ne lit pas (paramètre, import,
+          const name = c.type === 'MemberExpression' && !c.computed ? c.property.name : null
+          const rank = name === null ? undefined : CALLBACK_METHODS.get(name)
+          const a0   = rank === undefined && !SORT_METHODS.has(name ?? '') ? null : args[0]
+          // rappel nommé : la fonction écrite dans ce code (cf. localFunction) ; un rappel que la passe ne lit pas (paramètre, import,
           // méthode, `this.cmp`) reste hors de la garde
-          const f    = a0 && fonctionLocale(a0)
-          const r    = a0 ? racineDesElements(call ? n.arguments[0] : c.object) : null
-          if (r && f) for (const p of rang === undefined ? f.params.slice(0, 2) : [f.params[rang], f.params[rang + 2], rang === 1 && args.length === 1 ? f.params[0] : null]) lieMotif(p, r)
+          const f = a0 && localFunction(a0)
+          const r = a0 ? elementsRoot(call ? n.arguments[0] : c.object) : null
+          if (r && f) for (const p of rank === undefined ? f.params.slice(0, 2) : [f.params[rank], f.params[rank + 2], rank === 1 && args.length === 1 ? f.params[0] : null]) bindPattern(p, r)
         },
       })
     }
   }
-  // ce que la méthode compilée (`µ._mjs_deepCall`) laisse BRUT — la valeur de `pop` & co. (cf. renduBrut : `t = $.l.pop()`,
+  // ce que la méthode compilée (`µ._mjs_deepCall`) laisse BRUT — la valeur de `pop` & co. (cf. returnsRaw : `t = $.l.pop()`,
   // `const [a] = $.l.splice(0, 1)`, `for (const t of $.l.splice(0, 2))`, `$.l.splice(0, 2).forEach((t) => …)`), une liste, un objet ou une
   // copie qui la tient (`o = { t: $.l.pop() }`, `o.t = $.l.pop()` : l'objet `o` du script), le paramètre d'une fonction appelée en place
   // (`((o) => …)(t)`), et les deux éléments du rappel de comparaison de `sort` sur une liste de l'état (`$.l.sort((a, b) => …)`,
-  // `$.l.sort(cmp)` d'une fonction de ce code, cf. fonctionLocale) ; les noms qui les reçoivent ensuite (`c = a` dans le rappel, `s = a`
-  // hors de lui, `p = Object.getPrototypeOf($.o)`) aussi. Une écriture par eux passe par l'aide gardée (cf. racineGardee) ; avec le
+  // `$.l.sort(cmp)` d'une fonction de ce code, cf. localFunction) ; les noms qui les reçoivent ensuite (`c = a` dans le rappel, `s = a`
+  // hors de lui, `p = Object.getPrototypeOf($.o)`) aussi. Une écriture par eux passe par l'aide gardée (cf. keptRoot) ; avec le
   // réglage, la passe voit déjà les noms qui tiennent une partie de l'état (cf. lie), ceux-ci y ajoutent ce qu'elle ne suit pas
   if (!storeOnly) {
-    const lieNoms = (p: any, r: string | null, affecte = false) => {
-      if (!sansProxy) return lieMotif(p, r, affecte)
-      if (r) forEachPatternLeaf(p, (f: any) => { if (f.type === 'Identifier') brutsNoms.set(bindingOf(f), r) })
+    const bindNames = (p: any, r: string | null, assigns = false) => {
+      if (!withoutProxy) return bindPattern(p, r, assigns)
+      if (r) forEachPatternLeaf(p, (f: any) => { if (f.type === 'Identifier') rawNames.set(bindingOf(f), r) })
     }
-    const lieBrut = (cible: any, valeur: any, affecte = false): void => {
+    const bindRaw = (target: any, value: any, assigns = false): void => {
       // motif de liste sur une liste écrite (`[t] = [$.l.pop()]`) : chaque nom reçoit sa valeur
-      if (cible.type === 'ArrayPattern' && valeur.type === 'ArrayExpression') {
-        cible.elements.forEach((c: any, i: number) => {
-          const v = valeur.elements[i]
-          if (c && v && v.type !== 'SpreadElement' && c.type !== 'RestElement') lieBrut(c.type === 'AssignmentPattern' ? c.left : c, v, affecte)
+      if (target.type === 'ArrayPattern' && value.type === 'ArrayExpression') {
+        target.elements.forEach((c: any, i: number) => {
+          const v = value.elements[i]
+          if (c && v && v.type !== 'SpreadElement' && c.type !== 'RestElement') bindRaw(c.type === 'AssignmentPattern' ? c.left : c, v, assigns)
         })
         return
       }
-      const r = racineBrute(valeur)
+      const r = rawRoot(value)
       if (!r) return
-      let v = valeur
+      let v = value
       while (v.type === 'ChainExpression' || v.type === 'AwaitExpression') v = v.type === 'ChainExpression' ? v.expression : v.argument
-      if (cible.type === 'Identifier') {
-        brutsNoms.set(bindingOf(cible), r)
+      if (target.type === 'Identifier') {
+        rawNames.set(bindingOf(target), r)
       }
-      else if (cible.type !== 'MemberExpression') lieNoms(cible, r, affecte)
+      else if (target.type !== 'MemberExpression') bindNames(target, r, assigns)
       // champ de l'instance (`@t = $l.pop()` de CoffeeScript, `this.t`)
-      else if (cible.object.type === 'ThisExpression' && !cible.computed && cible.property.type === 'Identifier') brutsNoms.set('this.' + cible.property.name, r)
+      else if (target.object.type === 'ThisExpression' && !target.computed && target.property.type === 'Identifier') rawNames.set('this.' + target.property.name, r)
       // champ d'un objet du script (`o.t = $.l.pop()`) : l'objet en tient une partie
       else {
-        const b = baseLocale(cible)
-        if (b) brutsNoms.set(b, r)
+        const b = baseLocale(target)
+        if (b) rawNames.set(b, r)
       }
     }
-    for (let tour = 0, taille = -1; tour < 8 && taille !== brutsNoms.size; tour++) {
-      taille = brutsNoms.size
+    for (let turn = 0, size = -1; turn < 8 && size !== rawNames.size; turn++) {
+      size = rawNames.size
       walk.simple(ast, {
         VariableDeclarator(n: any) {
-          if (n.init) lieBrut(n.id, n.init)
+          if (n.init) bindRaw(n.id, n.init)
         },
         AssignmentExpression(n: any) {
-          if (n.operator === '=' || LOGICAL_ASSIGN.has(n.operator)) lieBrut(n.left, n.right, true)
+          if (n.operator === '=' || LOGICAL_ASSIGN.has(n.operator)) bindRaw(n.left, n.right, true)
         },
         ForOfStatement(n: any) {
           const id = n.left.type === 'VariableDeclaration' ? n.left.declarations[0]?.id : n.left
-          if (id && id.type !== 'MemberExpression') lieNoms(id, racineBrute(n.right), n.left.type !== 'VariableDeclaration')
+          if (id && id.type !== 'MemberExpression') bindNames(id, rawRoot(n.right), n.left.type !== 'VariableDeclaration')
         },
         CallExpression(n: any) {
           // fonction appelée en place (`((o) => { o.a[k].x = v })(t)`) : chaque paramètre reçoit son argument
           if (isFunction(n.callee)) n.callee.params.forEach((p: any, i: number) => {
             const a = n.arguments[i]
-            if (a && a.type !== 'SpreadElement') lieBrut(p.type === 'AssignmentPattern' ? p.left : p, a)
+            if (a && a.type !== 'SpreadElement') bindRaw(p.type === 'AssignmentPattern' ? p.left : p, a)
           })
           const c    = n.callee
-          const nom  = c.type === 'MemberExpression' && !c.computed ? c.property.name : null
-          const rang = nom === null ? undefined : CALLBACK_METHODS.get(nom)
+          const name = c.type === 'MemberExpression' && !c.computed ? c.property.name : null
+          const rank = name === null ? undefined : CALLBACK_METHODS.get(name)
           // tri compilé d'une liste de l'état (`$.l.sort(f)`), rappel sur une valeur brute (`$.l.splice(0, 2).forEach(f)`)
-          const tri  = nom === 'sort' && renduBrut(n) !== null
-          const r    = tri ? renduBrut(n) : rang !== undefined || nom === 'sort' ? racineBrute(c.object) : null
+          const sort = name === 'sort' && returnsRaw(n) !== null
+          const r    = sort ? returnsRaw(n) : rank !== undefined || name === 'sort' ? rawRoot(c.object) : null
           if (!r || !n.arguments[0]) return
           // rappel que la passe ne lit pas : hors de la garde
-          const f = fonctionLocale(n.arguments[0])
-          if (f) for (const p of rang === undefined ? f.params.slice(0, 2) : [f.params[rang], f.params[rang + 2], rang === 1 && n.arguments.length === 1 ? f.params[0] : null]) lieNoms(p, r)
+          const f = localFunction(n.arguments[0])
+          if (f) for (const p of rank === undefined ? f.params.slice(0, 2) : [f.params[rank], f.params[rank + 2], rank === 1 && n.arguments.length === 1 ? f.params[0] : null]) bindNames(p, r)
         },
       })
     }
   }
-  // clés calculées des motifs liés (cf. clesDeMotif) — aucune case ni pile partagée, rien ne reste après une erreur : une déclaration
-  // (`[k]: c`) devient `[µ._mjs_deepNomA]: n = µ._mjs_deepNom(k), [n]: t, [µ._mjs_deepNomA]: c = µ._mjs_deepNomLu(t, n)` — la clé absente
-  // `µ._mjs_deepNomA` donne à `n` la clé convertie une fois (le texte entre les crochets, entier : `[(0, k)]`), la valeur est lue une fois
-  // dans `t`, puis jugée avec sa clé par `µ._mjs_deepNomLu` (mjs_deep.ts), deux noms posés ici, propres au site et à chaque appel. Un motif
-  // d'affectation, sans nom à poser, passe par un cadre neuf (`µ._mjs_deepNom(k, 1)`) : `[µ._mjs_deepNomA]: µ._mjs_deepNomF = µ._mjs_deepNom(k, 1),
-  // [µ._mjs_deepNomF.k]: µ._mjs_deepNomF.v, [µ._mjs_deepNomA]: c = µ._mjs_deepNomV` — JavaScript évalue la cible `µ._mjs_deepNomF.v`
+  // clés calculées des motifs liés (cf. patternKeys) — aucune case ni pile partagée, rien ne reste après une erreur : une déclaration
+  // (`[k]: c`) devient `[µ._mjs_deepNameA]: n = µ._mjs_deepName(k), [n]: t, [µ._mjs_deepNameA]: c = µ._mjs_deepNameRead(t, n)` — la clé absente
+  // `µ._mjs_deepNameA` donne à `n` la clé convertie une fois (le texte entre les crochets, entier : `[(0, k)]`), la valeur est lue une fois
+  // dans `t`, puis jugée avec sa clé par `µ._mjs_deepNameRead` (mjs_deep.ts), deux noms posés ici, propres au site et à chaque appel. Un motif
+  // d'affectation, sans nom à poser, passe par un cadre neuf (`µ._mjs_deepName(k, 1)`) : `[µ._mjs_deepNameA]: µ._mjs_deepNameF = µ._mjs_deepName(k, 1),
+  // [µ._mjs_deepNameF.k]: µ._mjs_deepNameF.v, [µ._mjs_deepNameA]: c = µ._mjs_deepNameV` — JavaScript évalue la cible `µ._mjs_deepNameF.v`
   // (son cadre) avant de lire la valeur, que le cadre juge en la recevant. Un défaut écrit (`[k]: c = d`) passe par un motif de liste
   // (`[c = d] = [jugée]`), qui le prend quand la valeur jugée est `undefined`
-  for (const [q, affecte] of motifsCles) {
-    const n   = affecte ? 'µ._mjs_deepNomF' : `_mjs_cn${q.key.start}`
-    const t   = affecte ? 'µ._mjs_deepNomF.v' : `_mjs_cle${q.key.start}`
-    const lu  = affecte ? 'µ._mjs_deepNomV' : `µ._mjs_deepNomLu(${t}, ${n})`
-    const def = q.value.type === 'AssignmentPattern'
-    ms.appendLeft(q.start + 1, `µ._mjs_deepNomA]: ${n} = µ._mjs_deepNom(`)
-    ms.prependRight(js.indexOf(']', q.key.end), `${affecte ? ', 1' : ''}), [${affecte ? n + '.k' : n}`)
-    ms.prependLeft(q.value.start, `${t}, [µ._mjs_deepNomA]: ${def ? '[' : ''}`)
-    ms.prependRight(q.value.end, def ? `] = [${lu}]` : ` = ${lu}`)
+  for (const [q, assigns] of patternKeyMap) {
+    const n    = assigns ? 'µ._mjs_deepNameF' : `_mjs_cn${q.key.start}`
+    const t    = assigns ? 'µ._mjs_deepNameF.v' : `_mjs_keyAt${q.key.start}`
+    const read = assigns ? 'µ._mjs_deepNameV' : `µ._mjs_deepNameRead(${t}, ${n})`
+    const def  = q.value.type === 'AssignmentPattern'
+    ms.appendLeft(q.start + 1, `µ._mjs_deepNameA]: ${n} = µ._mjs_deepName(`)
+    ms.prependRight(js.indexOf(']', q.key.end), `${assigns ? ', 1' : ''}), [${assigns ? n + '.k' : n}`)
+    ms.prependLeft(q.value.start, `${t}, [µ._mjs_deepNameA]: ${def ? '[' : ''}`)
+    ms.prependRight(q.value.end, def ? `] = [${read}]` : ` = ${read}`)
     changed = true
   }
   // écriture par `objet` que la passe ne compile pas : un objet de l'état local (nom qui en tient une partie, élément rendu par une
   // méthode, `$.l.find(f)`) fait avertir, nommé par sa tête, ou par son texte quand elle est `$`
-  function invisible(objet: any, at: number): void {
-    const r = sansProxy ? racineLocale(objet) : null
+  function invisible(object: any, at: number): void {
+    const r = withoutProxy ? localRoot(object) : null
     if (!r) return
-    let e = objet
+    let e = object
     while (e.type === 'MemberExpression' || e.type === 'ChainExpression' || e.type === 'CallExpression') e = e.type === 'MemberExpression' ? e.object : e.type === 'ChainExpression' ? e.expression : e.callee
     // tête qui ne tient rien de l'état (`Object` de `Object.values($m)[0]`) : le texte de l'objet
-    avis.push({ at, forme: 1, nom: e.type === 'Identifier' && e.name !== '$' && racineLocale(e) ? e.name : js.slice(objet.start, objet.end).replace(/\$\./g, '$'), racine: '$' + r })
+    notice.push({ at, shape: 1, name: e.type === 'Identifier' && e.name !== '$' && localRoot(e) ? e.name : js.slice(object.start, object.end).replace(/\$\./g, '$'), root: '$' + r })
   }
   // variable de l'état local dont l'objet `e` d'une écriture que la passe ne compile pas est une partie (réglage `proxy: false`) : celle de
   // racineLocale, ou celle d'une chaîne de membres et d'appels qui part de l'état (`$.l.values().next().value`, `$.l.map(f)[0]`) — la clé
   // de l'aide gardée (cf. LOCALE) ; sinon null. Un objet rendu par un appel est une valeur neuve (`$.l.slice().reverse()`), sauf un
   // élément trouvé ou retiré (cf. racineLocale)
-  function racineGardee(e: any): string | null {
+  function keptRoot(e: any): string | null {
     if (storeOnly) return null
     // avec l'enveloppe, ce qu'elle ne garde pas (cf. racineBrute) : une chaîne qui part de la valeur de `pop` & co. (`$.l.pop()[k].x = v`,
     // `(0, $.l.shift()).x = v`), d'un nom qui en tient une, d'un élément du rappel de `sort` (`a[k].x = v`), du prototype d'une partie de
     // l'état (`Object.getPrototypeOf($.o).constructor.x = v`)
-    if (!sansProxy) {
-      const r = racineBrute(e)
+    if (!withoutProxy) {
+      const r = rawRoot(e)
       return r ? LOCALE + r : null
     }
     if ((e.type === 'ChainExpression' ? e.expression : e).type === 'CallExpression') {
-      const r = racineLocale(e)
+      const r = localRoot(e)
       if (r) return LOCALE + r
     }
     // tête faite d'une virgule ou d'un `await` (`(0, $.l.pop())[k].x = v`) : leur valeur
     else for (let x = e; x; x = x.type === 'MemberExpression' ? x.object : x.type === 'CallExpression' ? x.callee : x.type === 'ChainExpression' ? x.expression : x.type === 'SequenceExpression' ? x.expressions[x.expressions.length - 1] : x.type === 'AwaitExpression' ? x.argument : null) {
-      const r = racineLocale(x)
+      const r = localRoot(x)
       if (r) return LOCALE + r
     }
     // valeur de `pop` & co. tenue par une liste, un objet ou une copie (`Object.assign({}, $.l.pop()).a`), un nom qui les tient, le
     // paramètre d'une fonction appelée en place (cf. lieBrut) : sortie de l'état, aucun avertissement, l'écriture gardée
-    const b = racineBrute(e)
+    const b = rawRoot(e)
     return b ? LOCALE + b : null
   }
   // objet d'une écriture gardée dont la chaîne écrit un nom réservé dans le code (`$.l.find(f).constructor.prototype`, `['__proto__']`),
-  // sans clé calculée après lui (cf. ctorWritten) : passé par `µ._mjs_deepSur`, qui nomme ce nom (le premier écrit) quand il mène à un
+  // sans clé calculée après lui (cf. ctorWritten) : passé par `µ._mjs_deepSafe`, qui nomme ce nom (le premier écrit) quand il mène à un
   // prototype ou à une fonction du navigateur ; sinon le texte tel quel
-  // `texte` : celui de l'objet, ses clés calculées déjà lues par `µ._mjs_deepCle` (cf. boundChain, clesGardees) ; `sur` : l'objet passe
-  // toujours par `µ._mjs_deepSur` (premier argument d'`Object.assign`, cf. premierGarde ; objet d'une écriture avec `yield`)
-  function objetGarde(root: string, e: any, texte: string, sur = false): string {
+  // `texte` : celui de l'objet, ses clés calculées déjà lues par `µ._mjs_deepKey` (cf. boundChain, keptKeys) ; `sur` : l'objet passe
+  // toujours par `µ._mjs_deepSafe` (premier argument d'`Object.assign`, cf. firstGuard ; objet d'une écriture avec `yield`)
+  function guardedObject(root: string, e: any, text: string, safe = false): string {
     let s: string | null = null
     for (let x = e; x; x = x.type === 'MemberExpression' ? x.object : x.type === 'CallExpression' ? x.callee : x.type === 'ChainExpression' ? x.expression : null) {
       if (x.type !== 'MemberExpression') continue
-      const k   = x.property
-      const nom = !x.computed ? k.name : k.type === 'Literal' ? k.value : k.type === 'TemplateLiteral' && k.expressions.length === 0 ? k.quasis[0].value.cooked : undefined
-      if (nom === undefined) break
-      if (nom === '__proto__' || nom === 'constructor' || nom === 'prototype') s = nom
+      const k    = x.property
+      const name = !x.computed ? k.name : k.type === 'Literal' ? k.value : k.type === 'TemplateLiteral' && k.expressions.length === 0 ? k.quasis[0].value.cooked : undefined
+      if (name === undefined) break
+      if (name === '__proto__' || name === 'constructor' || name === 'prototype') s = name
     }
-    // objet du magasin (`#$` devant sa clé, cf. premierGarde) : l'aide du magasin, sans le module des écritures profondes
-    const aide = root.startsWith(LOCALE + '$') ? 'µ._mjs_storeSur' : 'µ._mjs_deepSur'
-    return s ? `${aide}(${JSON.stringify(root.slice(1))}, ${texte}, "${s}")` : sur ? `${aide}(${JSON.stringify(root.slice(1))}, ${texte})` : texte
+    // objet du magasin (`#$` devant sa clé, cf. firstGuard) : l'aide du magasin, sans le module des écritures profondes
+    const helper = root.startsWith(LOCALE + '$') ? 'µ._mjs_storeSafe' : 'µ._mjs_deepSafe'
+    return s ? `${helper}(${JSON.stringify(root.slice(1))}, ${text}, "${s}")` : safe ? `${helper}(${JSON.stringify(root.slice(1))}, ${text})` : text
   }
-  // texte du premier argument `e` d'une fonction qui modifie l'objet qu'elle reçoit (cf. premierGarde), tenu entre `debut` et `fin` :
-  // chaque clé calculée de sa chaîne (`$.l.find(f)[k]`), ni littérale ni dans une chaîne `?.`, lue par `aide` (cf. aideCle, boundChain).
+  // texte du premier argument `e` d'une fonction qui modifie l'objet qu'elle reçoit (cf. firstGuard), tenu entre `start` et `end` :
+  // chaque clé calculée de sa chaîne (`$.l.find(f)[k]`), ni littérale ni dans une chaîne `?.`, lue par `aide` (cf. keyHelper, boundChain).
   // Sans une telle clé, ou sans aide, `texte`
-  function clesGardees(e: any, texte: string, debut: number, fin: number, aide: string | null): string {
-    const cles: any[] = []
+  function keptKeys(e: any, text: string, start: number, end: number, helper: string | null): string {
+    const keys: any[] = []
     for (let x = e; x; x = x.type === 'MemberExpression' ? x.object : x.type === 'CallExpression' ? x.callee : x.type === 'ChainExpression' ? x.expression : null) {
-      if (x.optional || x.type === 'ChainExpression') return texte
+      if (x.optional || x.type === 'ChainExpression') return text
       // appel déjà réécrit (cf. reecrit) : ses clés sont celles du chemin compilé, qui les refuse lui-même
-      if (reecrit(x)) break
-      if (x.type === 'MemberExpression' && x.computed && x.property.type !== 'Literal' && !(x.property.type === 'TemplateLiteral' && x.property.expressions.length === 0)) cles.push(x)
+      if (rewritten(x)) break
+      if (x.type === 'MemberExpression' && x.computed && x.property.type !== 'Literal' && !(x.property.type === 'TemplateLiteral' && x.property.expressions.length === 0)) keys.push(x)
     }
-    if (!cles.length || !aide) return texte
-    const copie = ms.clone()
-    for (const x of cles) {
-      const ouvre = js.lastIndexOf('[', x.property.start)
-      copie.prependRight(x.start, aide + '(')
-      copie.overwrite(ouvre, ouvre + 1, ', ')
-      copie.overwrite(x.end - 1, x.end, ')')
+    if (!keys.length || !helper) return text
+    const copy = ms.clone()
+    for (const x of keys) {
+      const opens = js.lastIndexOf('[', x.property.start)
+      copy.prependRight(x.start, helper + '(')
+      copy.overwrite(opens, opens + 1, ', ')
+      copy.overwrite(x.end - 1, x.end, ')')
     }
-    return copie.slice(debut, fin)
+    return copy.slice(start, end)
   }
   // écriture relue dont la valeur porte `yield` (`$.l.find(f)[k].x ||= yield v`, `$$l.find(f)[k].x ||= yield v`) : aucune fonction
-  // fléchée ne reçoit le `yield`, l'objet passe en place par `µ._mjs_deepSur`, qui rend un objet gelé pour un prototype ou une fonction
+  // fléchée ne reçoit le `yield`, l'objet passe en place par `µ._mjs_deepSafe`, qui rend un objet gelé pour un prototype ou une fonction
   // du navigateur ; l'écriture reste celle de JavaScript, sans aide ni redessin. Rend faux quand rien n'est posé (`?.` dans l'objet)
-  function objetSurPlace(m: MagicString, cible: any, root: string): boolean {
-    const p = foundParts(cible, aideCle(root))
+  function objectInPlace(m: MagicString, target: any, root: string): boolean {
+    const p = foundParts(target, keyHelper(root))
     if (!p || p.binds.length) return false
     const r = root[0] === LOCALE ? root : LOCALE + '$' + (root === SOFT || root === NO_KEY ? '…' : root)
-    m.overwrite(cible.start, p.sep, objetGarde(r, cible.object, p.obj, true))
+    m.overwrite(target.start, p.sep, guardedObject(r, target.object, p.obj, true))
     return true
   }
-  // écriture `node` par un objet de l'état local que la passe ne compile pas (cf. racineGardee), posée sur `m` (le texte, ou sa copie, cf.
-  // texteGarde) par l'aide gardée : affectation, `++`/`--` (`bloc` : l'instruction qu'elle est, cf. instructionSeule), méthode qui
+  // écriture `node` par un objet de l'état local que la passe ne compile pas (cf. keptRoot), posée sur `m` (le texte, ou sa copie, cf.
+  // keptText) par l'aide gardée : affectation, `++`/`--` (`bloc` : l'instruction qu'elle est, cf. loneStatement), méthode qui
   // modifie, `delete`. Rend faux quand rien n'est posé (aucun objet de l'état, `?.` dans l'objet, `yield` qu'aucune fonction fléchée ne
   // reçoit) : l'écriture reste telle qu'écrite
-  function ecritureGardee(m: MagicString, node: any, ancestors: any[], bloc: any = null): boolean {
+  function keptWrite(m: MagicString, node: any, ancestors: any[], block: any = null): boolean {
     if (node.type === 'AssignmentExpression' || node.type === 'UpdateExpression') {
-      const cible = node.type === 'AssignmentExpression' ? node.left : node.argument
-      const root  = cible.type === 'MemberExpression' ? racineGardee(cible.object) : null
-      const wait  = root ? suspension(node.type === 'AssignmentExpression' ? node.right : cible) : null
-      const t     = root && !(wait === 'yield' && node.type === 'UpdateExpression') ? foundTarget(cible, root, node.type === 'UpdateExpression' || node.operator !== '=', wait === 'await') : null
-      if (t && wait === 'yield' && t.bind) return objetSurPlace(m, cible, root!)
+      const target = node.type === 'AssignmentExpression' ? node.left : node.argument
+      const root   = target.type === 'MemberExpression' ? keptRoot(target.object) : null
+      const wait   = root ? suspension(node.type === 'AssignmentExpression' ? node.right : target) : null
+      const t      = root && !(wait === 'yield' && node.type === 'UpdateExpression') ? foundTarget(target, root, node.type === 'UpdateExpression' || node.operator !== '=', wait === 'await') : null
+      if (t && wait === 'yield' && t.bind) return objectInPlace(m, target, root!)
       if (!t) return false
       if (node.type === 'AssignmentExpression') emitAssign(m, js, node, ancestors, t)
       else {
-        emitUpdate(m, node, ancestors, t, !!bloc)
-        if (bloc) poserBloc(m, bloc)
+        emitUpdate(m, node, ancestors, t, !!block)
+        if (block) setBlock(m, block)
       }
       return true
     }
-    const cible = node.type === 'CallExpression' ? node.callee : node.argument
-    const root  = cible?.type === 'MemberExpression' && !(node.type === 'CallExpression' && (cible.computed || node.optional)) ? racineGardee(cible.object) : null
-    const p     = root ? foundParts(cible, aideCle(root)) : null
+    const target = node.type === 'CallExpression' ? node.callee : node.argument
+    const root   = target?.type === 'MemberExpression' && !(node.type === 'CallExpression' && (target.computed || node.optional)) ? keptRoot(target.object) : null
+    const p      = root ? foundParts(target, keyHelper(root)) : null
     if (!p || p.binds.length) return false
-    const obj = objetGarde(root!, cible.object, p.obj)
+    const obj = guardedObject(root!, target.object, p.obj)
     if (node.type === 'UnaryExpression') m.overwrite(node.start, node.end, `${onHead('Delete', root!)}${obj}, ${p.key})`)
-    else if (node.arguments.length === 0) m.overwrite(node.start, node.end, `${onHead('Call', root!)}${obj}, '${cible.property.name}', [])`)
+    else if (node.arguments.length === 0) m.overwrite(node.start, node.end, `${onHead('Call', root!)}${obj}, '${target.property.name}', [])`)
     else {
-      m.overwrite(node.start, js.indexOf('(', cible.end) + 1, `${onHead('Call', root!)}${obj}, '${cible.property.name}', [`)
+      m.overwrite(node.start, js.indexOf('(', target.end) + 1, `${onHead('Call', root!)}${obj}, '${target.property.name}', [`)
       m.overwrite(node.end - 1, node.end, '])')
     }
     return true
   }
-  // la même écriture, posée sur une copie du texte entre les parenthèses d'une garde (cf. parGarde) : son texte, ou null
-  function texteGarde(node: any, ancestors: any[]): string | null {
-    const copie = ms.clone()
-    const anc   = [...ancestors.slice(0, -1), { type: 'ParenthesizedExpression', start: node.start - 1, end: node.end + 1, expression: node }, node]
-    return ecritureGardee(copie, node, anc) ? copie.slice(node.start, node.end) : null
+  // la même écriture, posée sur une copie du texte entre les parenthèses d'une garde (cf. byGuard) : son texte, ou null
+  function keptText(node: any, ancestors: any[]): string | null {
+    const copy = ms.clone()
+    const anc  = [...ancestors.slice(0, -1), { type: 'ParenthesizedExpression', start: node.start - 1, end: node.end + 1, expression: node }, node]
+    return keptWrite(copy, node, anc) ? copy.slice(node.start, node.end) : null
   }
   // écriture que la passe ne compile pas : avertie avec le réglage `proxy: false` (cf. invisible), passée par l'aide gardée quand son
-  // objet est une partie de l'état local (cf. ecritureGardee)
-  function ecritureInvisible(node: any, ancestors: any[], objet: any, bloc: any = null): void {
-    invisible(objet, node.start)
-    if (ecritureGardee(ms, node, ancestors, bloc)) changed = true
+  // objet est une partie de l'état local (cf. keptWrite)
+  function invisibleWrite(node: any, ancestors: any[], object: any, block: any = null): void {
+    invisible(object, node.start)
+    if (keptWrite(ms, node, ancestors, block)) changed = true
   }
   // nom d'une fonction écrite `Objet.nom` (`Object.assign`) ; méthode d'une liste qui la modifie, prise sur `Array.prototype` ou sur une
   // liste vide écrite (`Array.prototype.push`, `[].splice`) : `Array.prototype.nom` — sinon null
-  function nomDeFonction(e: any): string | null {
+  function functionName(e: any): string | null {
     if (e?.type !== 'MemberExpression' || e.computed) return null
     const o = e.object
     if (o.type === 'Identifier') return `${o.name}.${e.property.name}`
-    const liste = (o.type === 'MemberExpression' && !o.computed && o.object.type === 'Identifier' && o.object.name === 'Array' && o.property.name === 'prototype') || (o.type === 'ArrayExpression' && o.elements.length === 0)
-    return liste && MUTATIVE_METHODS.Array.has(e.property.name) ? `Array.prototype.${e.property.name}` : null
+    const list = (o.type === 'MemberExpression' && !o.computed && o.object.type === 'Identifier' && o.object.name === 'Array' && o.property.name === 'prototype') || (o.type === 'ArrayExpression' && o.elements.length === 0)
+    return list && MUTATIVE_METHODS.Array.has(e.property.name) ? `Array.prototype.${e.property.name}` : null
   }
-  // objet que modifie ou fige un appel (cf. premierGarde, appelInvisible) : premier argument d'une fonction qui modifie ou fige ce qu'elle
-  // reçoit (cf. ECRIT_LE_PREMIER, FIGE_LE_PREMIER), écrit tel quel, premier élément d'une liste écrite étalée (`Object.assign(...[o], …)`),
+  // objet que modifie ou fige un appel (cf. firstGuard, invisibleCall) : premier argument d'une fonction qui modifie ou fige ce qu'elle
+  // reçoit (cf. WRITES_FIRST, FREEZES_FIRST), écrit tel quel, premier élément d'une liste écrite étalée (`Object.assign(...[o], …)`),
   // ou passé par `call`, `apply`, `Reflect.apply` (`Object.assign.apply(null, [o, …])`, `Reflect.apply(Object.assign, null, [o, …])`) ;
   // objet sur lequel `call`, `apply` ou `Reflect.apply` appelle une méthode d'une liste qui la modifie (`Array.prototype.push.call(o, v)`).
   // Rend le nom de la fonction et l'objet, null sinon
-  function cibleModifiee(node: any): { nom: string, cible: any } | null {
-    const c  = node.callee
-    let nom  = nomDeFonction(c)
-    let fn   = c
-    let soi  = null
-    let args = node.arguments
-    if (nom === 'Reflect.apply') {
-      fn   = node.arguments[0]
-      nom  = nomDeFonction(fn)
-      soi  = node.arguments[1]
-      args = node.arguments[2]?.type === 'ArrayExpression' ? node.arguments[2].elements : null
+  function modifiedTarget(node: any): { name: string, target: any } | null {
+    const c    = node.callee
+    let name   = functionName(c)
+    let fn     = c
+    let itself = null
+    let args   = node.arguments
+    if (name === 'Reflect.apply') {
+      fn     = node.arguments[0]
+      name   = functionName(fn)
+      itself = node.arguments[1]
+      args   = node.arguments[2]?.type === 'ArrayExpression' ? node.arguments[2].elements : null
     }
-    else if (!nom && c?.type === 'MemberExpression' && !c.computed && (c.property.name === 'call' || c.property.name === 'apply')) {
-      fn   = c.object
-      nom  = nomDeFonction(fn)
-      soi  = node.arguments[0]
-      args = c.property.name === 'call' ? node.arguments.slice(1) : node.arguments[1]?.type === 'ArrayExpression' ? node.arguments[1].elements : null
+    else if (!name && c?.type === 'MemberExpression' && !c.computed && (c.property.name === 'call' || c.property.name === 'apply')) {
+      fn     = c.object
+      name   = functionName(fn)
+      itself = node.arguments[0]
+      args   = c.property.name === 'call' ? node.arguments.slice(1) : node.arguments[1]?.type === 'ArrayExpression' ? node.arguments[1].elements : null
     }
-    if (!nom) return null
+    if (!name) return null
     // méthode d'une liste : l'objet de l'appel
-    if (nom.startsWith('Array.prototype.')) return fn !== c && soi && soi.type !== 'SpreadElement' ? { nom, cible: soi } : null
-    if (!(ECRIT_LE_PREMIER.test(nom) || FIGE_LE_PREMIER.test(nom)) || !args) return null
+    if (name.startsWith('Array.prototype.')) return fn !== c && itself && itself.type !== 'SpreadElement' ? { name, target: itself } : null
+    if (!(WRITES_FIRST.test(name) || FREEZES_FIRST.test(name)) || !args) return null
     let a0 = args[0]
     if (a0?.type === 'SpreadElement' && a0.argument.type === 'ArrayExpression') a0 = a0.argument.elements[0]
-    return a0 && a0.type !== 'SpreadElement' ? { nom, cible: a0 } : null
+    return a0 && a0.type !== 'SpreadElement' ? { name, target: a0 } : null
   }
-  // objet que modifie ou fige un appel (cf. cibleModifiee), pris dans le magasin, ou dans l'état local avec le réglage `proxy: false` :
-  // passé par `µ._mjs_storeSur` (magasin) ou `µ._mjs_deepSur`, qui refusent un prototype ou une fonction du navigateur
+  // objet que modifie ou fige un appel (cf. modifiedTarget), pris dans le magasin, ou dans l'état local avec le réglage `proxy: false` :
+  // passé par `µ._mjs_storeSafe` (magasin) ou `µ._mjs_deepSafe`, qui refusent un prototype ou une fonction du navigateur
   // (`Object.assign($$t.find(f).constructor, …)`) — la fonction reçoit alors un objet gelé, et échoue comme avec l'enveloppe
-  function premierGarde(node: any): void {
-    const a0 = cibleModifiee(node)?.cible
+  function firstGuard(node: any): void {
+    const a0 = modifiedTarget(node)?.target
     if (!a0) return
     const store = findRoot(a0)
-    const root  = store !== null && store !== SOFT && store !== NO_KEY ? LOCALE + '$' + store : racineGardee(a0)
-    const texte = root ? morceau(a0.start, a0.end) : null
-    if (texte === null) return
-    ms.overwrite(a0.start, a0.end, objetGarde(root!, a0, clesGardees(a0, texte, a0.start, a0.end, aideCle(root!)), true))
+    const root  = store !== null && store !== SOFT && store !== NO_KEY ? LOCALE + '$' + store : keptRoot(a0)
+    const text  = root ? piece(a0.start, a0.end) : null
+    if (text === null) return
+    ms.overwrite(a0.start, a0.end, guardedObject(root!, a0, keptKeys(a0, text, a0.start, a0.end, keyHelper(root!)), true))
     changed = true
   }
   // appel qui peut modifier l'état local sans passer par une aide : fonction qui modifie son premier argument ; appel dont la valeur
   // n'est pas lue (appelé pour son effet) — méthode inconnue d'un objet de l'état, rappel venu d'ailleurs qui reçoit ses éléments,
   // objet de l'état passé en argument. Une méthode qui modifie une liste, une Map, un Set ou une Date est compilée
-  function appelInvisible(node: any, ancestors: any[]): void {
-    const c     = node.callee
-    const objet = c.type === 'MemberExpression' && !c.computed ? (c.object.type === 'Identifier' ? c.object.name : c.object.type === 'ThisExpression' ? 'this' : null) : null
-    const nomFn = c.type === 'Identifier' ? c.name : objet ? `${objet}.${c.property.name}` : null
-    const a0    = node.arguments[0]
-    // fonction qui modifie ce qu'elle reçoit, appelée par son nom, par `call`, `apply` ou `Reflect.apply` (cf. cibleModifiee)
-    const cm    = cibleModifiee(node)
-    if (cm && !FIGE_LE_PREMIER.test(cm.nom)) {
-      const r = racineLocale(cm.cible)
-      if (r) avis.push({ at: node.start, forme: 2, nom: cm.nom, racine: '$' + r })
+  function invisibleCall(node: any, ancestors: any[]): void {
+    const c      = node.callee
+    const object = c.type === 'MemberExpression' && !c.computed ? (c.object.type === 'Identifier' ? c.object.name : c.object.type === 'ThisExpression' ? 'this' : null) : null
+    const fnName = c.type === 'Identifier' ? c.name : object ? `${object}.${c.property.name}` : null
+    const a0     = node.arguments[0]
+    // fonction qui modifie ce qu'elle reçoit, appelée par son nom, par `call`, `apply` ou `Reflect.apply` (cf. modifiedTarget)
+    const cm    = modifiedTarget(node)
+    if (cm && !FREEZES_FIRST.test(cm.name)) {
+      const r = localRoot(cm.target)
+      if (r) notice.push({ at: node.start, shape: 2, name: cm.name, root: '$' + r })
       return
     }
-    if (!writeValueUnused(ancestors) || (nomFn && SANS_ECRITURE_FN.test(nomFn))) return
-    const r = c.type === 'MemberExpression' && !c.computed ? racineLocale(c.object) : null
+    if (!writeValueUnused(ancestors) || (fnName && NO_WRITE_FN.test(fnName))) return
+    const r = c.type === 'MemberExpression' && !c.computed ? localRoot(c.object) : null
     if (r) {
       const m = c.property.name
       if (CALLBACK_METHODS.has(m)) {
-        if (a0 && a0.type !== 'SpreadElement' && !isFunction(a0)) avis.push({ at: node.start, forme: 5, nom: js.slice(a0.start, a0.end), racine: '$' + r })
+        if (a0 && a0.type !== 'SpreadElement' && !isFunction(a0)) notice.push({ at: node.start, shape: 5, name: js.slice(a0.start, a0.end), root: '$' + r })
       }
-      else if (!ALL_MUTATIVE.has(m) && !SANS_ECRITURE.has(m)) avis.push({ at: node.start, forme: 3, nom: m, racine: '$' + r })
+      else if (!ALL_MUTATIVE.has(m) && !NO_WRITE.has(m)) notice.push({ at: node.start, shape: 3, name: m, root: '$' + r })
       return
     }
     // méthode d'une liste, d'une Map ou d'un Set appelée sur une copie qui garde les objets de l'état (`l = Array.from($l)`, puis
     // `l.splice(i, 0, t)`) : elle range ou lit l'objet reçu, sans le modifier — aucun avertissement
-    if (c.type === 'MemberExpression' && !c.computed && (ALL_MUTATIVE.has(c.property.name) || SANS_ECRITURE.has(c.property.name)) && racineCopie(c.object)) return
+    if (c.type === 'MemberExpression' && !c.computed && (ALL_MUTATIVE.has(c.property.name) || NO_WRITE.has(c.property.name)) && copiedRoot(c.object)) return
     for (const a of node.arguments) {
-      const ra = racineLocale(a.type === 'SpreadElement' ? a.argument : a)
+      const ra = localRoot(a.type === 'SpreadElement' ? a.argument : a)
       if (ra) {
-        avis.push({ at: node.start, forme: 4, nom: nomFn ?? js.slice(c.start, c.end), racine: '$' + ra })
+        notice.push({ at: node.start, shape: 4, name: fnName ?? js.slice(c.start, c.end), root: '$' + ra })
         return
       }
     }
   }
   // variable de la tête d'une boucle du script (cf. ForOfStatement)
-  let tetes = 0
+  let heads = 0
 
   walk.ancestor(ast, {
     // déclarations `let/const/var X = µ.store.path`, `X = $$l.find(f)`, `X = autreVariableSuivie` (cf. track)
@@ -1829,7 +1898,7 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
       // $$b] = …`, réécrit par les DEUX passes, l'une dans l'autre :
       // transformReactiveWrites tourne AVANT, applyPathTracking réécrit ensuite
       // l'IIFE qu'elle a laissée). Les cibles `$.x` du motif, déjà réécrites par transformReactiveWrites, sont laissées
-      // telles quelles ; celles du magasin et de l'état local profond (`$.o.k`) passent par les aides (cf. parLesAides).
+      // telles quelles ; celles du magasin et de l'état local profond (`$.o.k`) passent par les aides (cf. byHelpers).
       if (node.operator === '=' && (target.type === 'ArrayPattern' || target.type === 'ObjectPattern')) {
         const storeTargets: { node: any, set: string, tail?: string }[] = []
         collectStoreTargets(target, storeTargets)
@@ -1851,11 +1920,11 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
         const wait = root ? suspension(node.right) : null
         const t    = root ? foundTarget(target, root, isCompound, wait === 'await') : null
         if (t && !(wait === 'yield' && t.bind)) {
-          if (!cheminMagasin(node, ancestors)) emitAssign(ms, js, node, ancestors, t)
+          if (!storePath(node, ancestors)) emitAssign(ms, js, node, ancestors, t)
           changed = true
         }
-        else if (t && objetSurPlace(ms, target, root!)) changed = true
-        else ecritureInvisible(node, ancestors, target.object)
+        else if (t && objectInPlace(ms, target, root!)) changed = true
+        else invisibleWrite(node, ancestors, target.object)
         return
       }
       // Le top-level $.x = y reste géré par transformReactiveWrites (le filet
@@ -1871,21 +1940,19 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
       // plat→accesseur posée dans `_storeDeclare` (mjs_store_globals.ts).
       if (tp.origin === 'local' && tp.path.length < 2) return
 
-      // Compound (`+=` etc.) : seule l'origine 'store' est traitée ici (cf.
-      // commentaire COMPOUND_OPS plus haut) — 'local' reste skip,
-      // `transformReactiveWrites`/le filet Proxy `_mjs_wrapDeep` suffisent déjà
-      // pour ce cas (« gérés ailleurs »). Court-circuit `||=`/`&&=`/`??=` :
+      // Compound (`+=` etc.) : l'origine 'store' est traitée ici, l'état local
+      // aussi (cf. la fin de ce commentaire). Court-circuit `||=`/`&&=`/`??=` :
       // `baseOp` EST le vrai opérateur JS (`||`/`&&`/`??`), le rhs n'est donc
       // évalué QUE si le court-circuit le permet (sémantique native préservée) ;
       // `_storeSet`/`_mjs_storeDeepSet` sautent en plus l'écriture+notification si
       // la valeur calculée est identique à l'existante (cas où le court-circuit
       // renvoie la valeur de gauche inchangée).
-      // l'état local aussi, avec ou sans l'enveloppe : cf. parLesAides ; une clé qui agit, relue, passe par un paramètre (cf.
+      // l'état local aussi, avec ou sans l'enveloppe : cf. byHelpers ; une clé qui agit, relue, passe par un paramètre (cf.
       // pathTargetRead), qu'une valeur de droite avec `yield` ne peut pas recevoir
       if (isCompound) {
-        if (!parLesAides(tp)) return
+        if (!byHelpers(tp)) return
         const wait = suspension(node.right)
-        if ((wait === 'yield' && agit(tp)) || !parGarde(node, ancestors, tp, (anc) => emitAssign(ms, js, node, anc, pathTargetRead(tp, target, wait === 'await')))) return ecritureInvisible(node, ancestors, target.object)
+        if ((wait === 'yield' && acts(tp)) || !byGuard(node, ancestors, tp, (anc) => emitAssign(ms, js, node, anc, pathTargetRead(tp, target, wait === 'await')))) return invisibleWrite(node, ancestors, target.object)
         changed = true
         return
       }
@@ -1898,14 +1965,14 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
       // `$.y++`, assignations imbriquées) survivent — un overwrite global
       // recopiait le source ORIGINAL du RHS et les perdait.
       // `µ._mjs_deepSet` rend déjà la valeur écrite : sa forme directe vaut aussi là où la valeur est lue.
-      if (!parGarde(node, ancestors, tp, (anc) => emitAssign(ms, js, node, anc, pathTarget(tp, '')))) return ecritureInvisible(node, ancestors, target.object)
+      if (!byGuard(node, ancestors, tp, (anc) => emitAssign(ms, js, node, anc, pathTarget(tp, '')))) return invisibleWrite(node, ancestors, target.object)
       changed = true
     },
 
     // tête d'une boucle qui écrit un champ de l'état local (`for ($.o.k of l)`, `for ($.o.k in o)`) : une variable de la boucle, écrite
     // dans le champ par l'aide au début de chaque tour — `for (const _mjs_fN of l) { µ._mjs_deepSet(_mjsThis, ["o", "k"], _mjs_fN); … }`
-    ForOfStatement: teteDeBoucle,
-    ForInStatement: teteDeBoucle,
+    ForOfStatement: loopHead,
+    ForInStatement: loopHead,
 
     // STATISATION — `$$obj.a++`/`--` (depth >= 2, origine 'store'
     // uniquement, même raison que ci-dessus : aucun filet Proxy sur le store).
@@ -1917,22 +1984,22 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
     UpdateExpression(node: any, _st: any, ancestors: any[]) {
       const target = node.argument
       if (!target || target.type !== 'MemberExpression') return
-      const tp   = getPath(target, true)
-      const bloc = instructionSeule(ancestors)
+      const tp    = getPath(target, true)
+      const block = loneStatement(ancestors)
       if (!tp) {
         const root = findRoot(target.object)
         const wait = root ? suspension(target) : null
         const t    = root && wait !== 'yield' ? foundTarget(target, root, true, wait === 'await') : null
         if (t) {
-          emitUpdate(ms, node, ancestors, t, !!bloc)
-          if (bloc) poserBloc(ms, bloc)
+          emitUpdate(ms, node, ancestors, t, !!block)
+          if (block) setBlock(ms, block)
           changed = true
         }
-        else ecritureInvisible(node, ancestors, target.object, bloc)
+        else invisibleWrite(node, ancestors, target.object, block)
         return
       }
-      // l'état local aussi, avec ou sans l'enveloppe : cf. parLesAides
-      if (!parLesAides(tp)) return
+      // l'état local aussi, avec ou sans l'enveloppe : cf. byHelpers
+      if (!byHelpers(tp)) return
 
       // valeur non lue (instruction seule…) : forme DIRECTE, qui commence par `µ` — les formes fidèles
       // commencent par `(` et Civet n'écrit pas de point-virgule : posées après une autre ligne, elles
@@ -1941,8 +2008,8 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
       // l'opérateur de JavaScript sur `_mjs_n`, qui reçoit la valeur lue une seule fois : même conversion que le langage (un
       // `BigInt` reste un `BigInt`, `'5'` donne 6), comme l'état local (transform-reactive.ts). Instruction seule : le bloc qui
       // déclare `_mjs_n` se pose après la garde, autour d'elle. Cf. emitUpdate
-      if (!parGarde(node, ancestors, tp, (anc) => emitUpdate(ms, node, anc, pathTargetRead(tp, target), !!bloc))) return ecritureInvisible(node, ancestors, target.object, bloc)
-      if (bloc) poserBloc(ms, bloc)
+      if (!byGuard(node, ancestors, tp, (anc) => emitUpdate(ms, node, anc, pathTargetRead(tp, target), !!block))) return invisibleWrite(node, ancestors, target.object, block)
+      if (block) setBlock(ms, block)
       changed = true
     },
 
@@ -1954,16 +2021,16 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
     // Proxy `_mjs_wrapDeep` reste le filet de sécurité pour les cas non trackés.
     CallExpression(node: any, _st: any, ancestors: any[]) {
       const callee = node.callee
-      if (sansProxy) appelInvisible(node, ancestors)
-      premierGarde(node)
+      if (withoutProxy) invisibleCall(node, ancestors)
+      firstGuard(node)
       if (callee?.type !== 'MemberExpression') return
       // clé calculée (`$o.m[push]()`) : la méthode est celle que nomme la valeur de la clé, pas le nom écrit entre les
       // crochets — l'appel reste tel quel
       if (callee.computed) return
       const methodName = callee.property?.name
-      // accesseur défini sur un objet du magasin atteint sans chemin (cf. DEFINIT_L_OBJET) : son aide gardée
-      const definit    = DEFINIT_L_OBJET.has(methodName)
-      if (!methodName || !(ALL_MUTATIVE.has(methodName) || definit)) return
+      // accesseur défini sur un objet du magasin atteint sans chemin (cf. DEFINES_OBJECT) : son aide gardée
+      const defines    = DEFINES_OBJECT.has(methodName)
+      if (!methodName || !(ALL_MUTATIVE.has(methodName) || defines)) return
       // LIMITE CONNUE — la réécriture ne teste
       // QUE le NOM de méthode (`ALL_MUTATIVE`), jamais le TYPE : `$.form.set(k,v)`
       // / `$.o.add(y)` / `$.o.clear()` sur un OBJET MÉTIER à méthode homonyme (pas
@@ -1973,18 +2040,18 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
       // absorbent le cas. Documenté plutôt que restreint (restreindre ferait perdre
       // la notification compilée sur de vrais Map/Set aliasés).
 
-      const tp   = definit ? null : getPath(callee.object, true)
+      const tp   = defines ? null : getPath(callee.object, true)
       // sans chemin : méthode appelée à travers un objet du magasin (`µ.store.t.find(f).tags.push(x)`, cf. findRoot)
-      const root = tp ? null : findRoot(callee.object) ?? (definit ? null : racineGardee(callee.object))
-      const p    = root ? foundParts(callee, aideCle(root)) : null
+      const root = tp ? null : findRoot(callee.object) ?? (defines ? null : keptRoot(callee.object))
+      const p    = root ? foundParts(callee, keyHelper(root)) : null
       if (!tp && !p) {
-        if (!definit) invisible(callee.object, node.start)
+        if (!defines) invisible(callee.object, node.start)
         return
       }
-      // objet de l'état local (cf. racineGardee) : averti, son nom réservé écrit dans le code nommé par le refus (cf. objetGarde)
+      // objet de l'état local (cf. keptRoot) : averti, son nom réservé écrit dans le code nommé par le refus (cf. guardedObject)
       if (p && root![0] === LOCALE) {
         invisible(callee.object, node.start)
-        p.obj = objetGarde(root!, callee.object, p.obj)
+        p.obj = guardedObject(root!, callee.object, p.obj)
       }
 
       // `?.` dans la chaîne (`$liste?.push(x)`, `$o?.items.push(x)`, `$liste.push?.(x)`) : un maillon
@@ -1994,26 +2061,56 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
       // `_mjsThis._state` (l'objet que le code appelle `$`) : une écriture réécrite n'est jamais une
       // lecture pour les dépendances d'un `µeffect` (effect-deps.ts), le test non plus.
       // la recherche passe aussi les appels d'un élément trouvé (`$$m?.get(k).tags.push(x)`), absents d'un chemin
-      let maillon: any = null
-      for (let m = callee; !maillon && m; m = m.type === 'MemberExpression' ? m.object : m.type === 'CallExpression' ? m.callee : null) {
-        if (m.type === 'MemberExpression' && m.optional) maillon = m
+      let link: any = null
+      for (let m = callee; !link && m; m = m.type === 'MemberExpression' ? m.object : m.type === 'CallExpression' ? m.callee : null) {
+        if (m.type === 'MemberExpression' && m.optional) link = m
       }
-      const garde = node.optional ? callee : maillon?.object
+      const guard = node.optional ? callee : link?.object
       // la chaîne entière (`$$l?.push(1).toFixed()`) : l'appel, puis les maillons qui le prolongent
       let k = ancestors.length - 1
       while (k > 1 && ((ancestors[k - 1].type === 'MemberExpression' && ancestors[k - 1].object === ancestors[k]) ||
         (ancestors[k - 1].type === 'CallExpression' && ancestors[k - 1].callee === ancestors[k]))) k--
-      const chaine = garde && ancestors[k - 1]?.type === 'ChainExpression' ? ancestors[k - 1] : null
-      if (garde && !chaine) return
-      let avant = '', apres = '', objet = p?.obj
-      if (chaine) {
-        const texte = js.slice(garde.start, garde.end)
-        if (tp?.origin === 'local' && texte[0] !== '$') return
-        const posChaine = ancestors.slice(0, k)
-        const lue = !writeValueUnused(posChaine)
-        if (tp) {
-          apres = lue ? ')' : ''
-          avant = `${lue ? asiGuard(posChaine) + '(' : ''}${tp.origin === 'local' ? '_mjsThis._state' + texte.slice(1) : texte} == null ? void 0 : `
+      const chain = guard && ancestors[k - 1]?.type === 'ChainExpression' ? ancestors[k - 1] : null
+      if (guard && !chain) return
+      let before = '', after = '', object = p?.obj
+      let path: Path | null = null
+      if (chain) {
+        const text = js.slice(guard.start, guard.end)
+        if (tp?.origin === 'local' && text[0] !== '$') return
+        // clé qui agit dans la chaîne (`$l[$i++]?.push(x)`) : le test du maillon la rejouerait — l'appel reste tel qu'écrit, que voit
+        // l'enveloppe ; sans elle (réglage `proxy: false`), celui de l'état local est compilé : chaque clé qui agit dans l'objet testé est
+        // tenue par un paramètre (cf. pathTargetRead), évaluée une fois, dans l'ordre de JavaScript, lue par le test et par le chemin.
+        // Celles d'après le maillon (`$o?.l[$j++].push(x)`) restent au chemin seul, jouées quand le maillon n'est pas vide. Un `?.` avant
+        // une telle clé (`$o?.l[$j++]?.push(x)`), ou `yield` : tel qu'écrit, averti
+        if (tp && acts(tp) && !(withoutProxy && tp.origin === 'local')) return invisible(callee.object, node.start)
+        const ancestorChain = ancestors.slice(0, k)
+        const read = !writeValueUnused(ancestorChain)
+        // clés qui agissent dans l'objet testé, du maillon vers la racine : le membre qui les porte, leur rang dans le chemin
+        const bound: { m: any, i: number, param: string }[] = []
+        let beforeKey                                       = false
+        let inside                                          = guard === callee
+        for (let m = callee.object, i = tp ? tp.path.length - 1 : -1; i >= 0 && m?.type === 'MemberExpression'; m = m.object, i--) {
+          inside ||= m === guard
+          const s = tp!.path[i]
+          if (inside && typeof s === 'object' && s.effect) bound.push({ m, i, param: '' })
+          if (bound.length && m.optional) beforeKey = true
+        }
+        if (bound.length) {
+          const wait = suspension(node)
+          if (beforeKey || wait === 'yield') return invisible(callee.object, node.start)
+          let test = text
+          bound.forEach((x, n) => {
+            x.param = `_mjs_k${bound.length - n}`
+            test    = test.slice(0, x.m.property.start - guard.start) + x.param + test.slice(x.m.property.end - guard.start)
+          })
+          path = tp!.path.map((s, i) => bound.find((x) => x.i === i) ? { dyn: bound.find((x) => x.i === i)!.param } : s)
+          const b = bindings(bound.slice().reverse().map((x, n) => ({ param: x.param, value: (tp!.path[x.i] as DynSegment).dyn, test: n === bound.length - 1 ? '_mjsThis._state' + test.slice(1) : '' })), 'void 0', wait === 'await')
+          before = asiGuard(ancestorChain) + b.open
+          after = b.close
+        }
+        else if (tp) {
+          after  = read ? ')' : ''
+          before = `${read ? asiGuard(ancestorChain) + '(' : ''}${tp.origin === 'local' ? '_mjsThis._state' + text.slice(1) : text} == null ? void 0 : `
         }
         else {
           // objet du magasin : chaque maillon testé une fois, son objet tenu par un paramètre local (cf. boundChain),
@@ -2024,69 +2121,71 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
           const binds = [...p!.binds]
           if (callee.optional || node.optional) {
             const param = `_mjs_o${binds.length + 1}`
-            binds.push({ param, value: objet!, test: [callee.optional ? param : '', node.optional ? `${param}.${methodName}` : ''].filter(Boolean).join(' == null || ') })
-            objet = param
+            binds.push({ param, value: object!, test: [callee.optional ? param : '', node.optional ? `${param}.${methodName}` : ''].filter(Boolean).join(' == null || ') })
+            object = param
           }
           const b = bindings(binds, 'void 0', wait === 'await')
-          avant = asiGuard(posChaine) + b.open
-          apres = b.close
+          before = asiGuard(ancestorChain) + b.open
+          after = b.close
         }
       }
 
       // `head` = tête d'appel déjà fermée par sa 1ʳᵉ virgule (`prefix(path, `
       // pour 'local' ; `prefix(rootKey, path, ` pour 'store' ; `prefix(rootKey, objet, ` pour un élément trouvé)
       const head = !tp
-        ? `${onHead('Call', root!)}${objet}, `
+        ? `${onHead('Call', root!)}${object}, `
         : tp.origin === 'local'
-          ? `µ._mjs_deepCall(_mjsThis, ${pathToJsLiteral(tp.path)}, `
+          ? `µ._mjs_deepCall(_mjsThis, ${pathToJsLiteral(path ?? tp.path)}, `
           : `µ._mjs_storeDeepCall(${JSON.stringify(tp.path[0])}, ${pathToJsLiteral(tp.path.slice(1))}, `
       const tail = tp ? ')' : onTail(root!, ctorWritten(callee.object))
 
       // méthode d'une `Date` sur un chemin de l'état local : un nom que porte aussi un objet à soi (lecteur, calendrier) — compilée
       // seulement si l'objet est une Date, sinon l'appel tel qu'écrit, sa méthode recevant l'objet de JavaScript (avec l'enveloppe, ses
       // écritures d'après un `await` restent vues). Dans une chaîne `?.`, par une clé qui agit ou lue en tête d'instruction : telle quelle
-      const dateSeule = tp?.origin === 'local' && MUTATIVE_METHODS.Date.has(methodName)
-      if (dateSeule && (chaine || agit(tp!) || (asiGuard(ancestors) && !writeValueUnused(ancestors)))) return invisible(callee.object, node.start)
+      const dateOnly = tp?.origin === 'local' && MUTATIVE_METHODS.Date.has(methodName)
+      if (dateOnly && (chain || acts(tp!) || (asiGuard(ancestors) && !writeValueUnused(ancestors)))) return invisible(callee.object, node.start)
       // méthode d'une liste, d'une Map ou d'un Set sur un chemin de l'état local, avec l'enveloppe : un nom que porte aussi un objet à
       // soi (panier, file d'attente) — compilée seulement pour ce que l'enveloppe ne range pas comme un objet ordinaire (liste, Map, Set,
       // liste typée…), sinon l'appel tel qu'écrit, sur l'enveloppe, qui voit les écritures de la méthode, celles d'après un `await`
       // comprises. Sans l'enveloppe (`proxy: false`), dans une chaîne `?.`, par une clé qui agit ou lue en tête d'instruction : compilée
       // pour tout objet, comme avant (elle prévient après la méthode)
-      const objetSeul = !sansProxy && !dateSeule && tp?.origin === 'local' && !(chaine || agit(tp!) || (asiGuard(ancestors) && !writeValueUnused(ancestors)))
+      const objectOnly = !withoutProxy && !dateOnly && tp?.origin === 'local' && !(chain || acts(tp!) || (asiGuard(ancestors) && !writeValueUnused(ancestors)))
       const args = node.arguments ?? []
-      const appel = () => {
-        const tel = dateSeule || objetSeul ? ms.slice(node.start, node.end) : ''
+      const call = () => {
+        const verbatim = dateOnly || objectOnly ? ms.slice(node.start, node.end) : ''
         if (args.length === 0) {
-          ms.overwrite(node.start, node.end, `${avant}${head}'${methodName}', []${tail}`)
+          ms.overwrite(node.start, node.end, `${before}${head}'${methodName}', []${tail}`)
         } else {
           // Bordures uniquement (cf. AssignmentExpression) : les arguments
           // restent en place, leurs édits imbriqués survivent — leurs parenthèses aussi
           // (`$liste.push((a, b))` pousse UN élément) : la réécriture s'arrête à la parenthèse
           // ouvrante de l'appel et reprend à sa fermante, la dernière du nœud.
-          ms.overwrite(node.start, js.indexOf('(', callee.end) + 1, `${avant}${head}'${methodName}', [`)
+          ms.overwrite(node.start, js.indexOf('(', callee.end) + 1, `${before}${head}'${methodName}', [`)
           ms.overwrite(node.end - 1, node.end, ']' + tail)
         }
-        if (dateSeule) {
+        // l'objet relu par `_mjsThis._state`, l'objet que le code appelle `$` : ni le test ni l'appel ne sont une lecture pour les
+        // dépendances d'un `µeffect` (effect-deps.ts), pas plus que l'appel compilé
+        const read = (text: string) => text[0] === '$' ? '_mjsThis._state' + text.slice(1) : text
+        if (dateOnly) {
           // test posé à DROITE de `node.start` : argument d'un autre appel (`$d.setTime($e.setDate(1))`), à gauche il tombait avec la
-          // bordure que l'appel extérieur réécrit (cf. objetSeul)
-          ms.prependRight(node.start, `${tp!.guard ? '' : asiGuard(ancestors)}(${js.slice(callee.object.start, callee.object.end)} instanceof Date ? `)
-          ms.appendLeft(node.end, ` : ${tel})`)
+          // bordure que l'appel extérieur réécrit (cf. objectOnly)
+          ms.prependRight(node.start, `${tp!.guard ? '' : asiGuard(ancestors)}(${read(js.slice(callee.object.start, callee.object.end))} instanceof Date ? `)
+          ms.appendLeft(node.end, ` : ${read(verbatim)})`)
         }
-        else if (objetSeul) {
+        else if (objectOnly) {
           // l'objet relu par `_mjsThis._state`, l'objet que le code appelle `$` : ni le test ni l'appel ne sont une lecture pour les
           // dépendances d'un `µeffect` (effect-deps.ts), pas plus que l'appel compilé. Le test posé à DROITE de `node.start`, sur l'appel
           // lui-même : argument d'un autre appel (`$l.push($l.shift())`), à gauche il tombait avec la bordure que l'appel extérieur réécrit
-          const lu = (texte: string) => texte[0] === '$' ? '_mjsThis._state' + texte.slice(1) : texte
-          ms.prependRight(node.start, `${tp!.guard ? '' : asiGuard(ancestors)}(Object.prototype.toString.call(${lu(js.slice(callee.object.start, callee.object.end))}) !== '[object Object]' ? `)
-          ms.appendLeft(node.end, ` : ${lu(tel)})`)
+          ms.prependRight(node.start, `${tp!.guard ? '' : asiGuard(ancestors)}(Object.prototype.toString.call(${read(js.slice(callee.object.start, callee.object.end))}) !== '[object Object]' ? `)
+          ms.appendLeft(node.end, ` : ${read(verbatim)})`)
         }
       }
-      // élément de liste (cf. parGarde) : jamais dans une chaîne `?.`, dont le texte ne part pas de `$`
-      if (!tp || !parGarde(node, ancestors, tp, appel)) {
-        if (tp) return ecritureInvisible(node, ancestors, callee.object)
-        appel()
+      // élément de liste (cf. byGuard) : jamais dans une chaîne `?.`, dont le texte ne part pas de `$`
+      if (!tp || !byGuard(node, ancestors, tp, call)) {
+        if (tp) return invisibleWrite(node, ancestors, callee.object)
+        call()
       }
-      if (apres) ms.appendLeft(chaine.end, apres)
+      if (after) ms.appendLeft(chain.end, after)
       changed = true
     },
 
@@ -2097,8 +2196,8 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
     // On émet dès la profondeur 1 : le top-level `delete $.x` n'est PAS vu par
     // transformReactiveWrites (qui ne traite que les AssignmentExpression), donc
     // c'est bien ici qu'on le câble ; `delete $[expr]` aussi (clé évaluée à l'exécution).
-    // Plus bas, les clés computées non littérales (`delete $.o[expr]`) donnent un path nul
-    // → laissées brutes : l'enveloppe de `$.o` prévient la suppression.
+    // Plus bas, une clé calculée non littérale (`delete $.o[expr]`) a un path, comme une clé
+    // écrite (getPath suit `$.x[i]`).
     //
     // Statisation $$ : `delete $$x` (profondeur racine, 1 segment) →
     // `µ._mjs_storeDelete('x')` (fonction TOP-LEVEL dédiée, contrat runtime) ;
@@ -2114,17 +2213,17 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
         const tp = getPath(m)
         let out  = ''
         if (tp?.origin === 'store') {
-          let maillon: any = null
-          for (let e = m; !maillon && e.type === 'MemberExpression'; e = e.object) if (e.optional) maillon = e
-          if (maillon) out = `${ms.slice(maillon.object.start, maillon.object.end)} == null ? true : ${storeDelete(tp.path)}`
+          let link: any = null
+          for (let e = m; !link && e.type === 'MemberExpression'; e = e.object) if (e.optional) link = e
+          if (link) out = `${ms.slice(link.object.start, link.object.end)} == null ? true : ${storeDelete(tp.path)}`
         }
-        const root = tp ? (tp.origin === 'local' ? racineGardee(m.object) : null) : findRoot(m.object) ?? racineGardee(m.object)
-        const p    = root ? foundParts(m, aideCle(root)) : null
+        const root = tp ? (tp.origin === 'local' ? keptRoot(m.object) : null) : findRoot(m.object) ?? keptRoot(m.object)
+        const p    = root ? foundParts(m, keyHelper(root)) : null
         const wait = p ? suspension(m) : null
-        // objet de l'état local, réglage `proxy: false` (cf. racineGardee) : averti, son nom réservé écrit dans le code nommé (cf. objetGarde)
+        // objet de l'état local, réglage `proxy: false` (cf. keptRoot) : averti, son nom réservé écrit dans le code nommé (cf. guardedObject)
         if (p && root![0] === LOCALE) {
           invisible(m.object, node.start)
-          p.obj = objetGarde(root!, m.object, p.obj)
+          p.obj = guardedObject(root!, m.object, p.obj)
         }
         if (p && wait !== 'yield') {
           // chaque maillon testé une fois, son objet tenu par un paramètre local (cf. boundChain) ; `?.` sur la clé
@@ -2158,42 +2257,78 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean,
         }
         // à travers un objet du magasin : `µ._mjs_storeDeleteOn(rootKey, objet, clé)`
         const root = findRoot(target.object)
-        const p    = root ? foundParts(target, aideCle(root)) : null
+        const p    = root ? foundParts(target, keyHelper(root)) : null
         if (p) {
           ms.overwrite(node.start, node.end, `${onHead('Delete', root!)}${p.obj}, ${p.key}${onTail(root!, ctorWritten(target.object))}`)
           changed = true
         }
-        else ecritureInvisible(node, ancestors, target.object)
+        else invisibleWrite(node, ancestors, target.object)
         return
       }
       if (tp.path.length < 1) return
-      if (!parGarde(node, ancestors, tp, () => ms.overwrite(node.start, node.end, tp.origin === 'local' ? `µ._mjs_deepDelete(_mjsThis, ${pathToJsLiteral(tp.path)})` : storeDelete(tp.path)))) return ecritureInvisible(node, ancestors, target.object)
+      if (!byGuard(node, ancestors, tp, () => ms.overwrite(node.start, node.end, tp.origin === 'local' ? `µ._mjs_deepDelete(_mjsThis, ${pathToJsLiteral(tp.path)})` : storeDelete(tp.path)))) return invisibleWrite(node, ancestors, target.object)
       changed = true
     },
   })
 
   // cf. ForOfStatement : un champ de l'état local (profondeur 2 et plus), ni élément de liste ni clé qui agit ; un champ d'un objet du
   // magasin ou de l'état local que la passe ne compile pas (`for ($.l.find(f)[k].x of l)`, cf. foundTarget), par l'aide gardée
-  function teteDeBoucle(node: any): void {
+  function loopHead(node: any): void {
     const m    = node.left.type === 'MemberExpression' ? node.left : null
     const tp   = m ? getPath(m) : null
-    const root = m && !tp ? findRoot(m.object) ?? racineGardee(m.object) : null
+    const root = m && !tp ? findRoot(m.object) ?? keptRoot(m.object) : null
     const t    = root && !suspension(m) ? foundTarget(m, root, false) : null
-    if (!t && (!tp || tp.origin !== 'local' || tp.path.length < 2 || agit(tp))) return
+    if (!t && (!tp || tp.origin !== 'local' || tp.path.length < 2 || acts(tp))) return
     if (t && root![0] === LOCALE) invisible(m.object, m.start)
-    const v     = `_mjs_f${++tetes}`
-    const ecrit = `${t ? t.set : pathTarget(tp!, '').set}${v}${t?.tail ?? ')'};`
+    const v       = `_mjs_f${++heads}`
+    const written = `${t ? t.set : pathTarget(tp!, '').set}${v}${t?.tail ?? ')'};`
     ms.overwrite(node.left.start, node.left.end, `const ${v}`)
-    if (node.body.type === 'BlockStatement') ms.appendLeft(node.body.start + 1, ` ${ecrit}`)
+    if (node.body.type === 'BlockStatement') ms.appendLeft(node.body.start + 1, ` ${written}`)
     else {
-      ms.prependRight(node.body.start, `{ ${ecrit} `)
+      ms.prependRight(node.body.start, `{ ${written} `)
       ms.appendLeft(node.body.end, ' }')
     }
     changed = true
   }
 
+  // lecture d'une clé faite d'une expression à la racine de l'état (`x = $[k]`, `x = $?.[k]`, `Object.assign($[k], o)`, `f($[k])`) : par
+  // `µ._mjs_deepKey` (mjs_deep.ts), qui refuse `__proto__`, `constructor` et `prototype` — ni `Object.prototype` ni la fonction `Object`
+  // ne sont rendus au code de l'appli, comme pour l'écriture (cf. getPath). Après le parcours, là seulement où le texte de la lecture
+  // est resté tel qu'écrit : une écriture ou un appel compilés prennent sa clé dans leur chemin, que leur aide refuse. Ni la cible
+  // d'une écriture (`$[k] = v`, `$[k]++`, `delete $[k]`, un motif, `for ($[k] of l)`), ni la fonction appelée (`$[k]()`, son `this`).
+  // Le magasin n'en a pas besoin : `µ.store` refuse lui-même ces trois noms, par tout chemin (mjs_store_globals.ts)
+  if (!storeOnly && STATE_ROOT.test(js)) {
+    // relecture que pose l'écriture compilée d'une clé de la racine (transform-reactive.ts : `µ._set(_mjsThis, k, $[k] + (1))`,
+    // `_mjs_n = $[k]`, `((_mjs_n) => ++_mjs_n)($[k])`, `((_v) => …)($[k] + (1))`) : sa valeur va à `µ._set`, qui refuse ces trois noms
+    const arrow = (c: any, name: string) => c?.type === 'CallExpression' && c.callee.type === 'ArrowFunctionExpression' && c.callee.params[0]?.type === 'Identifier' && c.callee.params[0].name === name
+    const rereads = (e: any, anc: any[]): boolean => {
+      const p = anc[anc.length - 2]
+      const g = anc[anc.length - 3]
+      if ((p.type === 'AssignmentPattern' || p.type === 'AssignmentExpression') && p.right === e && p.left.type === 'Identifier' && p.left.name === '_mjs_n') return true
+      if (arrow(p, '_mjs_n') && p.arguments.includes(e)) return true
+      if ((p.type === 'BinaryExpression' || p.type === 'LogicalExpression') && p.left === e && arrow(g, '_v') && g.arguments.includes(p)) return true
+      return anc.some((a, i) => a.type === 'CallExpression' && a.callee.type === 'MemberExpression' && a.callee.object.type === 'Identifier' && a.callee.object.name === 'µ' && a.callee.property.name === '_set' && a.arguments.includes(anc[i + 1]))
+    }
+    walk.ancestor(ast, {
+      MemberExpression(e: any, _st: any, anc: any[]) {
+        const k = e.property
+        if (!e.computed || e.object.type !== 'Identifier' || e.object.name !== '$' || k.type === 'Literal' || (k.type === 'TemplateLiteral' && !k.expressions.length)) return
+        const p = anc[anc.length - 2]
+        const g = anc[anc.length - 3]
+        if ((p.type === 'AssignmentExpression' && p.left === e) || p.type === 'UpdateExpression' || (p.type === 'UnaryExpression' && p.operator === 'delete')) return
+        if (p.type === 'ArrayPattern' || p.type === 'RestElement' || (p.type === 'AssignmentPattern' && p.left === e) || (p.type === 'Property' && g?.type === 'ObjectPattern')) return
+        if (((p.type === 'ForOfStatement' || p.type === 'ForInStatement') && p.left === e) || ((p.type === 'CallExpression' || p.type === 'NewExpression') && p.callee === e) || (p.type === 'TaggedTemplateExpression' && p.tag === e)) return
+        if (rereads(e, anc) || piece(e.start, k.start) !== js.slice(e.start, k.start) || piece(k.end, e.end) !== js.slice(k.end, e.end)) return
+        const seq = k.type === 'SequenceExpression'
+        ms.overwrite(e.start, k.start, `µ._mjs_deepKey($, ${seq ? '(' : ''}`, { contentOnly: true })
+        ms.overwrite(k.end, e.end, seq ? '))' : ')', { contentOnly: true })
+        changed = true
+      },
+    })
+  }
+
   const r = passResult(ms, js, changed, 'path-tracker')
-  return avis.length ? { ...r, avis } : r
+  return notice.length ? { ...r, notice } : r
 }
 
 // `$$x = $$x` (`µ.store.x = µ.store.x`, `$$x = ($$x)`) : la clé écrite avec sa propre valeur, exactement — refusée (sigils.ts,

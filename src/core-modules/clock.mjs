@@ -9,7 +9,7 @@
   boolAttr = (v)-> v !== undefined and v !== false and v !== 'false'
   num      = (v, d)-> if v? and v !== '' and isFinite(Number(v)) then Number(v) else d
   zero     = (n)-> if n < 10 then '0' + n else String(n)
-  liste    = (v, d)-> if Array.isArray(v) then v else if v then String(v).split(',').map((x)-> x.trim()) else d
+  list     = (v, d)-> if Array.isArray(v) then v else if v then String(v).split(',').map((x)-> x.trim()) else d
 
   TICKS = [1..60]
 
@@ -78,20 +78,20 @@
   # noms des cadrans par défaut : la langue de la page choisit (lire µlang rend le dérivé réactif à la bascule)
   tr = (key, lang)-> µ._mjs_label('core', key)
 
-  $names = liste($labels, [tr('clockHours', µlang), tr('clockMinutes', µlang), tr('clockSeconds', µlang)])
+  $names = list($labels, [tr('clockHours', µlang), tr('clockMinutes', µlang), tr('clockSeconds', µlang)])
 
   # les cadrans : un état posé par un effet, pas un dérivé — un {for} sur un dérivé dont le corps lit
   # $h, $m ou $s était reconstruit en entier à chaque seconde (les 180 traits recréés)
   $dials = []
 
   µeffect ->
-    c      = liste($colors, [])
+    c      = list($colors, [])
     $dials = if µlayout isnt 'timer' then [['h', c[0] or '#ff2972'], ['m', c[1] or '#fee800'], ['s', c[2] or '#04fc43']] else []
 
   # les valeurs passent en argument : le gabarit suit ainsi $h, $m et $s
-  valeur  = (k, h, m, s)-> if k is 'h' then h else if k is 'm' then m else s
+  value   = (k, h, m, s)-> if k is 'h' then h else if k is 'm' then m else s
   # 0 minute, 0 seconde : le trait du haut, le 60
-  actif   = (k, i, h, m, s)-> if k is 'h' then i is h * 5 else i is (valeur(k, h, m, s) or 60)
+  tickActive   = (k, i, h, m, s)-> if k is 'h' then i is h * 5 else i is (value(k, h, m, s) or 60)
   ampmOf  = (pm)-> if pm then 'PM' else 'AM'
 
   # la part du compte écoulée, de 0 à 1 : l'aiguille et le point la lisent sur le chiffre lui-même —
@@ -120,9 +120,9 @@
         {if dial[0] is 's' and boolAttr($ampm)}
           <b class="ampm">{ampmOf($pm)}</b>
         {end}
-        <h2>{zero(valeur(dial[0], $h, $m, $s))}<span>{$names[i]}</span></h2>
+        <h2>{zero(value(dial[0], $h, $m, $s))}<span>{$names[i]}</span></h2>
         {for n in TICKS}
-          <i class="tick" :class{actif(dial[0], n, $h, $m, $s)}="active" :class{dial[0] is 'h'}="hour" :class{n % 5 is 0}="five" --mjs-clock-a={n * 6 + 'deg'}></i>
+          <i class="tick" :class{tickActive(dial[0], n, $h, $m, $s)}="active" :class{dial[0] is 'h'}="hour" :class{n % 5 is 0}="five" --mjs-clock-a={n * 6 + 'deg'}></i>
         {end}
       </div>
     {end}

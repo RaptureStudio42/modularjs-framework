@@ -7,7 +7,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
-import { Bundler, terminateSharedWorkerPool, MARQUE_SORTIE } from '../src/bundler/index.js'
+import { Bundler, terminateSharedWorkerPool, OUTPUT_MARK } from '../src/bundler/index.js'
 
 // hors des sources : appli Rails, manifeste dans app/assets/javascripts ; dans les sources : projet qui construit sous son
 // dossier des sources (`sourceDir: "."`), manifeste dans le dossier de sortie
@@ -49,7 +49,7 @@ describe('manifeste sur un fichier vide : remplacé sans refus, il n\'a rien à 
     const { opts, manifeste } = projet('manifeste-vide-sources', true)
     writeFileSync(manifeste, '')
     assert.deepEqual(await construire(opts), [])
-    assert.ok(readFileSync(manifeste, 'utf-8').startsWith(`${MARQUE_SORTIE}\n`), 'manifeste sans marque')
+    assert.ok(readFileSync(manifeste, 'utf-8').startsWith(`${OUTPUT_MARK}\n`), 'manifeste sans marque')
   })
 
   it('un fichier d\'un seul octet n\'est pas vide : refusé, intact, hors des sources comme dedans', async () => {

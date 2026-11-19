@@ -100,7 +100,7 @@ function compileCssBlock(source: string, lang: StyleLang): string {
 // blancs CSS reconnus — jamais `\s` (générique JS), qui inclut l'espace insécable (U+00A0) et
 // d'autres blancs Unicode : `.a<NBSP>b` devenait `.a b`, sélecteur CHANGÉ (le HTML, lui, ne coupe
 // jamais une classe sur un NBSP). Espace, tabulation, LF, CR, form feed — les seuls blancs CSS.
-const CSS_BLANC_RE = /[ \t\n\r\f]/
+const CSS_BLANK_RE = /[ \t\n\r\f]/
 
 function compactCss(source: string): string {
   let out = ''
@@ -135,9 +135,9 @@ function compactCss(source: string): string {
       // combinateur descendant) ni être compacté lui-même — sinon le combinateur disparaissait.
       out += c + (source[i + 1] ?? '')
       i += 2
-    } else if (CSS_BLANC_RE.test(c)) {
+    } else if (CSS_BLANK_RE.test(c)) {
       out += ' '
-      while (i < source.length && CSS_BLANC_RE.test(source[i])) i++
+      while (i < source.length && CSS_BLANK_RE.test(source[i])) i++
     } else {
       out += c
       i++

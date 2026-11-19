@@ -68,7 +68,10 @@ function couvert(lignes: Jeton[][], n: number, scope: string): string {
   return lignes[n].filter(j => j.scopes.includes(scope)).map(j => j.txt).join('')
 }
 
-describe('extension VS Code — blocs <vars> et <types>', () => {
+describe('extension VS Code — blocs <vars> et <types>', function () {
+  // le chargement du moteur d'expressions (WASM) et de la grammaire peut passer 2 s sous la charge
+  this.timeout(60000)
+
   before(async () => {
     await oniguruma.loadWASM(readFileSync(ONIG_WASM).buffer)
     const registry = new vsctm.Registry({

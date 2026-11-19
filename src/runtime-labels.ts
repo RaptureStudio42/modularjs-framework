@@ -87,12 +87,12 @@ export const RUNTIME_LABELS = {
       // mjs_element.ts
       elProto: 'état : changement de prototype refusé',
       elCycle: 'Cycle réactif détecté sur \'{k}\' — retourne undefined',
-      refreshCalcul: 'µrefresh({k}) est appelé par le calcul de la valeur dérivée {d} du composant <{c}>, plus de 1 000 fois dans la même rafale : deux valeurs dérivées dont chacune rafraîchit une source de l\'autre se refont l\'une l\'autre en boucle. Une valeur dérivée ne doit pas appeler µrefresh : écrivez µrefresh({k}) dans le script ou dans un gestionnaire d\'événement, juste après le changement fait hors de MJS. Cet avertissement n\'existe qu\'en développement.',
-      refreshRendu: 'µrefresh({k}) est appelé pendant chaque rendu du composant <{c}> (une fonction que lit le gabarit, ou un écouteur que ce rendu déclenche à chaque fois), et chaque appel redessine ce que ce rendu affiche : une boucle, que MJS a coupée. Écrivez µrefresh({k}) dans le script ou dans un gestionnaire d\'événement, juste après le changement fait hors de MJS ; une fonction que lit le gabarit ou une valeur dérivée ne doit pas l\'appeler. Cet avertissement n\'existe qu\'en développement : la production coupe la boucle de même.',
-      derAccesseur: 'La valeur dérivée « {k} » du composant <{c}> a servi son dernier calcul alors que son recalcul donne autre chose : elle lit un accesseur posé sur un objet ({a}), et MJS ne voit pas changer ce que lit cet accesseur, même quand votre code l\'écrit par une autre variable `$`. Juste après chacun de ces changements, écrivez {w}, ou rangez cette valeur dans un champ plutôt que dans un accesseur. Cet avertissement n\'existe qu\'en développement : la valeur servie reste celle de la production.',
+      refreshCompute: 'µrefresh({k}) est appelé par le calcul de la valeur dérivée {d} du composant <{c}>, plus de 1 000 fois dans la même rafale : deux valeurs dérivées dont chacune rafraîchit une source de l\'autre se refont l\'une l\'autre en boucle. Une valeur dérivée ne doit pas appeler µrefresh : écrivez µrefresh({k}) dans le script ou dans un gestionnaire d\'événement, juste après le changement fait hors de MJS. Cet avertissement n\'existe qu\'en développement.',
+      refreshRender: 'µrefresh({k}) est appelé pendant chaque rendu du composant <{c}> (une fonction que lit le gabarit, ou un écouteur que ce rendu déclenche à chaque fois), et chaque appel redessine ce que ce rendu affiche : une boucle, que MJS a coupée. Écrivez µrefresh({k}) dans le script ou dans un gestionnaire d\'événement, juste après le changement fait hors de MJS ; une fonction que lit le gabarit ou une valeur dérivée ne doit pas l\'appeler. Cet avertissement n\'existe qu\'en développement : la production coupe la boucle de même.',
+      derivedAccessor: 'La valeur dérivée « {k} » du composant <{c}> a servi son dernier calcul alors que son recalcul donne autre chose : elle lit un accesseur posé sur un objet ({a}), et MJS ne voit pas changer ce que lit cet accesseur, même quand votre code l\'écrit par une autre variable `$`. Juste après chacun de ces changements, écrivez {w}, ou rangez cette valeur dans un champ plutôt que dans un accesseur. Cet avertissement n\'existe qu\'en développement : la valeur servie reste celle de la production.',
       collNotNamed: 'Une collection `{c}` est arrivée dans l\'état, alors qu\'aucun fichier de ce projet ne nomme `{c}` : le cœur a été bâti sans la part qui suit les clés objets des collections. Elle y garde un comportement plus simple, sans erreur : la clé objet d\'une `Map` sort brute et `get` ne la retrouve que sous la forme rangée, une `WeakMap` ou un `WeakSet` reste sans enveloppe dans un composant. Si une bibliothèque chargée à part vous donne cette collection, demandez cette part par "collections": true dans mjs.config.json : elle s\'ajoute sans toucher au repérage des autres modules ; si vous écrivez déjà une liste "runtime", vous pouvez aussi y ajouter "collections". Cet avertissement n\'existe qu\'en développement, une fois par page.',
       mapKeyBothForms: 'Une `Map` ou un `Set` de l\'état tient le même objet sous ses deux formes, brut et sous son enveloppe : `get`, `set`, `add` et `delete` prennent l\'entrée de l\'enveloppe, et un parcours rend cet objet deux fois. Gardez une seule forme par objet : quand la collection ne le tient pas encore, MJS range la forme brute. Cet avertissement n\'existe qu\'en développement.',
-      derPrecise: 'La valeur dérivée « {k} » du composant <{c}> a servi son dernier calcul alors que son recalcul donne autre chose : une donnée qu\'elle lit a sans doute été changée hors de MJS (bibliothèque, script extérieur, objet gardé dans une variable sans `$`). Juste après ce changement, écrivez {w}. Cet avertissement n\'existe qu\'en développement : la valeur servie reste celle de la production.',
+      derivedPrecise: 'La valeur dérivée « {k} » du composant <{c}> a servi son dernier calcul alors que son recalcul donne autre chose : une donnée qu\'elle lit a sans doute été changée hors de MJS (bibliothèque, script extérieur, objet gardé dans une variable sans `$`). Juste après ce changement, écrivez {w}. Cet avertissement n\'existe qu\'en développement : la valeur servie reste celle de la production.',
       elTeardown: ':attach/:this teardown en erreur :',
       elOrphanInherited: 'Orphelin CSS hérité : La feuille \'{sheetName}\' est absente du registre.',
       elOrphanLocal: 'Orphelin CSS local : La feuille \'{sheetName}\' est introuvable.',
@@ -124,12 +124,13 @@ export const RUNTIME_LABELS = {
       everyId: '{rune} : l\'option « id » attend un nom, une chaîne non vide (« {rune} 2000, id: \'sauver\', -> ») — option ignorée, reçu :',
       everyUnseen: '{rune} hors de tout composant : en production, cet appel ne ferait rien — la construction ne le voit pas (script de public/, script extérieur, accès entièrement calculé comme window[k], code exécuté depuis un texte…).',
       everyUnseenId: '{rune} : en production, l\'option « id » de cet appel serait ignorée — la construction ne le voit pas (script de public/, script extérieur, accès entièrement calculé comme window[k], code exécuté depuis un texte…).',
-      ajaxOldName: 'µajax : l\'option « {cle} » n\'existe pas, son gestionnaire ne sera jamais appelé — écrivez error: pour une erreur du serveur, typeError: pour un refus de type.',
+      ajaxOldName: 'µajax : l\'option « {key} » n\'existe pas, son gestionnaire ne sera jamais appelé — écrivez error: pour une erreur du serveur, typeError: pour un refus de type.',
       ajaxUnseen: 'µajax est appelé comme une fonction, mais la construction n\'a lu aucun appel de ce genre (accès calculé µ[k], µ passé à une fonction…) : en production, cet appel échouera — écrivez µajax(…) ou µajax \'/url\', options dans le code de l\'appli.',
       // mjs_dynamic.ts
       dynAccept: '<@element>/<@module> : accept attend une liste de noms (tableau ou chaîne séparée par des espaces)',
       dynRefused: '<@element>/<@module> : balise « {norm} » refusée — un élément dynamique ne peut pas devenir {norm} ; pour l\'autoriser explicitement : accept="{norm}".',
       dynNotListed: '<@element>/<@module> : balise « {norm} » refusée — hors de la liste accept="{list}" ; quand accept est présent, seuls les noms qu\'il liste sont créés.',
+      dynBadName: '<@element>/<@module> : « {norm} » n\'est pas un nom de balise — la balise en place reste.',
       dynInstance: '<@module> : impossible d\'instancier le composant. Passez le NOM de tag (chaîne kebab du custom element) plutôt que la classe.',
       // mjs_i18n.ts
       i18nMissing: 'i18n : clé « {key} » absente en « {lang} », repli sur « {def} »',
@@ -137,7 +138,7 @@ export const RUNTIME_LABELS = {
       i18nLoadSection: 'i18n : échec de chargement de « {section} » ({lang}) — {reason}',
       i18nLoadLang: 'i18n : échec de chargement de la langue « {lang} » ({url}) — {reason}',
       i18nHook: 'i18n : crochet de bascule en erreur :',
-      i18nSecours: 'i18n : textes toujours absents après {ms} ms — le module paraît avec ⟦clé⟧ à la place de chaque texte absent, les textes les remplaceront à leur arrivée',
+      i18nRescue: 'i18n : textes toujours absents après {ms} ms — le module paraît avec ⟦clé⟧ à la place de chaque texte absent, les textes les remplaceront à leur arrivée',
       // mjs_fx.ts
       fxLoad: 'effet « {name} » : son fichier ne s\'est pas chargé —',
       fxApply: 'effet « {name} » : sa pose a échoué —',
@@ -183,6 +184,8 @@ export const RUNTIME_LABELS = {
       initFn: '{path} : {fn} contient la fonction {name} du navigateur, sans doute amenée par une clé venue de l\'extérieur (adresse, formulaire, données reçues) ; rien n\'est écrit. Vérifiez cette clé.',
       initFnCtor: '{path} : `constructor`, écrit dans le code, mène à la fonction {name} du navigateur, que partage toute la page ; rien n\'est écrit. Écrivez dans l\'objet lui-même, sans `constructor`.',
       initPath: 'chemin d\'état refusé (segment « {seg} ») — mutation ignorée.',
+      initHtmlKey: '<{tag}> : la prop « {prop} » poserait du HTML sur un élément qui n\'est pas un composant du projet, elle est ignorée — écrivez ce HTML par :html ou {{ }}.',
+      initAttrName: '« {name} » n\'est pas un nom d\'attribut : clé ignorée.',
       // mjs_for.ts
       forDupKeys: '{for} : clés dupliquées détectées — seules les 1ères occurrences sont rendues. Vérifiez l\'unicité de la clé `by`. (cacheId: {id})',
       // mjs_failed.ts
@@ -212,7 +215,7 @@ export const RUNTIME_LABELS = {
       // mjs_ticker.ts
       tickerTask: 'Ticker : tâche en erreur, éjectée.',
       // mjs_socket.ts
-      socketPackage: '{effet} : le serveur MJS WS ne connaît pas « {type} » — il lui manque le paquet {paquet} : ajoutez app.use({invoke}) côté serveur ; en attendant, rien ne part',
+      socketPackage: '{effect} : le serveur MJS WS ne connaît pas « {type} » — il lui manque le paquet {pack} : ajoutez app.use({invoke}) côté serveur ; en attendant, rien ne part',
       // mjs_rare_runes.ts
       runesInspectInit: 'µ.inspect doit être appelé à l\'initialisation.',
       // mjs_lazy_css.ts
@@ -291,7 +294,7 @@ export const RUNTIME_LABELS = {
       ujsConfirmRetry: ':confirm : requestSubmit({tag}) a échoué après acceptation, repli sur requestSubmit() nu — {reqErr}',
       ujsNoAjaxNav: 'navigation vers le serveur sans le module ajax : le navigateur charge la page. Pour la navigation de MJS, ajoutez "ujs", "ajax" et "modal" à la liste "runtime" de mjs.config.json.',
       ujsHardNavOutside: 'navigation abandonnée, url hors origine et protocole non http/https : {dest}',
-      ujsCallbackMissing: ':callback="{nom}" : aucune méthode « {nom} » trouvée sur {tag} ni ses ancêtres — rappel ignoré.',
+      ujsCallbackMissing: ':callback="{name}" : aucune méthode « {name} » trouvée sur {tag} ni ses ancêtres — rappel ignoré.',
       ujsFlashNoModal: 'flash/error à afficher mais µ.modal est absent (module \'modal\' non inclus dans `runtime`) — repli console/alert.',
       ujsFlashUnknown: 'mjs-flash="{attr}" : valeur non reconnue (popup/console/silent attendus) — politique globale utilisée.',
       ujsTargetMissingReceived: 'cible de navigation \'{target}\' introuvable dans la page reçue — contenu de <body> remplacé (des deux côtés).',
@@ -312,20 +315,20 @@ export const RUNTIME_LABELS = {
       schemaEncodeFailed: 'encodage en échec, envoi en JSON',
       schemaDecodeUnknownId: 'decode() : id de schéma inconnu ({id}) — registre local incomplet ou désynchronisé',
       schemaDecodeEmpty: 'decode() : trame vide, octet id de schéma attendu',
-      schemaEncodeUnknown: 'encode() : schéma inconnu \'{nom}\' — déclarez-le d\'abord (µ.schema)',
-      schemaDecodeOutOfFrame: 'decode() : lecture hors de la trame (offset {offset}, {taille} octets, trame de {frame})',
+      schemaEncodeUnknown: 'encode() : schéma inconnu \'{name}\' — déclarez-le d\'abord (µ.schema)',
+      schemaDecodeOutOfFrame: 'decode() : lecture hors de la trame (offset {offset}, {size} octets, trame de {frame})',
       schemaListTooLong: 'list({of}) : {count} éléments, max 65535 (compteur u16)',
       schemaStringTooLong: 'chaîne trop longue pour {t} ({bytes} octets UTF-8, max {max})',
-      schemaOutOfRange: 'schéma \'{nomSchema}\', champ \'{nomChamp}\' : {valeur} est hors de la plage de {t} ({min} à {max}) — la valeur arriverait repliée. Choisissez un type plus large, ou bornez la valeur avant l\'envoi.',
-      schemaRegistryFull: 'registre plein — 256 schémas déjà déclarés (id u8 épuisé), impossible d\'ajouter \'{nom}\'',
-      schemaRedeclared: 'schéma \'{nom}\' déjà déclaré avec une forme différente — garde AJOUT-SEUL : un schéma existant est IMMUABLE, déclarez un NOM neuf pour faire évoluer le protocole.',
-      schemaFieldName: 'schéma \'{nom}\' : nom de champ invalide \'{field}\' — ne survit pas à un objet ordinaire ({}[nom] = valeur), ex. \'__proto__\'',
-      schemaFieldInvalid: 'schéma \'{nomSchema}\', champ \'{nomChamp}\' : type de champ invalide (ni chaîne scalaire, ni list(), ni bits())',
-      schemaBitsDup: 'schéma \'{nomSchema}\', champ \'{nomChamp}\' : bits() — noms en double',
-      schemaBitsMax: 'schéma \'{nomSchema}\', champ \'{nomChamp}\' : bits() accepte au plus 8 booléens (reçu {count})',
-      schemaBitsEmpty: 'schéma \'{nomSchema}\', champ \'{nomChamp}\' : bits() attend un tableau de noms non vide',
-      schemaListType: 'schéma \'{nomSchema}\', champ \'{nomChamp}\' : list() attend un type scalaire ({scalars}) — sous-schémas/list imbriquée non supportés, reçu \'{of}\'',
-      schemaUnknownType: 'schéma \'{nomSchema}\', champ \'{nomChamp}\' : type inconnu \'{type}\' — types valides : {scalars}, list(type), bits([noms])',
+      schemaOutOfRange: 'schéma \'{schemaName}\', champ \'{fieldName}\' : {value} est hors de la plage de {t} ({min} à {max}) — la valeur arriverait repliée. Choisissez un type plus large, ou bornez la valeur avant l\'envoi.',
+      schemaRegistryFull: 'registre plein — 256 schémas déjà déclarés (id u8 épuisé), impossible d\'ajouter \'{name}\'',
+      schemaRedeclared: 'schéma \'{name}\' déjà déclaré avec une forme différente — garde AJOUT-SEUL : un schéma existant est IMMUABLE, déclarez un NOM neuf pour faire évoluer le protocole.',
+      schemaFieldName: 'schéma \'{name}\' : nom de champ invalide \'{field}\' — ne survit pas à un objet ordinaire ({}[nom] = valeur), ex. \'__proto__\'',
+      schemaFieldInvalid: 'schéma \'{schemaName}\', champ \'{fieldName}\' : type de champ invalide (ni chaîne scalaire, ni list(), ni bits())',
+      schemaBitsDup: 'schéma \'{schemaName}\', champ \'{fieldName}\' : bits() — noms en double',
+      schemaBitsMax: 'schéma \'{schemaName}\', champ \'{fieldName}\' : bits() accepte au plus 8 booléens (reçu {count})',
+      schemaBitsEmpty: 'schéma \'{schemaName}\', champ \'{fieldName}\' : bits() attend un tableau de noms non vide',
+      schemaListType: 'schéma \'{schemaName}\', champ \'{fieldName}\' : list() attend un type scalaire ({scalars}) — sous-schémas/list imbriquée non supportés, reçu \'{of}\'',
+      schemaUnknownType: 'schéma \'{schemaName}\', champ \'{fieldName}\' : type inconnu \'{type}\' — types valides : {scalars}, list(type), bits([noms])',
       // mjs_socket.ts
       sockLiveEffect: 'effet en direct',
       sockQueueFull: 'file hors-ligne pleine (maxQueue={maxQ}) — message le plus ancien perdu',
@@ -427,6 +430,7 @@ export const RUNTIME_LABELS = {
       coreChartMix: '<@@chart> : {prop} « {word} » ne va pas avec la forme {shape}, il est ignoré — valeurs possibles : {list}.',
       coreChartRadar: '<@@chart> : un radar demande au moins 3 lignes, une par axe ; il en reçoit {n}, une courbe le remplace.',
       coreChartRadarCut: '<@@chart> : un radar montre {max} axes au plus, les {n} lignes reçues sont réduites aux {max} dernières.',
+      coreChartFaultsFull: '<@@chart> : {max} données fautives sont déjà signalées sur cette page ; les suivantes ne sont plus listées. Corrigez d\'abord celles-ci.',
       coreChartUnits: '<@@chart> : les séries de la forme {shape} n\'ont pas la même unité ({units}) et partagent pourtant une même échelle.',
       coreChartZone: '<@@chart> : « {zone} » n\'est pas un fuseau connu, il est ignoré — écrivez local ou le nom d\'une zone IANA (Europe/Paris, UTC…) ; sans fuseau, les heures s\'affichent telles qu\'elles sont écrites.',
       coreChartDecimals: '<@@chart> : decimals « {value} » est ignoré — écrivez un nombre entier de 0 à 10 ; sans decimals, les nombres gardent leur écriture automatique.',
@@ -441,6 +445,7 @@ export const RUNTIME_LABELS = {
       coreNumberDecimals: '<@@number> : decimals « {value} » est ignoré — écrivez un nombre entier de 0 à 100 ; la valeur s\'écrit comme sans decimals.',
       coreNumberPrecision: '<@@number> : precision « {value} » est ignoré — écrivez un nombre entier de 0 à 100, ou precision seul pour deux décimales.',
       coreNumberSeparator: '<@@number> : separator « {value} » est ignoré — écrivez « , » ou « . » ; sans separator, le séparateur est celui de la langue de la page.',
+      coreNumberStack: '<@@number> : stack « {value} » est ignoré, les boutons s\'empilent au bord de fin — écrivez stack seul (au bord de fin : à droite, à gauche dans un bloc écrit de droite à gauche) ou stack="start" (au bord de début).',
       // src/core-modules/number.mjs, knob.mjs, gauge.mjs
       coreRangeInverted: '<@@{tag}> : min « {min} » est plus grand que max « {max} », la valeur reste bloquée sur une borne. Écrivez un min plus petit que max.',
       // mjs_types.ts
@@ -448,17 +453,18 @@ export const RUNTIME_LABELS = {
       typesRefuses: '{p} refuse {v}{d}{at}',
       typesBrought: '{p} : {v} ramené à {to}{d}{at}',
       typesAnimated: '{p} reçoit une valeur animée : ses bornes se règlent en la créant (µspring(valeur, raideur, amortissement, min, max), µinterpolate(valeur, durée, min, max)) — retirez {p} du <vars>{at}',
+      typesDerived: 'La variable dérivée « {k} » du composant <{c}> sort de sa règle : {p} vaut {v} — permis : {d}. Sa valeur reste celle du calcul : corrigez le calcul ou la règle. Cet avertissement n\'existe qu\'en développement.',
       // mjs_form.ts
       formMasked: '{p} : « {k} » est un nom de l\'objet formulaire (µform), qui le garde pour lui — lisez le champ de cette variable par fields : $form.fields.{k}{at}',
       // mjs_fx.ts
-      fxBrought: '*{name} : {k} = {vu} ramené à {to} — permis : {reg}{at}',
-      fxRefused: '*{name} : {k} = {vu} refusé, valeur par défaut — permis : {reg}{at}',
-      fxEveryRefused: 'la variable de thème $$mjs-fx-every vaut {vu}, une valeur refusée : chaque effet garde sa cadence par défaut — permis : une durée (300ms, 1.5s, 0){at}',
+      fxBrought: '*{name} : {k} = {seen} ramené à {to} — permis : {reg}{at}',
+      fxRefused: '*{name} : {k} = {seen} refusé, valeur par défaut — permis : {reg}{at}',
+      fxEveryRefused: 'la variable de thème $$mjs-fx-every vaut {seen}, une valeur refusée : chaque effet garde sa cadence par défaut — permis : une durée (300ms, 1.5s, 0){at}',
       // mjs_fx_sprite.ts
       spriteImage: '*sprite : l\'image {url} est introuvable — la planche n\'est pas animée',
       spriteFps: '*sprite : fps et speed sont écrits tous les deux — fps l\'emporte',
       spriteRow: '*sprite : row sans rows — row est ignoré',
-      spritePoses: '*sprite : poses : « {valeur} » n\'est pas un numéro de case — écarté',
+      spritePoses: '*sprite : poses : « {value} » n\'est pas un numéro de case — écarté',
       // mjs_adopt_sheet.ts
       adoptSheetNoShadow: 'µ.adoptSheet : la feuille n\'est pas collée dans <{tag}>, car cette balise n\'a pas d\'ombre (composant réglé en mjs-light, ou balise qui n\'est pas un composant ModularJS). Écrivez ce style dans le <style> du composant, ou dans une feuille de la page : sans ombre, les feuilles de la page s\'appliquent déjà à la balise.',
       // mjs_clone.ts
@@ -473,12 +479,17 @@ export const RUNTIME_LABELS = {
       formIdTwice: 'deux formulaires de ce composant portent l\'id « {id} » : le framework les tient pour un seul formulaire, qui partage ses réponses. Donnez-leur des id distincts, ou aucun id.',
       // mjs_debug.ts
       propOneWay: '<{tag}> écrit sa prop « {prop} » : cette valeur vient du parent ; liez-la par !{…} ou envoyez un événement. Le parent garde sa propre valeur, il ne voit pas ce changement.',
-      propMutated: '<{tag}> modifie un objet que <{parent}> lui a passé par sa prop « {prop} » : <{parent}> n\'en est pas prévenu. Lisez « Modifier un objet reçu » dans la documentation des props (04-props.md).',
-      propMutatedBound: '<{by}>, lié à <{tag}>, modifie un objet que <{parent}> a passé à <{tag}> par sa prop « {prop} » : <{parent}> n\'en est pas prévenu. Lisez « Modifier un objet reçu » dans la documentation des props (04-props.md).',
+      propMutated: '<{tag}> modifie un objet que <{parent}> lui a passé par sa prop « {prop} » : l\'écran suit, mais préférez demander la modification à <{parent}> par un événement ou par une de ses méthodes. Lisez « Modifier un objet reçu » dans la documentation des props (04-props.md).',
+      propMutatedBound: '<{by}>, lié à <{tag}>, modifie un objet que <{parent}> a passé à <{tag}> par sa prop « {prop} » : l\'écran suit, mais préférez demander la modification à <{parent}> par un événement ou par une de ses méthodes. Lisez « Modifier un objet reçu » dans la documentation des props (04-props.md).',
+      propMutatedNoProxy: '<{tag}> modifie un objet que <{parent}> lui a passé par sa prop « {prop} » : <{parent}> n\'en est pas prévenu, son écran ne suit pas (réglage « proxy » à false). Demandez la modification à <{parent}> par un événement, ou faites-lui signaler le changement par µrefresh sur sa variable qui tient l\'objet. Lisez « Modifier un objet reçu » dans la documentation des props (04-props.md).',
+      propMutatedBoundNoProxy: '<{by}>, lié à <{tag}>, modifie un objet que <{parent}> a passé à <{tag}> par sa prop « {prop} » : <{parent}> n\'en est pas prévenu, son écran ne suit pas (réglage « proxy » à false). Demandez la modification à <{parent}> par un événement, ou faites-lui signaler le changement par µrefresh sur sa variable qui tient l\'objet. Lisez « Modifier un objet reçu » dans la documentation des props (04-props.md).',
+      propMutatedUnseen: '<{tag}> modifie un objet que <{parent}> lui a passé par sa prop « {prop} » : <{parent}> n\'en est pas prévenu. Lisez « Modifier un objet reçu » dans la documentation des props (04-props.md).',
+      propMutatedBoundUnseen: '<{by}>, lié à <{tag}>, modifie un objet que <{parent}> a passé à <{tag}> par sa prop « {prop} » : <{parent}> n\'en est pas prévenu. Lisez « Modifier un objet reçu » dans la documentation des props (04-props.md).',
       attachNotFn: '<{tag}> : le :attach de <{node}> (ligne {line}) a rendu une valeur de type {type}, pas une fonction : elle est ignorée. Rendez une fonction de nettoyage, appelée quand la balise disparaît, ou rien.',
       forKeyTypes: '{for} : une liste de <{tag}> reçoit la même clé sous deux types, {a} et {b} : ce sont deux clés différentes, sa ligne est refaite au lieu d\'être déplacée. Donnez à toutes les clés de la liste le même type : des nombres partout, ou des textes partout. (cacheId: {id})',
       forRowChanged: '<{tag}> : la ligne de clé {key} de {list} a changé sans passer par MJS : écrivez µrefresh({list}) après ce changement. La liste ne relit que les lignes qui changent d\'objet ; un objet modifié hors de MJS (variable ordinaire, objet gardé avant son ajout) garde son ancienne valeur à l\'écran.',
       forRowChangedAt: '<{tag}> : la ligne {list}[{at}] a changé sans passer par MJS : écrivez µrefresh({list}) après ce changement. La liste ne relit que les lignes qui changent d\'objet ; un objet modifié hors de MJS (variable ordinaire, objet gardé avant son ajout) garde son ancienne valeur à l\'écran.',
+      storeOutsideData: 'Le magasin {store} range sa donnée dans this.{field}, hors de .data : MJS ne suit que .data, et l\'écran qui lit ce champ ne suit pas ses changements. Passez cette donnée à super(…) dans le constructeur, puis lisez-la et écrivez-la par .data (magasin.data.x plutôt que magasin.{field}.x).',
       // mjs_hotcss.ts
       hotcssLight: '_hotCss : replaceSync a échoué pour la feuille légère <{tag}> :',
       hotcssTag: '_hotCss : replaceSync a échoué pour <{tag}> :',
@@ -493,9 +504,9 @@ export const RUNTIME_LABELS = {
       inspectArmed: 'inspecteur d\'objets armé — µconsole(valeur), ou depuis le panneau (Ctrl+Shift+Espace)',
       // mjs_devpanel.ts
       panelArmed: 'panneau d\'inspection armé — Ctrl+Shift+Espace, ou µconsole',
-      majEffect: 'effet',
-      majColor: 'couleur',
-      majDuration: 'durée',
+      updEffect: 'effet',
+      updColor: 'couleur',
+      updDuration: 'durée',
       anchorDetach: 'détacher',
       anchorBottom: 'ancrer en bas',
       btnTarget: 'cibler',
@@ -635,12 +646,12 @@ export const RUNTIME_LABELS = {
       // mjs_element.ts
       elProto: 'state: prototype change refused',
       elCycle: 'Reactive cycle detected on \'{k}\' — returning undefined',
-      refreshCalcul: 'µrefresh({k}) is called by the computation of the derived value {d} of component <{c}>, more than 1,000 times in the same burst: two derived values that each refresh a source of the other keep recomputing each other in a loop. A derived value must not call µrefresh: write µrefresh({k}) in the script or in an event handler, right after the change made outside MJS. This warning only exists in development.',
-      refreshRendu: 'µrefresh({k}) is called during every render of component <{c}> (a function read by the template, or a listener that this render triggers every time), and each call redraws what this render displays: a loop, which MJS has cut. Write µrefresh({k}) in the script or in an event handler, right after the change made outside MJS; a function read by the template or a derived value must not call it. This warning only exists in development: production cuts the loop the same way.',
-      derAccesseur: 'The derived value \"{k}\" of component <{c}> served its last computation while recomputing it gives something else: it reads an accessor set on an object ({a}), and MJS does not see what this accessor reads change, even when your code writes it through another `$` variable. Right after each of these changes, write {w}, or store this value in a field rather than in an accessor. This warning exists in development only: the value served stays the production one.',
+      refreshCompute: 'µrefresh({k}) is called by the computation of the derived value {d} of component <{c}>, more than 1,000 times in the same burst: two derived values that each refresh a source of the other keep recomputing each other in a loop. A derived value must not call µrefresh: write µrefresh({k}) in the script or in an event handler, right after the change made outside MJS. This warning only exists in development.',
+      refreshRender: 'µrefresh({k}) is called during every render of component <{c}> (a function read by the template, or a listener that this render triggers every time), and each call redraws what this render displays: a loop, which MJS has cut. Write µrefresh({k}) in the script or in an event handler, right after the change made outside MJS; a function read by the template or a derived value must not call it. This warning only exists in development: production cuts the loop the same way.',
+      derivedAccessor: 'The derived value \"{k}\" of component <{c}> served its last computation while recomputing it gives something else: it reads an accessor set on an object ({a}), and MJS does not see what this accessor reads change, even when your code writes it through another `$` variable. Right after each of these changes, write {w}, or store this value in a field rather than in an accessor. This warning exists in development only: the value served stays the production one.',
       collNotNamed: 'A `{c}` collection reached the state while no file of this project names `{c}`: the core was built without the part that follows the object keys of collections. It keeps a simpler behaviour there, without error: the object key of a `Map` comes out raw and `get` only finds it under the form it was stored in, a `WeakMap` or a `WeakSet` stays without a wrapper in a component. If a separately loaded library gives you this collection, ask for this part with "collections": true in mjs.config.json: it is added without touching the detection of the other modules; if you already write a "runtime" list, you can also add "collections" to it. This warning only exists in development, once per page.',
       mapKeyBothForms: 'A state `Map` or `Set` holds the same object in both its forms, raw and wrapped: `get`, `set`, `add` and `delete` take the wrapped entry, and iterating it yields this object twice. Keep a single form per object: when the collection does not hold it yet, MJS stores the raw form. This warning only exists in development.',
-      derPrecise: 'The derived value \"{k}\" of component <{c}> served its last computation while recomputing it gives something else: data it reads was probably changed outside MJS (a library, an external script, an object kept in a variable without `$`). Right after that change, write {w}. This warning exists in development only: the value served stays the production one.',
+      derivedPrecise: 'The derived value \"{k}\" of component <{c}> served its last computation while recomputing it gives something else: data it reads was probably changed outside MJS (a library, an external script, an object kept in a variable without `$`). Right after that change, write {w}. This warning exists in development only: the value served stays the production one.',
       elTeardown: ':attach/:this teardown failed:',
       elOrphanInherited: 'Inherited CSS orphan: the sheet \'{sheetName}\' is missing from the registry.',
       elOrphanLocal: 'Local CSS orphan: the sheet \'{sheetName}\' was not found.',
@@ -672,12 +683,13 @@ export const RUNTIME_LABELS = {
       everyId: '{rune}: the "id" option expects a name, a non-empty string ("{rune} 2000, id: \'save\', ->") — option ignored, received:',
       everyUnseen: '{rune} outside any component: in production, this call would do nothing — the build does not see it (script in public/, external script, fully computed access such as window[k], code run from a string…).',
       everyUnseenId: '{rune}: in production, the "id" option of this call would be ignored — the build does not see it (script in public/, external script, fully computed access such as window[k], code run from a string…).',
-      ajaxOldName: 'µajax: the "{cle}" option does not exist, its handler will never be called — write error: for a server error, typeError: for a type refusal.',
+      ajaxOldName: 'µajax: the "{key}" option does not exist, its handler will never be called — write error: for a server error, typeError: for a type refusal.',
       ajaxUnseen: 'µajax is called as a function, but the build read no such call (computed access µ[k], µ passed to a function…): in production this call will fail — write µajax(…) or µajax \'/url\', options in the app code.',
       // mjs_dynamic.ts
       dynAccept: '<@element>/<@module>: accept expects a list of names (array or space-separated string)',
       dynRefused: '<@element>/<@module>: tag "{norm}" refused — a dynamic element cannot become {norm}; to allow it explicitly: accept="{norm}".',
       dynNotListed: '<@element>/<@module>: tag "{norm}" refused — not in the list accept="{list}"; when accept is present, only the names it lists are created.',
+      dynBadName: '<@element>/<@module>: "{norm}" is not a tag name — the tag in place stays.',
       dynInstance: '<@module>: cannot instantiate the component. Pass the tag NAME (kebab string of the custom element) rather than the class.',
       // mjs_i18n.ts
       i18nMissing: 'i18n: key "{key}" missing in "{lang}", falling back to "{def}"',
@@ -685,7 +697,7 @@ export const RUNTIME_LABELS = {
       i18nLoadSection: 'i18n: failed to load "{section}" ({lang}) — {reason}',
       i18nLoadLang: 'i18n: failed to load the language "{lang}" ({url}) — {reason}',
       i18nHook: 'i18n: language switch hook failed:',
-      i18nSecours: 'i18n: texts still missing after {ms} ms — the module appears with ⟦key⟧ in place of each missing text, the texts will replace them on arrival',
+      i18nRescue: 'i18n: texts still missing after {ms} ms — the module appears with ⟦key⟧ in place of each missing text, the texts will replace them on arrival',
       // mjs_fx.ts
       fxLoad: 'effect "{name}": its file failed to load —',
       fxApply: 'effect "{name}": applying it failed —',
@@ -731,6 +743,8 @@ export const RUNTIME_LABELS = {
       initFn: '{path}: {fn} holds the browser function {name}, probably brought in by a key from outside (address, form, received data); nothing is written. Check this key.',
       initFnCtor: '{path}: `constructor`, written in the code, leads to the browser function {name}, shared by the whole page; nothing is written. Write to the object itself, without `constructor`.',
       initPath: 'state path refused (segment "{seg}") — mutation ignored.',
+      initHtmlKey: '<{tag}>: the prop "{prop}" would set HTML on an element that is not a component of the project, it is ignored — write this HTML with :html or {{ }}.',
+      initAttrName: '"{name}" is not an attribute name: key ignored.',
       // mjs_for.ts
       forDupKeys: '{for}: duplicate keys detected — only the first occurrences are rendered. Check that the `by` key is unique. (cacheId: {id})',
       // mjs_failed.ts
@@ -760,7 +774,7 @@ export const RUNTIME_LABELS = {
       // mjs_ticker.ts
       tickerTask: 'Ticker: task failed, ejected.',
       // mjs_socket.ts
-      socketPackage: '{effet}: the MJS WS server does not know "{type}" — it lacks the {paquet} package: add app.use({invoke}) on the server side; until then, nothing is sent',
+      socketPackage: '{effect}: the MJS WS server does not know "{type}" — it lacks the {pack} package: add app.use({invoke}) on the server side; until then, nothing is sent',
       // mjs_rare_runes.ts
       runesInspectInit: 'µ.inspect must be called at initialization.',
       // mjs_lazy_css.ts
@@ -839,7 +853,7 @@ export const RUNTIME_LABELS = {
       ujsConfirmRetry: ':confirm: requestSubmit({tag}) failed after acceptance, falling back to a bare requestSubmit() — {reqErr}',
       ujsNoAjaxNav: 'server navigation without the ajax module: the browser loads the page. For MJS navigation, add "ujs", "ajax" and "modal" to the "runtime" list in mjs.config.json.',
       ujsHardNavOutside: 'navigation abandoned, url outside the origin and protocol not http/https: {dest}',
-      ujsCallbackMissing: ':callback="{nom}": no method \'{nom}\' found on {tag} or its ancestors — callback ignored.',
+      ujsCallbackMissing: ':callback="{name}": no method \'{name}\' found on {tag} or its ancestors — callback ignored.',
       ujsFlashNoModal: 'flash/error to display but µ.modal is missing (module \'modal\' not included in `runtime`) — falling back to console/alert.',
       ujsFlashUnknown: 'mjs-flash="{attr}": unrecognized value (popup/console/silent expected) — global policy used.',
       ujsTargetMissingReceived: 'navigation target \'{target}\' not found in the received page — <body> content replaced (on both sides).',
@@ -860,20 +874,20 @@ export const RUNTIME_LABELS = {
       schemaEncodeFailed: 'encoding failed, sending as JSON',
       schemaDecodeUnknownId: 'decode(): unknown schema id ({id}) — local registry incomplete or out of sync',
       schemaDecodeEmpty: 'decode(): empty frame, schema id byte expected',
-      schemaEncodeUnknown: 'encode(): unknown schema \'{nom}\' — declare it first (µ.schema)',
-      schemaDecodeOutOfFrame: 'decode(): read outside the frame (offset {offset}, {taille} bytes, frame of {frame})',
+      schemaEncodeUnknown: 'encode(): unknown schema \'{name}\' — declare it first (µ.schema)',
+      schemaDecodeOutOfFrame: 'decode(): read outside the frame (offset {offset}, {size} bytes, frame of {frame})',
       schemaListTooLong: 'list({of}): {count} elements, max 65535 (u16 counter)',
       schemaStringTooLong: 'string too long for {t} ({bytes} UTF-8 bytes, max {max})',
-      schemaOutOfRange: 'schema \'{nomSchema}\', field \'{nomChamp}\': {valeur} is out of range for {t} ({min} to {max}) — the value would arrive wrapped. Choose a wider type, or clamp the value before sending.',
-      schemaRegistryFull: 'registry full — 256 schemas already declared (u8 id exhausted), cannot add \'{nom}\'',
-      schemaRedeclared: 'schema \'{nom}\' already declared with a different shape — APPEND-ONLY guard: an existing schema is IMMUTABLE, declare a NEW NAME to evolve the protocol.',
-      schemaFieldName: 'schema \'{nom}\': invalid field name \'{field}\' — does not survive a plain object ({}[name] = value), e.g. \'__proto__\'',
-      schemaFieldInvalid: 'schema \'{nomSchema}\', field \'{nomChamp}\': invalid field type (neither a scalar string, nor list(), nor bits())',
-      schemaBitsDup: 'schema \'{nomSchema}\', field \'{nomChamp}\': bits() — duplicate names',
-      schemaBitsMax: 'schema \'{nomSchema}\', field \'{nomChamp}\': bits() accepts at most 8 booleans (received {count})',
-      schemaBitsEmpty: 'schema \'{nomSchema}\', field \'{nomChamp}\': bits() expects a non-empty array of names',
-      schemaListType: 'schema \'{nomSchema}\', field \'{nomChamp}\': list() expects a scalar type ({scalars}) — sub-schemas/nested list not supported, received \'{of}\'',
-      schemaUnknownType: 'schema \'{nomSchema}\', field \'{nomChamp}\': unknown type \'{type}\' — valid types: {scalars}, list(type), bits([names])',
+      schemaOutOfRange: 'schema \'{schemaName}\', field \'{fieldName}\': {value} is out of range for {t} ({min} to {max}) — the value would arrive wrapped. Choose a wider type, or clamp the value before sending.',
+      schemaRegistryFull: 'registry full — 256 schemas already declared (u8 id exhausted), cannot add \'{name}\'',
+      schemaRedeclared: 'schema \'{name}\' already declared with a different shape — APPEND-ONLY guard: an existing schema is IMMUTABLE, declare a NEW NAME to evolve the protocol.',
+      schemaFieldName: 'schema \'{name}\': invalid field name \'{field}\' — does not survive a plain object ({}[name] = value), e.g. \'__proto__\'',
+      schemaFieldInvalid: 'schema \'{schemaName}\', field \'{fieldName}\': invalid field type (neither a scalar string, nor list(), nor bits())',
+      schemaBitsDup: 'schema \'{schemaName}\', field \'{fieldName}\': bits() — duplicate names',
+      schemaBitsMax: 'schema \'{schemaName}\', field \'{fieldName}\': bits() accepts at most 8 booleans (received {count})',
+      schemaBitsEmpty: 'schema \'{schemaName}\', field \'{fieldName}\': bits() expects a non-empty array of names',
+      schemaListType: 'schema \'{schemaName}\', field \'{fieldName}\': list() expects a scalar type ({scalars}) — sub-schemas/nested list not supported, received \'{of}\'',
+      schemaUnknownType: 'schema \'{schemaName}\', field \'{fieldName}\': unknown type \'{type}\' — valid types: {scalars}, list(type), bits([names])',
       // mjs_socket.ts
       sockLiveEffect: 'live effect',
       sockQueueFull: 'offline queue full (maxQueue={maxQ}) — oldest message lost',
@@ -975,6 +989,7 @@ export const RUNTIME_LABELS = {
       coreChartMix: '<@@chart>: {prop} "{word}" does not go with the {shape} shape, it is ignored — possible values: {list}.',
       coreChartRadar: '<@@chart>: a radar needs at least 3 rows, one per axis; it receives {n}, a line chart replaces it.',
       coreChartRadarCut: '<@@chart>: a radar shows {max} axes at most, the {n} rows received are cut to the last {max}.',
+      coreChartFaultsFull: '<@@chart>: {max} faulty data items are already reported on this page; the next ones are no longer listed. Fix these first.',
       coreChartUnits: '<@@chart>: the series of the {shape} shape do not have the same unit ({units}) yet they share one scale.',
       coreChartZone: '<@@chart>: "{zone}" is not a known time zone, it is ignored — write local or the name of an IANA zone (Europe/Paris, UTC…); without a time zone, hours are shown as they are written.',
       coreChartDecimals: '<@@chart>: decimals "{value}" is ignored — write a whole number from 0 to 10; without decimals, numbers keep their automatic writing.',
@@ -989,6 +1004,7 @@ export const RUNTIME_LABELS = {
       coreNumberDecimals: '<@@number>: decimals "{value}" is ignored — write a whole number from 0 to 100; the value is written as without decimals.',
       coreNumberPrecision: '<@@number>: precision "{value}" is ignored — write a whole number from 0 to 100, or precision alone for two decimals.',
       coreNumberSeparator: '<@@number>: separator "{value}" is ignored — write "," or "."; without separator, the separator is the one of the page language.',
+      coreNumberStack: '<@@number>: stack "{value}" is ignored, the buttons stack at the end edge — write stack alone (at the end edge: on the right, on the left in a right-to-left block) or stack="start" (at the start edge).',
       // src/core-modules/number.mjs, knob.mjs, gauge.mjs
       coreRangeInverted: '<@@{tag}>: min "{min}" is greater than max "{max}", the value stays stuck on a bound. Write a min smaller than max.',
       // mjs_types.ts
@@ -996,17 +1012,18 @@ export const RUNTIME_LABELS = {
       typesRefuses: '{p} refuses {v}{d}{at}',
       typesBrought: '{p}: {v} brought back to {to}{d}{at}',
       typesAnimated: '{p} receives an animated value: its bounds are set when creating it (µspring(value, stiffness, damping, min, max), µinterpolate(value, duration, min, max)) — remove {p} from the <vars>{at}',
+      typesDerived: 'The derived variable \"{k}\" of component <{c}> is outside its rule: {p} is {v} — allowed: {d}. Its value stays the one of the calculation: fix the calculation or the rule. This warning exists in development only.',
       // mjs_form.ts
       formMasked: '{p}: "{k}" is a name of the form object (µform), which keeps it for itself — read this variable\'s field through fields: $form.fields.{k}{at}',
       // mjs_fx.ts
-      fxBrought: '*{name} : {k} = {vu} brought back to {to} — allowed: {reg}{at}',
-      fxRefused: '*{name} : {k} = {vu} refused, default value — allowed: {reg}{at}',
-      fxEveryRefused: 'the theme variable $$mjs-fx-every is {vu}, a refused value: each effect keeps its default cadence — allowed: a duration (300ms, 1.5s, 0){at}',
+      fxBrought: '*{name} : {k} = {seen} brought back to {to} — allowed: {reg}{at}',
+      fxRefused: '*{name} : {k} = {seen} refused, default value — allowed: {reg}{at}',
+      fxEveryRefused: 'the theme variable $$mjs-fx-every is {seen}, a refused value: each effect keeps its default cadence — allowed: a duration (300ms, 1.5s, 0){at}',
       // mjs_fx_sprite.ts
       spriteImage: '*sprite: the image {url} was not found — the sheet is not animated',
       spriteFps: '*sprite: fps and speed are both written — fps wins',
       spriteRow: '*sprite: row without rows — row is ignored',
-      spritePoses: '*sprite: poses: "{valeur}" is not a cell number — dropped',
+      spritePoses: '*sprite: poses: "{value}" is not a cell number — dropped',
       // mjs_adopt_sheet.ts
       adoptSheetNoShadow: 'µ.adoptSheet: the sheet is not attached to <{tag}>, because this tag has no shadow (a component set to mjs-light, or a tag that is not a ModularJS component). Write this style in the <style> of the component, or in a stylesheet of the page: without a shadow, the page\'s stylesheets already apply to the tag.',
       // mjs_clone.ts
@@ -1021,12 +1038,17 @@ export const RUNTIME_LABELS = {
       formIdTwice: 'two forms of this component carry the id "{id}": the framework treats them as a single form that shares its answers. Give them distinct ids, or no id.',
       // mjs_debug.ts
       propOneWay: '<{tag}> writes its prop "{prop}": this value comes from the parent; bind it with !{…} or send an event. The parent keeps its own value, it does not see this change.',
-      propMutated: '<{tag}> modifies an object that <{parent}> passed to it through its prop "{prop}": <{parent}> is not notified. See the section on modifying a received object in the props documentation (04-props.md).',
-      propMutatedBound: '<{by}>, bound to <{tag}>, modifies an object that <{parent}> passed to <{tag}> through its prop "{prop}": <{parent}> is not notified. See the section on modifying a received object in the props documentation (04-props.md).',
+      propMutated: '<{tag}> modifies an object that <{parent}> passed to it through its prop "{prop}": the screen follows, but prefer asking <{parent}> for the change through an event or one of its methods. See the section on modifying a received object in the props documentation (04-props.md).',
+      propMutatedBound: '<{by}>, bound to <{tag}>, modifies an object that <{parent}> passed to <{tag}> through its prop "{prop}": the screen follows, but prefer asking <{parent}> for the change through an event or one of its methods. See the section on modifying a received object in the props documentation (04-props.md).',
+      propMutatedNoProxy: '<{tag}> modifies an object that <{parent}> passed to it through its prop "{prop}": <{parent}> is not notified, its screen does not follow (the "proxy" setting is false). Ask <{parent}> for the change through an event, or have it report the change with µrefresh on its variable that holds the object. See the section on modifying a received object in the props documentation (04-props.md).',
+      propMutatedBoundNoProxy: '<{by}>, bound to <{tag}>, modifies an object that <{parent}> passed to <{tag}> through its prop "{prop}": <{parent}> is not notified, its screen does not follow (the "proxy" setting is false). Ask <{parent}> for the change through an event, or have it report the change with µrefresh on its variable that holds the object. See the section on modifying a received object in the props documentation (04-props.md).',
+      propMutatedUnseen: '<{tag}> modifies an object that <{parent}> passed to it through its prop "{prop}": <{parent}> is not notified. See the section on modifying a received object in the props documentation (04-props.md).',
+      propMutatedBoundUnseen: '<{by}>, bound to <{tag}>, modifies an object that <{parent}> passed to <{tag}> through its prop "{prop}": <{parent}> is not notified. See the section on modifying a received object in the props documentation (04-props.md).',
       attachNotFn: '<{tag}>: the :attach on <{node}> (line {line}) returned a value of type {type}, not a function: it is ignored. Return a cleanup function, called when the element goes away, or nothing.',
       forKeyTypes: '{for}: a list of <{tag}> receives the same key as two types, {a} and {b}: these are two different keys, its row is rebuilt instead of moved. Give every key of the list the same type: numbers everywhere, or strings everywhere. (cacheId: {id})',
       forRowChanged: '<{tag}>: the row with key {key} of {list} changed without going through MJS: write µrefresh({list}) after this change. The list only rereads the rows whose object changes; an object modified outside MJS (plain variable, object kept before it was added) keeps its old value on screen.',
       forRowChangedAt: '<{tag}>: the row {list}[{at}] changed without going through MJS: write µrefresh({list}) after this change. The list only rereads the rows whose object changes; an object modified outside MJS (plain variable, object kept before it was added) keeps its old value on screen.',
+      storeOutsideData: 'The store {store} keeps its data in this.{field}, outside .data: MJS only follows .data, so a screen that reads this field does not follow its changes. Pass this data to super(…) in the constructor, then read and write it through .data (store.data.x rather than store.{field}.x).',
       // mjs_hotcss.ts
       hotcssLight: '_hotCss: replaceSync failed for the light sheet <{tag}>:',
       hotcssTag: '_hotCss: replaceSync failed for <{tag}>:',
@@ -1041,9 +1063,9 @@ export const RUNTIME_LABELS = {
       inspectArmed: 'object inspector armed — µconsole(value), or from the panel (Ctrl+Shift+Space)',
       // mjs_devpanel.ts
       panelArmed: 'inspection panel armed — Ctrl+Shift+Space, or µconsole',
-      majEffect: 'effect',
-      majColor: 'color',
-      majDuration: 'duration',
+      updEffect: 'effect',
+      updColor: 'color',
+      updDuration: 'duration',
       anchorDetach: 'detach',
       anchorBottom: 'anchor to bottom',
       btnTarget: 'target',
@@ -1215,26 +1237,26 @@ export function fxLabelKeys(effects: Iterable<string>): Set<string> {
 // `files` = les fichiers du runtime que le build emporte : hors production, le groupe `err` reçoit les messages de ceux qui en ont à part
 // (cf. RUNTIME_FILE_MESSAGES) ; absent (faits inconnus), ceux de tous
 export function runtimeLabelsFor(prod: boolean, groups?: ReadonlySet<string>, coreModules?: ReadonlySet<string>, fxEffects?: ReadonlySet<string>, coreDropped?: ReadonlySet<string>, files?: ReadonlySet<string>) {
-  const garde = (t: any, lang: string) => {
+  const guard = (t: any, lang: string) => {
     // hors production, les messages des fichiers du runtime emportés qui en ont à part ; sans eux, la table telle quelle
     const err = t.err && errFor(lang, files)
     if (err && err !== t.err) t = { ...t, err }
     if (!groups) return t
-    const reste: any = {}
+    const rest: any = {}
     for (const k of Object.keys(t)) {
       if (OPTIONAL_LABEL_GROUPS.includes(k) && !groups.has(k)) continue
       const keys = k === 'core' && coreModules ? coreLabelKeys(coreModules, coreDropped) : k === 'fx' && fxEffects ? fxLabelKeys(fxEffects) : undefined
       if (keys) {
         const part = Object.fromEntries(Object.entries(t[k]).filter(([key]) => keys.has(key)))
-        if (Object.keys(part).length > 0) reste[k] = part
+        if (Object.keys(part).length > 0) rest[k] = part
       }
-      else reste[k] = t[k]
+      else rest[k] = t[k]
     }
-    return reste
+    return rest
   }
-  if (!prod) return { fr: garde(RUNTIME_LABELS.fr, 'fr'), en: garde(RUNTIME_LABELS.en, 'en') }
-  const sansMessages = (t: any, lang: string) => { const { dev: _dev, err: _err, ...reste } = t; return garde(reste, lang) }
-  return { fr: sansMessages(RUNTIME_LABELS.fr, 'fr'), en: sansMessages(RUNTIME_LABELS.en, 'en') }
+  if (!prod) return { fr: guard(RUNTIME_LABELS.fr, 'fr'), en: guard(RUNTIME_LABELS.en, 'en') }
+  const withoutMessages = (t: any, lang: string) => { const { dev: _dev, err: _err, ...rest } = t; return guard(rest, lang) }
+  return { fr: withoutMessages(RUNTIME_LABELS.fr, 'fr'), en: withoutMessages(RUNTIME_LABELS.en, 'en') }
 }
 
 // les langues de la table, et le groupe `err` de l'une d'elles : le contenu du fichier de messages
@@ -1255,9 +1277,10 @@ export const RUNTIME_FILE_MESSAGES: Record<string, Record<string, Record<string,
   'mjs_load.ts': {
     fr: {
       loadArgs: 'µload : les options s\'écrivent en objet — écrivez µload(url, { refresh: {v} }). Valeur ignorée : la donnée n\'est relue que sur demande.',
+      loadClearArgs: 'µload.clear() oublie toutes les adresses gardées et ne prend pas d\'argument : « {v} » est ignoré. Pour relire une seule adresse, écrivez µload.refresh(url).',
       loadOption: 'µload : option « {opt} » inconnue — la seule option est refresh.',
       loadRefresh: 'µload : refresh « {v} » inconnu — écrivez false, un nombre de secondes, \'focus\' ou \'online\'. La donnée n\'est relue que sur demande.',
-      loadPlace: 'µload("{url}") appelé dans {lieu} de {tag} : ici, l\'appel n\'est pas suivi — ses requêtes dépassées ne sont pas annulées. Écrivez l\'appel dans une dérivée du script ($membres = µload(…), l\'adresse peut lire des $), puis lisez-la dans le gabarit ; pour une ligne de {for}, dans le script d\'un composant enfant.',
+      loadPlace: 'µload("{url}") appelé dans {place} de {tag} : ici, l\'appel n\'est pas suivi — ses requêtes dépassées ne sont pas annulées. Écrivez l\'appel dans une dérivée du script ($membres = µload(…), l\'adresse peut lire des $), puis lisez-la dans le gabarit ; pour une ligne de {for}, dans le script d\'un composant enfant.',
       loadPlaceEffect: 'un µeffect',
       loadPlaceHelper: 'une aide appelée par le gabarit',
       loadPlaceFor: 'une ligne de {for}',
@@ -1265,13 +1288,29 @@ export const RUNTIME_FILE_MESSAGES: Record<string, Record<string, Record<string,
     },
     en: {
       loadArgs: 'µload: options are written as an object — write µload(url, { refresh: {v} }). Value ignored: the data is only reloaded on request.',
+      loadClearArgs: 'µload.clear() forgets every kept address and takes no argument: "{v}" is ignored. To reload a single address, write µload.refresh(url).',
       loadOption: 'µload: unknown option "{opt}" — the only option is refresh.',
       loadRefresh: 'µload: unknown refresh "{v}" — write false, a number of seconds, \'focus\' or \'online\'. The data is only reloaded on request.',
-      loadPlace: 'µload("{url}") called in {lieu} of {tag}: here the call is not followed — its outdated requests are not cancelled. Write the call in a derived value of the script ($members = µload(…), the address can read $), then read it in the template; for a {for} row, in the script of a child component.',
+      loadPlace: 'µload("{url}") called in {place} of {tag}: here the call is not followed — its outdated requests are not cancelled. Write the call in a derived value of the script ($members = µload(…), the address can read $), then read it in the template; for a {for} row, in the script of a child component.',
       loadPlaceEffect: 'a µeffect',
       loadPlaceHelper: 'a helper called by the template',
       loadPlaceFor: 'a {for} row',
       loadPlaceTemplate: 'the template',
+    },
+  },
+  // valeur dérivée qui attend (mjs_await_derived.ts) : messages du développement seul
+  'mjs_await_derived.ts': {
+    fr: {
+      awaitedEarly: '<{tag}> : {written} lit {name} avant sa première réponse, quand elle vaut encore undefined. Écrivez {tip}, ou testez µpending({name}) avant de la lire.',
+      awaitedEarlyField: '<{tag}> : {written} lit {name} avant sa première réponse, quand elle vaut encore undefined : la lecture rend undefined. Testez µpending({name}) pour montrer l\'attente.',
+      awaitedUnread: '<{tag}> : la demande de {name} a échoué ({msg}) et rien ne lit cette erreur : la valeur d\'avant reste à l\'écran. Lisez-la avec µfailed({name}) pour la montrer.',
+      awaitedRefused: '{name} refuse {v} (<{tag}>) : la réponse de la demande ne suit pas la règle du <vars>, la valeur d\'avant reste.',
+    },
+    en: {
+      awaitedEarly: '<{tag}>: {written} reads {name} before its first answer, while it is still undefined. Write {tip}, or test µpending({name}) before reading it.',
+      awaitedEarlyField: '<{tag}>: {written} reads {name} before its first answer, while it is still undefined: the read gives undefined. Test µpending({name}) to show the wait.',
+      awaitedUnread: '<{tag}>: the request of {name} failed ({msg}) and nothing reads this error: the previous value stays on screen. Read it with µfailed({name}) to show it.',
+      awaitedRefused: '{name} refuses {v} (<{tag}>): the answer of the request does not follow the <vars> rule, the previous value stays.',
     },
   },
 }

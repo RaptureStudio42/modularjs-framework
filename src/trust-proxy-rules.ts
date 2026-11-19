@@ -46,7 +46,7 @@ function tooWide(address: string, family: number, bits: number): { family: strin
 // une entrée de liste : adresse, ou plage `adresse/bits` ; une plage de 0 bit couvre le monde entier, c'est `true` ; une plage trop large
 // pour un proxy (cf. tooWide) laisserait des visiteurs directs choisir leur adresse
 function addEntry(list: BlockList, entry: unknown): void {
-  const invalid = () => new Error(t('ws.trust-proxy.entree-invalide', { entry: show(entry) }))
+  const invalid = () => new Error(t('ws.trust-proxy.entry-invalid', { entry: show(entry) }))
   if (typeof entry !== 'string') throw invalid()
   const [address, bits, ...rest] = entry.trim().split('/')
   const family                   = isIP(address)
@@ -54,9 +54,9 @@ function addEntry(list: BlockList, entry: unknown): void {
   const type = family === 4 ? 'ipv4' : 'ipv6'
   if (bits === undefined) { list.addAddress(address, type); return }
   if (!/^\d{1,3}$/.test(bits) || Number(bits) > (family === 4 ? 32 : 128)) throw invalid()
-  if (Number(bits) === 0) throw new Error(t('ws.trust-proxy.plage-trop-large', { entry: show(entry) }))
+  if (Number(bits) === 0) throw new Error(t('ws.trust-proxy.range-too-large', { entry: show(entry) }))
   const wide = tooWide(address, family, Number(bits))
-  if (wide) throw new Error(t('ws.trust-proxy.plage-trop-etendue', { entry: show(entry), family: wide.family, max: wide.max }))
+  if (wide) throw new Error(t('ws.trust-proxy.range-too-wide', { entry: show(entry), family: wide.family, max: wide.max }))
   list.addSubnet(address, Number(bits), type)
 }
 
@@ -68,14 +68,14 @@ function addEntry(list: BlockList, entry: unknown): void {
  */
 export function parseTrustProxy(raw: unknown): TrustProxyList | null {
   if (raw === undefined || raw === null || raw === false) return null
-  if (raw === true) throw new Error(t('ws.trust-proxy.vrai-refuse'))
+  if (raw === true) throw new Error(t('ws.trust-proxy.true-refused'))
   if (raw === 'loopback') {
     const list = new BlockList()
     list.addSubnet('127.0.0.0', 8, 'ipv4')
     list.addAddress('::1', 'ipv6')
     return { list, local: true }
   }
-  if (!Array.isArray(raw)) throw new Error(t('ws.trust-proxy.valeur-invalide', { raw: show(raw) }))
+  if (!Array.isArray(raw)) throw new Error(t('ws.trust-proxy.value-invalid', { raw: show(raw) }))
   if (raw.length === 0) return null
   const list = new BlockList()
   for (const entry of raw) addEntry(list, entry)

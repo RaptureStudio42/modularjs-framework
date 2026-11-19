@@ -1,6 +1,6 @@
 // µ.predict (mjs_predict.ts) — une RAFALE de coups locaux (aucun ack entre eux, la file `pending`
 // grandit) doit rester réactive à CHAQUE coup, pas seulement au premier : le miroir republie sa clé
-// racine par réassignation (jamais une mutation en place, cf. _mjpredictPublier) — un fragment
+// racine par réassignation (jamais une mutation en place, cf. _mjpredictPublish) — un fragment
 // réutilisé EN PLACE d'un coup à l'autre romprait cette réassignation (comparaison par référence
 // `a === b` dans _mjpredictEq) et gèlerait la réactivité après le 1er coup.
 import assert from 'node:assert/strict'

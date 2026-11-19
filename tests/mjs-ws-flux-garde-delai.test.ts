@@ -72,7 +72,7 @@ const recu = (trames: any[], depuis: number): string[] => trames.slice(depuis)
   .map(f => f.t === 'µ:error' ? 'µ:error' : f.p && f.p.op ? f.p.op + (f.p.key ? ':' + f.p.key : '') : '')
   .filter(Boolean)
 const jamais = () => new Promise<boolean>(() => {})
-const delaiDepasse = () => t('ws.streams.garde-sans-reponse')
+const delaiDepasse = () => t('ws.streams.guard-no-response')
 
 describe('MJS-WS — flux : délai de garde (guardTimeout)', function () {
   this.timeout(20000)
@@ -178,7 +178,7 @@ describe('MJS-WS — flux : délai de garde (guardTimeout)', function () {
         b.attentes[1](false); await flush()
         b.flux.add('apres', 2); await flush()
         assert.deepEqual(recu(b.trames, b.depart), ['µ:error'])
-        assert.equal(b.trames.at(-1).p.message, t('ws.streams.acces-flux-refuse'))
+        assert.equal(b.trames.at(-1).p.message, t('ws.streams.access-stream-refused'))
       } finally {
         await arreter(b.app)
       }

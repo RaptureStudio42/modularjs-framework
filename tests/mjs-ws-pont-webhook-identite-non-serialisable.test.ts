@@ -72,7 +72,7 @@ describe('MJS-WS — pont : identité non sérialisable et webhook connect', fun
           assert.equal(back.recus[0].client.identity.id, 'u2')
           const erreurs = journal.filter(l => l.level === 'error' && l.meta?.event === 'connect')
           assert.equal(erreurs.length, 1, 'une erreur au journal pour le webhook abandonné : '+ JSON.stringify(journal.map(l => l.level +' '+ l.message)))
-          assert.equal(app.stats().pont.webhooksAbandonnes, 1)
+          assert.equal(app.stats().bridge.webhooksAbandoned, 1)
         } finally {
           await app.stop()
           await back.fermer()

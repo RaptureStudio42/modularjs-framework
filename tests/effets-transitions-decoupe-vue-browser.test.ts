@@ -1,4 +1,4 @@
-// une transition à découpe posée directement (*iris, *volet, *bars : leur première image est un clip-path d'aire
+// une transition à découpe posée directement (*iris, *cover, *bars : leur première image est un clip-path d'aire
 // nulle) avec `on: view`, le défaut : elle joue quand la balise arrive à l'écran, comme *fade — déjà à l'écran au
 // chargement, sous le pli puis défilée, et de nouveau après une sortie avec `once: false`. Chromium compte la découpe
 // de la balise elle-même dans ce que voit l'observateur de visibilité : tenue dans sa première image découpée, la
@@ -40,12 +40,12 @@ const SOURCE = [
   '$z = \'view\'',
   '</script>',
   `<img class="el" id="v-iris" src="${IMG}" alt="" *iris(duration: 300ms)>`,
-  `<img class="el" id="v-volet" src="${IMG}" alt="" *volet(duration: 300ms)>`,
+  `<img class="el" id="v-cover" src="${IMG}" alt="" *cover(duration: 300ms)>`,
   `<img class="el" id="v-bars" src="${IMG}" alt="" *bars(duration: 300ms)>`,
   `<img class="el" id="v-fade" src="${IMG}" alt="" *fade(duration: 300ms)>`,
   '<div class="marge"></div>',
   `<img class="el" id="s-iris" src="${IMG}" alt="" *iris(duration: 300ms)>`,
-  `<img class="el" id="s-volet" src="${IMG}" alt="" *volet(duration: 300ms)>`,
+  `<img class="el" id="s-cover" src="${IMG}" alt="" *cover(duration: 300ms)>`,
   `<img class="el" id="s-bars" src="${IMG}" alt="" *bars(duration: 300ms)>`,
   '<div class="marge"></div>',
   `<img class="el" id="r-iris" src="${IMG}" alt="" *iris(duration: 300ms, once: false)>`,
@@ -74,7 +74,7 @@ const SOURCE = [
   `<img class="el" id="e-turn" src="${IMG}" alt="" *turn(once: false, duration: 300ms)>`,
   `<img class="el" id="e-fade" src="${IMG}" alt="" *fade(once: false, duration: 300ms)>`,
   `<img class="el" id="e-fly" src="${IMG}" alt="" *fly(once: false, duration: 300ms)>`,
-  `<img class="el" id="e-volet" src="${IMG}" alt="" *volet(once: false, duration: 300ms)>`,
+  `<img class="el" id="e-cover" src="${IMG}" alt="" *cover(once: false, duration: 300ms)>`,
   `<img class="el" id="e-bars" src="${IMG}" alt="" *bars(once: false, duration: 300ms)>`,
   '<div class="marge"></div>',
   '<style>',
@@ -96,7 +96,7 @@ const SOURCE = [
   ''
 ].join('\n')
 
-const REJEUX = ['e-reveal', 'e-turn', 'e-fade', 'e-fly', 'e-volet', 'e-bars']
+const REJEUX = ['e-reveal', 'e-turn', 'e-fade', 'e-fly', 'e-cover', 'e-bars']
 
 describe('les transitions à découpe posées directement jouent quand la balise arrive à l\'écran (navigateurs réels)', function () {
   this.timeout(240000)
@@ -223,18 +223,18 @@ describe('les transitions à découpe posées directement jouent quand la balise
         return page.evaluate(() => (window as any).__clics.slice())
       }
 
-      it('à l\'écran dès le chargement : *iris, *volet, *bars jouent leur entrée, comme *fade', async function () {
+      it('à l\'écran dès le chargement : *iris, *cover, *bars jouent leur entrée, comme *fade', async function () {
         if (!present) { this.skip(); return }
-        await attendre(['v-iris', 'v-volet', 'v-bars', 'v-fade'], 'une transition déjà à l\'écran n\'a pas joué')
+        await attendre(['v-iris', 'v-cover', 'v-bars', 'v-fade'], 'une transition déjà à l\'écran n\'a pas joué')
         assert.deepEqual(errors, [])
       })
 
       it('sous le pli : cachées en attendant, elles jouent quand on les fait défiler à l\'écran', async function () {
         if (!present) { this.skip(); return }
-        const avant = await page.evaluate(() => ['s-iris', 's-volet', 's-bars'].map((id) => (window as any).__cachee(id)))
+        const avant = await page.evaluate(() => ['s-iris', 's-cover', 's-bars'].map((id) => (window as any).__cachee(id)))
         assert.deepEqual(avant, [true, true, true], 'sous le pli, elles attendent cachées')
-        await page.evaluate(() => (window as any).__voir('s-volet'))
-        await attendre(['s-iris', 's-volet', 's-bars'], 'une transition défilée à l\'écran n\'a pas joué')
+        await page.evaluate(() => (window as any).__voir('s-cover'))
+        await attendre(['s-iris', 's-cover', 's-bars'], 'une transition défilée à l\'écran n\'a pas joué')
         assert.deepEqual(errors, [])
       })
 

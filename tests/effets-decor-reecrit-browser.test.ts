@@ -19,6 +19,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox' | 'webkit'): Promise<boolean> {
   try {
@@ -348,7 +349,7 @@ describe('un effet à décor survit à la réécriture du contenu de sa balise (
   after(async () => { await terminateSharedWorkerPool() })
 
   for (const nom of (process.env.NAVIGATEUR ? [process.env.NAVIGATEUR] : ['chromium', 'firefox']) as Array<'chromium' | 'firefox' | 'webkit'>) {
-    describe(nom, function () {
+    playTogether(describe(nom, function () {
       let browser: any
 
       before(async function () {
@@ -626,6 +627,6 @@ describe('un effet à décor survit à la réécriture du contenu de sa balise (
           })
         })
       })
-    })
+    }))
   }
 })

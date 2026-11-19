@@ -25,9 +25,9 @@
       var pal    = s.colors || µ._mjs_fxList(el, '--mjs-confetti-colors') || ['#ff4fa3', '#22d3ee', '#facc15', '#7c3aed'];
       var spread = (s.spread === void 0 ? 360 : s.spread) * Math.PI / 180;
       // l'angle du milieu de la gerbe, compté comme à l'écran (0 = vers la droite, y vers le bas)
-      var axis   = (µ._mjs_fxDeg(s.direction, 0) - 90) * Math.PI / 180;
-      var power  = s.power === void 0 ? 140 : s.power;
-      var lot    = [];
+      var axis  = (µ._mjs_fxDeg(s.direction, 0) - 90) * Math.PI / 180;
+      var power = s.power === void 0 ? 140 : s.power;
+      var batch = [];
       for (var i = 0; i < µ._mjs_fxCount(s.count || 40); i++) {
         var p = document.createElement('span');
         p.setAttribute('mjs-fx-confetto', '');
@@ -42,14 +42,14 @@
         p.style.setProperty('--rot', (Math.random() * 720 - 360).toFixed(0) + 'deg');
         p.addEventListener('animationend', function() { this.remove(); });
         document.body.appendChild(p);
-        lot.push(p);
+        batch.push(p);
       }
-      pieces = pieces.concat(lot);
+      pieces = pieces.concat(batch);
       // filet : sans fin d'animation (onglet caché…), les confettis de cette gerbe partent quand même,
       // pas ceux des gerbes suivantes, encore en vol
       setTimeout(function() {
-        for (var j = 0; j < lot.length; j++) lot[j].remove();
-        pieces = pieces.filter(function(q) { return lot.indexOf(q) < 0; });
+        for (var j = 0; j < batch.length; j++) batch[j].remove();
+        pieces = pieces.filter(function(q) { return batch.indexOf(q) < 0; });
       }, 2000);
     };
     var stop = µ._mjs_fxWhen(el, s.on || 'click', burst);

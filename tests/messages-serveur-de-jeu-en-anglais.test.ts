@@ -22,7 +22,7 @@ describe('messages — serveur de jeu en anglais', () => {
   it('aucun message anglais `serveur.*` ne contient de mot français ni d accent', () => {
     const fautifs: string[] = []
     for (const [cle, entree] of Object.entries(en)) {
-      if (!cle.startsWith('serveur.')) continue
+      if (!cle.startsWith('mjs-server.')) continue
       const texte = texteDe(entree)
       if (MOTS.test(texte) || ACCENTS.test(texte)) fautifs.push(cle + ' → ' + texte)
     }
@@ -31,7 +31,7 @@ describe('messages — serveur de jeu en anglais', () => {
 
   it('un `limits` mal formé : le message nomme moves, moveIntervalMs et moveWaitMs, en français comme en anglais', () => {
     for (const table of [fr, en] as Array<Record<string, unknown>>) {
-      const texte = texteDe(table['serveur.game-limits-invalide'])
+      const texte = texteDe(table['mjs-server.game-limits-invalid'])
       for (const cle of ['moves', 'moveIntervalMs', 'moveWaitMs']) assert.match(texte, new RegExp('\\b' + cle + '\\?'), texte)
     }
   })

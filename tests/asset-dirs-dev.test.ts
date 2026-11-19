@@ -67,7 +67,7 @@ describe('assetDirs — mjs dev surveille les dossiers de la liste', function ()
     const p = projet('assetdirs-dev-ajoutee')
     const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest, assetDirs: [p.imgA] } as any)
     let derniere: { errors: Error[] } | undefined
-    await bundler.watch({ onRecompile: (_chemin, stats) => { derniere = stats } })
+    await bundler.watch({ onRecompile: (_path, stats) => { derniere = stats } })
     assert.ok(derniere && derniere.errors.length > 0, 'build initial : l\'image manque, le build échoue')
 
     writeFileSync(join(p.imgA, 'hero.png'), validPng(1200, 600))

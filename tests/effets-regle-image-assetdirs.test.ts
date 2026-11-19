@@ -18,10 +18,10 @@ describe('la règle d\'un réglage d\'image d\'effet — les dossiers de assetDi
   for (const lang of ['fr', 'en'] as const) {
     it(`${lang} : le libellé d'une image et celui d'une liste d'images citent assetDirs, sans perdre leurs exemples`, () => {
       setMessagesLang(lang)
-      assert.match(t('effets.regle-image'), /assetDirs/)
-      assert.match(t('effets.regle-image'), /\('photo\.jpg'\)$/)
-      assert.match(t('effets.regle-images'), /assetDirs/)
-      assert.match(t('effets.regle-images'), /\(\[a\.jpg, 'b\.jpg'\]\)$/)
+      assert.match(t('effects.rule-image'), /assetDirs/)
+      assert.match(t('effects.rule-image'), /\('photo\.jpg'\)$/)
+      assert.match(t('effects.rule-images'), /assetDirs/)
+      assert.match(t('effects.rule-images'), /\(\[a\.jpg, 'b\.jpg'\]\)$/)
     })
 
     it(`${lang} : la faute d'un réglage image montre ce libellé, assetDirs compris`, () => {
@@ -31,7 +31,7 @@ describe('la règle d\'un réglage d\'image d\'effet — les dossiers de assetDi
   }
 
   it('français : la phrase est celle de la décision (dossier source, ou dossier de assetDirs)', () => {
-    assert.equal(t('effets.regle-image'), "une image : son adresse, µasset('…') ou µimage('…'), ou le chemin d'un fichier du dossier source ou d'un dossier de `assetDirs` ('photo.jpg')")
+    assert.equal(t('effects.rule-image'), "une image : son adresse, µasset('…') ou µimage('…'), ou le chemin d'un fichier du dossier source ou d'un dossier de `assetDirs` ('photo.jpg')")
   })
 
   it('l\'extension VS Code : chaque réglage d\'image, seul ou en liste, porte la règle avec assetDirs', () => {

@@ -2,14 +2,14 @@
 // fonctions sorties de la classe Bundler, qui garde ses méthodes (mêmes noms, mêmes signatures) et leur passe l'instance : un membre
 // privé de la classe s'y lit `bundler['nom']`, et tout appel de méthode passe par l'instance, comme avant la découpe
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { dirname, basename, join } from 'node:path'
 import { build as esbuildBuild } from 'esbuild'
 import { t } from '../messages/index.js'
 import { normalizePreload } from './config.js'
 import { FINGERPRINT_LENGTH } from './fingerprint.js'
 import { runtimeCallsCut, buildPureList, withMangleCacheLock } from './minify.js'
-import { MARQUE_SORTIE, bundleNeighborFiles } from './outputs.js'
+import { OUTPUT_MARK, bundleNeighborFiles } from './outputs.js'
 import type { Bundler } from './index.js'
 
 /**
@@ -22,16 +22,16 @@ import type { Bundler } from './index.js'
  * compacte). Le manifeste publié recopie cette règle (`µPath`, writeManifest) : la changer ici sans
  * l'y changer casse tous les chargements.
  */
-export function decodePathValue(cle: string, valeur: string): string {
-  return valeur.includes('.') ? valeur : `${valeur.slice(0, -FINGERPRINT_LENGTH)}${cle}-${valeur.slice(-FINGERPRINT_LENGTH)}.js`
+export function decodePathValue(key: string, value: string): string {
+  return value.includes('.') ? value : `${value.slice(0, -FINGERPRINT_LENGTH)}${key}-${value.slice(-FINGERPRINT_LENGTH)}.js`
 }
 
 /** forme la plus courte d'un nom de fichier (sans préfixe d'URL) ; garantie : decodePathValue la rend à l'identique */
-export function encodePathValue(cle: string, fichier: string): string {
-  const m = /^(.*)-([0-9a-z]{5})\.js$/.exec(fichier)
-  if (!m || !m[1].endsWith(cle)) return fichier
-  const compact = m[1].slice(0, m[1].length - cle.length) + m[2]
-  return !compact.includes('.') && decodePathValue(cle, compact) === fichier ? compact : fichier
+export function encodePathValue(key: string, file: string): string {
+  const m = /^(.*)-([0-9a-z]{5})\.js$/.exec(file)
+  if (!m || !m[1].endsWith(key)) return file
+  const compact = m[1].slice(0, m[1].length - key.length) + m[2]
+  return !compact.includes('.') && decodePathValue(key, compact) === file ? compact : file
 }
 
 /**
@@ -256,14 +256,18 @@ export function writeManifest(bundler: Bundler): void {
   // importe alors le fichier de page, déjà en cache, qui définit tous ces composants d'un coup).
   // Fiche absente (autre mode, autre page, rendu sans DOM) ou JSON abîmé : rien de posé, la table
   // reste celle du manifeste — jamais d'exception, la page doit démarrer quoi qu'il arrive.
+  // la fiche ne désigne qu'un fichier de page du dossier du cœur, sous la forme des valeurs de `µ.paths` : son nom seul quand le
+  // préfixe est factorisé, sinon ce nom derrière le dossier du cœur — jamais un autre dossier (`../`), une adresse à schéma ni `//hôte`
+  const pageDir   = compactable ? '' : bundler.coreHashedPath.slice(0, bundler.coreHashedPath.lastIndexOf('/') + 1)
+  const pageDirRe = pageDir.replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&')
   const pageBlock = [
     `let _mjs_page = null;`,
     `if (typeof document !== 'undefined') {`,
-    `  const _mjs_pageTag = document.getElementById('__mjs_page');`,
+    // la fiche est le <script type="application/json"> que le build écrit, jamais un autre élément du même id (contenu d'un visiteur rendu dans la page)
+    `  const _mjs_pageTag = document.querySelector('script#__mjs_page[type="application/json"]');`,
     `  try { _mjs_page = _mjs_pageTag ? JSON.parse(_mjs_pageTag.textContent) : null; } catch (e) { _mjs_page = null; }`,
     `}`,
-    // la fiche ne peut désigner qu'un fichier de page du site : jamais une adresse à schéma ni `//hôte`
-    `if (_mjs_page && typeof _mjs_page.file === 'string' && /^(?!\\/\\/)[\\w.\\/-]*mjs_page-[\\w.-]+\\.js$/.test(_mjs_page.file) && Array.isArray(_mjs_page.names)) { _mjs_page.names.forEach((n) => { µPaths[n] = _mjs_page.file; }); }`,
+    `if (_mjs_page && typeof _mjs_page.file === 'string' && /^${pageDirRe}mjs_page-[\\w.-]+\\.js$/.test(_mjs_page.file) && Array.isArray(_mjs_page.names)) { _mjs_page.names.forEach((n) => { µPaths[n] = _mjs_page.file; }); }`,
   ].join('\n')
   // table que suit le préchargement du démarrage, selon `blocks.preload` (cf. startDepsTable) : `null` = µDeps elle-même
   const startTable = startDepsTable(manifestDeps, bundler.manifestBranchDeps, bundler.blocksPreload)
@@ -434,7 +438,7 @@ export function writeManifest(bundler: Bundler): void {
   // téléchargement), et une erreur écrite au bout d'un délai fixe l'était sous un visiteur parti ; sans départ, l'échec se
   // dit tout de suite, la même erreur qu'avant (rejet non rattrapé). Posées APRÈS `µReady`, dans la même tâche (aucun
   // événement ne passe entre les deux) : le prologue et le corps de `µReady` restent tels qu'on les découpe ailleurs
-  const departLines = [
+  const startLines = [
     `if (typeof addEventListener === 'function') {`,
     `  let µLeft = false;`,
     `  const µLeave = () => { µLeft = true; };`,
@@ -475,7 +479,7 @@ export function writeManifest(bundler: Bundler): void {
     ...bodyLines.map(l => `  ${l}`),
     `});`,
     `if (typeof window !== 'undefined') { window.__mjsBundleReady = µReady; }`,
-    ...departLines,
+    ...startLines,
   ]
   // (protocole de navigation) — id de build GLOBAL, dérivé du CONTENU
   // assemblé ci-dessus (SAUF la ligne de version elle-même) : même style que
@@ -503,9 +507,13 @@ export function writeManifest(bundler: Bundler): void {
   // infinie. Fix : lit le contenu existant et skip l'écriture si identique
   // (comportement fonctionnel inchangé pour tout le reste — seul le
   // TOUCHER inutile du fichier est évité).
-  // construction qui écrit dans le dossier des sources : la marque en première ligne (cf. sortieDuBuild), hors de l'id de build
-  const newContent = (bundler['ecritDansSources']() ? `${MARQUE_SORTIE}\n` : '') + lines.join('\n')
-  if (existsSync(bundler.manifestPath)) {
+  // construction qui écrit dans le dossier des sources : la marque en première ligne (cf. isBuildOutput), hors de l'id de build
+  // texte arrêté du manifeste : gardé sur un octet par caractère en production (cf. oneByte du Bundler). L'adresse du cœur se cherche dans ce texte
+  // sans le décoder (visionneuse du journal, gabarit de page d'une appli hôte) : si elle porte un caractère au-delà de U+00FF, le manifeste sort tel quel
+  const body       = lines.join('\n')
+  const newContent = (bundler['writesToSources']() ? `${OUTPUT_MARK}\n` : '') + ([...bundler.coreHashedPath].every(c => c.charCodeAt(0) <= 0xFF) ? bundler['oneByte'](body).code : body)
+  // un lien vers un dossier ne se lit pas : l'aide commune des écritures le refuse plus bas, par son message
+  if (existsSync(bundler.manifestPath) && statSync(bundler.manifestPath).isFile()) {
     const current = readFileSync(bundler.manifestPath, 'utf-8')
     if (current === newContent) return
   }
@@ -542,8 +550,8 @@ export function bundleUnitOrder(bundler: Bundler): string[] {
   // un module chargé à la demande n'est pas importé d'office par l'entrée : un composant qui l'`@import`e le tire
   // par ses dépendances (visit ci-dessus), sinon il sort dans son propre fichier (cf. runBundleEsbuild) ; de même un module que
   // seuls des modules chargés à la demande importent
-  const reserves = bundler['bundleLazyOnlyModules']()
-  for (const stem of stems) if (!bundler['bundleLazyStems'].has(stem) && !reserves.has(stem)) visit(stem)
+  const reserved = bundler['bundleLazyOnlyModules']()
+  for (const stem of stems) if (!bundler['bundleLazyStems'].has(stem) && !reserved.has(stem)) visit(stem)
   return order
 }
 
@@ -556,35 +564,35 @@ export function bundleUnitOrder(bundler: Bundler): string[] {
 // demande, pas un lien).
 // --------------------------------------------------------------------------
 export function bundleLazyOnlyModules(bundler: Bundler): Set<string> {
-  const reserves = new Set<string>()
-  if (bundler['bundleLazyStems'].size === 0) return reserves
-  const re        = /(\bimport\s*\(\s*)?(['"])mjs:unit\/([^'"]+)\2/g
-  const statiques = new Map<string, string[]>()
-  const liens     = (stem: string): string[] => {
-    let l = statiques.get(stem)
+  const reserved = new Set<string>()
+  if (bundler['bundleLazyStems'].size === 0) return reserved
+  const re      = /(\bimport\s*\(\s*)?(['"])mjs:unit\/([^'"]+)\2/g
+  const statics = new Map<string, string[]>()
+  const links   = (stem: string): string[] => {
+    let l = statics.get(stem)
     if (!l) {
       l = []
       for (const m of (bundler['bundleVirtualSources'].get(stem) ?? '').matchAll(re)) if (!m[1]) l.push(m[3])
-      statiques.set(stem, l)
+      statics.set(stem, l)
     }
     return l
   }
-  const fermeture = (depart: Iterable<string>): Set<string> => {
-    const vus  = new Set<string>()
-    const pile = [...depart]
-    while (pile.length > 0) {
-      const s = pile.pop()!
-      if (vus.has(s)) continue
-      vus.add(s)
-      for (const d of liens(s)) pile.push(d)
+  const closer = (start: Iterable<string>): Set<string> => {
+    const seen  = new Set<string>()
+    const stack = [...start]
+    while (stack.length > 0) {
+      const s = stack.pop()!
+      if (seen.has(s)) continue
+      seen.add(s)
+      for (const d of links(s)) stack.push(d)
     }
-    return vus
+    return seen
   }
-  const estModule = (stem: string): boolean => /\.(?:civet|coffee)(?:\.mjs)?$/.test(bundler['pendingUnits'].get(stem)?.file ?? '')
-  const candidats = new Set([...fermeture(bundler['bundleLazyStems'])].filter(s => !bundler['bundleLazyStems'].has(s) && estModule(s)))
-  const atteints  = fermeture([...bundler['bundleVirtualSources'].keys()].filter(s => !bundler['bundleLazyStems'].has(s) && !candidats.has(s)))
-  for (const s of candidats) if (!atteints.has(s)) reserves.add(s)
-  return reserves
+  const isModule   = (stem: string): boolean => /\.(?:civet|coffee)(?:\.mjs)?$/.test(bundler['pendingUnits'].get(stem)?.file ?? '')
+  const candidates = new Set([...closer(bundler['bundleLazyStems'])].filter(s => !bundler['bundleLazyStems'].has(s) && isModule(s)))
+  const reached    = closer([...bundler['bundleVirtualSources'].keys()].filter(s => !bundler['bundleLazyStems'].has(s) && !candidates.has(s)))
+  for (const s of candidates) if (!reached.has(s)) reserved.add(s)
+  return reserved
 }
 
 // --------------------------------------------------------------------------
@@ -675,7 +683,7 @@ export async function runBundleEsbuild(bundler: Bundler): Promise<{ code: string
           : null
         const contents = key !== null ? sources.get(key) : undefined
         if (contents === undefined) {
-          throw new Error(t('bundler.index.js-bundle-module-virtuel-introuvable', { specificateur: args.path }))
+          throw new Error(t('bundler.index.js-bundle-module-virtual-not-found', { specifier: args.path }))
         }
         return { contents, loader: 'js' }
       })
@@ -729,7 +737,7 @@ export async function runBundleEsbuild(bundler: Bundler): Promise<{ code: string
   try {
     result = shouldMinify ? await withMangleCacheLock(bundler.mangleCache, runOnce) : await runOnce()
   } catch (e: any) {
-    throw new Error(t('bundler.index.js-bundle-echec', { raison: e?.message ?? String(e) }))
+    throw new Error(t('bundler.index.js-bundle-failed', { reason: e?.message ?? String(e) }))
   }
   // esbuild N'AJOUTE PAS ses nouvelles entrées AU mangleCache passé — il ne fait que les
   // RENDRE dans `result.mangleCache` (mesuré, même contrat que transform()/minifyJs()) :
@@ -739,57 +747,58 @@ export async function runBundleEsbuild(bundler: Bundler): Promise<{ code: string
   if (!lazy) {
     const jsFile = result.outputFiles!.find(f => f.path.endsWith('.js')) ?? result.outputFiles![0]
     const mapFile = result.outputFiles!.find(f => f.path.endsWith('.map'))
-    return { code: jsFile.text, map: mapFile?.text, chunks: [] }
+    // texte arrêté du fichier unique : gardé sur un octet par caractère en production (cf. oneByte du Bundler), sa carte suit
+    return { ...bundler['oneByte'](jsFile.text, mapFile?.text), chunks: [] }
   }
   // fichier unique coupé : chaque sortie autre que l'entrée prend un nom `<base>-<8 hexadécimaux>.js` de la famille des
   // fichiers du projet (l'empreinte d'esbuild, déterministe, en est la graine) et chaque renvoi d'un fichier à l'autre suit
-  const sorties = result.outputFiles!
-  const js      = sorties.filter(f => f.path.endsWith('.js'))
-  const noms    = new Map<string, string>()
+  const outputs = result.outputFiles!
+  const js      = outputs.filter(f => f.path.endsWith('.js'))
+  const names   = new Map<string, string>()
   for (const f of js) {
-    const nom = basename(f.path)
-    if (nom === `${entryName}.js`) continue
-    noms.set(nom, `${nom.replace(/-[A-Z0-9]{8}\.js$/, '').replace(/\.js$/, '')}-${createHash('md5').update(nom).digest('hex').slice(0, 8)}.js`)
+    const name = basename(f.path)
+    if (name === `${entryName}.js`) continue
+    names.set(name, `${name.replace(/-[A-Z0-9]{8}\.js$/, '').replace(/\.js$/, '')}-${createHash('md5').update(name).digest('hex').slice(0, 8)}.js`)
   }
-  const renomme = (texte: string): string => { let out = texte; for (const [ancien, nouveau] of noms) out = out.split(ancien).join(nouveau); return out }
-  const carteDe = (f: { path: string }): string | undefined => { const c = sorties.find(o => o.path === `${f.path}.map`); return c ? renomme(c.text) : undefined }
-  const entree  = js.find(f => basename(f.path) === `${entryName}.js`)
-  if (!entree) throw new Error(t('bundler.index.js-bundle-echec', { raison: `${entryName}.js` }))
-  const texteEntree = renomme(entree.text)
+  const rename = (text: string): string => { let out = text; for (const [old, fresh] of names) out = out.split(old).join(fresh); return out }
+  const mapOf  = (f: { path: string }): string | undefined => { const c = outputs.find(o => o.path === `${f.path}.map`); return c ? rename(c.text) : undefined }
+  const entry  = js.find(f => basename(f.path) === `${entryName}.js`)
+  if (!entry) throw new Error(t('bundler.index.js-bundle-failed', { reason: `${entryName}.js` }))
+  const entryText = rename(entry.text)
+  // textes arrêtés de l'entrée et de chaque morceau : gardés sur un octet par caractère en production (cf. oneByte du Bundler), leurs cartes suivent
   return {
-    code:   `${texteEntree}${texteEntree.endsWith('\n') ? '' : '\n'}//# mjsVersion=${bundler.lastBuildId ?? ''}\n`,
-    map:    carteDe(entree),
-    chunks: js.filter(f => f !== entree).map(f => ({ name: noms.get(basename(f.path))!, code: renomme(f.text), map: carteDe(f) })),
+    ...bundler['oneByte'](`${entryText}${entryText.endsWith('\n') ? '' : '\n'}//# mjsVersion=${bundler.lastBuildId ?? ''}\n`, mapOf(entry)),
+    chunks: js.filter(f => f !== entry).map(f => ({ name: names.get(basename(f.path))!, ...bundler['oneByte'](rename(f.text), mapOf(f)) })),
   }
 }
 
 export function writeBundleChunks(bundler: Bundler, chunks: Array<{ name: string; code: string; map?: string }>): void {
   const dir      = dirname(bundler.manifestPath)
   const sameDir  = (a: string, b: string): boolean => { try { return realpathSync(a) === realpathSync(b) } catch { return a === b } }
-  const enSortie = sameDir(dir, bundler.outputDir)
-  const courants = new Set<string>()
+  const inOutput = sameDir(dir, bundler.outputDir)
+  const current  = new Set<string>()
   if (chunks.length > 0 && !existsSync(dir)) mkdirSync(dir, { recursive: true })
   for (const c of chunks) {
     bundler['assertValidEsm'](c.code, c.name)
-    const contenu = c.map ? `${c.code}\n//# sourceMappingURL=${c.name}.map\n` : c.code
+    const content = c.map ? `${c.code}\n//# sourceMappingURL=${c.name}.map\n` : c.code
     if (c.map) bundler['writeFileAtomic'](join(dir, `${c.name}.map`), c.map)
-    bundler['writeFileAtomic'](join(dir, c.name), contenu)
-    courants.add(c.name)
-    if (c.map) courants.add(`${c.name}.map`)
-    if (enSortie) bundler['emittedThisCompile'].add(c.name)
+    bundler['writeFileAtomic'](join(dir, c.name), content)
+    current.add(c.name)
+    if (c.map) current.add(`${c.name}.map`)
+    if (inOutput) bundler['emittedThisCompile'].add(c.name)
   }
   // Ce que ce build a écrit avant — lui-même, ou un build d'un autre processus que le registre a consigné — et qu'il n'écrit plus
   // part après la publication du manifeste s'il est REMPLACÉ (un morceau de même base y prend sa place) ou s'il vient de cette
   // instance. Un fichier que personne n'a consigné n'est jamais retiré, quelle que soit la forme de son nom (`chunk-deadbeef.js`
   // d'un auteur) ; un module disparu sans successeur laisse ses fichiers à la purge de `mjs build` (cf. pruneBundleChunks).
   const base   = (n: string): string => n.replace(/-[a-f0-9]{8}\.js(?:\.map)?$/, '')
-  const bases  = new Set([...courants].map(base))
-  const avant  = new Set([...bundler['bundleChunkFiles'], ...bundleNeighborFiles(bundler.manifestPath)])
-  for (const f of avant) {
-    if (courants.has(f)) continue
+  const bases  = new Set([...current].map(base))
+  const before = new Set([...bundler['bundleChunkFiles'], ...bundleNeighborFiles(bundler.manifestPath)])
+  for (const f of before) {
+    if (current.has(f)) continue
     if (bundler['bundleChunkFiles'].has(f) || bases.has(base(f))) bundler['pendingHashCleanup'].push(join(dir, f))
   }
-  bundler['bundleChunkFiles'] = courants
+  bundler['bundleChunkFiles'] = current
 }
 
 // --------------------------------------------------------------------------
@@ -823,26 +832,27 @@ export async function writeBundleManifest(bundler: Bundler): Promise<void> {
   if (!existsSync(dirname(bundler.manifestPath))) {
     mkdirSync(dirname(bundler.manifestPath), { recursive: true })
   }
-  // construction qui écrit dans le dossier des sources : la marque en première ligne (cf. sortieDuBuild), et la carte suit ce
+  // construction qui écrit dans le dossier des sources : la marque en première ligne (cf. isBuildOutput), et la carte suit ce
   // décalage d'une ligne (un `;` de plus en tête de `mappings`)
-  const marque   = bundler['ecritDansSources']()
-  let newContent = marque ? `${MARQUE_SORTIE}\n${code}` : code
+  const mark     = bundler['writesToSources']()
+  let newContent = mark ? `${OUTPUT_MARK}\n${code}` : code
   if (map) {
     const mapName = `${basename(bundler.manifestPath)}.map`
     newContent = `${newContent}\n//# sourceMappingURL=${mapName}\n`
-    let carte = map
-    if (marque) {
-      const lue = JSON.parse(map)
-      lue.mappings = `;${lue.mappings}`
-      carte = JSON.stringify(lue)
+    let finalMap = map
+    if (mark) {
+      const read = JSON.parse(map)
+      read.mappings = `;${read.mappings}`
+      finalMap = JSON.stringify(read)
     }
     // carte identique non retouchée : sous un dossier surveillé, chaque écriture relançait une construction
-    bundler['writeIfChanged'](join(dirname(bundler.manifestPath), mapName), carte)
+    bundler['writeIfChanged'](join(dirname(bundler.manifestPath), mapName), finalMap)
   }
   // même garde skip-si-identique que writeManifest() (cf. son commentaire détaillé) : un
   // `mjs dev` dont rien n'a changé ne doit pas toucher le fichier (mtime stable, jamais de
   // boucle de recompilation).
-  if (existsSync(bundler.manifestPath)) {
+  // un lien vers un dossier ne se lit pas : l'aide commune des écritures le refuse plus bas, par son message
+  if (existsSync(bundler.manifestPath) && statSync(bundler.manifestPath).isFile()) {
     const current = readFileSync(bundler.manifestPath, 'utf-8')
     if (current === newContent) return
   }

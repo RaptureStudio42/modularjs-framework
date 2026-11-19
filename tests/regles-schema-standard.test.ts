@@ -39,7 +39,7 @@ const TYPES: Record<string, string> = {
 
 // une règle écrite comme dans <vars>, compilée comme le fait le build de production (sans texte)
 function regle(texte: string): any {
-  const ou   = { bloc: '<vars>', ligne: 1 }
+  const ou   = { block: '<vars>', line: 1 }
   const defs: Record<string, RuleAst> = {}
   for (const [k, v] of Object.entries(TYPES)) defs[k] = parseTypesBlock(`${k}\n${v.split('\n').map(l => '  ' + l).join('\n')}`, 0)[0].rule
   return new Function(`return ${emitRuntimeRule(resolveRule(parseRule(texte, ou), defs, ou), false)}`)()

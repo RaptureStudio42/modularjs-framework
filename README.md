@@ -38,6 +38,8 @@ Tout tourne en ligne sur le site officiel — **[mjs.rapturestudio.fr](https://m
 npm install modularjs-framework
 ```
 
+npm 11 peut avertir, à l'installation, que les scripts d'installation d'`esbuild` et de `@parcel/watcher` ne sont pas couverts par `allowScripts` (« npm warn allow-scripts … »). Il n'y a rien à faire : MJS n'a besoin d'aucun de ces deux scripts. esbuild prend son exécutable dans son paquet de plateforme, `@parcel/watcher` le sien, déjà compilé : une installation qui les saute (`npm install --ignore-scripts`) construit (`mjs build`) et recompile (`mjs dev`) comme une autre. Pour ne plus voir l'avertissement : `npm approve-scripts esbuild @parcel/watcher` ; npm inscrit leur version sous `allowScripts`, dans `package.json`, et l'avertissement revient avec une nouvelle version de l'un d'eux.
+
 Le paquet livre ses types TypeScript, en déclarations `.d.ts`, pour `modularjs-framework`, `modularjs-framework/cli`, `modularjs-framework/testing`, `modularjs-framework/ws` et `modularjs-framework/mjs-server` : un projet TypeScript les lit tels quels, en mode `strict` compris. Elles citent les types de Node.js : installez `@types/node` dans votre projet (`npm install --save-dev @types/node`), que le paquet déclare en dépendance pair facultative ; un projet JavaScript n'a rien à installer.
 
 ### Coloration dans l'éditeur
@@ -164,6 +166,8 @@ Everything runs online on the official site — **[mjs.rapturestudio.fr](https:/
 ```bash
 npm install modularjs-framework
 ```
+
+npm 11 may warn, during the install, that the install scripts of `esbuild` and `@parcel/watcher` are not covered by `allowScripts` ("npm warn allow-scripts …"). There is nothing to do: MJS needs neither of these two scripts. esbuild takes its executable from its platform package, `@parcel/watcher` its own, already compiled: an install that skips them (`npm install --ignore-scripts`) builds (`mjs build`) and recompiles (`mjs dev`) like any other. To stop seeing the warning: `npm approve-scripts esbuild @parcel/watcher`; npm records their version under `allowScripts`, in `package.json`, and the warning comes back with a new version of either of them.
 
 The package ships its TypeScript types, as `.d.ts` declarations, for `modularjs-framework`, `modularjs-framework/cli`, `modularjs-framework/testing`, `modularjs-framework/ws` and `modularjs-framework/mjs-server`: a TypeScript project reads them as is, `strict` mode included. They refer to the Node.js types: install `@types/node` in your project (`npm install --save-dev @types/node`), which the package declares as an optional peer dependency; a JavaScript project has nothing to install.
 

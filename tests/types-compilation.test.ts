@@ -8,7 +8,7 @@ import { extractSections } from '../src/transpiler/sections.js'
 import { transpile } from '../src/transpiler/index.js'
 import { parseRule } from '../src/transpiler/var-types.js'
 
-const DEFS = { Percent: parseRule('int 0..100', { bloc: '<types>', ligne: 1 }) }
+const DEFS = { Percent: parseRule('int 0..100', { block: '<types>', line: 1 }) }
 
 describe('types — le bloc <vars> dans un composant', () => {
   it('extractSections : le bloc, sa première ligne, et rien de lui dans le HTML', () => {

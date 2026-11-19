@@ -140,9 +140,11 @@ describe('mjs_ujs — le jeton CSRF porté en en-tête par une réponse de navig
     assert.equal(meta(ctx.document, 'csrf-token'), 'AVANT')
   })
 
-  it('réponse venue d\'une autre origine (redirection) : son jeton n\'est pas repris', async function () {
+  // une réponse d'une autre origine n'arrive jamais à la navigation comme une réussite : elle lui revient en échec, qui ne
+  // porte que son adresse (le navigateur y va lui-même, comme sans MJS), et rien d'elle ne passe, jeton compris
+  it('réponse venue d\'une autre origine (redirection) : rendue en échec, son jeton n\'est pas repris', async function () {
     const { ctx, fin } = naviguer({ url: 'https://tiers.example/x', entetes: { 'x-csrf-token': 'TIERS' }, corps: { module: 'mjs-x' } })
-    assert.equal(await fin, 'réussite')
+    assert.equal(await fin, 'refus')
     assert.equal(meta(ctx.document, 'csrf-token'), 'AVANT')
   })
 

@@ -161,10 +161,10 @@ function _mjsRulesStatus(r, v) {
 }
 
 // le message d'une valeur `v` que la règle `r` refuse ou ramène, à son niveau (ses champs et ses éléments ont été vus avant) ; une
-// valeur vide n'est obligatoire que si la règle refuse null (`nul` : elle l'accepte, par le choix qui la contient)
-function _mjsRulesSaid(r, v, nul) {
+// valeur vide n'est obligatoire que si la règle refuse null (`none` : elle l'accepte, par le choix qui la contient)
+function _mjsRulesSaid(r, v, none) {
   var l;
-  if (!nul && !_mjsRulesNull(r) && (v === void 0 || v === null || v === '' || (Array.isArray(v) && v.length === 0))) return _mjsRulesTxt('required');
+  if (!none && !_mjsRulesNull(r) && (v === void 0 || v === null || v === '' || (Array.isArray(v) && v.length === 0))) return _mjsRulesTxt('required');
   // passée sans ses interdits : c'est un interdit qui la refuse
   if (r.n !== void 0) {
     var s = _mjsRulesStatus(Object.assign({}, r, { n: void 0 }), v);
@@ -195,8 +195,8 @@ function _mjsRulesSaid(r, v, nul) {
 
 // les refus de `v` sous `r`, au plus profond : chaque champ et chaque élément refusés d'un objet ou d'une liste ont le leur ; un
 // conteneur n'a le sien que si aucun de ses champs ne l'explique (pas un objet, nombre d'éléments hors plage). Une règle ou null
-// (`int[] | null`) : la valeur se lit sous cette règle, jusque dans ses éléments, null y restant permis (`nul`)
-function _mjsRulesWalk(r, v, path, out, nul) {
+// (`int[] | null`) : la valeur se lit sous cette règle, jusque dans ses éléments, null y restant permis (`none`)
+function _mjsRulesWalk(r, v, path, out, none) {
   var s = _mjsRulesStatus(r, v);
   if (s === 0 || s === 1) return;
   var n = out.length, k, i, l;
@@ -215,7 +215,7 @@ function _mjsRulesWalk(r, v, path, out, nul) {
   else if (r.t === 'a' && Array.isArray(v) && (r.a === void 0 || v.length >= r.a) && (r.b === void 0 || v.length <= r.b)) {
     for (i = 0; i < v.length; i++) _mjsRulesWalk(r.e, v[i], path.concat(i), out);
   }
-  if (out.length === n) out.push({ message: _mjsRulesSaid(r, v, nul), path: path });
+  if (out.length === n) out.push({ message: _mjsRulesSaid(r, v, none), path: path });
 }
 
 // un formulaire reçu (`e` : ses champs en paires [nom, valeur], dans l'ordre) en objet, lu le long des champs de la règle : un champ

@@ -27,7 +27,7 @@ function makeClient(transport: MemoryTransport): any {
   ;(globalThis as any).WebSocket = function(url: string, protocols?: any) { return transport.connect({ url, protocols }) }
   return makeMu()
 }
-function hacherSecret(secret: string, salt: Buffer): Promise<string> {
+function hashSecret(secret: string, salt: Buffer): Promise<string> {
   return new Promise((resolve, reject) => scrypt(secret, salt, 64, (err, k) => err ? reject(err) : resolve(k.toString('hex'))))
 }
 
@@ -51,7 +51,7 @@ function connectAnonyme(transport: MemoryTransport, url: string): any {
 describe('MJS-WS — accounts.ts persist.load() en échec transitoire : retenté au prochain accès', () => {
   it("a. 1er load() qui lève, 2e qui réussit → le compte pré-existant redevient visible", async () => {
     const salt = randomBytes(16)
-    const hash = await hacherSecret('secretpreexistant1', salt)
+    const hash = await hashSecret('secretpreexistant1', salt)
     const preexistant: MjsWsAccountRecord = { id: 'preexistant-id', name: 'zora', hash, salt: salt.toString('hex'), roles: [], createdAt: Date.now(), seenAt: Date.now(), meta: {} }
 
     let loadCalls = 0
@@ -88,7 +88,7 @@ describe('MJS-WS — accounts.ts persist.load() en échec transitoire : retenté
 
   it("b. plus de doublon silencieux une fois la panne résolue — account:create voit l'existant", async () => {
     const salt = randomBytes(16)
-    const hash = await hacherSecret('secretpreexistant1', salt)
+    const hash = await hashSecret('secretpreexistant1', salt)
     const preexistant: MjsWsAccountRecord = { id: 'preexistant-id', name: 'zora', hash, salt: salt.toString('hex'), roles: [], createdAt: Date.now(), seenAt: Date.now(), meta: {} }
 
     let loadCalls = 0

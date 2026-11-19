@@ -24,18 +24,18 @@ function captureFirstWeakMap<T>(factory: () => T): { result: T; map: WeakMap<any
 
 describe('MJS-WS — schema.ts, table du throttle purgée (WeakMap, pas Map forte)', () => {
   it('createSchemaEngine construit une WeakMap pour lastErrorAt — pas une Map qui grossit sans borne', () => {
-    const stats: any = { messages: { binaireIgnorees: 0, texteRejete: 0 } }
+    const stats: any = { messages: { binaryIgnored: 0, textRejected: 0 } }
     const sent: any[] = []
     const resolved = resolveSchemaOptions({ codec: 'binary' })
     const { result: engine, map } = captureFirstWeakMap(() => createSchemaEngine(resolved, (_c, f) => sent.push(f), () => {}, stats))
     assert.ok(map, 'le moteur crée bien une WeakMap (capturée par le constructeur global instrumenté) — pas une Map forte')
 
     // fonctionnel : le throttle marche TOUJOURS exactement pareil pour un client donné — 1 µ:error
-    // envoyé par fenêtre (1 s), même si texteRejete (stats.ts) compte, LUI, chaque rejet
+    // envoyé par fenêtre (1 s), même si textRejected (stats.ts) compte, LUI, chaque rejet
     const c = fakeClient('c1')
     assert.equal(engine.rejectIfStrictText(c, 'chat:sansschema'), true)
     assert.equal(engine.rejectIfStrictText(c, 'chat:sansschema'), true)
-    assert.equal(stats.messages.texteRejete, 2, 'les DEUX rejets sont comptés (stats.ts)')
+    assert.equal(stats.messages.textRejected, 2, 'les DEUX rejets sont comptés (stats.ts)')
     assert.equal(sent.length, 1, 'mais un SEUL µ:error envoyé — throttlé dans la même seconde, comportement inchangé')
   })
 })

@@ -1,5 +1,5 @@
-// mjs-ws/comptes — paquet COMPTES & IDENTITÉS v1. MÊME patron que packages.ts::paquetEcho et
-// chat.ts::chatPackage (definirPaquet + installer composé SUR l'API PUBLIQUE app.serve — jamais par
+// mjs-ws/comptes — paquet COMPTES & IDENTITÉS v1. MÊME patron que packages.ts::echoPackage et
+// chat.ts::chatPackage (definePackage + install composé SUR l'API PUBLIQUE app.serve — jamais par
 // accès à l'interne de core.ts) : accountsPackage(opts) déclare 3 trames (préfixe `account:`)
 // utilisables APRÈS un hello anonyme, pour qu'une appli MJS autonome (SANS back Rails) puisse créer
 // des comptes, se connecter, rester connectée — et que les AUTRES paquets (chat/jeu/lobby) reçoivent
@@ -13,16 +13,16 @@
 //
 // Protocole (préfixe 'account:' — simple CONVENTION de nommage, comme 'chat:', PAS une réservation
 // façon µgame:) — utilisable dès le hello anonyme (aucun `auth` requis à la CONNEXION) :
-//   account:create       CLIENT→SERVEUR (requête, µ:ack)  { pseudo, secret }  → { ok, jeton } (création
+//   account:create       CLIENT→SERVEUR (requête, µ:ack)  { name, secret }  → { ok, token } (création
 //                       + connexion immédiate) ; refus : 'account-name-invalid' (format), 'account-
 //                       secret-short' (< 8), 'account-name-taken' (unicité, casse-insensible — donnée
 //                       seulement APRÈS la limite de contrôles par IP, cf. « Anti-DoS création »),
 //                       'account-throttled' (limite de contrôles PAR IP, ou seau anti-DoS PAR IP épuisé
 //                       juste avant le hachage scrypt, cf. « Anti-DoS création » plus bas — durci : accessible
 //                       en hello ANONYME + scrypt coûteux, aucune limite jusque-là), 'account-limit-reached'
-//                       (opts.maxComptes atteint), 'account-load-failed' (chargement initial des
+//                       (opts.maxAccounts atteint), 'account-load-failed' (chargement initial des
 //                       comptes déjà persistés en échec — rien créé, retenté au prochain appel).
-//   account:login   CLIENT→SERVEUR (requête, µ:ack)  { pseudo, secret }  → { ok, jeton } ; refus
+//   account:login   CLIENT→SERVEUR (requête, µ:ack)  { name, secret }  → { ok, token } ; refus
 //                       'account-denied' (message IDENTIQUE pseudo inexistant OU secret faux OU secret
 //                       qui n'est pas une chaîne — jamais d'énumération de comptes) ; 'account-throttled'
 //                       (budget d'échecs épuisé, ou réservé par des essais en vol).
@@ -62,12 +62,12 @@
 // HTTP maison — au choix de l'appli hôte) : cf. docs/27-accounts.md.
 //
 // Anti-force-brute — seau d'échecs PAR ADRESSE (capacité `bruteForce` ; une IPv6 compte pour tout son
-// préfixe /56, cf. `ipDe`) et budget PAR PSEUDO toutes adresses confondues (la même capacité), MÊME
+// préfixe /56, cf. `ipOf`) et budget PAR PSEUDO toutes adresses confondues (la même capacité), MÊME
 // PATRON que mjs-ws/bridge.ts (createBridgeRateLimiter) mais COPIÉ plutôt qu'importé : bridge.ts est le
 // pont HTTP (pas une dépendance saine pour un paquet WS pur). Budget du pseudo dépensé, il ne ferme pas
 // le compte à tous : une adresse qui a déjà raté ce compte pendant la fenêtre est arrêtée, une adresse
 // qui n'a encore rien raté essaie encore, une fois (`failuresByPair` ; une IPv6 compte alors pour tout son /48, cf.
-// `reseauDe`) — des échecs envoyés d'ailleurs ne verrouillent donc jamais le titulaire qui se connecte depuis une
+// `networkOf`) — des échecs envoyés d'ailleurs ne verrouillent donc jamais le titulaire qui se connecte depuis une
 // adresse propre, et tout un /48 ne gagne qu'un essai par minute sur un compte dont le budget est dépensé. Seul un plafond
 // dur par pseudo, dix fois plus haut, arrête une attaque répartie sur beaucoup d'adresses (et tout le
 // monde avec elle tant qu'il est atteint). Chaque essai RÉSERVE sa place dans chaque budget AVANT tout
@@ -85,9 +85,9 @@
 // PAS le seau, seule une tentative qui atteindrait le hachage compte — exactement le chemin visé par
 // le défaut (DoS CPU via scrypt), sans pénaliser un client qui enchaîne des essais de format invalide
 // (ex. validation côté formulaire). La tentative qui fait déborder le seau n'a donc payé AUCUN
-// hachage. Clé de repli 'inconnue' si l'IP n'est pas exposée par le transport (cf. `ipDe`) — jamais
-// un accès non limité. Défaut CONSERVATEUR (création = action rare, plus stricte que forceBrute car
-// scrypt coûte plus cher qu'une comparaison) : cf. `DEFAULT_CREATION_CAPACITY`/`opts.creationParIp`.
+// hachage. Clé de repli 'inconnue' si l'IP n'est pas exposée par le transport (cf. `ipOf`) — jamais
+// un accès non limité. Défaut CONSERVATEUR (création = action rare, plus stricte que bruteForce car
+// scrypt coûte plus cher qu'une comparaison) : cf. `DEFAULT_CREATION_CAPACITY`/`opts.createPerIp`.
 // La réponse « pseudo déjà pris », elle, dirait gratuitement qu'un compte existe : elle ne se donne
 // qu'après une limite de contrôles PAR IP (`nameChecksByIp`, `opts.nameCheckPerIp`), que chaque
 // demande arrivée au contrôle d'unicité consomme, pseudo pris ou libre ; une IP déjà arrêtée par le
@@ -138,7 +138,7 @@ export interface MjsWsAccountRecord {
 // --- le contrat de persistance (duck-typing STRICT, MÊME esprit que mjs-server/persist.ts — cf.
 // tête de fichier pour le POURQUOI d'un contrat séparé plutôt qu'un réemploi) --------------------
 //   load()            → Promise<MjsWsAccountRecord[]> — lu UNE FOIS, paresseusement, avant la
-//                        première trame compte:* traitée (cf. assurerCharge plus bas)
+//                        première trame compte:* traitée (cf. ensureLoaded plus bas)
 //   save(id, compte)  → void | Promise<void> — écrit/remplace l'entrée, jamais attendue par le
 //                        client (l'ack part dès que le jeton est signé, cf. accountsPackage)
 //   remove(id)        → void | Promise<void> — aucune trame v1 ne l'appelle (pas de suppression de
@@ -181,80 +181,80 @@ export interface FileAccountsPersistAdapterOpts {
 const defaultLog     = defaultLogOf('accounts')
 const fileDefaultLog = defaultLogOf('accounts:file')
 
-function estENOENT(err: unknown): boolean {
+function isENOENT(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as NodeJS.ErrnoException).code === 'ENOENT'
 }
 
 export class FileAccountsPersistAdapter implements MjsWsAccountsPersistAdapter {
   private _dir: string
   private _onLog: MjsWsLogFn
-  private _pret: Promise<void>
+  private _ready: Promise<void>
   private _inFlight = new Set<Promise<void>>()
 
   constructor(opts: FileAccountsPersistAdapterOpts) {
-    if (!opts.dir) throw new Error(t('ws.accounts.dir-manquant'))
+    if (!opts.dir) throw new Error(t('ws.accounts.dir-missing'))
     this._dir   = opts.dir
     this._onLog = opts.onLog ?? fileDefaultLog
-    this._pret  = mkdir(this._dir, { recursive: true }).then(() => {})
+    this._ready  = mkdir(this._dir, { recursive: true }).then(() => {})
   }
 
-  private _chemin(id: string): string { return join(this._dir, id + '.json') }
+  private _path(id: string): string { return join(this._dir, id + '.json') }
 
   async load(): Promise<MjsWsAccountRecord[]> {
-    await this._pret
-    let fichiers: string[]
-    try { fichiers = await readdir(this._dir) } catch { return [] }
-    const résultats: MjsWsAccountRecord[] = []
-    for (const fichier of fichiers) {
-      if (!fichier.endsWith('.json') || fichier.endsWith('.tmp.json')) continue   // '.tmp.json' termine aussi par '.json' — l'exclusion doit passer en second
+    await this._ready
+    let files: string[]
+    try { files = await readdir(this._dir) } catch { return [] }
+    const results: MjsWsAccountRecord[] = []
+    for (const file of files) {
+      if (!file.endsWith('.json') || file.endsWith('.tmp.json')) continue   // '.tmp.json' termine aussi par '.json' — l'exclusion doit passer en second
       try {
-        const brut   = await readFile(join(this._dir, fichier), 'utf8')
-        const account = JSON.parse(brut) as MjsWsAccountRecord
-        résultats.push(account)
+        const json   = await readFile(join(this._dir, file), 'utf8')
+        const account = JSON.parse(json) as MjsWsAccountRecord
+        results.push(account)
       } catch (err) {
-        this._onLog('warn', t('ws.accounts.fichier-corrompu-ignore', { fichier }), { err: err instanceof Error ? err.message : String(err) })
+        this._onLog('warn', t('ws.accounts.file-corrupt-ignored', { file }), { err: err instanceof Error ? err.message : String(err) })
       }
     }
-    return résultats
+    return results
   }
 
   // rend la promesse d'écriture — AVANT, `void` strict : un échec (disque plein, dossier
-  // interdit…) était avalé par _ecrireAtomique et invisible du caller direct, `account-persist-
+  // interdit…) était avalé par _writeAtomic et invisible du caller direct, `account-persist-
   // failed` (cf. accounts.ts, account:create) ne pouvait donc jamais se déclencher avec cet
-  // adaptateur. `_suivre` reste le filet de sécurité (cf. son commentaire) pour un appelant qui
+  // adaptateur. `_track` reste le filet de sécurité (cf. son commentaire) pour un appelant qui
   // n'attendrait pas ce retour (usage admin direct de l'adaptateur, hors protocole).
   save(id: string, account: MjsWsAccountRecord): Promise<void> {
-    const p = this._ecrireAtomique(id, account)
-    this._suivre(p, `save('${id}')`)
+    const p = this._writeAtomic(id, account)
+    this._track(p, `save('${id}')`)
     return p
   }
 
   remove(id: string): void {
-    const p = unlink(this._chemin(id)).catch((err) => {
-      if (estENOENT(err)) return
-      this._onLog('warn', t('ws.accounts.remove-echoue', { id }), { err: err instanceof Error ? err.message : String(err) })
+    const p = unlink(this._path(id)).catch((err) => {
+      if (isENOENT(err)) return
+      this._onLog('warn', t('ws.accounts.remove-failed', { id }), { err: err instanceof Error ? err.message : String(err) })
     })
-    this._suivre(p, `remove('${id}')`)
+    this._track(p, `remove('${id}')`)
   }
 
   async flush(): Promise<void> {
     await Promise.allSettled(Array.from(this._inFlight))
   }
 
-  private _suivre(p: Promise<void>, label: string): void {
+  private _track(p: Promise<void>, label: string): void {
     this._inFlight.add(p)
-    p.catch(err => this._onLog('warn', t('ws.accounts.rejet-non-intercepte', { label }), { err: err instanceof Error ? err.message : String(err) }))
+    p.catch(err => this._onLog('warn', t('ws.accounts.unhandled-rejection', { label }), { err: err instanceof Error ? err.message : String(err) }))
       .finally(() => this._inFlight.delete(p))
   }
 
-  private async _ecrireAtomique(id: string, account: MjsWsAccountRecord): Promise<void> {
+  private async _writeAtomic(id: string, account: MjsWsAccountRecord): Promise<void> {
     const tmp = join(this._dir, id + '.' + randomBytes(4).toString('hex') + '.tmp.json')
     try {
-      await this._pret
+      await this._ready
       await writeFile(tmp, JSON.stringify(account))
-      await rename(tmp, this._chemin(id))
+      await rename(tmp, this._path(id))
     } catch (err) {
-      this._onLog('warn', t('ws.accounts.save-echoue', { id }), { err: err instanceof Error ? err.message : String(err) })
+      this._onLog('warn', t('ws.accounts.save-failed', { id }), { err: err instanceof Error ? err.message : String(err) })
       await unlink(tmp).catch(() => {})
       throw err   // propage — cf. save() ci-dessus, sans ce throw l'échec restait invisible du caller
     }
@@ -266,7 +266,7 @@ export class FileAccountsPersistAdapter implements MjsWsAccountsPersistAdapter {
 // par l'OWASP — 32 Mio de mémoire par calcul (N = 2^17, p = 1, en demanderait 128, à multiplier par les connexions
 // simultanées). Un hachage hexadécimal nu (compte écrit avant que les réglages ne soient enregistrés) vaut les réglages
 // de Node par défaut (N = 2^14, r = 8, p = 1) : il se vérifie tel quel et se refait aux réglages actuels à la première
-// connexion réussie (cf. verifierSecret). Coût réduit des essais (option `weakHashForTests`, jamais par défaut) : N = 2^10,
+// connexion réussie (cf. verifySecret). Coût réduit des essais (option `weakHashForTests`, jamais par défaut) : N = 2^10,
 // r = 8, p = 1, le plus bas que readHash relise, environ cent fois moins de calcul — une suite qui crée des comptes en rafale
 // tient sur une machine chargée
 
@@ -285,7 +285,7 @@ const SCRYPT_MAX_R    = 8
 const SCRYPT_MAX_P    = 4
 const SCRYPT_MAX_COST = 2 * 2 ** SCRYPT_CURRENT.ln * SCRYPT_CURRENT.r * SCRYPT_CURRENT.p
 
-function hacherSecret(secret: string, salt: Buffer, settings: ScryptSettings = SCRYPT_CURRENT): Promise<string> {
+function hashSecret(secret: string, salt: Buffer, settings: ScryptSettings = SCRYPT_CURRENT): Promise<string> {
   const N = 2 ** settings.ln
   return new Promise((resolve, reject) => {
     // maxmem : 128·N·r octets de travail, plus que le plafond par défaut de Node (32 Mio) dès N = 2^15
@@ -322,27 +322,27 @@ const DUMMY_SALT = Buffer.from('0'.repeat(32), 'hex')
 // d'un calcul aux réglages actuels, comme pour un compte à jour ou un pseudo absent : l'âge d'un hachage ne se lit pas
 // au chronomètre. Pseudo absent ou hachage illisible : hachage FACTICE de même coût (cf. DUMMY_SALT). `current` : réglages du
 // paquet (coût réduit des essais sous `weakHashForTests`), qui ne refait jamais un hachage enregistré plus faible
-async function verifierSecret(secret: string, account: MjsWsAccountRecord | undefined, current: ScryptSettings = SCRYPT_CURRENT): Promise<{ ok: boolean; redone?: { hash: string; salt: string } }> {
+async function verifySecret(secret: string, account: MjsWsAccountRecord | undefined, current: ScryptSettings = SCRYPT_CURRENT): Promise<{ ok: boolean; redone?: { hash: string; salt: string } }> {
   const stored = account ? readHash(account.hash) : null
   if (!account || !stored) {
-    await hacherSecret(secret, DUMMY_SALT, current)
+    await hashSecret(secret, DUMMY_SALT, current)
     return { ok: false }
   }
   const salt = Buffer.from(account.salt, 'hex')
   const s    = stored.settings
   if (s.ln === current.ln && s.r === current.r && s.p === current.p) {
-    return { ok: safeEqual(await hacherSecret(secret, salt, s), stored.key, 'hex') }
+    return { ok: safeEqual(await hashSecret(secret, salt, s), stored.key, 'hex') }
   }
   if (current !== SCRYPT_CURRENT) {
-    const essai = await hacherSecret(secret, salt, s).catch(() => null)
-    return { ok: essai !== null && safeEqual(essai, stored.key, 'hex') }
+    const computed = await hashSecret(secret, salt, s).catch(() => null)
+    return { ok: computed !== null && safeEqual(computed, stored.key, 'hex') }
   }
   const newSalt         = randomBytes(16)
   // réglages enregistrés que scrypt refuserait malgré les bornes de readHash : refus ordinaire, jamais le message d'OpenSSL,
   // au temps du calcul aux réglages actuels mené de front
-  const [essai, refait] = await Promise.all([hacherSecret(secret, salt, s).catch(() => null), hacherSecret(secret, newSalt)])
-  if (essai === null || !safeEqual(essai, stored.key, 'hex')) return { ok: false }
-  return { ok: true, redone: { hash: writeHash(SCRYPT_CURRENT, refait), salt: newSalt.toString('hex') } }
+  const [computed, rehashed] = await Promise.all([hashSecret(secret, salt, s).catch(() => null), hashSecret(secret, newSalt)])
+  if (computed === null || !safeEqual(computed, stored.key, 'hex')) return { ok: false }
+  return { ok: true, redone: { hash: writeHash(SCRYPT_CURRENT, rehashed), salt: newSalt.toString('hex') } }
 }
 
 // --- anti-force-brute — seau d'échecs PAR CLÉ (IP ou pseudo), MÊME PATRON que
@@ -351,10 +351,10 @@ async function verifierSecret(secret: string, account: MjsWsAccountRecord | unde
 // réservation doit lire le solde (TokenBucket n'expose que `take`), verrou `blockedUntil` posé quand
 // le budget est dépassé, éviction PARESSEUSE bornée (Map ordonnée par dernier accès). -----
 
-const ECHEC_ENTRY_TTL_MS = 10 * 60 * 1000   // entrée intacte depuis > 10 min → purgée au passage
-const ECHEC_SWEEP_MAX    = 8                // borne le coût d'un passage
+const FAILURE_ENTRY_TTL_MS = 10 * 60 * 1000   // entrée intacte depuis > 10 min → purgée au passage
+const FAILURE_SWEEP_MAX    = 8                // borne le coût d'un passage
 
-interface EchecEntry { tokens: number; refilledAt: number; reserved: number; blockedUntil: number; lastSeen: number }
+interface FailureEntry { tokens: number; refilledAt: number; reserved: number; blockedUntil: number; lastSeen: number }
 
 /**
  * Seau d'échecs — `isBlocked(cle)` / `recordFailure(cle)`, et `reserve(cle)` / `release(cle, échec)`
@@ -364,16 +364,16 @@ interface EchecEntry { tokens: number; refilledAt: number; reserved: number; blo
  * jamais d'adresse distincte en test (cf. tests/mjs-ws-accounts.test.ts pour le détail).
  */
 export class FailureBucket {
-  private _map = new Map<string, EchecEntry>()
+  private _map = new Map<string, FailureEntry>()
 
   constructor(private _capacity: number, private _windowMs: number) {}
 
-  private _touch(key: string, now: number): EchecEntry {
+  private _touch(key: string, now: number): FailureEntry {
     let evicted = 0
     for (const [k, e] of this._map) {
-      if (now - e.lastSeen <= ECHEC_ENTRY_TTL_MS) break   // Map ordonnée par ancienneté d'accès — le reste est plus récent
+      if (now - e.lastSeen <= FAILURE_ENTRY_TTL_MS) break   // Map ordonnée par ancienneté d'accès — le reste est plus récent
       this._map.delete(k)
-      if (++evicted >= ECHEC_SWEEP_MAX) break
+      if (++evicted >= FAILURE_SWEEP_MAX) break
     }
     let entry = this._map.get(key)
     if (entry) {
@@ -387,7 +387,7 @@ export class FailureBucket {
   }
 
   // jetons regagnés depuis le dernier passage — même calcul que TokenBucket::_refill (guard.ts)
-  private _refill(entry: EchecEntry): void {
+  private _refill(entry: FailureEntry): void {
     const t       = Date.now()
     const elapsed = t - entry.refilledAt
     if (elapsed <= 0) return
@@ -449,7 +449,7 @@ export class FailureBucket {
 // --- rôles — helper exporté, utilisable par les hooks des AUTRES paquets (ex. chat.moderateurs) --
 
 /** `hasRole(identity, 'admin')` — `identity` = `client.identity` (duck-typé `{roles: string[]}`,
- *  forme posée par le jeton compte, cf. emettreJeton) : `false` pour toute forme inattendue, jamais
+ *  forme posée par le jeton compte, cf. issueToken) : `false` pour toute forme inattendue, jamais
  *  un throw (identité anonyme, jeton d'un AUTRE mécanisme sans `roles`…). */
 export function hasRole(identity: unknown, role: string): boolean {
   if (!identity || typeof identity !== 'object') return false
@@ -511,7 +511,7 @@ export interface MjsWsAccountsOptions {
   bruteForce?: { capacity?: number; windowMs?: number }
   /** Anti-DoS création (account:create SEULEMENT, PAR IP — cf. tête de fichier « Anti-DoS création »,
    *  durci) — défaut CONSERVATEUR, 3 créations/minute/IP (seau
-   *  SÉPARÉ de `forceBrute`, MÊME mécanisme FailureBucket). */
+   *  SÉPARÉ de `bruteForce`, MÊME mécanisme FailureBucket). */
   createPerIp?: { capacity?: number; windowMs?: number }
   /** Anti-énumération (account:create SEULEMENT, PAR IP — cf. tête de fichier « Anti-DoS création ») —
    *  défaut 10 contrôles de pseudo/minute/IP : chaque demande arrivée au contrôle d'unicité en
@@ -531,41 +531,41 @@ export interface MjsWsAccountsOptions {
   onLog?: MjsWsLogFn
 }
 
-const DEFAULT_TTL                    = 7 * 24 * 3600   // 7 jours, secondes (signToken attend un ttl en secondes)
-const DEFAULT_FORCE_BRUTE_CAPACITY   = 5
-const DEFAULT_FORCE_BRUTE_WINDOW_MS  = 60000            // 1 minute
-const DEFAULT_CREATION_CAPACITY      = 3                // créations/IP/fenêtre — conservateur (scrypt coûteux, hello anonyme)
-const DEFAULT_CREATION_WINDOW_MS     = 60000            // 1 minute
-const DEFAULT_NAME_CHECK_CAPACITY    = 10               // contrôles de pseudo/IP/fenêtre — au-dessus du seau de création
-const DEFAULT_NAME_CHECK_WINDOW_MS   = 60000            // 1 minute
-const NAME_FAILURES_FACTOR           = 10               // plafond dur par pseudo, toutes adresses confondues = capacité × 10
+const DEFAULT_TTL                   = 7 * 24 * 3600   // 7 jours, secondes (signToken attend un ttl en secondes)
+const DEFAULT_BRUTE_FORCE_CAPACITY  = 5
+const DEFAULT_BRUTE_FORCE_WINDOW_MS = 60000            // 1 minute
+const DEFAULT_CREATION_CAPACITY     = 3                // créations/IP/fenêtre — conservateur (scrypt coûteux, hello anonyme)
+const DEFAULT_CREATION_WINDOW_MS    = 60000            // 1 minute
+const DEFAULT_NAME_CHECK_CAPACITY   = 10               // contrôles de pseudo/IP/fenêtre — au-dessus du seau de création
+const DEFAULT_NAME_CHECK_WINDOW_MS  = 60000            // 1 minute
+const NAME_FAILURES_FACTOR          = 10               // plafond dur par pseudo, toutes adresses confondues = capacité × 10
 
 // clés des options du paquet, dans l'ordre de MjsWsAccountsOptions — toute autre lève dès la construction, avec la plus
 // proche en suggestion (cf. accountsPackage). Une option lue par le paquet s'ajoute ici : un test garde l'accord entre
 // cette liste et les lectures `opts.…` d'accountsPackage
 const ACCOUNTS_OPTION_KEYS: readonly string[] = ['secret', 'persist', 'ttl', 'audience', 'issuer', 'roles', 'bruteForce', 'createPerIp', 'nameCheckPerIp', 'maxAccounts', 'weakHashForTests', 'onLog']
 
-// clé de seau-échecs d'un nom qui n'est pas une chaîne ou dépasse NOM_CLE_MAX — un SEUL panier partagé par tout
-// payload malformé (pas d'explosion de clés ni de clé de 60 Ko, cf. ECHEC_SWEEP_MAX) ; le seau par adresse reste, lui,
-// TOUJOURS discriminant (cf. ipDe) — un payload malformé n'échappe donc jamais à la limite de débit. La recherche du
+// clé de seau-échecs d'un nom qui n'est pas une chaîne ou dépasse KEY_NAME_MAX — un SEUL panier partagé par tout
+// payload malformé (pas d'explosion de clés ni de clé de 60 Ko, cf. FAILURE_SWEEP_MAX) ; le seau par adresse reste, lui,
+// TOUJOURS discriminant (cf. ipOf) — un payload malformé n'échappe donc jamais à la limite de débit. La recherche du
 // compte, elle, se fait sur le nom tel quel (cf. account:login)
-const ECHEC_CLE_INVALIDE = '\0invalide'
+const FAILURE_INVALID_KEY = '\0invalide'
 // un nom plus court a sa propre clé, même hors du format des pseudos : un compte persisté par un adaptateur maison
 // (base reprise d'un autre système : point, accent, adresse de courriel) a ses budgets comme les autres
-const NOM_CLE_MAX = 254
+const KEY_NAME_MAX = 254
 
 // adresse qui compte pour les budgets PAR ADRESSE — une IPv6 compte pour tout son préfixe /56, comme pour toutes les
 // limites par adresse du serveur (cf. transport.ts::addressForLimits)
-function ipDe(client: MjsWsClient): string {
-  return addressForLimits(client.meta.address) ?? 'inconnue'
+function ipOf(client: MjsWsClient): string {
+  return addressForLimits(client.meta.address) ?? 'unknown'
 }
 
 // réseau d'une source neuve sur un compte dont le budget est dépensé (cf. failuresByPair) — une IPv6 compte pour tout
 // son /48, qu'un tunnel donne gratuitement : ses 256 préfixes /56 ne valent qu'un essai
-function reseauDe(client: MjsWsClient): string {
-  const adresse = normalizeRemoteAddress(client.meta.address)
-  if (adresse === undefined) return 'inconnue'
-  return isIP(adresse) === 6 ? ipv6Prefix(adresse, 48) : adresse
+function networkOf(client: MjsWsClient): string {
+  const address = normalizeRemoteAddress(client.meta.address)
+  if (address === undefined) return 'unknown'
+  return isIP(address) === 6 ? ipv6Prefix(address, 48) : address
 }
 
 /**
@@ -581,17 +581,17 @@ function reseauDe(client: MjsWsClient): string {
  * fichier — cf. docs/27-accounts.md « Démarrer ».
  */
 export function accountsAuth(secret: string, opts: VerifyTokenOpts = {}): (hello: MjsWsHelloPayload, meta: MjsWsRemoteInfo) => unknown {
-  const verifier = jwtAuth(secret, opts)
+  const verify = jwtAuth(secret, opts)
   return (hello, meta) => {
     const raw   = hello?.auth as unknown
     const token = typeof raw === 'string' ? raw : (raw && typeof raw === 'object' ? (raw as { token?: unknown }).token : undefined)
     if (typeof token !== 'string' || token === '') return undefined   // pas de jeton — anonyme AUTORISÉ
-    return verifier(hello, meta)
+    return verify(hello, meta)
   }
 }
 
 /** types de trame servis par le paquet comptes — avec le battement et le rafraîchissement, les seuls ouverts à un
- *  visiteur sans compte accueilli d'une adresse au banc (core.ts, refuseAuBanc). Un type servi en plus par le paquet
+ *  visiteur sans compte accueilli d'une adresse au banc (core.ts, rejectBenched). Un type servi en plus par le paquet
  *  s'ajoute ici : un test garde l'accord entre cette liste et les `serve('account:…')` ci-dessous */
 export const ACCOUNTS_TYPES: readonly string[] = Object.freeze(['account:create', 'account:login', 'account:logout'])
 
@@ -607,7 +607,7 @@ export function accountsPackage(opts: MjsWsAccountsOptions): MjsPackage {
   // accountsAuth(secret, { audience }) refusait ensuite en silence) ; `secrte` nomme ainsi `secret`, pas seulement son absence
   if (opts && typeof opts === 'object' && !Array.isArray(opts)) checkOptionKeys(opts, ACCOUNTS_OPTION_KEYS, 'accountsPackage')
   if (!opts || typeof opts.secret !== 'string' || opts.secret === '') {
-    throw new Error(t('ws.accounts.secret-manquant'))
+    throw new Error(t('ws.accounts.secret-missing'))
   }
   // site et émetteur posés dans les jetons émis (`aud`, `iss`) — mêmes validations que jwtAuth : une audience en liste
   // part telle quelle (verifyToken lit un `aud` en liste), un émetteur en liste part par sa première valeur (un `iss` est
@@ -620,23 +620,23 @@ export function accountsPackage(opts: MjsWsAccountsOptions): MjsPackage {
   const onLog = opts.onLog ?? defaultLog
   const persist = opts.persist ?? new MemoryAccountsPersistAdapter()
   if (!opts.persist) {
-    onLog('warn', t('ws.accounts.adaptateur-memoire-defaut'))
+    onLog('warn', t('ws.accounts.adapter-memory-default'))
   }
   const ttl = opts.ttl ?? DEFAULT_TTL
   // coût du hachage des secrets : celui de la production, sauf `weakHashForTests: true` (essais seulement)
-  const reglages = opts.weakHashForTests === true ? SCRYPT_TESTS : SCRYPT_CURRENT
+  const hashSettings = opts.weakHashForTests === true ? SCRYPT_TESTS : SCRYPT_CURRENT
   // l'option se voit : un avertissement au démarrage, une fois par paquet, par le journal du paquet (la console sans `onLog`)
-  if (reglages === SCRYPT_TESTS) onLog('warn', t('ws.accounts.hachage-reduit-essais'))
-  const forceBruteCapacity = opts.bruteForce?.capacity ?? DEFAULT_FORCE_BRUTE_CAPACITY
-  const forceBruteWindowMs = opts.bruteForce?.windowMs ?? DEFAULT_FORCE_BRUTE_WINDOW_MS
-  const failuresByIp     = new FailureBucket(forceBruteCapacity, forceBruteWindowMs)
+  if (hashSettings === SCRYPT_TESTS) onLog('warn', t('ws.accounts.hashing-reduced-attempts'))
+  const bruteForceCapacity = opts.bruteForce?.capacity ?? DEFAULT_BRUTE_FORCE_CAPACITY
+  const bruteForceWindowMs = opts.bruteForce?.windowMs ?? DEFAULT_BRUTE_FORCE_WINDOW_MS
+  const failuresByIp       = new FailureBucket(bruteForceCapacity, bruteForceWindowMs)
   // budget d'un pseudo, toutes adresses confondues ; dépensé, seule une source sans échec récent sur ce pseudo essaie
-  // encore, une fois (failuresByPair, par réseau : une IPv6 y compte pour son /48, cf. reseauDe) — des échecs venus
+  // encore, une fois (failuresByPair, par réseau : une IPv6 y compte pour son /48, cf. networkOf) — des échecs venus
   // d'ailleurs ne verrouillent pas le titulaire (cf. tête de fichier)
-  const failuresByName = new FailureBucket(forceBruteCapacity, forceBruteWindowMs)
-  const failuresByPair = new FailureBucket(1, forceBruteWindowMs)
+  const failuresByName = new FailureBucket(bruteForceCapacity, bruteForceWindowMs)
+  const failuresByPair = new FailureBucket(1, bruteForceWindowMs)
   // plafond dur d'une attaque répartie sur beaucoup d'adresses : au-delà, le compte est fermé à tous
-  const nameCeiling    = new FailureBucket(forceBruteCapacity * NAME_FAILURES_FACTOR, forceBruteWindowMs)
+  const nameCeiling    = new FailureBucket(bruteForceCapacity * NAME_FAILURES_FACTOR, bruteForceWindowMs)
 
   // anti-DoS création (account:create SEULEMENT, PAR IP — cf. tête de fichier « Anti-DoS création »)
   const creationCapacity = opts.createPerIp?.capacity ?? DEFAULT_CREATION_CAPACITY
@@ -656,18 +656,18 @@ export function accountsPackage(opts: MjsWsAccountsOptions): MjsPackage {
   // elle, deux créations concurrentes du MÊME pseudo passent TOUTES LES DEUX le contrôle synchrone
   // (race TOCTOU) et persistent chacune un compte distinct sous le même nom.
   const pendingNames = new Set<string>()
-  // pseudos d'enregistrements relus mais illisibles (cf. assurerCharge) — consultée au contrôle
+  // pseudos d'enregistrements relus mais illisibles (cf. ensureLoaded) — consultée au contrôle
   // d'unicité : un compte abîmé qui porte encore son pseudo ne se reprend pas en recréant ce nom
   const damagedNames = new Set<string>()
-  let charge: Promise<boolean> | null = null
+  let loading: Promise<boolean> | null = null
 
   // rend `true` une fois les comptes déjà persistés chargés en mémoire, `false` si CET appel a
   // échoué (jamais un throw ici — account:login doit continuer à traiter le compte comme
   // introuvable, MÊME message qu'un pseudo absent, cf. tête de fichier « anti-énumération » ;
   // account:create, lui, lit ce retour et refuse explicitement, cf. plus bas).
-  function assurerCharge(): Promise<boolean> {
-    if (!charge) {
-      charge = Promise.resolve(persist.load()).then(rows => {
+  function ensureLoaded(): Promise<boolean> {
+    if (!loading) {
+      loading = Promise.resolve(persist.load()).then(rows => {
         for (const c of rows) {
           if (isReadableRecord(c)) {
             byName.set(c.name.toLowerCase(), c); byId.set(c.id, c)
@@ -675,23 +675,23 @@ export function accountsPackage(opts: MjsWsAccountsOptions): MjsPackage {
           }
           // écarté avec un avertissement, jamais bloquant ; son pseudo, s'il est lisible, reste pris —
           // ni hash ni sel au journal, seulement de quoi retrouver l'enregistrement
-          const brut = (c && typeof c === 'object' ? c : {}) as Record<string, unknown>
-          const name = typeof brut.name === 'string' ? brut.name : undefined
+          const json = (c && typeof c === 'object' ? c : {}) as Record<string, unknown>
+          const name = typeof json.name === 'string' ? json.name : undefined
           if (name != null) damagedNames.add(name.toLowerCase())
-          onLog('warn', t('ws.accounts.enregistrement-incomplet-ignore', { id: typeof brut.id === 'string' ? brut.id : '?' }), { name })
+          onLog('warn', t('ws.accounts.record-incomplete-ignored', { id: typeof json.id === 'string' ? json.id : '?' }), { name })
         }
         return true
       }).catch(err => {
-        onLog('warn', t('ws.accounts.persist-load-echoue'), { err: err instanceof Error ? err.message : String(err) })
+        onLog('warn', t('ws.accounts.persist-load-failed'), { err: err instanceof Error ? err.message : String(err) })
         // garde muette — SANS ça, `charge` restait posé (promesse
         // déjà réglée) même après un échec : une panne TRANSITOIRE (réseau, disque) rendait TOUS les
         // comptes déjà persistés invisibles à vie et autorisait des doublons de pseudo silencieux.
         // Retenté au PROCHAIN appel — jamais de retentative dans la foulée (pas de boucle serrée).
-        charge = null
+        loading = null
         return false
       })
     }
-    return charge
+    return loading
   }
 
   // id de compte UNIQUE — revérifie `byId` (même patron que
@@ -705,11 +705,11 @@ export function accountsPackage(opts: MjsWsAccountsOptions): MjsPackage {
     return id
   }
 
-  async function resoudreRoles(account: MjsWsAccountRecord): Promise<string[]> {
+  async function resolveRoles(account: MjsWsAccountRecord): Promise<string[]> {
     return opts.roles ? await opts.roles(account) : account.roles
   }
 
-  function emettreJeton(account: MjsWsAccountRecord, roles: string[]): string {
+  function issueToken(account: MjsWsAccountRecord, roles: string[]): string {
     return signToken({ id: account.id, name: account.name, roles, ...claims }, opts.secret, { ttl })
   }
 
@@ -718,9 +718,9 @@ export function accountsPackage(opts: MjsWsAccountsOptions): MjsPackage {
     app.serve('account:create', async (p, client) => {
       // le chargement initial DOIT avoir réussi avant toute création — sans ce refus, un load()
       // en échec laisse byName vide et la création se poursuit dessus : doublon de pseudo silencieux
-      // dès que la panne se résorbe (cf. assurerCharge, `false` = CET appel a échoué). Rien n'est
+      // dès que la panne se résorbe (cf. ensureLoaded, `false` = CET appel a échoué). Rien n'est
       // créé, aucun index touché ; un appel ultérieur retente automatiquement le chargement.
-      if (!(await assurerCharge())) throw new Error('account-load-failed')
+      if (!(await ensureLoaded())) throw new Error('account-load-failed')
       // le plafond compte aussi les réservations EN COURS (pendingNames) — sinon deux créations
       // concurrentes de pseudos DIFFÉRENTS passent toutes les DEUX ce contrôle synchrone avant que
       // l'une des deux n'ait eu le temps d'écrire dans byName (await scrypt derrière, cf. plus bas).
@@ -732,7 +732,7 @@ export function accountsPackage(opts: MjsWsAccountsOptions): MjsPackage {
       // anti-énumération — « pseudo déjà pris » dirait gratuitement qu'un compte existe : la limite
       // PAR IP passe AVANT (un contrôle consommé, pseudo pris ou libre), et une IP déjà arrêtée par le
       // seau de création reçoit le même refus quel que soit le pseudo
-      const ip = ipDe(client)
+      const ip = ipOf(client)
       if (createFailuresByIp.isBlocked(ip) || !nameChecksByIp.recordFailure(ip)) throw new Error('account-throttled')
       const key = name.toLowerCase()
       if (byName.has(key) || pendingNames.has(key) || damagedNames.has(key)) throw new Error('account-name-taken')
@@ -751,7 +751,7 @@ export function accountsPackage(opts: MjsWsAccountsOptions): MjsPackage {
         if (!createFailuresByIp.recordFailure(ip)) throw new Error('account-throttled')
 
         const salt  = randomBytes(16)
-        const hash = writeHash(reglages, await hacherSecret(secret, salt, reglages))
+        const hash = writeHash(hashSettings, await hashSecret(secret, salt, hashSettings))
         const now = Date.now()
         const account: MjsWsAccountRecord = {
           id: genId(), name, hash, salt: salt.toString('hex'), roles: [], createdAt: now, seenAt: now, meta: {},
@@ -763,27 +763,27 @@ export function accountsPackage(opts: MjsWsAccountsOptions): MjsPackage {
         try {
           await Promise.resolve(persist.save(account.id, account))
         } catch (err) {
-          onLog('error', t('ws.accounts.persist-echec', { name }), { err: err instanceof Error ? err.message : String(err) })
+          onLog('error', t('ws.accounts.persist-failed', { name }), { err: err instanceof Error ? err.message : String(err) })
           throw new Error('account-persist-failed')
         }
         byName.set(key, account); byId.set(account.id, account)
 
-        const roles = await resoudreRoles(account)
-        return { ok: true, token: emettreJeton(account, roles) }
+        const roles = await resolveRoles(account)
+        return { ok: true, token: issueToken(account, roles) }
       } finally {
         pendingNames.delete(key)
       }
     })
 
     app.serve('account:login', async (p, client) => {
-      await assurerCharge()
-      const name = p?.name
+      await ensureLoaded()
+      const name   = p?.name
       const secret = p?.secret
-      const ip      = ipDe(client)
+      const ip     = ipOf(client)
       // recherche : le nom tel quel, en minuscules, comme à la création et au chargement — un compte persisté peut porter
       // un nom hors du format des pseudos ; seule la clé des budgets est bornée
-      const nomMin  = typeof name === 'string' ? name.toLowerCase() : undefined
-      const nameKey = nomMin !== undefined && nomMin.length <= NOM_CLE_MAX ? nomMin : ECHEC_CLE_INVALIDE
+      const lowerName  = typeof name === 'string' ? name.toLowerCase() : undefined
+      const nameKey = lowerName !== undefined && lowerName.length <= KEY_NAME_MAX ? lowerName : FAILURE_INVALID_KEY
 
       // secret qui n'est pas une chaîne : refusé tout de suite, AVANT de chercher le compte — même
       // chemin et même temps (aucun hachage), que le pseudo existe ou non
@@ -793,25 +793,25 @@ export function accountsPackage(opts: MjsWsAccountsOptions): MjsPackage {
       // compris factice, cf. tête de fichier) : des essais lancés ensemble ne passent jamais tous le
       // contrôle avant que le premier échec ne soit compté. Budget du pseudo dépensé : seule une adresse
       // sans échec récent sur ce pseudo essaie encore, une fois. Refus IDENTIQUE quel que soit le budget.
-      const paire = reseauDe(client) + '\n' + nameKey
+      const pair = networkOf(client) + '\n' + nameKey
       if (!failuresByIp.reserve(ip)) throw new Error('account-throttled')
       if (!nameCeiling.reserve(nameKey)) {
         failuresByIp.release(ip, false)
         throw new Error('account-throttled')
       }
-      const dansLeBudget = failuresByName.reserve(nameKey)
-      if (!dansLeBudget && !failuresByPair.reserve(paire)) {
+      const inBudget = failuresByName.reserve(nameKey)
+      if (!inBudget && !failuresByPair.reserve(pair)) {
         failuresByIp.release(ip, false)
         nameCeiling.release(nameKey, false)
         throw new Error('account-throttled')
       }
 
-      const account = nomMin !== undefined ? byName.get(nomMin) : undefined
+      const account = lowerName !== undefined ? byName.get(lowerName) : undefined
       let ok = false
       let redone: { hash: string; salt: string } | undefined
       try {
-        // pseudo absent : hachage FACTICE de même coût — anti-énumération par le temps (cf. verifierSecret)
-        const verdict = await verifierSecret(secret, account, reglages)
+        // pseudo absent : hachage FACTICE de même coût — anti-énumération par le temps (cf. verifySecret)
+        const verdict = await verifySecret(secret, account, hashSettings)
         ok     = verdict.ok
         redone = verdict.redone
       } finally {
@@ -819,16 +819,16 @@ export function accountsPackage(opts: MjsWsAccountsOptions): MjsPackage {
         // réussite : les places sont rendues
         failuresByIp.release(ip, !ok)
         nameCeiling.release(nameKey, !ok)
-        if (dansLeBudget) {
+        if (inBudget) {
           failuresByName.release(nameKey, !ok)
-          if (!ok) failuresByPair.recordFailure(paire)
+          if (!ok) failuresByPair.recordFailure(pair)
         }
-        else failuresByPair.release(paire, !ok)
+        else failuresByPair.release(pair, !ok)
       }
       if (!ok) throw new Error('account-denied')
 
       account.seenAt = Date.now()
-      // hachage refait aux réglages actuels (cf. verifierSecret), écrit avec la date de connexion ; si l'écriture échoue,
+      // hachage refait aux réglages actuels (cf. verifySecret), écrit avec la date de connexion ; si l'écriture échoue,
       // l'ancien hachage enregistré reste valable
       if (redone) {
         account.hash = redone.hash
@@ -840,10 +840,10 @@ export function accountsPackage(opts: MjsWsAccountsOptions): MjsPackage {
       try {
         await Promise.resolve(persist.save(account.id, account))
       } catch (err) {
-        onLog('warn', t('ws.accounts.date-connexion-echec', { name: account.name }), { err: err instanceof Error ? err.message : String(err) })
+        onLog('warn', t('ws.accounts.date-connection-failed', { name: account.name }), { err: err instanceof Error ? err.message : String(err) })
       }
-      const roles = await resoudreRoles(account)
-      return { ok: true, token: emettreJeton(account, roles) }
+      const roles = await resolveRoles(account)
+      return { ok: true, token: issueToken(account, roles) }
     })
 
     // v1 sans état (cf. tête de fichier « Déconnexion ») — rien à révoquer pour une identité déjà
@@ -853,7 +853,7 @@ export function accountsPackage(opts: MjsWsAccountsOptions): MjsPackage {
     // SYNCHRONEMENT ici ferait courir le risque que l'ack ne parte jamais (client déjà 'closing').
     app.serve('account:logout', async (_p, client) => {
       if (identityIdOf(client.identity) != null) {
-        setTimeout(() => client.close('deconnexion'), 0)
+        setTimeout(() => client.close('logout'), 0)
       }
       return { ok: true }
     })

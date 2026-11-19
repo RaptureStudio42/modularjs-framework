@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { Bundler, terminateSharedWorkerPool, nommerFragmentI18n } from '../src/bundler/index.js'
+import { Bundler, terminateSharedWorkerPool, nameI18nFragment } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 
 describe('i18n — noms de fragments courts', function () {
@@ -14,9 +14,9 @@ describe('i18n — noms de fragments courts', function () {
 
   it('nommerFragmentI18n : 12 hex par défaut, même contenu = même nom', () => {
     const pris = new Map<string, string>()
-    const a = nommerFragmentI18n('{"a":"x"}', pris)
-    const b = nommerFragmentI18n('{"a":"x"}', pris)
-    const c = nommerFragmentI18n('{"a":"y"}', pris)
+    const a = nameI18nFragment('{"a":"x"}', pris)
+    const b = nameI18nFragment('{"a":"x"}', pris)
+    const c = nameI18nFragment('{"a":"y"}', pris)
     assert.match(a, /^[a-f0-9]{12}$/)
     assert.equal(a, b)
     assert.notEqual(a, c)
@@ -25,19 +25,19 @@ describe('i18n — noms de fragments courts', function () {
   it('collision forcée : le second contenu reçoit un nom plus long, jamais le même nom', () => {
     const pris = new Map<string, string>()
     const hacher = (s: string) => 'abcdef012345' + (s === 'un' ? '1' : '2').repeat(20)
-    const a = nommerFragmentI18n('un', pris, hacher)
-    const b = nommerFragmentI18n('deux', pris, hacher)
+    const a = nameI18nFragment('un', pris, hacher)
+    const b = nameI18nFragment('deux', pris, hacher)
     assert.equal(a.length, 12)
     assert.ok(b.length > 12 && b.startsWith(a), `nom allongé attendu, reçu ${b}`)
-    assert.equal(nommerFragmentI18n('deux', pris, hacher), b, 'stable pour le même contenu')
-    assert.equal(nommerFragmentI18n('un', pris, hacher), a)
+    assert.equal(nameI18nFragment('deux', pris, hacher), b, 'stable pour le même contenu')
+    assert.equal(nameI18nFragment('un', pris, hacher), a)
   })
 
   it('collision totale (empreinte entière identique) : erreur claire', () => {
     const pris = new Map<string, string>()
     const hacher = () => 'a'.repeat(32)
     for (let n = 12; n <= 32; n++) pris.set('a'.repeat(n), 'un')
-    assert.throws(() => nommerFragmentI18n('deux', pris, hacher), /même empreinte complète/)
+    assert.throws(() => nameI18nFragment('deux', pris, hacher), /même empreinte complète/)
   })
 
   it('build prod : noms à 12 hex, contenu identique partagé, contenus différents distincts', async () => {

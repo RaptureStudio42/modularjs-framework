@@ -58,7 +58,7 @@ describe('mjs_devinspect — nom de classe d\'une instance à travers un proxy r
       class Vehicule {}
       globalThis.store = new µ.Store({ v: new Vehicule() })
     `)
-    const apercu = window.eval('µ._mjs_diApercu(store.data.v)')
+    const apercu = window.eval('µ._mjs_diPreview(store.data.v)')
     assert.equal(apercu, 'Objet Vehicule', "AVANT le fix : « Objet » seul — v.constructor rend undefined à travers le proxy réactif")
   })
 
@@ -68,7 +68,7 @@ describe('mjs_devinspect — nom de classe d\'une instance à travers un proxy r
       class Vehicule {}
       globalThis.state = µ.state({ v: new Vehicule() })
     `)
-    const apercu = window.eval('µ._mjs_diApercu(state.v)')
+    const apercu = window.eval('µ._mjs_diPreview(state.v)')
     assert.equal(apercu, 'Objet Vehicule')
   })
 
@@ -79,20 +79,20 @@ describe('mjs_devinspect — nom de classe d\'une instance à travers un proxy r
       globalThis.store = new µ.Store({ v: new Vehicule() })
     `)
     const ctor = window.eval('store.data.v.constructor')
-    assert.equal(ctor, undefined, 'la lecture directe de .constructor reste bloquée, seul _mjs_diApercu contourne le blocage pour l\'AFFICHAGE, via le prototype de la cible brute')
+    assert.equal(ctor, undefined, 'la lecture directe de .constructor reste bloquée, seul _mjs_diPreview contourne le blocage pour l\'AFFICHAGE, via le prototype de la cible brute')
   })
 
   it('un objet PLAIN (pas d\'instance de classe) rangé dans un store reste affiché « Objet », sans nom parasite', () => {
     const window = fenetreAvecCore(core)
     window.eval(`globalThis.store = new µ.Store({ v: { x: 1 } })`)
-    const apercu = window.eval('µ._mjs_diApercu(store.data.v)')
+    const apercu = window.eval('µ._mjs_diPreview(store.data.v)')
     assert.equal(apercu, 'Objet', 'un objet plain (Object) ne doit jamais afficher "Objet Object"')
   })
 
   it('une instance de classe qui ne passe PAS par un proxy réactif (objet nu) affiche aussi son nom', () => {
     const window = fenetreAvecCore(core)
     window.eval(`class Vehicule {}; globalThis.brut = new Vehicule()`)
-    const apercu = window.eval('µ._mjs_diApercu(brut)')
+    const apercu = window.eval('µ._mjs_diPreview(brut)')
     assert.equal(apercu, 'Objet Vehicule', 'non-régression : le cas non proxifié fonctionnait déjà')
   })
 })

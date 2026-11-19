@@ -36,8 +36,8 @@ describe('cleanJs — setter de contexte à RHS chaîne littérale', function ()
   })
   it('setters à expression et getters restent corrects', function () {
     assert.equal(cleanJs('§x = 5', []), "this._mjs_setContext('x', 5)")
-    assert.equal(cleanJs('§theme', []), "this._mjs_getContext('theme')")
-    assert.equal(cleanJs('§§lang', []), "this._mjs_getRCtx('lang')")
+    assert.equal(cleanJs('§theme', []), "_mjsThis._mjs_getContext('theme')")
+    assert.equal(cleanJs('§§lang', []), "_mjsThis._mjs_getRCtx('lang')")
   })
   it('§§x = v TOUJOURS setRCtx, même si `$x` est un nom importé (plus de résolution vers un singleton)', function () {
     assert.equal(cleanJs('§§count = 5', ['$count']), "this._mjs_setRCtx('count', 5)")

@@ -112,12 +112,12 @@
   {
    "expr": "µt(§boutique) + §§lang",
    "externes": [],
-   "js": "µ.t(this._mjs_getContext('boutique')) + this._mjs_getRCtx('lang')"
+   "js": "µ.t(_mjsThis._mjs_getContext('boutique')) + _mjsThis._mjs_getRCtx('lang')"
   },
   {
    "expr": "@@total + [...§liste]",
    "externes": [],
-   "js": "_mjsThis.total + [...this._mjs_getContext('liste')]"
+   "js": "_mjsThis.total + [..._mjsThis._mjs_getContext('liste')]"
   },
   {
    "expr": "&id",
@@ -332,7 +332,7 @@
   {
    "expr": "`${§x} @@y`",
    "externes": [],
-   "js": "`${this._mjs_getContext('x')} @@y`"
+   "js": "`${_mjsThis._mjs_getContext('x')} @@y`"
   },
   {
    "expr": "$s.replace(/§|@@|&id/g, '')",
@@ -342,7 +342,7 @@
   {
    "expr": "§x + §§y + @@z + &id + $$s + µt('a')",
    "externes": [],
-   "js": "this._mjs_getContext('x') + this._mjs_getRCtx('y') + _mjsThis.z + µ.url.params.id + µ.store.s + µ.t('a')"
+   "js": "_mjsThis._mjs_getContext('x') + _mjsThis._mjs_getRCtx('y') + _mjsThis.z + µ.url.params.id + µ.store.s + µ.t('a')"
   },
   {
    "expr": "'$x $$y µr' + $x",
@@ -474,7 +474,7 @@
   {
    "expr": "`${§x} @@y`",
    "externes": [],
-   "texte": "`${this._mjs_getContext('x')} @@y`"
+   "texte": "`${_mjsThis._mjs_getContext('x')} @@y`"
   },
   {
    "expr": "$s.replace(/§|@@|&id/g, '')",

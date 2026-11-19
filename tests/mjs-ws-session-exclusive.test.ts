@@ -143,12 +143,12 @@ describe('MJS-WS — session exclusive par identité (option sessionExclusive)',
 
     a.ws.close(1006, 'coupure simulée')   // A tombe SANS dire au revoir — éligible au parcage
     await tick()
-    assert.equal(app.stats().connexions.parquees, 1, 'A est parqué (grâce en cours)')
+    assert.equal(app.stats().connections.parked, 1, 'A est parqué (grâce en cours)')
 
     const b = await rawHello(transport, 'memory://sx6b', { auth: { uid: 'p1' } })   // hello FRAIS, MÊME identité
     const w2 = b.frames.find((f: any) => f.t === 'µ:welcome')
     assert.ok(w2, 'B est accueilli normalement')
-    assert.equal(app.stats().connexions.parquees, 0, 'la session parquée de A a été révoquée (purgée, pas juste ignorée)')
+    assert.equal(app.stats().connections.parked, 0, 'la session parquée de A a été révoquée (purgée, pas juste ignorée)')
 
     // rejeu de l'ANCIENNE session de A (identité 'p1' aussi — déclenche À SON TOUR une éviction de
     // B, effet de bord ATTENDU du même mécanisme : seule l'issue de CE rejeu nous intéresse ici)
@@ -341,13 +341,13 @@ describe('MJS-WS — session exclusive par identité (option sessionExclusive)',
 
     a.ws.close(1006, 'coupure simulée')   // A tombe SANS dire au revoir — éligible au parcage
     await tick()
-    assert.equal(app.stats().connexions.parquees, 1, 'A est parqué (grâce en cours)')
+    assert.equal(app.stats().connections.parked, 1, 'A est parqué (grâce en cours)')
 
     const b = await rawHello(transport, 'memory://sx14b', { auth: { uid: 'p1' } })   // hello FRAIS, MÊME identité
     const w2 = b.frames.find((f: any) => f.t === 'µ:welcome')
     assert.ok(w2, 'B est accueilli — aucune session VIVANTE à refuser, seulement une parquée')
     assert.ok(!b.frames.some((f: any) => f.t === 'µ:denied'), 'B ne reçoit jamais de µ:denied ici')
-    assert.equal(app.stats().connexions.parquees, 0, 'la session parquée de A a été purgée (même mécanisme que le mode replace)')
+    assert.equal(app.stats().connections.parked, 0, 'la session parquée de A a été purgée (même mécanisme que le mode replace)')
 
     // rejeu de l'ANCIENNE session de A (identité 'p1' aussi, session révoquée → reprise impossible,
     // retombe en hello FRAIS pour la MÊME identité) — sous 'refuse', B (vivant) n'est JAMAIS évincé
@@ -357,7 +357,7 @@ describe('MJS-WS — session exclusive par identité (option sessionExclusive)',
     const denied = c.frames.find((f: any) => f.t === 'µ:denied')
     assert.ok(denied, "le rejeu de l'ancienne session de A, retombé en hello frais, est refusé — B (vivant) n'est jamais évincé")
     assert.equal(denied.p.message, 'session déjà active pour cette identité')
-    assert.equal(app.stats().connexions.actives, 1, 'B toujours seul actif — aucune éviction')
+    assert.equal(app.stats().connections.active, 1, 'B toujours seul actif — aucune éviction')
 
     await app.stop()
   })
@@ -424,13 +424,13 @@ describe('MJS-WS — session exclusive par identité (option sessionExclusive)',
     assert.ok(w1 && w1.p.session)
     b.ws.close(1006, 'coupure simulée')
     await tick()
-    assert.equal(appB.stats().connexions.parquees, 1, 'B est parqué (grâce en cours) — AUCUNE connexion vivante de cette identité nulle part')
+    assert.equal(appB.stats().connections.parked, 1, 'B est parqué (grâce en cours) — AUCUNE connexion vivante de cette identité nulle part')
 
     const µA = makeClient(transportA)
     const sA = µA.socket('memory://cx18a', { auth: () => ({ uid: 'z3' }) })   // MÊME identité, AUTRE process
     sA.connect(); await tick()
     assert.equal(sA.state, 'open', 'A est accueilli — aucune session VIVANTE nulle part dans le cluster')
-    assert.equal(appB.stats().connexions.parquees, 0, 'la parquée de B a été purgée via le cluster (kick parkedOnly)')
+    assert.equal(appB.stats().connections.parked, 0, 'la parquée de B a été purgée via le cluster (kick parkedOnly)')
 
     // rejeu de la session parquée de B (purgée) → reprise impossible, accueil frais — et ce 2e hello
     // FRAIS (même identité, retombé après échec de reprise) ne doit PAS non plus évincer A (vivant,

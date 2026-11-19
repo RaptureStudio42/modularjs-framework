@@ -30,6 +30,12 @@ export class TokenBucket {
     this._tokens = Math.min(this._capacity, this._tokens + cost)
   }
 
+  /** plein : rien ne le distingue d'un seau neuf, il peut être oublié */
+  get full(): boolean {
+    this._refill()
+    return this._tokens >= this._capacity
+  }
+
   private _refill(): void {
     const now     = Date.now()
     const elapsed = (now - this._lastRefill) / 1000
@@ -84,8 +90,8 @@ export function errMessage(err: unknown): string {
 
 // noms que porte Object.prototype au chargement de ce module (`constructor`, `toString`, `hasOwnProperty`, `__proto__`…), rangés
 // par longueur : une clé ordinaire n'est comparée qu'aux noms de sa longueur, souvent à aucun (0 à 2 ns de plus par clé, mesuré)
-const NOMS_DU_PROTOTYPE: string[][] = []
-for (const nom of Object.getOwnPropertyNames(Object.prototype)) (NOMS_DU_PROTOTYPE[nom.length] ??= []).push(nom)
+const PROTOTYPE_NAMES: string[][] = []
+for (const name of Object.getOwnPropertyNames(Object.prototype)) (PROTOTYPE_NAMES[name.length] ??= []).push(name)
 
 // range une donnée sous une clé venue du réseau (une identité, une clé de flux) dans un objet ordinaire que le serveur construit
 // pour l'envoi : une clé au nom d'une propriété d'Object.prototype y est définie en propriété propre, jamais affectée —
@@ -95,20 +101,20 @@ for (const nom of Object.getOwnPropertyNames(Object.prototype)) (NOMS_DU_PROTOTY
 // refusent `__proto__`, `constructor` et `prototype`, cf. le piège de µ.state, runtime/mjs_state.ts). Inutile pour une Map
 // (insensible à ce risque) ou un spread ({...a, ...b} : CreateDataProperty, pas le setter `__proto__`).
 export function putOwn(o: Record<string, unknown>, k: string, v: unknown): void {
-  const noms = NOMS_DU_PROTOTYPE[k.length]
-  if (noms !== undefined && noms.includes(k)) Object.defineProperty(o, k, { value: v, writable: true, enumerable: true, configurable: true })
+  const names = PROTOTYPE_NAMES[k.length]
+  if (names !== undefined && names.includes(k)) Object.defineProperty(o, k, { value: v, writable: true, enumerable: true, configurable: true })
   else o[k] = v
 }
 
 // --- réglages numériques de mjsWs() — vérifiés à la construction (index.ts, sessions.ts) -----------------------
 
 /** règle d'un réglage numérique — cf. checkSetting */
-export type MjsWsSettingRule = 'nombre' | 'plafond' | 'entier'
+export type MjsWsSettingRule = 'number' | 'cap' | 'integer'
 
-const ATTENDU: Record<MjsWsSettingRule, MsgKey> = {
-  nombre:  'ws.index.nombre-positif-ou-nul',
-  plafond: 'ws.index.nombre-positif-ou-nul-ou-null',
-  entier:  'ws.index.entier-positif',
+const EXPECTED: Record<MjsWsSettingRule, MsgKey> = {
+  number:  'ws.index.number-positive-or-zero',
+  cap: 'ws.index.number-positive-or-zero-or-null',
+  integer:  'ws.index.integer-positive',
 }
 
 /** une valeur fausse telle que le message la montre — NaN et Infinity tels quels (JSON.stringify les écrirait `null`) */
@@ -125,8 +131,8 @@ export function showSetting(v: unknown): string {
  * `'nombre'` : nombre fini ≥ 0 ; `'plafond'` : le même, ou `null` (illimité) ; `'entier'` : entier ≥ 1. `undefined`
  * (réglage absent) reste à l'appelant : c'est le défaut.
  */
-export function checkSetting(cle: string, v: unknown, regle: MjsWsSettingRule): void {
-  if (regle === 'plafond' && v === null) return
-  const ok = typeof v === 'number' && Number.isFinite(v) && (regle === 'entier' ? Number.isInteger(v) && v >= 1 : v >= 0)
-  if (!ok) throw new Error(t('ws.index.reglage-invalide', { cle, raw: showSetting(v), attendu: t(ATTENDU[regle]) }))
+export function checkSetting(key: string, v: unknown, rule: MjsWsSettingRule): void {
+  if (rule === 'cap' && v === null) return
+  const ok = typeof v === 'number' && Number.isFinite(v) && (rule === 'integer' ? Number.isInteger(v) && v >= 1 : v >= 0)
+  if (!ok) throw new Error(t('ws.index.setting-invalid', { key, raw: showSetting(v), expected: t(EXPECTED[rule]) }))
 }

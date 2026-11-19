@@ -24,9 +24,9 @@ const RUNTIME   = join(__dirname, '..', 'src', 'runtime')
 const lire      = (f: string) => readFileSync(join(RUNTIME, f), 'utf-8')
 const NAV_SRC   = lire('mjs_nav_progress.ts')
 
-// le cœur d'une appli sans table de routes au repos : la construction en retire les blocs `<routes-repos>` (la page montée y est
+// le cœur d'une appli sans table de routes au repos : la construction en retire les blocs `<routes-idle>` (la page montée y est
 // demandée par le guetteur de l'ombre, que ce banc ne pose pas)
-const sansRepos = (src: string) => src.replace(/^[ \t]*\/\/ <routes-repos>\n[\s\S]*?^[ \t]*\/\/ <\/routes-repos>\n/gm, '')
+const sansRepos = (src: string) => src.replace(/^[ \t]*\/\/ <routes-idle>\n[\s\S]*?^[ \t]*\/\/ <\/routes-idle>\n/gm, '')
 
 function installProgress(µ: any, document: any, setTimeoutFn: any, clearTimeoutFn: any, CSSStyleSheetFn: any = undefined) {
   new Function('µ', 'document', 'setTimeout', 'clearTimeout', 'CSSStyleSheet', NAV_SRC)(µ, document, setTimeoutFn, clearTimeoutFn, CSSStyleSheetFn)

@@ -3,8 +3,9 @@
 // bouton (Firefox pose une ancre transformée comme si la transformation n'existait pas : le script les place alors) ; une transformation
 // identité garde l'ancrage. L'élément caché par le conteneur qui défile ferme la liste, le menu et la bulle ancrés (Firefox et WebKit
 // les laissaient flotter hors du conteneur). Un navigateur qui connaît `anchor-name` sans `position-area` (Chrome 125 à 128) prend le
-// placement par le script. Sans ancrage (le test de fonction forcé à faux), le placement par le script : mêmes places, la liste rognée
-// avec son bouton. Page rendue par le serveur puis reprise. Chromium, Firefox et WebKit réels
+// placement par le script, la liste dans la couche du dessus. Sans ancrage (le test de fonction forcé à faux), le placement par le
+// script : mêmes places, la liste dans la couche du dessus, dans la fenêtre, fermée quand le conteneur qui défile cache son bouton.
+// Page rendue par le serveur puis reprise. Chromium, Firefox et WebKit réels
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readdirSync, readFileSync, existsSync } from 'node:fs'
@@ -134,6 +135,9 @@ const contreListe = (l: any) => (l.haut ? Math.abs(l.p.b - (l.b.t - 4)) : Math.a
 const contreMenu  = (m: any) => (m.haut ? Math.abs(m.m.b - (m.k.t - 4)) : Math.abs(m.m.t - (m.k.b + 4))) <= 1.5 && Math.abs(m.m.l - m.k.l) <= 1.5
 const contreBulle = (x: any) => (x.cote === 'bottom' ? Math.abs(x.q.t - (x.e.b + 8)) : Math.abs(x.q.b - (x.e.t - 8))) <= 1.5 && Math.abs((x.q.l + x.q.r) / 2 - (x.e.l + x.e.r) / 2) <= 1.5
 
+// la liste entière dans la fenêtre de la page (1000 × 800)
+const dansLaFenetre = (l: any) => l.p.l >= 0 && l.p.t >= 0 && l.p.r <= 1000 && l.p.b <= 800
+
 for (const nom of MOTEURS) for (const mode of MODES) describe(`menus natifs aux bords de l'ancrage (${nom} réel, ${mode === 'natif' ? 'ancrage CSS' : 'sans ancrage'})`, function () {
   this.timeout(240000)
   let present = false
@@ -256,16 +260,16 @@ for (const nom of MOTEURS) for (const mode of MODES) describe(`menus natifs aux 
     assert.ok(contreBulle(t), `bulle contre son élément, centrée : ${JSON.stringify(t)}`)
   })
 
-  it(natif ? 'une transformation identité (`translate(0)`) garde l\'ancrage : la liste dans la couche du dessus' : 'une transformation identité : la liste dans sa balise, contre son bouton', async function () {
+  it(natif ? 'une transformation identité (`translate(0)`) garde l\'ancrage : la liste dans la couche du dessus' : 'une transformation identité : la liste dans la couche du dessus, placée par le script, contre son bouton', async function () {
     if (!present) { this.skip(); return }
     await ouvrirListe('s-id')
     const l = await liste('s-id')
     assert.ok(contreListe(l), `liste contre son bouton : ${JSON.stringify(l)}`)
     if (natif) assert.ok(l.dessus && l.ancree, `ancrée, dans la couche du dessus : ${JSON.stringify(l)}`)
-    else assert.ok(!l.dessus && !l.ancree && l.position === 'absolute', `dans sa balise : ${JSON.stringify(l)}`)
+    else assert.ok(l.dessus && !l.ancree && l.position === 'fixed' && dansLaFenetre(l), `couche du dessus, placée par le script, dans la fenêtre : ${JSON.stringify(l)}`)
   })
 
-  it(natif ? 'le bouton caché par le conteneur qui défile : la liste ancrée se ferme' : 'le bouton caché par le conteneur qui défile : la liste, dans sa balise, est cachée avec lui', async function () {
+  it(natif ? 'le bouton caché par le conteneur qui défile : la liste ancrée se ferme' : 'le bouton caché par le conteneur qui défile : la liste placée par le script se ferme', async function () {
     if (!present) { this.skip(); return }
     await ouvrirListe('s-dv')
     await lire(`__h().querySelector('.dv').scrollTop = 140`)
@@ -276,7 +280,7 @@ for (const nom of MOTEURS) for (const mode of MODES) describe(`menus natifs aux 
       return { ferme: !p, vu, cache: b.b <= d.t && b.t >= 0, ouvert: o.querySelector('.select-btn').getAttribute('aria-expanded'), b, d }`)
     assert.ok(r.cache, `le bouton est caché par le conteneur, dans la fenêtre : ${JSON.stringify(r)}`)
     assert.ok(!r.vu, `aucun panneau visible hors du conteneur : ${JSON.stringify(r)}`)
-    if (natif) assert.ok(r.ferme && r.ouvert === 'false', `la liste est fermée : ${JSON.stringify(r)}`)
+    assert.ok(r.ferme && r.ouvert === 'false', `la liste est fermée : ${JSON.stringify(r)}`)
   })
 
   if (natif) it('le bouton caché par le conteneur qui défile : le menu des formes ancré se ferme, le focus revient au bouton sans rien faire défiler', async function () {
@@ -311,7 +315,7 @@ for (const nom of MOTEURS) for (const mode of MODES) describe(`menus natifs aux 
     try {
       await ouvrirListe('s-dv')
       const l = await liste('s-dv')
-      assert.ok(contreListe(l) && !l.ancree && !l.dessus && l.position === 'absolute', `liste dans sa balise, contre son bouton : ${JSON.stringify(l)}`)
+      assert.ok(contreListe(l) && !l.ancree && l.dessus && l.position === 'fixed' && dansLaFenetre(l), `liste dans la couche du dessus, placée par le script, contre son bouton, dans la fenêtre : ${JSON.stringify(l)}`)
       await page.keyboard.press('Escape')
       const t = await survoler('t-dv')
       assert.ok(contreBulle(t) && !t.ancree, `bulle placée par le script, contre son élément : ${JSON.stringify(t)}`)

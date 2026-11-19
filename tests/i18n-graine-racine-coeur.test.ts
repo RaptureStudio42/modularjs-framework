@@ -1,7 +1,7 @@
 // Les textes racine de la graine et le cœur du runtime — pourquoi ce test existe.
 //
 // Le relevé des clés racine lues par une page rendue (`µ._i18nTrackRoot`, `__i18nNoteRoot`), leur reprise par le navigateur (`seed.root`,
-// `__i18nFill`) et le rendu immédiat d'un composant enfant d'un hôte de page rendue (`__i18nSousHote`) sont dans le cœur de TOUTE application
+// `__i18nFill`) et le rendu immédiat d'un composant enfant d'un hôte de page rendue (`__i18nUnderHost`) sont dans le cœur de TOUTE application
 // traduite. Le build du client ne peut pas savoir d'où viendra sa graine : une page rendue par l'API du serveur (`renderToString`,
 // `createSSRRenderer`), ou une graine écrite à la main, porte `root` sans que l'application déclare un bloc `render` ni `runtime: [..., 'hydrate']`.
 // Sans cette reprise, un module qui lit un texte racine clignoterait sur une telle page, le temps que le fichier de langue arrive. Le cœur d'une
@@ -78,7 +78,7 @@ describe('graine : textes racine et cœur du runtime — build RÉEL', function 
     it(`application traduite (${nom}) : le cœur garde le relevé et la reprise des textes racine (développement)`, async () => {
       const avec = await construire('garde-' + nom.replace(/\W+/g, ''), conf)
       assert.ok(avec.coeur.length > 0)
-      for (const mot of ['__i18nNoteRoot', '__i18nFill', '__i18nSousHote', 'seed.root', '_i18nTrackRoot']) assert.ok(avec.coeur.includes(mot), mot)
+      for (const mot of ['__i18nNoteRoot', '__i18nFill', '__i18nUnderHost', 'seed.root', '_i18nTrackRoot']) assert.ok(avec.coeur.includes(mot), mot)
       assert.equal(avec.coeur.includes('i18n-graine'), false, 'aucune balise de bloc ne reste dans le cœur')
     })
   }

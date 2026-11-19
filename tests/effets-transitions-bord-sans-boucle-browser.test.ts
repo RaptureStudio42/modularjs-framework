@@ -1,6 +1,6 @@
 // une transition posée directement (`on: view`) est jugée à sa place, jamais à la place où l'emporte son mouvement, dans Chromium
 // et Firefox réels :
-//   · `once: false` près d'un bord de l'écran : *fly (sa sortie la redescend de 40 px) et *volet (sa sortie le déplace vers
+//   · `once: false` près d'un bord de l'écran : *fly (sa sortie la redescend de 40 px) et *cover (sa sortie le déplace vers
 //     l'écran, ce que Firefox voit) posés juste au-delà du bord sortent une fois et s'arrêtent — ils entraient et sortaient sans fin,
 //     l'observateur voyant la boîte déplacée revenir à l'écran ; ramenés à l'écran, ils rentrent et finissent à leur place ;
 //   · une première image qui sort la balise d'un parent qui rogne (`overflow: hidden`, *fly venu de 100 % de sa largeur) : la
@@ -28,9 +28,9 @@ const SOURCE = [
   '<div class="cadre"><div id="rogne" class="bande" *fly(direction: left, distance: 100%, duration: 300ms)>a</div></div>',
   '<div class="cadre"><div id="temoin" class="bande" *fly(direction: left, distance: 60%, duration: 300ms)>b</div></div>',
   '<div class="marge"></div>',
-  `<img class="el" id="down" src="${IMAGE}" alt="" *volet(once: false, duration: 300ms)>`,
+  `<img class="el" id="down" src="${IMAGE}" alt="" *cover(once: false, duration: 300ms)>`,
   '<div class="marge"></div>',
-  `<img class="el" id="up" src="${IMAGE}" alt="" *volet(direction: up, once: false, duration: 300ms)>`,
+  `<img class="el" id="up" src="${IMAGE}" alt="" *cover(direction: up, once: false, duration: 300ms)>`,
   '<div class="marge"></div>',
   `<img class="el" id="fly" src="${IMAGE}" alt="" *fly(once: false, duration: 300ms)>`,
   '<div class="marge"></div>',

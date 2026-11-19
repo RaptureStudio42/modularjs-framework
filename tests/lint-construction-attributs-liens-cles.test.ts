@@ -8,13 +8,13 @@ import { chmodSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from '
 import { dirname, join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { checkProject, routePrend } from '../src/bundler/build-checks.js'
+import { checkProject, routeMatches } from '../src/bundler/build-checks.js'
 import { findConfig, resolveBundlerOpts } from '../src/bundler/config.js'
 import { Bundler } from '../src/bundler/index.js'
 import { LINT_SEVERITY } from '../src/diagnostics.js'
 import { getMessagesLang, setMessagesLang, t } from '../src/messages/index.js'
 import { parse, type ProjectTagSeen, type TagRef } from '../src/parser/index.js'
-import { gabaritNommeRoutes } from '../src/transpiler/build-checks.js'
+import { templateNamesRoutes } from '../src/transpiler/build-checks.js'
 import { mjsTmp } from './helpers/tmp.js'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -373,18 +373,18 @@ describe('parser — les balises des composants du projet, relevées à part (Pa
     const refs: TagRef[]         = []
     const tags: ProjectTagSeen[] = []
     parse('<p>\n  <@fiche titre="a"></@fiche>\n  <mjs-fiche titre="a" {...$p}></mjs-fiche>\n  <@fiche titre="a"></@fiche>\n</p>', refs, { projectTags: tags })
-    assert.deepEqual(refs, [{ name: 'fiche', kind: 'raccourci-dev' }, { name: 'fiche', kind: 'litteral-dev' }, { name: 'fiche', kind: 'raccourci-dev' }])
-    assert.deepEqual(tags.map(g => [g.name, g.kind, g.names, g.spread, g.line, g.texte, g.rang, g.total]), [
-      ['fiche', 'raccourci-dev', ['titre'], false, 2, '<@fiche titre="a"', 0, 2],
-      ['fiche', 'litteral-dev', ['titre'], true, 3, '<mjs-fiche titre="a" {...$p}', 0, 1],
-      ['fiche', 'raccourci-dev', ['titre'], false, 4, '<@fiche titre="a"', 1, 2],
+    assert.deepEqual(refs, [{ name: 'fiche', kind: 'shortcut-dev' }, { name: 'fiche', kind: 'literal-dev' }, { name: 'fiche', kind: 'shortcut-dev' }])
+    assert.deepEqual(tags.map(g => [g.name, g.kind, g.names, g.spread, g.line, g.text, g.rank, g.total]), [
+      ['fiche', 'shortcut-dev', ['titre'], false, 2, '<@fiche titre="a"', 0, 2],
+      ['fiche', 'literal-dev', ['titre'], true, 3, '<mjs-fiche titre="a" {...$p}', 0, 1],
+      ['fiche', 'shortcut-dev', ['titre'], false, 4, '<@fiche titre="a"', 1, 2],
     ])
   })
 
   it('un modèle en fichier : écrit en dur, la balise du modèle ; choisi à l\'exécution, la base et la liste de ses modèles', () => {
     const tags: ProjectTagSeen[] = []
     parse('<@carte layout="compacte" a="1"></@carte><@carte layout={$vue} b="2"></@carte>', [], { projectTags: tags, models: { dev: { carte: ['compacte', 'large'] } } })
-    assert.deepEqual(tags.map(g => [g.name, g.names, g.modeles]), [['carte--compacte', ['layout', 'a'], undefined], ['carte', ['layout', 'b'], ['compacte', 'large']]])
+    assert.deepEqual(tags.map(g => [g.name, g.names, g.models]), [['carte--compacte', ['layout', 'a'], undefined], ['carte', ['layout', 'b'], ['compacte', 'large']]])
   })
 
   it('un module du cœur, une balise d\'une autre bibliothèque : pas une balise du projet', () => {
@@ -416,11 +416,11 @@ describe('build — i18nKeyUnknown : le message dit ce que l\'écran montre', fu
   })
 
   it('en anglais, au même sens', () => {
-    const vars  = { fichier: 'a.mjs', ligne: 2, ecrit: 'nav.fermr', cle: 'nav.fermr', dico: 'i18n/fr.yml', ajout: 'nav.fermr', langue: 'fr' }
+    const vars  = { file: 'a.mjs', line: 2, written: 'nav.fermr', key: 'nav.fermr', dict: 'i18n/fr.yml', addition: 'nav.fermr', lang: 'fr' }
     const avant = getMessagesLang()
     setMessagesLang('en')
     try {
-      assert.match(t('bundler.build-checks.cle-absente', vars), /the screen will show ⟦nav\.fermr⟧, in development as in production\./)
+      assert.match(t('bundler.build-checks.key-missing', vars), /the screen will show ⟦nav\.fermr⟧, in development as in production\./)
     }
     finally {
       setMessagesLang(avant)
@@ -768,7 +768,7 @@ describe('build — routeUnknown : un `@` écrit en texte dans une accolade, un 
       if (tirage(3) === 0) suivi.splice(tirage(suivi.length + 1), tirage(2), valeur())
       const chemin  = '/' + (tirage(2) === 0 ? suivi : Array.from({ length: tirage(9) }, valeur)).join('/')
       const attendu = pasAPas(route, chemin)
-      assert.equal(routePrend(route, chemin), attendu, `${route} ← ${chemin}`)
+      assert.equal(routeMatches(route, chemin), attendu, `${route} ← ${chemin}`)
       if (attendu) oui++
     }
     // les deux réponses, chacune en nombre : le tirage ne joue pas qu'un seul cas
@@ -842,7 +842,7 @@ describe('build — routeUnknown : une expression régulière dans une accolade,
       ['<p>{s.replace(/\'/g, \'’\') + \'@\'}</p>\n', false],
       ['<p>{x /* @ */}</p>\n', false],
     ] as [string, boolean][]) {
-      assert.equal(gabaritNommeRoutes(gabarit), muet, gabarit)
+      assert.equal(templateNamesRoutes(gabarit), muet, gabarit)
     }
   })
 })
@@ -920,7 +920,7 @@ describe('build — routeUnknown : un commentaire de ligne, une chaîne ou un ga
       ['<p>{a! / 2 + \'/\' + f(@) + \'/\' + \'x\'}</p>\n', true],
       ['<p>{if /}/.test(s)}<b>{f(@)}</b>{end}</p>\n', true],
     ] as [string, boolean][]) {
-      assert.equal(gabaritNommeRoutes(gabarit), attendu, gabarit)
+      assert.equal(templateNamesRoutes(gabarit), attendu, gabarit)
     }
   })
 
@@ -949,7 +949,7 @@ describe('build — routeUnknown : un commentaire de ligne, une chaîne ou un ga
       ['<p>{a // x\u2028 + b\n}</p>\n', false],
       ['<p>{a // @\r\n + b}</p>\r\n', false],
     ] as [string, boolean][]) {
-      assert.equal(gabaritNommeRoutes(gabarit), attendu, JSON.stringify(gabarit))
+      assert.equal(templateNamesRoutes(gabarit), attendu, JSON.stringify(gabarit))
     }
   })
 
@@ -959,7 +959,7 @@ describe('build — routeUnknown : un commentaire de ligne, une chaîne ou un ga
       ['40 000 guillemets échappés', '<p>{' + '\'\\'.repeat(40000) + '}</p>\n'],
     ]) {
       const debut = performance.now()
-      const nomme = gabaritNommeRoutes(gabarit)
+      const nomme = templateNamesRoutes(gabarit)
       const duree = performance.now() - debut
       assert.equal(nomme, false, nom)
       assert.ok(duree < 150, `${nom} : ${Math.round(duree)} ms`)

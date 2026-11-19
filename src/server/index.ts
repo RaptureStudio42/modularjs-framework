@@ -11,8 +11,8 @@
 // le browser charge directement via `<script src="bundle.js">`.
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs'
-import { resolve, join, extname } from 'node:path'
+import { readFileSync, writeFileSync, existsSync, statSync, realpathSync } from 'node:fs'
+import { resolve, join, extname, relative, sep } from 'node:path'
 import { normalizeUrlPrefix, type MjsConfig } from '../bundler/config.js'
 import { HMRServer, hmrClientSnippet, isTrustedDevOrigin, hasTrustedBrowserOrigin, createDevHostCheck, hostForUrl, hostNameForMessage, createDevOriginCheck } from './hmr.js'
 import { shell, shellHead, shellTail, isRealPathWithin, isBuildFingerprinted, MIME, readCappedBody, serveBundleNeighbor, isBrowserResource, isServableFile, isProjectRootFileServable } from './render-server.js'
@@ -30,7 +30,14 @@ import { TokenBucket, pruneIdleBuckets } from './token-bucket.js'
 import { resolvePage } from './render-routes.js'
 import { escapeJsonForScript } from './renderToString.js'
 import { t } from '../messages/index.js'
-import { createAddressResolver, type MjsWsAddressResolver } from '../mjs-ws/trust-proxy.js'
+import { createAddressResolver, resolveTrustProxy, type MjsWsAddressResolver } from '../mjs-ws/trust-proxy.js'
+
+// pair de la boucle locale : la machine elle-même (127.0.0.0/8, ::1, forme IPv4 dans IPv6 comprise) — le seul qui enregistre dans
+// le source par l'atelier des thèmes
+const LOOPBACK_PEER = resolveTrustProxy('loopback')!
+// en-têtes par lesquels un mandataire se signale (RFC 7239, usages courants, CDN) : un seul présent, et la requête ne vient pas
+// de la machine elle-même, quel que soit le pair
+const PROXY_HEADERS = ['forwarded', 'x-forwarded-for', 'x-real-ip', 'x-forwarded-host', 'x-forwarded-proto', 'via', 'cf-connecting-ip', 'true-client-ip']
 
 // Chemin virtuel FIXE du bundle pour la résolution `render.routes` en dev — même
 // convention que render-server.ts (`/__mjs/bundle.js`, hors de `outputDir`/
@@ -202,7 +209,7 @@ function resScript(pathname: string, props: Record<string, unknown>): string {
     const json = JSON.stringify(props)
     return `<script type="application/json" id="__mjs_res">${escapeJsonForScript(json)}</script>`
   } catch (e: any) {
-    console.warn(t('server.res-serialisation-echec', { pathname, erreur: e && e.message ? e.message : String(e) }))
+    console.warn(t('server.res-serialization-failed', { pathname, error: e && e.message ? e.message : String(e) }))
     return ''
   }
 }
@@ -232,12 +239,12 @@ export class StaticServer {
   recordServer: RecordServerFn
   errorsRateLimit = new Map<string, TokenBucket>()
   // adresse du visiteur derrière un proxy de confiance (`journal.trustProxy`), sinon celle de la socket
-  adresseVisiteur: MjsWsAddressResolver
+  visitorAddress: MjsWsAddressResolver
   // réponses en cours d'écriture, et rappel posé par stop() pour couper le reste dès qu'il n'y en a plus
   private inflight = 0
   private onDrained: (() => void) | null = null
   // arrêt en cours ou fait, partagé par tous les appels à stop() (double Ctrl+C, SIGINT puis SIGTERM)
-  private arret: Promise<void> | null = null
+  private stopping: Promise<void> | null = null
   // en-tête Host admis (cf. createDevHostCheck, hmr.ts) : garde contre le rebinding DNS
   private hostAllowed: (host: string | string[] | undefined) => boolean
   // garde d'origine (cf. createDevOriginCheck, hmr.ts), une pour le rechargement à chaud et les formulaires, sur les noms de hostAllowed
@@ -277,7 +284,7 @@ export class StaticServer {
     warnIfJournalViewerOpenInProd(this.config?.journal?.viewer, this.env) // une fois au démarrage, cf. viewer-page.ts
     // cf. ServerOpts.journal : absent ⇒ AUCUNE route journal servie par `handle`.
     this.journal = opts.journal ?? null
-    this.adresseVisiteur = createAddressResolver(this.config?.journal?.trustProxy)
+    this.visitorAddress = createAddressResolver(this.config?.journal?.trustProxy)
     // cf. ServerOpts.entry : absent ⇒ AUCUN verbe mutant traité par `handle` (405 sec, porte
     // GET/HEAD historique inchangée).
     this.entry = opts.entry ?? null
@@ -285,7 +292,7 @@ export class StaticServer {
   }
 
   async start(): Promise<void> {
-    this.arret = null
+    this.stopping = null
     return new Promise((resolveStart, reject) => {
       // `handle` est désormais async (résolution render.routes, cf. plus bas) —
       // `createServer` ne l'attend pas (fire-and-forget, comme tout serveur HTTP
@@ -304,10 +311,10 @@ export class StaticServer {
         if (this.hmrEnabled) {
           this.hmr = new HMRServer(this.server!, { listenHost: this.host, isAllowedHost: this.hostAllowed, allowedHosts: this.config?.dev?.allowedHosts, originCheck: this.originAllowed })
           // eslint-disable-next-line no-console
-          console.log(t('server.index-hmr-actif', { host: hostForUrl(this.host), port: this.port }))
+          console.log(t('server.index-hmr-active', { host: hostForUrl(this.host), port: this.port }))
         }
         // eslint-disable-next-line no-console
-        console.log(t('server.index-ecoute', { host: hostForUrl(this.host), port: this.port, pathPrefix: this.pathPrefix }))
+        console.log(t('server.index-listen', { host: hostForUrl(this.host), port: this.port, pathPrefix: this.pathPrefix }))
         resolveStart()
       })
     })
@@ -319,11 +326,11 @@ export class StaticServer {
   // tombent aussitôt au lieu d'attendre leur propre délai d'inactivité. Un second appel rejoint
   // l'arrêt déjà lancé au lieu d'en commencer un autre.
   stop(): Promise<void> {
-    if (!this.arret) this.arret = this.arreter()
-    return this.arret
+    if (!this.stopping) this.stopping = this.halt()
+    return this.stopping
   }
 
-  private async arreter(): Promise<void> {
+  private async halt(): Promise<void> {
     if (this.hmr) this.hmr.close()
     if (!this.server) return
     const server = this.server
@@ -344,12 +351,12 @@ export class StaticServer {
    *  (`0.0.0.0` n'en est pas une, un téléphone passe par l'adresse du réseau local). */
   getHMRClientSnippet(reqHost?: string): string {
     const protocol = 'ws'
-    const adresse = this.server?.address()
-    const port = adresse && typeof adresse === 'object' ? adresse.port : this.port
+    const address = this.server?.address()
+    const port = address && typeof address === 'object' ? address.port : this.port
     // l'en-tête Host entre dans un script servi : son nom passe par le filtre des messages, son port par des chiffres seuls
-    const portHote = reqHost?.match(/:(\d{1,5})$/)?.[1]
-    const hote     = reqHost === undefined ? hostForUrl(this.host) + ':' + port : hostForUrl(hostNameForMessage(reqHost)) + (portHote ? ':' + portHote : '')
-    const wsUrl    = `${protocol}://${hote}/__mjs_hmr`
+    const hostPort = reqHost?.match(/:(\d{1,5})$/)?.[1]
+    const host     = reqHost === undefined ? hostForUrl(this.host) + ':' + port : hostForUrl(hostNameForMessage(reqHost)) + (hostPort ? ':' + hostPort : '')
+    const wsUrl    = `${protocol}://${host}/__mjs_hmr`
     return hmrClientSnippet(wsUrl)
   }
 
@@ -367,7 +374,7 @@ export class StaticServer {
     if (!this.hostAllowed(req.headers.host)) {
       res.statusCode = 403
       res.setHeader('Content-Type', 'text/plain; charset=utf-8')
-      res.end(t('server.hote-refuse', { nom: hostNameForMessage(req.headers.host) }))
+      res.end(t('server.host-refused', { name: hostNameForMessage(req.headers.host) }))
       return
     }
 
@@ -415,16 +422,26 @@ export class StaticServer {
     if (url === '/__mjs/theme/write') {
       if (isProdEnv(this.env)) { res.statusCode = 404; res.end('Not Found'); return }
       if (req.method !== 'POST') { res.statusCode = 405; res.end('Method Not Allowed'); return }
-      // origine vérifiée ICI alors que /edit s'en passe : n'importe quelle page du navigateur
+      // le PAIR d'abord : l'en-tête Origin s'écrit à la main hors d'un navigateur (curl), depuis un autre poste du réseau
+      // (`dev.host: "0.0.0.0"`, test sur un téléphone) comme derrière un mandataire — seule la machine elle-même enregistre dans
+      // le source : pair de la boucle locale, sans aucun en-tête par lequel un mandataire se signale (PROXY_HEADERS). Limite : un
+      // tunnel TCP brut (`ssh -R`, `socat`) ne pose aucun en-tête et passe pour la machine elle-même. Refus en JSON, avec le
+      // motif que l'atelier affiche.
+      // L'ORIGINE ensuite, vérifiée ICI alors que /edit s'en passe : n'importe quelle page du navigateur
       // peut POSTer en cross-origin sans lire la réponse (cf. l'en-tête de hmr.ts) — sur une
       // diffusion ça repeint un onglet de dev, ici ça écrirait dans le code du projet.
       // hasTrustedBrowserOrigin, PAS isTrustedDevOrigin : cette dernière traite l'absence
       // d'Origin comme une confiance par défaut (pensé pour un curl/outillage local sur les
-      // routes qui ne FONT qu'une diffusion) — un navigateur envoie TOUJOURS Origin sur une
-      // requête cross-origin, donc seul un client qui n'en est PAS un peut l'omettre. Sur une
-      // route qui ÉCRIT dans le code source, ne pas exiger la présence de l'en-tête revenait à
-      // laisser passer n'importe quel client qui l'omet — trouvé 23/09 : réel dès que
-      // `dev.host` est ouvert au réseau (cas documenté, test sur mobile).
+      // routes qui ne FONT qu'une diffusion) — sur une route qui ÉCRIT dans le code source,
+      // l'en-tête est exigé et seule une page de cette machine passe (boucle locale : localhost
+      // et ses sous-domaines, 127.0.0.1, [::1]).
+      const pair = req.socket.remoteAddress
+      if (pair === undefined || !LOOPBACK_PEER.trusts(pair) || PROXY_HEADERS.some(h => req.headers[h] !== undefined)) {
+        res.statusCode = 403
+        res.setHeader('Content-Type', 'application/json; charset=utf-8')
+        res.end(JSON.stringify({ written: false, reason: 'local-machine-only' }))
+        return
+      }
       if (!hasTrustedBrowserOrigin(req.headers.origin)) { res.statusCode = 403; res.end('Forbidden'); return }
       await this.serveThemeWritePost(req, res)
       return
@@ -481,7 +498,7 @@ export class StaticServer {
             res.setHeader('Content-Type', 'text/html; charset=utf-8')
             res.end(shell('', RENDER_BUNDLE_PATH, this.defaultLang, viewerScriptElement(script, JOURNAL_VIEWER)))
           } catch (e: any) {
-            console.error(t('server.journal-viewer-compile-echec', { erreur: e && e.message ? e.message : String(e) }))
+            console.error(t('server.journal-viewer-compile-failed', { error: e && e.message ? e.message : String(e) }))
             res.statusCode = 500
             res.end('Internal Server Error')
           }
@@ -552,9 +569,9 @@ export class StaticServer {
     // fichiers voisins du manifeste (fichier unique coupé en morceaux), sous le même chemin virtuel : le manifeste les importe par
     // un chemin relatif (`./chunk-….js`) ; seulement ceux que le build a consignés, cf. serveBundleNeighbor
     if (url.startsWith('/__mjs/')) {
-      let nom = ''
-      try { nom = decodeURIComponent(url.slice('/__mjs/'.length)) } catch { /* nom illisible : rien à servir */ }
-      if (serveBundleNeighbor(this.manifestPath, nom, req.method, res)) return
+      let name = ''
+      try { name = decodeURIComponent(url.slice('/__mjs/'.length)) } catch { /* nom illisible : rien à servir */ }
+      if (serveBundleNeighbor(this.manifestPath, name, req.method, res)) return
     }
 
     // Endpoint dédié au client HMR (snippet JS à inclure dans la page).
@@ -593,7 +610,7 @@ export class StaticServer {
         res.setHeader('Content-Type', 'text/html; charset=utf-8')
         res.end(shell('', RENDER_BUNDLE_PATH, this.defaultLang, viewerScriptElement(script, THEME_VIEWER)))
       } catch (e: any) {
-        console.error(t('server.theme-viewer-compile-echec', { erreur: e && e.message ? e.message : String(e) }))
+        console.error(t('server.theme-viewer-compile-failed', { error: e && e.message ? e.message : String(e) }))
         res.statusCode = 500
         res.end('Internal Server Error')
       }
@@ -738,11 +755,11 @@ export class StaticServer {
    *  JSON.parse, au lieu de laisser passer un fragment reçu jusque-là (même s'il se trouve être,
    *  par coïncidence, un JSON syntaxiquement valide). */
   private async readJsonBody(req: IncomingMessage, res: ServerResponse): Promise<Record<string, unknown> | undefined> {
-    const corps = await readCappedBody(req, res, 65_536)
-    if (corps === null) return undefined
+    const body = await readCappedBody(req, res, 65_536)
+    if (body === null) return undefined
     let payload: unknown
     try {
-      payload = JSON.parse(corps.toString('utf-8'))
+      payload = JSON.parse(body.toString('utf-8'))
     } catch {
       res.statusCode = 400; res.end('Bad Request'); return undefined
     }
@@ -756,25 +773,25 @@ export class StaticServer {
     const vars = payload.vars
     if (!isPlainObject(vars)) { res.statusCode = 400; res.end('Bad Request'); return }
 
-    const retenues: Record<string, string> = {}
-    const refusees: string[] = []
-    for (const [nom, valeur] of Object.entries(vars as Record<string, unknown>)) {
+    const retained: Record<string, string> = {}
+    const rejected: string[] = []
+    for (const [name, value] of Object.entries(vars as Record<string, unknown>)) {
       // '' = retrait de la surcharge (retour à la valeur du source) : valeur LÉGALE, elle
       // traverse le crible de forme qui, lui, exige au moins un caractère.
-      if (typeof valeur !== 'string' || !THEME_NAME_RE.test(nom) || (valeur !== '' && !isTrustedThemeValue(valeur))) {
-        refusees.push(nom)
+      if (typeof value !== 'string' || !THEME_NAME_RE.test(name) || (value !== '' && !isTrustedThemeValue(value))) {
+        rejected.push(name)
         continue
       }
-      retenues['--' + varPrefix + '-' + nom] = valeur
+      retained['--' + varPrefix + '-' + name] = value
     }
 
     // `this.hmr` absent = serveur monté sans HMR : l'aperçu n'a aucun canal, on le DIT (200 avec
     // `live: false`) plutôt que de rendre un succès sur une diffusion qui n'a pas eu lieu.
-    const nbPages = this.hmr?.clientCount ?? 0
-    if (this.hmr && Object.keys(retenues).length > 0) this.hmr.notifyThemeVars(retenues)
+    const pageCount = this.hmr?.clientCount ?? 0
+    if (this.hmr && Object.keys(retained).length > 0) this.hmr.notifyThemeVars(retained)
     res.statusCode = 200
     res.setHeader('Content-Type', 'application/json; charset=utf-8')
-    res.end(JSON.stringify({ live: !!this.hmr, clients: nbPages, applied: Object.keys(retenues).length, rejected: refusees }))
+    res.end(JSON.stringify({ live: !!this.hmr, clients: pageCount, applied: Object.keys(retained).length, rejected: rejected }))
   }
 
   // POST /__mjs/theme/write — `{ name, value, file, line }`. `file` et `line` viennent du
@@ -789,10 +806,10 @@ export class StaticServer {
   private async serveThemeWritePost(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const payload = await this.readJsonBody(req, res)
     if (payload === undefined) return
-    const rendre = (corps: Record<string, unknown>) => {
+    const reveal = (body: Record<string, unknown>) => {
       res.statusCode = 200
       res.setHeader('Content-Type', 'application/json; charset=utf-8')
-      res.end(JSON.stringify(corps))
+      res.end(JSON.stringify(body))
     }
 
     const name  = payload.name
@@ -803,28 +820,30 @@ export class StaticServer {
     // MÊME crible de formes que l'aperçu, pour une raison plus forte encore : la valeur finit
     // dans une feuille de style DU DÉPÔT, pas seulement dans un onglet de dev. La chaîne vide —
     // le « rétablir » de l'aperçu — n'a aucun sens ici : on ne devine pas une valeur d'origine.
-    if (typeof name !== 'string' || !THEME_NAME_RE.test(name)) { rendre({ written: false, reason: 'nom-refuse' }); return }
-    if (typeof value !== 'string' || value === '' || !isTrustedThemeValue(value)) { rendre({ written: false, reason: 'valeur-refusee' }); return }
-    if (typeof file !== 'string' || file === '') { rendre({ written: false, reason: 'fichier-manquant' }); return }
+    if (typeof name !== 'string' || !THEME_NAME_RE.test(name)) { reveal({ written: false, reason: 'name-rejected' }); return }
+    if (typeof value !== 'string' || value === '' || !isTrustedThemeValue(value)) { reveal({ written: false, reason: 'value-rejected' }); return }
+    if (typeof file !== 'string' || file === '') { reveal({ written: false, reason: 'missing-file' }); return }
     // `mjs dev` connaît la racine du projet (cli.ts la passe toujours) ; un StaticServer monté à
     // la main n'en a pas — sans elle on ne sait pas contre quoi borner le chemin, donc on ne
     // touche à rien plutôt que de résoudre depuis le dossier courant du process
-    if (!this.projectRoot) { rendre({ written: false, reason: 'racine-inconnue' }); return }
+    if (!this.projectRoot) { reveal({ written: false, reason: 'unknown-root' }); return }
 
-    const cible = resolve(this.projectRoot, file)
+    const target = resolve(this.projectRoot, file)
     // le chemin arrive du navigateur : `../../.ssh/config` et un lien symbolique qui sort du
     // projet sont deux façons d'en échapper — isRealPathWithin résout les deux avant de comparer
-    if (!existsSync(cible) || !statSync(cible).isFile() || !isRealPathWithin(this.projectRoot, cible)) { rendre({ written: false, reason: 'hors-projet' }); return }
+    if (!existsSync(target) || !statSync(target).isFile() || !isRealPathWithin(this.projectRoot, target)) { reveal({ written: false, reason: 'outside-project' }); return }
+    // le registre ne nomme que des sources : jamais un fichier d'un dossier caché (`.git`…) ni de `node_modules`, liens résolus
+    if (relative(realpathSync(this.projectRoot), realpathSync(target)).split(sep).some(s => s.startsWith('.') || s === 'node_modules')) { reveal({ written: false, reason: 'outside-project' }); return }
 
     const varPrefix = this.config?.varPrefix ?? 'mjs'
-    const issue     = rewriteThemeValue(readFileSync(cible, 'utf-8'), name, varPrefix, value, line)
-    if (!issue.ok) { rendre({ written: false, reason: issue.reason, lines: issue.lines, file }); return }
+    const issue     = rewriteThemeValue(readFileSync(target, 'utf-8'), name, varPrefix, value, line)
+    if (!issue.ok) { reveal({ written: false, reason: issue.reason, lines: issue.lines, file }); return }
 
-    writeFileSync(cible, issue.source)
+    writeFileSync(target, issue.source)
     // AUCUNE diffusion `theme-vars` derrière l'écriture : le watcher voit le fichier changer et
     // recompile, la page reçoit la vraie couleur par le canal normal. Une surcharge posée en plus
     // masquerait le résultat réel — et masquerait donc aussi un échec de compilation.
-    rendre({ written: true, file, line: issue.line, before: issue.before, after: issue.after })
+    reveal({ written: true, file, line: issue.line, before: issue.before, after: issue.after })
   }
 
   // POST /__mjs/errors (étage 2 du journal) : mêmes plafonds/troncatures que `mjs serve`,
@@ -833,31 +852,31 @@ export class StaticServer {
   // (render-server.ts, cf. le commentaire de readJsonBody ci-dessus pour le pourquoi) plutôt que
   // relue ici à la main : une coupure réseau ne journalise plus jamais un fragment reçu jusque-là.
   private async serveErrorsPost(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const ip = this.adresseVisiteur(req.socket.remoteAddress, req.headers) ?? 'inconnue'
+    const ip = this.visitorAddress(req.socket.remoteAddress, req.headers) ?? 'unknown'
     let bucket = this.errorsRateLimit.get(ip)
     if (!bucket) {
       pruneIdleBuckets(this.errorsRateLimit)   // purge avant croissance, cf. token-bucket.ts
       bucket = new TokenBucket(10, 0.5); this.errorsRateLimit.set(ip, bucket)
     }
     if (!bucket.take()) { res.statusCode = 429; res.end('Too Many Requests'); return }
-    const corps = await readCappedBody(req, res, 65_536)
-    if (corps === null) return
+    const body = await readCappedBody(req, res, 65_536)
+    if (body === null) return
     let payload: unknown
     try {
-      payload = JSON.parse(corps.toString('utf-8'))
+      payload = JSON.parse(body.toString('utf-8'))
     } catch {
       res.statusCode = 400; res.end('Bad Request'); return
     }
     if (!isPlainObject(payload)) { res.statusCode = 400; res.end('Bad Request'); return }
-    const p = payload as Record<string, unknown>
+    const p        = payload as Record<string, unknown>
     const message  = typeof p.message === 'string' ? p.message.slice(0, 2048) : ''
-    const pile     = typeof p.pile === 'string' ? p.pile.slice(0, 8192) : ''
+    const stack    = typeof p.stack === 'string' ? p.stack.slice(0, 8192) : ''
     const errUrl   = typeof p.url === 'string' ? p.url.slice(0, 2048) : ''
     const version  = typeof p.version === 'string' ? p.version.slice(0, 32) : null
     const uaHeader = req.headers['user-agent']
     const ua       = typeof uaHeader === 'string' ? uaHeader.slice(0, 256) : undefined
     // source FORCÉE 'client' — cf. render-server.ts, même défense (p.source jamais lu).
-    this.journal!.record('client', { message, pile, url: errUrl, version, ua })
+    this.journal!.record('client', { message, stack, url: errUrl, version, ua })
     res.statusCode = 204
     res.end()
   }
@@ -872,7 +891,7 @@ export class StaticServer {
   private recordServerError(e: any, url: string): void {
     if (!this.journal) return
     if (this.config?.journal?.server === false) return
-    this.journal.record('server', { message: e && e.message ? e.message : String(e), pile: e && e.stack, url, version: readBuildVersion(this.manifestPath) })
+    this.journal.record('server', { message: e && e.message ? e.message : String(e), stack: e && e.stack, url, version: readBuildVersion(this.manifestPath) })
   }
 
   // render.routes en dev (feature) — appelée UNIQUEMENT quand `this.renderHandle`
@@ -949,11 +968,11 @@ export class StaticServer {
       }
       // page servie en flux (`stream`, même règle que `mjs serve`) : statut, en-têtes et coquille partent dès son entrée dans la file
       // de rendu, avant le chargeur et le rendu (`onShell`) ; file pleine, le 503 d'un bloc
-      const enFlux  = streamedPage(this.config?.render, req.method, pathname, req.headers as any)
-      let coquille  = false
-      const onShell = enFlux ? (): void => {
-        coquille = true
-        pageHeaders(200, enFlux.mode)
+      const streamed = streamedPage(this.config?.render, req.method, pathname, req.headers as any)
+      let shellSent  = false
+      const onShell  = streamed ? (): void => {
+        shellSent = true
+        pageHeaders(200, streamed.mode)
         res.write(shellHead(this.defaultLang, headExtra()))
       } : undefined
       let r: RenderResponse
@@ -966,7 +985,7 @@ export class StaticServer {
       } finally {
         req.off('close', onReqClose)
       }
-      if (!coquille) pageHeaders(r.status, r.mode, r.retryAfter)
+      if (!shellSent) pageHeaders(r.status, r.mode, r.retryAfter)
       // Props du chargeur serve.server.mjs injectées AU 1er chargement HTML — DÉJÀ résolues par
       // `this.renderHandle` ci-dessus (`loadProps`, même chargeur entry.propsFor, appelé UNE seule
       // fois pour cette requête ; la fusion dans le rendu SSR lui-même vit dans render-request.ts) :
@@ -977,11 +996,11 @@ export class StaticServer {
       const body = r.kind === 'csr'
         ? (r.component ? '<' + r.component + '></' + r.component + '>' : '<!-- mjs: csr -->')
         : r.body
-      const contenu = (resTag ? resTag + '\n' : '') + body
+      const content = (resTag ? resTag + '\n' : '') + body
       // page en flux : le reste part derrière la coquille, page d'erreur comprise (statut 200 déjà parti, cf. streamedPage)
       const client = this.hmrEnabled ? HMR_CLIENT_TAG + '\n' : ''
-      if (coquille) res.end(contenu + shellTail(RENDER_BUNDLE_PATH, client))
-      else res.end(shell(contenu, RENDER_BUNDLE_PATH, this.defaultLang, client, headExtra()))
+      if (shellSent) res.end(content + shellTail(RENDER_BUNDLE_PATH, client))
+      else res.end(shell(content, RENDER_BUNDLE_PATH, this.defaultLang, client, headExtra()))
     } catch (e: any) {
       // (point de capture dev, cf. recordServerError) — auparavant, l'échec était avalé
       // en SILENCE TOTAL, comme le catch global de render-server.ts.

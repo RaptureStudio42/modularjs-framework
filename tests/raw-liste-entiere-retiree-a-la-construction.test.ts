@@ -69,12 +69,12 @@ const WITHOUT = ['µ.raw = function(target) {']
 // la marque de la liste lue par la passe, et le saut d'une ligne pure, dans leurs quatre textes : mise à jour fine ou non, note ou non
 const LIST_MARK = {
   plain:     'let __raw = µ._mjs_rawSet.has(col);',
-  fine:      'let __raw = µ._mjs_rawSet.has(col) || _mjs_propre(this, cacheId);',
+  fine:      'let __raw = µ._mjs_rawSet.has(col) || _mjs_isClean(this, cacheId);',
   noted:     'let __raw = µ._mjs_rawRows.has(items) ? 2 : µ._mjs_rawSet.has(col);',
-  notedFine: 'let __raw = µ._mjs_rawRows.has(items) ? 2 : µ._mjs_rawSet.has(col) || _mjs_propre(this, cacheId);',
+  notedFine: 'let __raw = µ._mjs_rawRows.has(items) ? 2 : µ._mjs_rawSet.has(col) || _mjs_isClean(this, cacheId);',
 }
-const SKIP_PLAIN = 'else if (raw && p && (p > 1 || en._mjs_ix === x) && (en._mjs_br || Object(it) !== it || µ._mjs_rawSet.has(it) && !it[µ._mjs_RAW] && (en._mjs_br = 1))) {'
-const SKIP_TWO   = 'else if (raw && p && (p > 1 || en._mjs_ix === x) && (en._mjs_br || raw === 2 || Object(it) !== it || µ._mjs_rawSet.has(it) && !it[µ._mjs_RAW] && (en._mjs_br = 1))) {'
+const SKIP_PLAIN = 'else if (raw && p && (p > 1 || ent._mjs_ix === x) && (ent._mjs_br || Object(it) !== it || µ._mjs_rawSet.has(it) && !it[µ._mjs_RAW] && (ent._mjs_br = 1))) {'
+const SKIP_TWO   = 'else if (raw && p && (p > 1 || ent._mjs_ix === x) && (ent._mjs_br || raw === 2 || Object(it) !== it || µ._mjs_rawSet.has(it) && !it[µ._mjs_RAW] && (ent._mjs_br = 1))) {'
 
 const all   = (text: string, marks: string[], what: string) => { for (const m of marks) assert.ok(text.includes(m), `${what} : « ${m} » manque`) }
 const none  = (text: string, marks: string[], what: string) => { for (const m of marks) assert.ok(!text.includes(m), `${what} : « ${m} » est encore là`) }

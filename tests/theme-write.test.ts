@@ -67,14 +67,14 @@ describe('theme-write — repérage de la déclaration dans le source', () => {
   it('applique le varPrefix du projet, pas un « mjs » codé en dur', () => {
     const src = '  --acme-accent: #000\n'
     assert.equal(rewriteThemeValue(src, 'accent', 'acme', '#fff').ok, true)
-    assert.equal(rewriteThemeValue(src, 'accent', 'mjs', '#fff').reason, 'introuvable')
+    assert.equal(rewriteThemeValue(src, 'accent', 'mjs', '#fff').reason, 'not-found')
   })
 
   it('une LECTURE n\'est jamais prise pour une déclaration', () => {
     // `color: $$accent` lit la variable ; seule une ligne qui OUVRE sur le nom la déclare
     const src = '.titre\n  color: $$accent\n  border-color: var(--mjs-accent)\n'
     assert.deepEqual(findThemeDecls(src, 'accent', 'mjs'), [])
-    assert.equal(rewriteThemeValue(src, 'accent', 'mjs', '#fff').reason, 'introuvable')
+    assert.equal(rewriteThemeValue(src, 'accent', 'mjs', '#fff').reason, 'not-found')
   })
 
   it('deux déclarations (clair et sombre) : la ligne du registre tranche', () => {
@@ -89,7 +89,7 @@ describe('theme-write — repérage de la déclaration dans le source', () => {
     const src = '[data-theme=light]\n  $$bg: #ffffff\n\n[data-theme=dark]\n  $$bg: #111111\n'
     const out = rewriteThemeValue(src, 'bg', 'mjs', '#000000')
     assert.equal(out.ok, false)
-    assert.equal(out.reason, 'ambigu')
+    assert.equal(out.reason, 'ambiguous')
     assert.deepEqual(out.lines, [2, 5])
     assert.equal(out.source, '')
   })
@@ -107,7 +107,7 @@ describe('theme-write — repérage de la déclaration dans le source', () => {
   it('valeur déjà posée = « inchange », et rien n\'est réécrit', () => {
     const out = rewriteThemeValue('  $$accent: #ff0000\n', 'accent', 'mjs', '#ff0000')
     assert.equal(out.ok, false)
-    assert.equal(out.reason, 'inchange')
+    assert.equal(out.reason, 'unchanged')
     assert.equal(out.source, '')
   })
 
@@ -163,7 +163,7 @@ describe('POST /__mjs/theme/write — enregistrement dans le source', () => {
       for (const file of [remonte, 'src/lien.sass']) {
         const { corps } = await ecrire(portDe(server), { name: 'accent', value: '#ff0000', file, line: 1 })
         assert.equal(corps.written, false, `refusé : ${file}`)
-        assert.equal(corps.reason, 'hors-projet')
+        assert.equal(corps.reason, 'outside-project')
       }
       assert.equal(readFileSync(temoin, 'utf-8'), '  --mjs-accent: #000000\n', 'le fichier hors projet n\'a pas bougé')
     } finally {
@@ -180,7 +180,7 @@ describe('POST /__mjs/theme/write — enregistrement dans le source', () => {
       for (const value of ['red; } body { display: none', 'url(//exemple.test/pixel.png)', 'a'.repeat(65)]) {
         const { corps } = await ecrire(port, { name: 'accent', value, file: 'src/carte.mjs', line: 1 })
         assert.equal(corps.written, false, `refusée : ${value}`)
-        assert.equal(corps.reason, 'valeur-refusee')
+        assert.equal(corps.reason, 'value-rejected')
       }
       assert.equal(readFileSync(join(root, 'src/carte.mjs'), 'utf-8'), '  $$accent: #3b82f6\n')
     } finally {
@@ -239,7 +239,7 @@ describe('POST /__mjs/theme/write — enregistrement dans le source', () => {
       for (const value of pieges) {
         const { corps } = await ecrire(port, { name: 'accent', value, file: 'src/carte.mjs', line: 1 })
         assert.equal(corps.written, false, `refusée : ${value}`)
-        assert.equal(corps.reason, 'valeur-refusee')
+        assert.equal(corps.reason, 'value-rejected')
       }
       assert.equal(readFileSync(join(root, 'src/carte.mjs'), 'utf-8'), '  $$accent: #3b82f6\n')
     } finally {
@@ -289,7 +289,7 @@ describe('POST /__mjs/theme/write — enregistrement dans le source', () => {
     try {
       const { corps } = await ecrire(portDe(server), { name: 'accent', value: '#ff0000', file: 'src/carte.mjs', line: 1 })
       assert.equal(corps.written, false)
-      assert.equal(corps.reason, 'racine-inconnue')
+      assert.equal(corps.reason, 'unknown-root')
     } finally {
       await server.stop()
     }

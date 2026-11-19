@@ -179,10 +179,10 @@ describe('µeffect.root et gestionnaires globaux : construction', function () {
   })
   it('racines toutes dans des composants, gestionnaires du gabarit compris : pas de mécanique des reffets de module', async () => {
     const racines = (await construire('racines')).get('bundle.js')!.toString()
-    for (const nom of ['_mjs_magOpen', '_mjsReffetMagasin', '_mjs_storeOwners', '_mjs_magW']) assert.ok(!racines.includes(nom), nom + ' emporté sans reffet de module')
-    assert.ok(racines.includes('_mjs_proprio'), 'propriétaire d\'un magasin créé dans une racine')
+    for (const nom of ['_mjs_magOpen', '_mjsReffetStore', '_mjs_storeOwners', '_mjs_magW']) assert.ok(!racines.includes(nom), nom + ' emporté sans reffet de module')
+    assert.ok(racines.includes('_mjs_owner'), 'propriétaire d\'un magasin créé dans une racine')
     const gabarit = (await construire('gabarit')).get('bundle.js')!.toString()
-    for (const nom of ['_mjs_magOpen', '_mjsReffetMagasin']) assert.ok(!gabarit.includes(nom), nom + ' emporté pour une racine d\'un gestionnaire du gabarit, qui reçoit son composant')
+    for (const nom of ['_mjs_magOpen', '_mjsReffetStore']) assert.ok(!gabarit.includes(nom), nom + ' emporté pour une racine d\'un gestionnaire du gabarit, qui reçoit son composant')
   })
 })
 

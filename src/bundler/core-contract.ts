@@ -21,7 +21,7 @@
 
 import * as acorn from 'acorn'
 import { CORE_HELPER_NAMES, blankNonCode } from './minify.js'
-import { INDICE_NOMS_PUBLICS } from './features.js'
+import { PUBLIC_NAME_HINT } from './features.js'
 
 // le périmètre surveillé, et RIEN d'autre — trois familles, toutes réservées au framework :
 //   - le préfixe `_mjs_` : réservé au générateur (cf. assertNoStringIndexedMjsAccess, minify.ts,
@@ -40,41 +40,41 @@ const SHORT_HELPERS = new Set<string>(CORE_HELPER_NAMES)
 // appelés, les trois autres dès qu'ils sont écrits, après un point ou un chaînage optionnel (`µ?.Store`).
 // Le nom réclamé garde son `µ.` : missingCoreSymbols y reconnaît une fonction publique, dont elle exige
 // la DÉFINITION
-const PUBLIQUES        = new Set(['Store', 'interpolate', 'Ticker'])
-const APPELEES         = new Set(['every', 'after', 'inspect', 'play', 'effect'])
+const PUBLIC_NAMES = new Set(['Store', 'interpolate', 'Ticker'])
+const CALLED_NAMES = new Set(['every', 'after', 'inspect', 'play', 'effect'])
 
 function publicCalls(js: string): string[] {
   // le même indice que le relevé des briques, commentaires compris entre les jetons (`µ /* c */ .Store`)
-  if (!INDICE_NOMS_PUBLICS.test(js)) return []
+  if (!PUBLIC_NAME_HINT.test(js)) return []
   const types = acorn.tokTypes
   // les mêmes lectures que le relevé des briques (features.ts, maskStringLiterals) : un programme en module,
   // en script, puis les jetons seuls (repères d'import d'une sortie de transpile() lue hors du bundler)
-  const lectures: Array<(onToken: (jeton: acorn.Token) => void) => void> = [
+  const reads: Array<(onToken: (token: acorn.Token) => void) => void> = [
     (onToken) => { acorn.parse(js, { ecmaVersion: 'latest', sourceType: 'module', onToken }) },
     (onToken) => { acorn.parse(js, { ecmaVersion: 'latest', sourceType: 'script', onToken }) },
-    (onToken) => { for (const jeton of acorn.tokenizer(js, { ecmaVersion: 'latest', sourceType: 'script' })) onToken(jeton) },
+    (onToken) => { for (const token of acorn.tokenizer(js, { ecmaVersion: 'latest', sourceType: 'script' })) onToken(token) },
   ]
-  for (const lire of lectures) {
-    const noms               = new Set<string>()
-    let avant: acorn.Token[] = []
-    let appelAttendu         = ''
+  for (const read of reads) {
+    const names               = new Set<string>()
+    let before: acorn.Token[] = []
+    let expectedCall          = ''
     try {
-      lire((jeton) => {
-        if (appelAttendu && jeton.type === types.parenL) noms.add('µ.' + appelAttendu)
-        appelAttendu = ''
-        const [avantPoint, point] = avant
-        if (jeton.type === types.name && (point?.type === types.dot || point?.type === types.questionDot) && avantPoint?.type === types.name && js.slice(avantPoint.start, avantPoint.end) === 'µ') {
-          const nom = js.slice(jeton.start, jeton.end)
-          if (APPELEES.has(nom)) appelAttendu = nom
-          else if (PUBLIQUES.has(nom)) noms.add('µ.' + nom)
+      read((token) => {
+        if (expectedCall && token.type === types.parenL) names.add('µ.' + expectedCall)
+        expectedCall = ''
+        const [beforeDot, point] = before
+        if (token.type === types.name && (point?.type === types.dot || point?.type === types.questionDot) && beforeDot?.type === types.name && js.slice(beforeDot.start, beforeDot.end) === 'µ') {
+          const name = js.slice(token.start, token.end)
+          if (CALLED_NAMES.has(name)) expectedCall = name
+          else if (PUBLIC_NAMES.has(name)) names.add('µ.' + name)
         }
-        avant = [point, jeton]
+        before = [point, token]
       })
     }
     catch {
       continue
     }
-    return [...noms]
+    return [...names]
   }
   // un code qu'acorn ne lit d'aucune façon : rien de réclamé (le relevé des briques, lui, n'y masque rien et
   // embarque à la moindre mention) — jamais un refus sur une lecture incertaine
@@ -85,7 +85,7 @@ function publicCalls(js: string): string[] {
 // qui écarte les propriétés que l'unité se pose à ELLE-MÊME (`this._mjs_fallback = (err, reset) =>`,
 // `static _mjs_noDestroyHooks = false`) — elles ne sont pas des promesses du cœur, et le cœur n'a
 // pas à les porter.
-const APPEL = /\.(_mjs_[A-Za-z0-9_$]*|_[A-Za-z][A-Za-z0-9_$]*)\s*\(/g
+const CALL = /\.(_mjs_[A-Za-z0-9_$]*|_[A-Za-z][A-Za-z0-9_$]*)\s*\(/g
 
 /**
  * Les symboles du contrat qu'une unité compilée appelle. Sur le code NON MINIFIÉ, commentaires et
@@ -94,15 +94,15 @@ const APPEL = /\.(_mjs_[A-Za-z0-9_$]*|_[A-Za-z][A-Za-z0-9_$]*)\s*\(/g
  */
 export function collectCoreCalls(js: string): Set<string> {
   const code  = blankNonCode(js)
-  const noms  = new Set<string>()
+  const names = new Set<string>()
   let m: RegExpExecArray | null
-  APPEL.lastIndex = 0
-  while ((m = APPEL.exec(code)) !== null) {
-    const nom = m[1]
-    if (nom.startsWith('_mjs_') || SHORT_HELPERS.has(nom)) noms.add(nom)
+  CALL.lastIndex = 0
+  while ((m = CALL.exec(code)) !== null) {
+    const name = m[1]
+    if (name.startsWith('_mjs_') || SHORT_HELPERS.has(name)) names.add(name)
   }
-  for (const nom of publicCalls(js)) noms.add(nom)
-  return noms
+  for (const name of publicCalls(js)) names.add(name)
+  return names
 }
 
 /**
@@ -121,21 +121,21 @@ export function collectCoreCalls(js: string): Set<string> {
  * rien. Le cœur doit porter leur affectation, `µ.X = …`, la forme de leurs fichiers
  * (mjs_store.ts, mjs_interpolate.ts, mjs_ticker.ts, mjs_every.ts, mjs_inspect.ts, mjs_play.ts, mjs_effect.ts).
  */
-export function missingCoreSymbols(coreJs: string, appels: Iterable<string>): string[] {
-  const code = blankNonCode(coreJs)
-  const noms = [...appels]
-  if (noms.length === 0) return []
-  const internes  = noms.filter(nom => !nom.startsWith('µ.'))
-  const manquants = noms.filter(nom => nom.startsWith('µ.') && !new RegExp(`(?<![\\w$.])µ\\.${nom.slice(2).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*=(?!=)`).test(code))
-  if (internes.length > 0) {
+export function missingCoreSymbols(coreJs: string, calls: Iterable<string>): string[] {
+  const code  = blankNonCode(coreJs)
+  const names = [...calls]
+  if (names.length === 0) return []
+  const internal = names.filter(name => !name.startsWith('µ.'))
+  const missing  = names.filter(name => name.startsWith('µ.') && !new RegExp(`(?<![\\w$.])µ\\.${name.slice(2).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*=(?!=)`).test(code))
+  if (internal.length > 0) {
     // UN SEUL passage sur le texte du cœur (jusqu'au Mo) plutôt qu'une expression régulière PAR
     // symbole relancée sur le texte ENTIER (jusqu'à ~150 fois sur un gros projet, mesuré ~80ms
     // pour 42 noms sur un cœur de 1,2 Mo) : une alternance couvre tous les noms d'un coup, chacun
     // gardant sa PROPRE frontière (`(?<![\w$])`/`(?![\w$])`, cf. le commentaire ci-dessus).
-    const alternance = internes.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
-    const trouves    = new Set<string>()
-    for (const m of code.matchAll(new RegExp(`(?<![\\w$])(?:${alternance})(?![\\w$])`, 'g'))) trouves.add(m[0])
-    manquants.push(...internes.filter(nom => !trouves.has(nom)))
+    const alternation = internal.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+    const found       = new Set<string>()
+    for (const m of code.matchAll(new RegExp(`(?<![\\w$])(?:${alternation})(?![\\w$])`, 'g'))) found.add(m[0])
+    missing.push(...internal.filter(name => !found.has(name)))
   }
-  return manquants.sort()
+  return missing.sort()
 }

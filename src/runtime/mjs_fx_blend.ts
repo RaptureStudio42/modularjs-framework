@@ -123,15 +123,15 @@ function _mjsFxBlendProbe(then) {
 function _mjsFxBlendUnits(el, w, h) {
   var vb = el.viewBox && el.viewBox.baseVal;
   if (!vb || !(vb.width > 0 && vb.height > 0)) return { x: 0, y: 0, w: w, h: h };
-  var par = String(µ._mjs_dom.getAttribute(el, 'preserveAspectRatio') || 'xMidYMid meet').trim().split(/\s+/);
-  var sx  = w / vb.width;
-  var sy  = h / vb.height;
-  var ax  = 0;
-  var ay  = 0;
-  if (par[0] !== 'none') {
-    sx = sy = par[1] === 'slice' ? Math.max(sx, sy) : Math.min(sx, sy);
-    ax = /xMin/.test(par[0]) ? 0 : /xMax/.test(par[0]) ? 1 : .5;
-    ay = /YMin/.test(par[0]) ? 0 : /YMax/.test(par[0]) ? 1 : .5;
+  var by = String(µ._mjs_dom.getAttribute(el, 'preserveAspectRatio') || 'xMidYMid meet').trim().split(/\s+/);
+  var sx = w / vb.width;
+  var sy = h / vb.height;
+  var ax = 0;
+  var ay = 0;
+  if (by[0] !== 'none') {
+    sx = sy = by[1] === 'slice' ? Math.max(sx, sy) : Math.min(sx, sy);
+    ax = /xMin/.test(by[0]) ? 0 : /xMax/.test(by[0]) ? 1 : .5;
+    ay = /YMin/.test(by[0]) ? 0 : /YMax/.test(by[0]) ? 1 : .5;
   }
   return { x: vb.x - (w - vb.width * sx) * ax / sx, y: vb.y - (h - vb.height * sy) * ay / sy, w: w / sx, h: h / sy };
 }
@@ -474,10 +474,10 @@ function _mjsFxBlendFilter(el, o) {
     put(f, 'height', own ? (rooted ? fr.h : (fr.h + Math.abs(fr.y) + fr.room) * ky) : 1);
   };
   // le point de l'image gardé visible, en mots pour preserveAspectRatio
-  var place = function(p, par) {
+  var place = function(p, by) {
     var ax = p.x < 1 / 3 ? 'xMin' : p.x > 2 / 3 ? 'xMax' : 'xMid';
     var ay = p.y < 1 / 3 ? 'YMin' : p.y > 2 / 3 ? 'YMax' : 'YMid';
-    return ax + ay + ' ' + par;
+    return ax + ay + ' ' + by;
   };
   var bound   = [];
   var size    = null;

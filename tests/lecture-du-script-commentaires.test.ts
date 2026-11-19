@@ -6,12 +6,12 @@
 
 import assert from 'node:assert/strict'
 import { applyCivetDialectSugar, transpile } from '../src/transpiler/index.js'
-import { compteursLectureDuScript } from '../src/reader/script.js'
+import { scriptReadCounters } from '../src/reader/script.js'
 
 // la lecture des commentaires par l'arbre (`lus`) : celle d'un script de composant repris
-const dialecte = (src: string): string => applyCivetDialectSugar(src, 'civet', undefined, 1, undefined, undefined, 'lus')
+const dialecte = (src: string): string => applyCivetDialectSugar(src, 'civet', undefined, 1, undefined, undefined, 'read')
 // le balayeur des commentaires : celui des gestionnaires, des modules et des fichiers serveur
-const balayeur = (src: string): string => applyCivetDialectSugar(src, 'civet', undefined, 1, undefined, undefined, 'balayeur')
+const balayeur = (src: string): string => applyCivetDialectSugar(src, 'civet', undefined, 1, undefined, undefined, 'scanner')
 
 describe('lecture du script par l\'arbre — commentaires du dialecte', () => {
   it('rend le même texte que le balayeur là où il lit juste', () => {
@@ -31,10 +31,10 @@ describe('lecture du script par l\'arbre — commentaires du dialecte', () => {
   })
 
   it('lit par l\'arbre un script ordinaire, sans relecture', () => {
-    const avant = { ...compteursLectureDuScript }
+    const avant = { ...scriptReadCounters }
     dialecte("total = 0 # somme l'an\n### note\n###\nfin = 1")
-    assert.equal(compteursLectureDuScript.arbre, avant.arbre + 1)
-    assert.equal(compteursLectureDuScript.relus, avant.relus)
+    assert.equal(scriptReadCounters.tree, avant.tree + 1)
+    assert.equal(scriptReadCounters.reread, avant.reread)
   })
 
   it('reprend le balayeur pour un script que l\'arbre ne lit pas sûrement, avec sa raison', () => {
@@ -49,10 +49,10 @@ describe('lecture du script par l\'arbre — commentaires du dialecte', () => {
       'x = (\n# c'
     ]
     for (const src of scripts) {
-      const avant = compteursLectureDuScript.relus
+      const avant = scriptReadCounters.reread
       assert.equal(dialecte(src), balayeur(src), src)
-      assert.equal(compteursLectureDuScript.relus, avant + 1, src)
-      assert.ok(typeof compteursLectureDuScript.derniere === 'string' && compteursLectureDuScript.derniere.length > 0, src)
+      assert.equal(scriptReadCounters.reread, avant + 1, src)
+      assert.ok(typeof scriptReadCounters.last === 'string' && scriptReadCounters.last.length > 0, src)
     }
   })
 

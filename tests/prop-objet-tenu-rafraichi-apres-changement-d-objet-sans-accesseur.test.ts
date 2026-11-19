@@ -21,7 +21,7 @@ const SOURCES: Record<string, string> = {
   // l'enfant tient `$o.a`, puis `$o.b` ; `garde.b.v` changé hors de MJS
   'rc-bascule.mjs': js(['const garde = { a: { v: 1 }, b: { v: 2 } };', '$o = garde;', '$k = "a";', '@basculer = function() { $k = "b"; };', '@dehors = function(v) { garde.b.v = v; };', RAF], '<@rc-json item={$o[$k]}></@rc-json>'),
   // accesseurs propres de `$o` : l'un compte ses lectures, l'autre lève
-  'rc-acces.mjs':   js(['window.__lu = 0;', '$o = { a: { c: 0 }, get total() { window.__lu++; return 1; }, get boum() { throw new Error("accesseur"); } };', RAF], '<@rc-json item={$o.a}></@rc-json>'),
+  'rc-acces.mjs':   js(['window.__read = 0;', '$o = { a: { c: 0 }, get total() { window.__read++; return 1; }, get boum() { throw new Error("accesseur"); } };', RAF], '<@rc-json item={$o.a}></@rc-json>'),
   // objet déplacé sous le conteneur que tient l'enfant, puis écrit par le nom gardé
   'rc-deplace.mjs': js(['let x = null;', '$o = { a: { b: { c: 0 } }, z: { w: 0 } };', '@deplacer = function() { x = $o.a.b; $o.z.m = x; delete $o.a.b; };', '@ecrire = function(v) { x.c = v; };', RAF], '<@rc-json item={$o.z}></@rc-json>'),
 }
@@ -81,10 +81,10 @@ for (const [nom, opts] of REGLAGES) describe(`µrefresh($o) et l'enfant qui tien
 
   it('µrefresh($o) n\'appelle aucun accesseur de l\'appli et ne lève pas son exception', async () => {
     const { win, el, montre } = await appli('rc-acces')
-    const lu = win.__lu
+    const lu = win.__read
     assert.doesNotThrow(() => { el.rafraichir(); el.rafraichir() })
     await tic()
-    assert.equal(win.__lu, lu, 'accesseur appelé par µrefresh')
+    assert.equal(win.__read, lu, 'accesseur appelé par µrefresh')
     assert.equal(montre(), '{"c":0}')
   })
 

@@ -45,7 +45,7 @@ function rendu(n: Node): string {
 }
 
 // l'avertissement d'une balise raccourci rendue vide avant un jeton de bloc (ou la fin du gabarit, jeton vide)
-const avantJeton = (attendu: string, ligneOuverture: number, jeton = '', ligne = 0): string => `${t('parser.raccourci-non-referme', { attendu, ligneOuverture, jeton, ligne })} [lint.syntax]`
+const avantJeton = (attendu: string, ligneOuverture: number, jeton = '', ligne = 0): string => `${t('parser.shorthand-not-closed', { expected: attendu, openLine: ligneOuverture, token: jeton, line: ligne })} [lint.syntax]`
 
 // rendue vide à la fermante d'un ancêtre : l'ancienne lecture la gardait ouverte jusque-là et avertissait ; l'arbre
 // la rend vide (le contenu reste au parent), avec ses avertissements à elle, dans son ordre

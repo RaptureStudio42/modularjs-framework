@@ -117,7 +117,7 @@ const TACHES = `@import marque 'taches-aides.civet.mjs'
   @optEfface   = (k) -> delete $$m.get(k)?.tags
   @optOu       = (k) -> $$m.get(k)?.note ||= 'd'
   @optDeux     = (id) -> $$taches.find((x) -> x.id == id)?.meta?.vu = true
-  @optLu       = (k) -> µ.__lu = ($$m.get(k)?.n = 7)
+  @optLu       = (k) -> µ.__read = ($$m.get(k)?.n = 7)
   @cheminOpt   = -> $$taches[0]?.meta.vu = true
   @cheminEfface = -> delete $$taches[1]?.note
   @proto       = (k1, k2) -> $$taches.find((x) -> x.id == 1)[k1][k2] = 'pollue'
@@ -574,7 +574,7 @@ describe('magasin $$ : une écriture par find(), findLast(), at(), get() prévie
     const { window, comp } = await taches()
     try {
       comp.optLu('a')
-      assert.equal(window.µ.__lu, 7)
+      assert.equal(window.µ.__read, 7)
     }
     finally {
       window.close()

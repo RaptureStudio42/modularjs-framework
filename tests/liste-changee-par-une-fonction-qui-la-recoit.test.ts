@@ -214,7 +214,7 @@ const AUTRES: Record<string, string> = {
   'tst-lcf-ligne': `<script lang="js">\n  $item = {};\n</script>\n<span>{$item.id}:{$item.n}</span>\n`,
   'tst-lcf-lignes': `<script lang="js">\n  $rows = [{id: 1, n: 10}, {id: 2, n: 20}, {id: 3, n: 30}, {id: 4, n: 40}];\n  @muter = function(f) { return f($rows); };\n</script>\n<ul class="e">{for r in $rows by id}<li><@tst-lcf-ligne item={r}></@tst-lcf-ligne></li>{end}</ul>\n`,
   'tst-lcf-type': `<vars>\n  $nums int[]\n</vars>\n<script lang="js">\n  $nums = [1, 2];\n  @muter = function(f) { return f($nums); };\n</script>\n<ul class="t">{for r in $nums}<li>{r}</li>{end}</ul>\n`,
-  'tst-lcf-store': `<script lang="js">\n  class Panier extends µ.Store { constructor() { super(); this.state = {rows: [{id: 1, n: 3}, {id: 2, n: 1}, {id: 3, n: 2}]}; } }\n  const p = new Panier();\n  @muter = function(f) { return f(p.state.rows); };\n</script>\n<ul class="s">{for r in p.state.rows by id}<li>{r.n}</li>{end}</ul>\n`
+  'tst-lcf-store': `<script lang="js">\n  class Panier extends µ.Store { constructor() { super({rows: [{id: 1, n: 3}, {id: 2, n: 1}, {id: 3, n: 2}]}); } }\n  const p = new Panier();\n  @muter = function(f) { return f(p.data.rows); };\n</script>\n<ul class="s">{for r in p.data.rows by id}<li>{r.n}</li>{end}</ul>\n`
 }
 const SOURCES2 = (root: string) => {
   mkdirSync(join(root, 'src'), { recursive: true })
@@ -324,8 +324,8 @@ for (const mode of ['développement', 'production']) {
       c.destroy()
     })
 
-    // la vue qui lit `p.state.rows` ne suit pas le magasin, même écrit dans le composant (`p.state.rows.pop()`, liste remplacée) : ce cas
-    // ne regarde que la donnée — la méthode change toute la liste, rend ce que rend JavaScript, rien ne tombe
+    // le magasin range sa liste dans `.data`, comme le dit le chapitre 14 (`super({ rows: […] })`, lue par `p.data.rows`) : la méthode
+    // change toute la liste, rend ce que rend JavaScript, rien ne tombe, et aucun avertissement ne part
     it('liste d\'un `µ.Store` changée par une fonction (`pop`, `sort`) : la donnée change en entier, rien ne tombe', async () => {
       const { c } = await scene('tst-lcf-store', (c) => c.el.muter((x: any[]) => x.pop()))
       assert.deepEqual(messages, [])

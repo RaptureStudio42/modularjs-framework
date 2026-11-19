@@ -8,6 +8,7 @@
 import assert from 'node:assert/strict'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { navigateurPresent, construireProd, ouvrir, boite, fly, measure, page, PENTE, PILOTE, couleurs, type Construit } from './helpers/hologramme-zoom.js'
+import { playTogether } from './helpers/engines-together.js'
 
 const DOS_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="280"><rect width="200" height="280" fill="#e8c020"/><circle cx="100" cy="140" r="60" fill="#a01030"/></svg>'
 const FACE    = [[42, 74, 106], [122, 90, 154]]
@@ -24,7 +25,7 @@ const compilations: Record<string, Promise<Construit>> = {}
 const construit = (pose: string) => compilations[pose] ??= construireProd(POSES[pose], 'effets-hologramme-zoom-production-' + pose)
 
 for (const nom of ['chromium', 'firefox'] as const) {
-  describe(`*hologram(zoom) en production, une construction par application (${nom} réel)`, function () {
+  playTogether(describe(`*hologram(zoom) en production, une construction par application (${nom} réel)`, function () {
     this.timeout(300000)
     let present = false
 
@@ -145,5 +146,5 @@ for (const nom of ['chromium', 'firefox'] as const) {
         assert.ok(m.turn >= 359 && montre(m), `${sens} : le tour et le dos (étendue de l'angle ${m.turn}°, dos montré ${m.showed}, images à ${m.grain} ms au plus)`)
       }
     })
-  })
+  }))
 }

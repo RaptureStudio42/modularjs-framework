@@ -33,8 +33,8 @@ const CODE_LENGTH = 5
 // movesPerIdentity, opt-in) : `codePerIp` de createMatchmaking (dernier paramètre) vaut CE défaut tant
 // qu'aucun appelant direct n'en passe un autre (index.ts n'en expose PAS encore l'option publique,
 // hors périmètre de ce correctif) ; `null` explicite désactive le verrou.
-const DEFAULT_CODE_PAR_IP_CAPACITY  = 10
-const DEFAULT_CODE_PAR_IP_WINDOW_MS = 60000   // 10 échecs/min/IP
+const DEFAULT_CODE_PER_IP_CAPACITY  = 10
+const DEFAULT_CODE_PER_IP_WINDOW_MS = 60000   // 10 échecs/min/IP
 
 // plafond de la file d'attente publique — sans lui, `queues` (une entrée par
 // IDENTITÉ distincte, cf. idempotence de file plus bas) grossit sans borne : N identités qui jouent
@@ -88,7 +88,7 @@ export interface MjsServerMatchmaking {
  *  (DEFAULT_CODE_PAR_IP_*, contrairement à movesPerIdentity qui est opt-in) — `null` explicite pour
  *  désactiver. index.ts n'expose PAS encore d'option publique pour le repasser (hors périmètre).
  *  `privateGamesPerCreator` — cf. DEFAULT_PRIVATE_GAMES_PER_CREATOR (opts.antiCheat.privateGamesPerCreator, déjà validée par index.ts) */
-export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServerResolvedDef>, baseServe: MjsWsApp['serve'], baseOn: MjsWsApp['on'], persist: MjsServerPersistEngine | null = null, gameStats: MjsServerGameStats | null = null, movesPerIdentity: [number, number] | null = null, codePerIp: [number, number] | null = [DEFAULT_CODE_PAR_IP_CAPACITY, DEFAULT_CODE_PAR_IP_WINDOW_MS], queueCap: number | null = DEFAULT_QUEUE_CAP, privateGamesPerCreator: number | null = DEFAULT_PRIVATE_GAMES_PER_CREATOR): MjsServerMatchmaking {
+export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServerResolvedDef>, baseServe: MjsWsApp['serve'], baseOn: MjsWsApp['on'], persist: MjsServerPersistEngine | null = null, gameStats: MjsServerGameStats | null = null, movesPerIdentity: [number, number] | null = null, codePerIp: [number, number] | null = [DEFAULT_CODE_PER_IP_CAPACITY, DEFAULT_CODE_PER_IP_WINDOW_MS], queueCap: number | null = DEFAULT_QUEUE_CAP, privateGamesPerCreator: number | null = DEFAULT_PRIVATE_GAMES_PER_CREATOR): MjsServerMatchmaking {
   const queues     = new Map<string, MjsWsClient[]>()     // type → tickets FIFO
   // reverse index — retrait O(1) sur déconnexion ; SINGULIER par construction (une connexion n'est
   // JAMAIS dans deux files à la fois, cf. playQueued) — s'inscrire pour un NOUVEAU type retire
@@ -98,7 +98,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
   const queuedType = new Map<MjsWsClient, string>()
   // idempotence de file (anti-triche) — type → Set des IDENTITÉS (peerIdOf) déjà
   // en file pour ce type : empêche un spam de µgame:play (même connexion qui rejoue, OU 2e onglet
-  // de la MÊME identité) de pousser plusieurs tickets — cf. matchmaking.ts:130-152
+  // de la MÊME identité) de pousser plusieurs tickets — cf. playQueued plus bas
   // (file.push SANS idempotence → N tickets → N sièges fantômes → partie jamais vidée). Nettoyé
   // aux DEUX points de sortie de la file (appariement ET déconnexion, cf. plus bas) — jamais laissé
   // traîner. Indépendant de `queuedType` ci-dessus (celui-ci reste keyé par CONNEXION, pour le
@@ -375,7 +375,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     const full = game.players.filter((j): j is MjsServerSeat => j !== null).length === game.def.seats
     if (!full) return
     game._started = true
-    for (const autre of game.players) { if (autre && autre !== directPlayer) pushStart(game, autre) }
+    for (const other of game.players) { if (other && other !== directPlayer) pushStart(game, other) }
   }
 
   // --- code : créer / rejoindre ----------------------------------------------------------------
@@ -416,11 +416,11 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     })
     return Promise.race([admissions[0], new Promise<void>(resolve => setImmediate(resolve))]).then(() => {
       verdict.waiting = false
-      if (game._destroyed) throw new Error(t('serveur.matchmaking-partie-introuvable'))
+      if (game._destroyed) throw new Error(t('mjs-server.matchmaking-game-not-found'))
       if (verdict.refused) {
         if (verdict.refused.clients.size > 1) game._refuseSeat(verdict.refused)   // un autre onglet de la même identité s'est rattaché pendant l'attente et a sa réponse : refus après coup, pour tous
         else game._dropSeat(verdict.refused)
-        throw new Error(t('serveur.matchmaking-entree-refusee'))
+        throw new Error(t('mjs-server.matchmaking-entry-refused'))
       }
       game._seatAdmitted()
       return seatedResponse(game, player, client)
@@ -444,7 +444,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     const creator  = creatorKeyOf(client)
     if (privateGamesPerCreator !== null) {
       const live = livePrivateGamesOf(creator)
-      if (live.size - (replaced && live.has(replaced) ? 1 : 0) >= privateGamesPerCreator) throw new Error(t('serveur.matchmaking-parties-privees-limite', { max: privateGamesPerCreator }))
+      if (live.size - (replaced && live.has(replaced) ? 1 : 0) >= privateGamesPerCreator) throw new Error(t('mjs-server.matchmaking-games-private-limit', { max: privateGamesPerCreator }))
       checkSeatedPrivateGames(peerIdOf(client), replaced)
     }
     const game = create(def)
@@ -517,7 +517,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
   function checkSeatedPrivateGames(id: string, freed: Game | null): void {
     if (privateGamesPerCreator === null) return
     const seated = seatedPrivateGamesOf(id)
-    if (seated.size - (freed && seated.has(freed) ? 1 : 0) >= privateGamesPerCreator) throw new Error(t('serveur.matchmaking-parties-privees-siege-limite', { max: privateGamesPerCreator }))
+    if (seated.size - (freed && seated.has(freed) ? 1 : 0) >= privateGamesPerCreator) throw new Error(t('mjs-server.matchmaking-games-private-seat-limit', { max: privateGamesPerCreator }))
   }
 
   // anti-brute-force code (cf. codeFailures plus haut) — `ipOf` MÊME fonction que
@@ -533,7 +533,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
    *  message qu'un rejet ordinaire du module (throw new Error), rien de spécifique côté client. */
   function checkCodeLockout(client: MjsWsClient): void {
     if (!codeFailures) return
-    if (codeFailures.isBlocked(ipOf(client))) throw new Error(t('serveur.matchmaking-trop-tentatives-code'))
+    if (codeFailures.isBlocked(ipOf(client))) throw new Error(t('mjs-server.matchmaking-too-many-attempts-code'))
   }
 
   /** à appeler UNIQUEMENT sur code INEXISTANT (cf. call-sites) — jamais sur 'partie complète' (code
@@ -556,7 +556,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     // { type: 'B', code: codeDeA } rejoindrait intégralement la partie A (vue/état RÉELS de A
     // renvoyés à une requête B). MÊME message que 'code inconnu' (pas une forme d'erreur à part) :
     // ne révèle jamais qu'un code existe pour un AUTRE type
-    if (!game || game.type !== def.type) throw new Error(recordCodeFailure(client) ? t('serveur.matchmaking-code-inconnu', { code: code }) : t('serveur.matchmaking-trop-tentatives-code'))
+    if (!game || game.type !== def.type) throw new Error(recordCodeFailure(client) ? t('mjs-server.matchmaking-code-unknown', { code: code }) : t('mjs-server.matchmaking-too-many-attempts-code'))
     // journal lockstep coupé : la page qui ne sait pas lire son instantané est refusée avant d'y prendre ou d'y retrouver un siège
     game._requireSnapshotReader(reads)
     const alreadySeated = game._findSeatOf(client)
@@ -609,7 +609,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     if (!queue) { queue = []; queues.set(def.type, queue) }
     // plafond — refuse le ticket AVANT de le pousser, jamais une file qui
     // grossit sans borne (queueCap null = plafond désactivé, cf. tête de fichier)
-    if (queueCap !== null && queue.length >= queueCap) throw new Error(t('serveur.matchmaking-file-pleine', { type: def.type }))
+    if (queueCap !== null && queue.length >= queueCap) throw new Error(t('mjs-server.matchmaking-queue-full', { type: def.type }))
     queue.push(client)
     queuedType.set(client, def.type)
     enqueue(def.type, id)
@@ -671,16 +671,16 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
       } catch (err) {
         requeue(def, group.filter(ticket => ticket !== caller))
         if (mine) { forget(def, caller!); failure = { err } }
-        else def.log('error', t('serveur.matchmaking-appariement-echoue', { msg: errMessage(err) }))
+        else def.log('error', t('mjs-server.matchmaking-matching-failed', { msg: errMessage(err) }))
         break
       }
       try {
         const outcome = openMatch(def, game, group, mine ? caller : null)
         if (mine) { answered = true; reply = outcome }
-        else if (outcome instanceof Promise) outcome.catch((err: unknown) => def.log('error', t('serveur.matchmaking-appariement-echoue', { msg: errMessage(err) })))
+        else if (outcome instanceof Promise) outcome.catch((err: unknown) => def.log('error', t('mjs-server.matchmaking-matching-failed', { msg: errMessage(err) })))
       } catch (err) {
         if (mine) failure = { err }   // le refus de l'appelant : seule exception que le règlement d'un groupe laisse remonter
-        else def.log('error', t('serveur.matchmaking-appariement-echoue', { msg: errMessage(err) }))
+        else def.log('error', t('mjs-server.matchmaking-matching-failed', { msg: errMessage(err) }))
       }
     }
     if (failure) throw failure.err
@@ -760,7 +760,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     requeue(def, tickets.filter(ticket => !refusedTickets.has(ticket)))
     if (caller === null) return undefined
     if (refusal && refusal.ticket === caller) throw refusal.err
-    if (refusedTickets.has(caller)) throw new Error(t('serveur.matchmaking-entree-refusee'))
+    if (refusedTickets.has(caller)) throw new Error(t('mjs-server.matchmaking-entry-refused'))
     return { queue: positionOf(def, caller) }
   }
 
@@ -778,7 +778,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     checkCodeLockout(client)   // MÊME verrou anti-brute-force que joinWithCode — même registre `codes`, même risque de devinette
     const gameId = codes.get(code)
     const game = gameId !== undefined ? games.get(gameId) : undefined
-    if (!game || game.type !== def.type) throw new Error(recordCodeFailure(client) ? t('serveur.matchmaking-code-inconnu', { code: code }) : t('serveur.matchmaking-trop-tentatives-code'))
+    if (!game || game.type !== def.type) throw new Error(recordCodeFailure(client) ? t('mjs-server.matchmaking-code-unknown', { code: code }) : t('mjs-server.matchmaking-too-many-attempts-code'))
     indexConnection(game, client)
     const info = game._addSpectator(client)
     resendEnd(game, client)
@@ -788,31 +788,31 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
   // --- les 4 handlers µgame:* --------------------------------------------------------------
 
   function handlerPlay(p: any, client: MjsWsClient): unknown {
-    if (typeof p?.type !== 'string') throw new Error(t('serveur.matchmaking-play-type-manquant'))
+    if (typeof p?.type !== 'string') throw new Error(t('mjs-server.matchmaking-play-type-missing'))
     // le client sait lire un instantané du lockstep (cf. game.ts::_requireSnapshotReader) — absent chez une page d'une version d'avant
     const reads = p.snapshots === true
     const def = gameDefs.get(p.type)
-    if (!def) throw new Error(t('serveur.matchmaking-type-jeu-inconnu', { type: p.type }))
+    if (!def) throw new Error(t('mjs-server.matchmaking-type-game-unknown', { type: p.type }))
     // anti-triche — drapeau spectateur SUR µgame:play (jamais une trame séparée : réutilise
     // l'ack/le rejeu-après-coupure déjà câblés côté client, cf. mjs_game.ts).
     // Adressage PAR CODE UNIQUEMENT (cf. joinAsSpectator) : une file publique peut avoir
     // PLUSIEURS parties du même type vivantes en parallèle, rien n'identifierait laquelle regarder.
-    if (p.spectator !== undefined && p.spectator !== true) throw new Error(t('serveur.matchmaking-spectateur-doit-etre-bool'))
+    if (p.spectator !== undefined && p.spectator !== true) throw new Error(t('mjs-server.matchmaking-spectator-must-be-bool'))
     if (p.spectator === true) {
-      if (!def.code) throw new Error(t('serveur.matchmaking-spectateur-sans-code-prive', { type: p.type }))
-      if (typeof p.code !== 'string' || p.code === '') throw new Error(t('serveur.matchmaking-spectateur-code-requis'))
+      if (!def.code) throw new Error(t('mjs-server.matchmaking-spectator-no-code-private', { type: p.type }))
+      if (typeof p.code !== 'string' || p.code === '') throw new Error(t('mjs-server.matchmaking-spectator-code-required'))
       return joinAsSpectator(def, client, p.code)
     }
     if (p.code === true) {
-      if (!def.code) throw new Error(t('serveur.matchmaking-jeu-sans-parties-privees', { type: p.type }))
+      if (!def.code) throw new Error(t('mjs-server.matchmaking-game-no-games-private', { type: p.type }))
       return createWithCode(def, client)
     }
     if (typeof p.code === 'string') {
-      if (p.code === '') throw new Error(t('serveur.matchmaking-code-invalide'))
-      if (!def.code) throw new Error(t('serveur.matchmaking-jeu-sans-parties-privees', { type: p.type }))
+      if (p.code === '') throw new Error(t('mjs-server.matchmaking-code-invalid'))
+      if (!def.code) throw new Error(t('mjs-server.matchmaking-game-no-games-private', { type: p.type }))
       return joinWithCode(def, client, p.code, reads)
     }
-    if (p.code !== undefined) throw new Error(t('serveur.matchmaking-code-invalide'))
+    if (p.code !== undefined) throw new Error(t('mjs-server.matchmaking-code-invalid'))
     return playQueued(def, client, reads)
   }
 
@@ -823,11 +823,11 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
   // sérialisée telle quelle) au lieu de sa vraie valeur de résolution. AUCUN nouveau format
   // d'erreur — celui déjà utilisé par tout throw synchrone.
   async function handlerMove(p: any, client: MjsWsClient): Promise<unknown> {
-    if (typeof p?.game !== 'string') throw new Error(t('serveur.matchmaking-move-partie-manquante'))
-    if (typeof p?.move !== 'string') throw new Error(t('serveur.matchmaking-move-coup-manquant'))
+    if (typeof p?.game !== 'string') throw new Error(t('mjs-server.matchmaking-move-game-missing'))
+    if (typeof p?.move !== 'string') throw new Error(t('mjs-server.matchmaking-move-move-missing'))
     const game = games.get(p.game)
-    if (!game) throw new Error(t('serveur.matchmaking-partie-introuvable'))
-    if (refusingMoves) throw new Error(t('serveur.matchmaking-arret-en-cours'))
+    if (!game) throw new Error(t('mjs-server.matchmaking-game-not-found'))
+    if (refusingMoves) throw new Error(t('mjs-server.matchmaking-stop-in-progress'))
     return { ok: true, result: await game._onMove(client, p.move, p.p) }
   }
 
@@ -843,9 +843,9 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
       }
       return { ok: true }
     }
-    if (typeof p?.game !== 'string') throw new Error(t('serveur.matchmaking-leave-partie-manquante'))
+    if (typeof p?.game !== 'string') throw new Error(t('mjs-server.matchmaking-leave-game-missing'))
     const game = games.get(p.game)
-    if (!game) throw new Error(t('serveur.matchmaking-partie-introuvable'))
+    if (!game) throw new Error(t('mjs-server.matchmaking-game-not-found'))
     game._leave(client)   // gère aussi bien un siège qu'un spectateur, cf. son commentaire
     // anti-triche — le quota de CETTE identité n'est JAMAIS réinitialisé par ce leave (cf.
     // « RÉTENTION » en tête de fichier) : simple point d'activité pour borner
@@ -855,9 +855,9 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
   }
 
   function handlerResync(p: any, client: MjsWsClient): unknown {
-    if (typeof p?.game !== 'string') throw new Error(t('serveur.matchmaking-resync-partie-manquante'))
+    if (typeof p?.game !== 'string') throw new Error(t('mjs-server.matchmaking-resync-game-missing'))
     const game = games.get(p.game)
-    if (!game) throw new Error(t('serveur.matchmaking-partie-introuvable'))
+    if (!game) throw new Error(t('mjs-server.matchmaking-game-not-found'))
     game._requireSnapshotReader(p.snapshots === true)   // journal lockstep coupé, page qui ne sait pas lire son instantané : refusée
     indexConnection(game, client)
     const { seat, info } = game._resync(client)
@@ -945,7 +945,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
       // deux sauvegardes du même id (copie dans le dossier de stockage, back qui rend un doublon) : la 1re restaurée reste, la suivante est
       // refusée (avertissement de loadAtBoot) — restaurée aussi, l'orpheline, détruite à sa grâce, retirait la partie vivante du registre
       // et effaçait sa sauvegarde
-      if (games.has(data.id)) throw new Error(t('serveur.persist-restauration-doublon', { id: data.id }))
+      if (games.has(data.id)) throw new Error(t('mjs-server.persist-restore-duplicate', { id: data.id }))
       const game = restoreGame(app, def, onGameDestroyed, data)
       game._gameStats = gameStats
       if (movesPerIdentity) game._identityQuota = identityQuotaOk

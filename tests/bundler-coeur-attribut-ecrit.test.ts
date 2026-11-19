@@ -427,43 +427,43 @@ describe('Bundler.coreAttrWritten — l\'attribut `other` est-il écrit sur une 
     })
 
     it('une référence au module cœur qui n\'a pas rapporté ses attributs : unknown (le doute vaut oui)', () => {
-      assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'select', kind: 'raccourci-coeur' }])), 'unknown')
-      assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'select', kind: 'litteral-coeur' }])), 'unknown')
+      assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'select', kind: 'shortcut-core' }])), 'unknown')
+      assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'select', kind: 'literal-core' }])), 'unknown')
     })
 
     it('une référence au projet nommée select, même avec other : no', () => {
-      assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'select', kind: 'raccourci-dev', attrs: written }])), 'no')
-      assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'select', kind: 'litteral-dev', attrs: written }])), 'no')
-      assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'select', kind: 'raccourci-mjs-retire', attrs: written }])), 'no')
+      assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'select', kind: 'shortcut-dev', attrs: written }])), 'no')
+      assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'select', kind: 'literal-dev', attrs: written }])), 'no')
+      assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'select', kind: 'shortcut-mjs-removed', attrs: written }])), 'no')
     })
 
     it('une référence à un autre module cœur ou au modèle select--compact, même avec other : no', () => {
-      assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'field', kind: 'raccourci-coeur', attrs: written }])), 'no')
-      assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'select--compact', kind: 'raccourci-coeur', attrs: written }])), 'no')
+      assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'field', kind: 'shortcut-core', attrs: written }])), 'no')
+      assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'select--compact', kind: 'shortcut-core', attrs: written }])), 'no')
     })
 
     it('la casse du nom de la référence et celle des noms d\'attribut ne comptent pas', () => {
-      assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'Select', kind: 'litteral-coeur', attrs: { names: ['OTHER'], spread: false } }])), 'yes')
+      assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'Select', kind: 'literal-core', attrs: { names: ['OTHER'], spread: false } }])), 'yes')
     })
 
     it('yes l\'emporte sur unknown, quel que soit l\'ordre des références', () => {
-      const a = { file: 'a.mjs', name: 'select', kind: 'raccourci-coeur', attrs: spread }
-      const b = { file: 'b.mjs', name: 'select', kind: 'raccourci-coeur', attrs: written }
+      const a = { file: 'a.mjs', name: 'select', kind: 'shortcut-core', attrs: spread }
+      const b = { file: 'b.mjs', name: 'select', kind: 'shortcut-core', attrs: written }
       assert.equal(ask(withRefs([a, b])), 'yes')
       assert.equal(ask(withRefs([b, a])), 'yes')
     })
 
     it('unknown l\'emporte sur no', () => {
-      const a = { file: 'a.mjs', name: 'select', kind: 'raccourci-coeur', attrs: plain }
-      const b = { file: 'b.mjs', name: 'select', kind: 'raccourci-coeur', attrs: spread }
+      const a = { file: 'a.mjs', name: 'select', kind: 'shortcut-core', attrs: plain }
+      const b = { file: 'b.mjs', name: 'select', kind: 'shortcut-core', attrs: spread }
       assert.equal(ask(withRefs([a, b])), 'unknown')
       assert.equal(ask(withRefs([b, a])), 'unknown')
     })
 
     it('les références sont lues à chaque appel : la liste remplacée change la réponse', () => {
-      const bundler = withRefs([{ file: 'a.mjs', name: 'select', kind: 'raccourci-coeur', attrs: written }])
+      const bundler = withRefs([{ file: 'a.mjs', name: 'select', kind: 'shortcut-core', attrs: written }])
       assert.equal(ask(bundler), 'yes')
-      ;(bundler as any).pendingTagRefs = [{ file: 'a.mjs', name: 'select', kind: 'raccourci-coeur', attrs: plain }]
+      ;(bundler as any).pendingTagRefs = [{ file: 'a.mjs', name: 'select', kind: 'shortcut-core', attrs: plain }]
       assert.equal(ask(bundler), 'no')
     })
   })

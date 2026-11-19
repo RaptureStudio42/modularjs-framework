@@ -78,7 +78,7 @@ describe('taille du texte adaptée à l\'écran — construction', function () {
     assert.ok(tout.includes('.t{font-size:41.5px}'), tout)
   })
 
-  it('--cache : une taille neuve dans un seul composant entre dans le bloc, celle d\'un composant repris reste, --cache=verifier sans alarme', () => {
+  it('--cache : une taille neuve dans un seul composant entre dans le bloc, celle d\'un composant repris reste, --cache=verify sans alarme', () => {
     const root = mjsTmp('taille-texte-cache')
     write(join(root, 'mjs.config.json'), `${JSON.stringify({ sourceDir: 'app', outputDir: 'public/m', manifestPath: 'public/m/bundle.js', urlPrefix: '/m' }, null, 2)}\n`)
     write(join(root, 'app/a.mjs'), '<p class="a">a</p>\n<style>\n  .a\n    font-size: 30px\n</style>\n')
@@ -95,7 +95,7 @@ describe('taille du texte adaptée à l\'écran — construction', function () {
     assert.ok(second.served >= 1, second.out)
     assert.deepEqual(noms(racine(out).join('')), ['30', '50'])
     writeFileSync(join(root, 'app/b.mjs'), '<p class="b">b</p>\n<style>\n  .b\n    font-size: 60px\n</style>\n')
-    const verifie = build(root, ['--cache=verifier'])
+    const verifie = build(root, ['--cache=verify'])
     assert.equal(verifie.status, 0, verifie.out)
     assert.match(verifie.out, /^cache vérifié : \d+ fichiers identiques à l'octet$/m)
     assert.deepEqual(noms(racine(out).join('')), ['30', '60'])

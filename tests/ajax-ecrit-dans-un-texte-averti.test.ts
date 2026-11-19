@@ -1,8 +1,8 @@
-// µajax écrit dans un texte que la construction lit comme du code — une regex étendue `///…///` sur plusieurs lignes, une chaîne
-// écrite dans une interpolation `#{…}`, une chaîne sur plusieurs lignes (CoffeeScript, Civet) — y devient µ._mjs_ajax : la
-// construction le dit, à sa ligne et sa colonne du fichier, en développement comme en production. Une chaîne simple, un
-// commentaire, un gabarit JavaScript gardent leur texte, sans avertissement ; un vrai appel écrit dans `#{…}` ou `${…}` reste un
-// appel, sans avertissement ; un module importé est averti de même, à sa ligne
+// µajax écrit dans une chaîne écrite dans une interpolation `#{…}` (CoffeeScript, Civet), un texte que la construction lit comme du
+// code, y devient µ._mjs_ajax : la construction le dit, à sa ligne et sa colonne du fichier, en développement comme en production.
+// Une regex étendue `///…///` et une chaîne écrites sur plusieurs lignes, une chaîne simple, un commentaire, un gabarit JavaScript
+// gardent leur texte, sans avertissement ; un vrai appel écrit dans `#{…}` ou `${…}` reste un appel, sans avertissement ; un module
+// importé est averti de même, à sa ligne
 
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
@@ -43,12 +43,11 @@ describe('µajax écrit dans un texte lu comme du code : la construction le dit,
 
   for (const lang of ['civet', 'coffee']) {
     for (const [mode, dev] of MODES) {
-      it(`${lang}, ${mode} : regex étendue sur plusieurs lignes — averti à la ligne et la colonne du µajax, l'appel voisin reste un appel`, async () => {
+      it(`${lang}, ${mode} : regex étendue sur plusieurs lignes — son µajax reste du texte, sans avertissement ; l'appel voisin reste un appel`, async () => {
         const src = fichier(lang, ['re = ///', '  a', `  µajax ${Q}/u${Q}`, '///', `r = µajax ${Q}/v${Q}`])
         const { sortie, avertis } = await compiler(src, dev)
-        assert.equal(avertis.length, 1, avertis.join('\n'))
-        assert.ok(avertis[0].includes(place(src, `µajax ${Q}/u`)), avertis[0])
-        assert.match(avertis[0], /µ\._mjs_ajax/)
+        assert.deepEqual(avertis, [])
+        assert.equal(sortie.split('_mjs_ajax').length - 1, 1, 'seul le vrai appel est réécrit')
         assert.match(sortie, /µ\._mjs_ajax\('\/v'\)/)
       })
 
@@ -58,24 +57,24 @@ describe('µajax écrit dans un texte lu comme du code : la construction le dit,
         assert.deepEqual(avertis.map(w => w.includes(place(src, `µajax ${Q}/u`))), [true], avertis.join('\n'))
       })
 
-      it(`${lang}, ${mode} : chaîne sur deux lignes — averti à sa place`, async () => {
+      it(`${lang}, ${mode} : chaîne sur deux lignes — son µajax reste du texte, sans avertissement`, async () => {
         const src = fichier(lang, ['s = "a', `  µajax ${Q}/u${Q}"`, `r = µajax ${Q}/v${Q}`])
-        const { avertis } = await compiler(src, dev)
-        assert.deepEqual(avertis.map(w => w.includes(place(src, `µajax ${Q}/u`))), [true], avertis.join('\n'))
+        const { sortie, avertis } = await compiler(src, dev)
+        assert.deepEqual(avertis, [])
+        assert.ok(sortie.includes(`µajax ${Q}/u${Q}`), sortie)
       })
 
-      it(`${lang}, ${mode} : deux µajax dans la même regex étendue — deux avertissements, chacun à sa colonne`, async () => {
+      it(`${lang}, ${mode} : deux µajax dans la même regex étendue — du texte, sans avertissement`, async () => {
         const src = fichier(lang, ['re = ///', `  µajax ${Q}/u${Q} | µajax ${Q}/w${Q}`, '///', `r = µajax ${Q}/v${Q}`])
-        const { avertis } = await compiler(src, dev)
-        assert.equal(avertis.length, 2, avertis.join('\n'))
-        assert.ok(avertis[0].includes(place(src, `µajax ${Q}/u`, 1)), avertis[0])
-        assert.ok(avertis[1].includes(place(src, `µajax ${Q}/u`, 2)), avertis[1])
+        const { sortie, avertis } = await compiler(src, dev)
+        assert.deepEqual(avertis, [])
+        assert.equal(sortie.split('_mjs_ajax').length - 1, 1, 'seul le vrai appel est réécrit')
       })
 
-      it(`${lang}, ${mode} : appel dans le <script module>, regex étendue dans le <script> — un avertissement, à la ligne du <script>`, async () => {
+      it(`${lang}, ${mode} : appel dans le <script module>, regex étendue dans le <script> — sans avertissement`, async () => {
         const src = fichier(lang, ['re = ///', `  µajax ${Q}/u${Q}`, '///'], [`charger = -> µajax ${Q}/m${Q}`])
         const { avertis } = await compiler(src, dev)
-        assert.deepEqual(avertis.map(w => w.includes(place(src, `µajax ${Q}/u`))), [true], avertis.join('\n'))
+        assert.deepEqual(avertis, [])
       })
 
       it(`${lang}, ${mode} : chaîne simple et commentaire gardent leur texte, sans avertissement`, async () => {
@@ -110,11 +109,11 @@ describe('µajax écrit dans un texte lu comme du code : la construction le dit,
   // CoffeeScript écrit une propriété de classe après les méthodes : le rang d'un `_mjs_ajax` dans le code produit n'y dit plus sa
   // réécriture, la carte le dément — ils se rangent alors dans l'ordre des lignes qu'elle donne, jamais à la place d'un vrai appel
   for (const [mode, dev] of MODES) {
-    it(`coffee, ${mode} : regex étendue d'une propriété de classe, écrite après la méthode qui appelle µajax — à sa place, pas à celle de l'appel`, async () => {
+    it(`coffee, ${mode} : regex étendue d'une propriété de classe, écrite après la méthode qui appelle µajax — du texte, sans avertissement`, async () => {
       for (const lignes of [['class A', '  re: ///', `    µajax ${Q}/u${Q}`, '  ///', `  m: -> µajax ${Q}/v${Q}`], ['class A', `  @s = µajax ${Q}/w${Q}`, '  re: ///', `    µajax ${Q}/u${Q}`, '  ///', `  m: -> µajax ${Q}/v${Q}`]]) {
         const src = fichier('coffee', lignes)
         const { sortie, avertis } = await compiler(src, dev)
-        assert.deepEqual(avertis.map(w => w.includes(place(src, `µajax ${Q}/u`))), [true], avertis.join('\n'))
+        assert.deepEqual(avertis, [])
         assert.match(sortie, /µ\._mjs_ajax\('\/v'\)/)
       }
     })
@@ -157,20 +156,18 @@ describe('µajax écrit dans un texte lu comme du code : la construction le dit,
   }
 
   for (const [mode, dev] of MODES) {
-    it(`module .coffee.mjs et .civet.mjs importés, ${mode} : regex étendue et chaîne d'interpolation averties à leur place`, async () => {
+    it(`module .coffee.mjs et .civet.mjs importés, ${mode} : chaîne d'interpolation avertie à sa place, regex étendue sans avertissement`, async () => {
       const coffee  = ['export charger = -> µajax ' + `${Q}/v${Q}`, 'export re = ///', `  µajax ${Q}/u${Q}`, '///'].join('\n')
       const civet   = ['f = (x) -> x', `export s = "a #{ f("µajax ${Q}/w${Q}") } b"`, `export lire = -> µajax ${Q}/x${Q}`].join('\n')
       const avertis = await construire({ 'outils.coffee.mjs': coffee + '\n', 'textes.civet.mjs': civet + '\n', 'alpha.mjs': `<script>\n@import { charger re } 'outils.coffee.mjs'\n@import { s lire } 'textes.civet.mjs'\nload = -> $r = await charger()\n</script>\n<p>{$r} {s} {re} {lire}</p>\n` }, dev)
-      assert.equal(avertis.length, 2, avertis.join('\n'))
-      assert.ok(avertis.some((w: string) => w.includes('outils.coffee.mjs:3:3')), avertis.join('\n'))
+      assert.equal(avertis.length, 1, avertis.join('\n'))
       assert.ok(avertis.some((w: string) => w.includes(`textes.civet.mjs:2:${civet.split('\n')[1].indexOf('µajax') + 1}`)), avertis.join('\n'))
     })
 
-    it(`module .coffee.mjs importé, ${mode} : propriété de classe ///…/// écrite après la méthode qui appelle µajax — à sa place, pas à celle de l'appel`, async () => {
+    it(`module .coffee.mjs importé, ${mode} : propriété de classe ///…/// écrite après la méthode qui appelle µajax — sans avertissement`, async () => {
       const classe  = ['export class A', '  re: ///', `    µajax ${Q}/u${Q}`, '  ///', `  m: -> µajax ${Q}/v${Q}`].join('\n')
       const avertis = await construire({ 'classe.coffee.mjs': classe + '\n', 'gamma.mjs': `<script>\n@import { A } 'classe.coffee.mjs'\nload = -> $r = await new A().m()\n</script>\n<p>{$r}</p>\n` }, dev)
-      assert.equal(avertis.length, 1, avertis.join('\n'))
-      assert.ok(avertis[0].includes('classe.coffee.mjs:3:5 '), avertis[0])
+      assert.deepEqual(avertis, [])
     })
   }
 })

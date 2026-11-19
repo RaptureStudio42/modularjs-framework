@@ -1,6 +1,7 @@
 // `µrefresh($x)` redessine aussi un miroir (`µ.clone(…, { mirror: true })`), sans relancer d'effet ; le même objet réécrit par l'enveloppe de l'état
-// (`Object.assign($, …)`) et l'écho d'une liaison `!{}` sur une variable au nom accentué restent muets : rien ne se redessine sur un changement que
-// MJS n'a pas vu. Développement et production, avec et sans valeur dérivée dans l'appli ; happy-dom, Chromium, Firefox, WebKit
+// (`Object.assign($, …)`) reste muet : rien ne se redessine sur un changement que MJS n'a pas vu. L'écho d'une liaison `!{}` sur une variable au nom
+// accentué se voit chez le parent : l'enfant écrit, par sa prop à sens unique, l'objet que le parent tient aussi, et le parent qui le garde se redessine
+// à la valeur du moment. Développement et production, avec et sans valeur dérivée dans l'appli ; happy-dom, Chromium, Firefox, WebKit
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync } from 'node:fs'
@@ -98,8 +99,8 @@ const ATTENDU = {
   miroir: 'départ 1,1 → miroir 2,2 → original 3,3 → effets 0',
   // seul `µrefresh($x)` redessine : l'enveloppe ne fait rien
   etat: 'départ 1 → enveloppe 1 → effets 0',
-  // le parent a vu la modification faite par la liaison (Z), pas celle faite par la prop à sens unique (S)
-  echo: 'parent aZ enfant aZS-aZS',
+  // le parent voit les deux modifications, celle de la liaison (Z) et celle de la prop à sens unique (S) : il tient le même objet, et se redessine
+  echo: 'parent aZS enfant aZS-aZS',
 }
 
 async function construire(prod: boolean, derivee: boolean): Promise<string> {
@@ -122,7 +123,7 @@ async function construire(prod: boolean, derivee: boolean): Promise<string> {
     : ordre.map((f) => stripEsm(readFileSync(join(outDir, f), 'utf-8'))).join('\n')
 }
 
-describe('`µrefresh($x)` redessine un miroir ; l\'enveloppe de l\'état qui réécrit le même objet et l\'écho d\'un nom accentué restent muets', function () {
+describe('`µrefresh($x)` redessine un miroir ; l\'enveloppe de l\'état qui réécrit le même objet reste muette ; l\'écho d\'un nom accentué se voit chez le parent qui tient l\'objet', function () {
   this.timeout(300000)
   after(async () => { await terminateSharedWorkerPool() })
 

@@ -263,7 +263,7 @@ describe('attribut dupliqué sur une balise = erreur générique au parseur (fil
     await assert.rejects(transpile('<a :confirm="A" data-x=">" :confirm="B">x</a>', { moduleName: 'a3-1-confirm-dup' }), /dupliqu/)
   })
 
-  it('<div title="a" title="b"> → erreur parser.attribut-duplique, nomme l\'attribut, la balise et la ligne', () => {
+  it('<div title="a" title="b"> → erreur parser.attribute-duplicate, nomme l\'attribut, la balise et la ligne', () => {
     assert.throws(() => parse('<div title="a" title="b">x</div>'), /dupliqu/)
     assert.throws(() => parse('<div title="a" title="b">x</div>'), /title/)
     assert.throws(() => parse('<div title="a" title="b">x</div>'), /\bdiv\b/)

@@ -73,14 +73,14 @@ function muFor(lang: string): any {
 function compiled(text: string, name: string, opts: RulesOptions): unknown {
   const defs: Record<string, RuleAst> = {}
   for (const [k, v] of Object.entries(opts.types ?? {})) defs[k] = typeRule(k, v)
-  const where = { bloc: name, ligne: 1 }
+  const where = { block: name, line: 1 }
   return new Function(`return ${emitRuntimeRule(resolveRule(parseRule(text, where), defs, where), false)}`)()
 }
 
 // une règle nommée de `opts.types` : sur une ligne, ou un objet en retrait, un champ par ligne, lu comme dans un bloc <types>
-function typeRule(nom: string, texte: string): RuleAst {
-  if (!texte.includes('\n')) return parseRule(texte, { bloc: '<types>', ligne: 1, nom })
-  return parseTypesBlock(`${nom}\n${texte.split('\n').map(l => '  ' + l).join('\n')}`, 0)[0].rule
+function typeRule(name: string, text: string): RuleAst {
+  if (!text.includes('\n')) return parseRule(text, { block: '<types>', line: 1, name })
+  return parseTypesBlock(`${name}\n${text.split('\n').map(l => '  ' + l).join('\n')}`, 0)[0].rule
 }
 
 // 'fr-CA' → 'fr' ; une langue hors de LANGS → 'en'

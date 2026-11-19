@@ -12,6 +12,7 @@ import { basename, join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
 
 type Navigateur = 'chromium' | 'firefox' | 'webkit'
 
@@ -139,7 +140,7 @@ describe('les outils des effets en production — dans des navigateurs réels', 
   after(async () => { await terminateSharedWorkerPool() })
 
   for (const nom of (process.env.NAVIGATEUR ? [process.env.NAVIGATEUR] : ['chromium', 'firefox', 'webkit']) as Navigateur[]) {
-    describe(nom, function () {
+    playTogether(describe(nom, function () {
       let browser: any
 
       before(async function () {
@@ -197,6 +198,6 @@ describe('les outils des effets en production — dans des navigateurs réels', 
           })
         })
       }
-    })
+    }))
   }
 })

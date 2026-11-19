@@ -7,7 +7,7 @@
 //    connexion ws://127.0.0.1:<port> réelle (un import direct de src/cli.ts est impossible :
 //    run(process.argv.slice(2)) s'exécute INCONDITIONNELLEMENT à son top-level, cf. la note de
 //    tests/mjs-ws-cli.test.ts) ;
-//  - `--host` sans valeur derrière → message catalogué cli.flag-valeur-manquante (process court,
+//  - `--host` sans valeur derrière → message catalogué cli.flag-value-missing (process court,
 //    --help juste après, MÊME patron que tests/cli-unknown-flag-warning.test.ts).
 
 import assert from 'node:assert/strict'
@@ -89,9 +89,10 @@ describe('cli.ts — flag --host de `mjs ws`', function () {
 })
 
 describe('cli.ts — parseArgs : --host sans valeur', function () {
-  this.timeout(10000)
+  // `npx tsx` démarre un processus : sous la charge, son départ seul peut passer 10 s
+  this.timeout(60000)
 
-  it("--host en dernière position utile (rien d'autre qu'un flag derrière) → message catalogué cli.flag-valeur-manquante, pas de crash", () => {
+  it("--host en dernière position utile (rien d'autre qu'un flag derrière) → message catalogué cli.flag-value-missing, pas de crash", () => {
     const { stderr, status } = spawnSync('npx', ['tsx', 'src/cli.ts', 'ws', '--host', '--help'], { cwd: repoRoot, encoding: 'utf-8' })
     assert.equal(status, 0, `stderr:\n${stderr}`)
     assert.match(stderr, /--host ignoré : valeur manquante\./, `message flag-valeur-manquante absent. stderr:\n${stderr}`)

@@ -49,8 +49,11 @@ const easingSrc = readFileSync(join(__dirname, '../src/runtime/mjs_easing.ts'), 
 const vtSrc     = readFileSync(join(__dirname, '../src/runtime/mjs_vt_presets.ts'), 'utf8')
 const storeSrc  = lireRuntime(join(__dirname, '../src/runtime/mjs_store.ts'))
 const elemSrc   = lireRuntime(join(__dirname, '../src/runtime/mjs_element.ts'))
-const murSrc    = lireBloc(join(__dirname, '../src/runtime/mjs_element.ts'), 'mur')
+const murSrc    = lireBloc(join(__dirname, '../src/runtime/mjs_element.ts'), 'wall')
 const initSrc   = lireRuntime(join(__dirname, '../src/runtime/mjs_init.ts'))
+// l'avis d'un état partagé à ses abonnés et l'ensemble des objets dont un composant a fait l'enveloppe (bloc <reffets-state> de
+// mjs_runes.ts, que ce bac à sable ne charge pas) : le cœur ne garde les lignes qui les lisent qu'avec ce bloc
+const etatSrc   = lireBloc(join(__dirname, '../src/runtime/mjs_runes.ts'), 'reffets-state')
 
 const stripEsm = (s: string) => s
   .replace(/^\s*import\s+[^;]+;\s*$/gm, '')
@@ -282,7 +285,8 @@ function makeStore(): { µ: any; warnCalls: any[][] } {
   µ._mjs_toRaw = function(o: any) { while (o != null && typeof o === 'object' && o[µ._mjs_RAW]) o = o[µ._mjs_RAW]; return o }
   µ._mjs_bumpEpoch = function(raw: any) { const e = (µ._mjs_epochs.get(raw) || 0) + 1; µ._mjs_epochs.set(raw, e); return e }
   µ._mjs_safeKey = function(k: any) { return k !== '__proto__' && k !== 'constructor' && k !== 'prototype' }
-  // le vrai mur des prototypes (µ._mjs_mur, bloc <mur> de mjs_element.ts), que le magasin pose sur l'enveloppe d'un prototype rangé
+  new Function('µ', etatSrc)(µ)
+  // le vrai mur des prototypes (µ._mjs_wall, bloc <wall> de mjs_element.ts), que le magasin pose sur l'enveloppe d'un prototype rangé
   new Function('µ', murSrc)(µ)
   new Function('µ', storeSrc)(µ)
   return { µ, warnCalls }
@@ -304,6 +308,7 @@ function makeElementSandbox(): { µ: any; MjsTest: any } {
     const customElements = { get: () => null, define: () => {} };
     const document = { adoptedStyleSheets: [] };
     ${initSrc.replace(/export\s*\{[^}]*\}/, '')}
+    ${etatSrc}
     ${elemSrc}
     class MjsTest extends µ.Element {
       constructor() {

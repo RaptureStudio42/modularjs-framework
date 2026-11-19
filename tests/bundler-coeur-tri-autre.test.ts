@@ -102,7 +102,7 @@ describe('construction — la partie « Autre » de <@@select> suit ce que les p
       ['multiple et recherche', { 'liste.mjs': liste('multiple search') }],
       ['other-label et other-placeholder seuls (sans `other` ils ne posent rien)', { 'liste.mjs': liste('other-label="Autre" other-placeholder="Précisez"') }],
       ['seulement l\'évènement : @other={…} écoute, il n\'allume rien', { 'liste.mjs': `<script>\n$dernier = null\n</script>\n${liste('@other={$dernier = e.data}')}` }],
-      ['l\'évènement nu : @other', { 'liste.mjs': `<script>\n@vu = -> null\n</script>\n${liste('@other')}` }],
+      ['l\'évènement nu : @other', { 'liste.mjs': `<script>\n@other = -> null\n</script>\n${liste('@other')}` }],
       ['deux listes, aucune', { 'a.mjs': liste('', 'a'), 'b.mjs': liste('multiple', 'b') }],
     ]
     for (const [nom, files] of SANS) {
@@ -266,11 +266,11 @@ describe('construction — la partie « Autre » de <@@select> suit ce que les p
       await app.bundler.compile()
       await app.bundler.compile()   // le second tour revient du cache
       const refs = (app.bundler as any).pendingTagRefs as { name: string, kind: string }[]
-      assert.ok(refs.some((r) => r.kind === 'raccourci-dev'), 'une référence du projet')
-      assert.ok(refs.some((r) => r.kind === 'raccourci-coeur'), 'une référence cœur')
-      for (const r of refs) assert.equal(Object.hasOwn(r, 'attrs'), r.kind.endsWith('coeur'), `${r.kind} ${r.name}`)
+      assert.ok(refs.some((r) => r.kind === 'shortcut-dev'), 'une référence du projet')
+      assert.ok(refs.some((r) => r.kind === 'shortcut-core'), 'une référence cœur')
+      for (const r of refs) assert.equal(Object.hasOwn(r, 'attrs'), r.kind.endsWith('core'), `${r.kind} ${r.name}`)
       for (const entry of (app.bundler as any).cache.values()) {
-        for (const r of entry.tagRefs ?? []) assert.equal(Object.hasOwn(r, 'attrs'), r.kind.endsWith('coeur'), `cache ${r.kind} ${r.name}`)
+        for (const r of entry.tagRefs ?? []) assert.equal(Object.hasOwn(r, 'attrs'), r.kind.endsWith('core'), `cache ${r.kind} ${r.name}`)
       }
     })
   })

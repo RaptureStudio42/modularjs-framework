@@ -33,7 +33,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Window } from 'happy-dom'
 import { poserMessages } from './helpers/messages-stub.js'
-import { lireRuntime } from './helpers/runtime-projete.js'
+import { lireRuntime, lireBloc } from './helpers/runtime-projete.js'
 import { lireDynamique } from './helpers/runtime-dynamique.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -44,6 +44,9 @@ const dynamicSrc = lireDynamique(join(__dirname, '../src/runtime/mjs_dynamic.ts'
 const easingSrc  = readFileSync(join(__dirname, '../src/runtime/mjs_easing.ts'), 'utf8')
 const elemSrc    = lireRuntime(join(__dirname, '../src/runtime/mjs_element.ts'))
 const initSrc    = lireRuntime(join(__dirname, '../src/runtime/mjs_init.ts'))
+// l'avis d'un état partagé à ses abonnés et l'ensemble des objets dont un composant a fait l'enveloppe (bloc <reffets-state> de
+// mjs_runes.ts, que ce bac à sable ne charge pas) : le cœur ne garde les lignes qui les lisent qu'avec ce bloc
+const etatSrc    = lireBloc(join(__dirname, '../src/runtime/mjs_runes.ts'), 'reffets-state')
 
 // Beaucoup de `it()` dans ce fichier (pool × accept, matrice de steps) instancient chacun leur
 // propre `Window` happy-dom — sans fermeture, la mémoire s'accumule sur tout le fichier jusqu'à
@@ -587,8 +590,8 @@ describe('<@element>/<@module> : tag/Comp non trimmé (mjs_runes.ts)', () => {
 // `cur.style.removeProperty('display')` partait INCONDITIONNELLEMENT (masqué ou
 // pas), y compris sur le chemin « même tag » préexistant : un `<@element $tag
 // style="display:flex">` perdait son display:flex dès le TOUT PREMIER rendu, masquage ou
-// pas. Marqueur `_mjs_mjsMasque` (µ._mjs_dynMask/µ._mjs_dynUnmask) : `_mjs_dynUnmask` ne touche RIEN si on
-// n'a jamais masqué nous-mêmes. Bonus au-delà du minimum demandé : `_mjs_mjsDisplayAvant`
+// pas. Marqueur `_mjs_mjsMask` (µ._mjs_dynMask/µ._mjs_dynUnmask) : `_mjs_dynUnmask` ne touche RIEN si on
+// n'a jamais masqué nous-mêmes. Bonus au-delà du minimum demandé : `_mjs_mjsDisplayPrev`
 // mémorise le display d'auteur AVANT l'écrasement et le RESTAURE au démasquage (pas
 // seulement retiré) — un `style="…;display:flex"` masqué puis re-basculé retrouve son
 // display:flex, pas seulement son absence de display:none.
@@ -627,7 +630,7 @@ describe('<@element>/<@module> : display d\'auteur écrasé par le masquage, mê
       assert.equal(!!p, true)
       assert.match(p.getAttribute('style') || '', /color:\s*red/, 'color:red de l\'auteur survit')
       assert.doesNotMatch(p.getAttribute('style') || '', /display:\s*none/, 'display:none du masque retiré')
-      assert.match(p.getAttribute('style') || '', /display:\s*flex/, 'MIEUX que le minimum acceptable : display:flex mémorisé (_mjs_mjsDisplayAvant) puis restauré, pas perdu')
+      assert.match(p.getAttribute('style') || '', /display:\s*flex/, 'MIEUX que le minimum acceptable : display:flex mémorisé (_mjs_mjsDisplayPrev) puis restauré, pas perdu')
     })
 
     it('(d) masqué (null, aucun display d\'auteur) puis MÊME tag (div) : redevient visible', () => {
@@ -852,6 +855,7 @@ function makeElementSandbox(): { µ: any; MjsTest: any } {
     const customElements = { get: () => null, define: () => {} };
     const document = { adoptedStyleSheets: [] };
     ${initSrc.replace(/export\s*\{[^}]*\}/, '')}
+    ${etatSrc}
     ${elemSrc}
     class MjsTest extends µ.Element {
       constructor() {

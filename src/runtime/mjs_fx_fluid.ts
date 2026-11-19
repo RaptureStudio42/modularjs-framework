@@ -653,13 +653,13 @@
     var count      = 0;
     var node;
     while ((node = walk.nextNode()) && count < 6000) {
-      var par  = node.parentNode;
-      var skip = !par || par.nodeType !== 1 || !/\S/.test(node.data);
-      for (var up = par; !skip && up && up !== el; up = up.parentNode) {
+      var by   = node.parentNode;
+      var skip = !by || by.nodeType !== 1 || !/\S/.test(node.data);
+      for (var up = by; !skip && up && up !== el; up = up.parentNode) {
         if (up.nodeType === 1 && µ._mjs_dom.hasAttribute(up, 'mjs-fx-layer')) skip = true;
       }
       if (skip) continue;
-      var cs = getComputedStyle(par);
+      var cs = getComputedStyle(by);
       if (cs.display === 'none' || cs.visibility === 'hidden') continue;
       g.fillStyle = plain ? '#fff' : '#000';
       if (!plain) g.fillStyle = cs.color;
@@ -712,12 +712,12 @@
     var walk   = document.createTreeWalker(el, 4);
     var node;
     while ((node = walk.nextNode()) && owners.length < 200) {
-      var par = node.parentNode;
-      var dup = !par || par.nodeType !== 1 || owners.indexOf(par) >= 0;
-      for (var up = par; !dup && up && up !== el; up = up.parentNode) {
+      var by  = node.parentNode;
+      var dup = !by || by.nodeType !== 1 || owners.indexOf(by) >= 0;
+      for (var up = by; !dup && up && up !== el; up = up.parentNode) {
         if (up.nodeType === 1 && µ._mjs_dom.hasAttribute(up, 'mjs-fx-layer')) dup = true;
       }
-      if (!dup) owners.push(par);
+      if (!dup) owners.push(by);
     }
     var sig = '';
     for (var i = 0; i < owners.length; i++) {
@@ -1375,9 +1375,9 @@
         if (text && (backStale || maskDirty)) {
           backStale = false;
           var raw   = µ._mjs_fxCss(el, '--mjs-fluid-background');
-          var nb    = raw ? resolve(raw, el) : null;
-          if ((nb !== null) !== (back !== null)) maskDirty = true;
-          back      = nb;
+          var count = raw ? resolve(raw, el) : null;
+          if ((count !== null) !== (back !== null)) maskDirty = true;
+          back      = count;
         }
         if (text && maskDirty) loadMask();
         // @@

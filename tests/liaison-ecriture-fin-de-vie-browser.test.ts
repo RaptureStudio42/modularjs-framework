@@ -11,6 +11,7 @@ import { existsSync } from 'node:fs'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { MODES, variantes, SHOW, construire, charger, attendre, graves } from './helpers/liaison-navigateur.js'
 import type { Cible, Mode } from './helpers/liaison-navigateur.js'
+import { playTogether } from './helpers/engines-together.js'
 
 const SOURCES: Record<string, string> = {
   // un enfant qui écrit en s'endormant puis en se détruisant
@@ -29,7 +30,7 @@ const cible  = (mode: Mode) => {
 
 const titre = (mode: Mode, variante: string) => mode + (variante ? ` (${variante})` : '')
 
-for (const nom of ['chromium', 'firefox'] as const) describe(`écritures de l'enfant en fin de vie et pendant que son parent est détaché (${nom} réel)`, function () {
+for (const nom of ['chromium', 'firefox'] as const) playTogether(describe(`écritures de l'enfant en fin de vie et pendant que son parent est détaché (${nom} réel)`, function () {
   this.timeout(300000)
   let present = false
   let browser: any
@@ -88,4 +89,4 @@ for (const nom of ['chromium', 'firefox'] as const) describe(`écritures de l'en
       }
     })
   }
-})
+}))

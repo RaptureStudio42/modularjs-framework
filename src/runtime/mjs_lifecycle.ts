@@ -62,17 +62,17 @@ if (µ.Element) {
       const wrapped = function() {
         // passage du µmount : une minuterie posée pendant lui lui appartient (marque 3, mjs_every.ts), arrêtée au retrait
         // du composant ; le µmount rejoué au retour en pose une neuve
-        const avant      = µ._mjs_mountPass;
+        const before     = µ._mjs_mountPass;
         µ._mjs_mountPass = self;
         let res;
         try {
           res = fn.call(self);
         }
         finally {
-          µ._mjs_mountPass = avant;
+          µ._mjs_mountPass = before;
         }
         // main d'arrêt d'un `µafter … always: true` (marque 2, mjs_every.ts) : son tir part même après la disparition,
-        // ce n'est pas un nettoyage ; celle d'une autre minuterie en est un (arrêtée au démontage, µmount rejoué au
+        // ce n'est pas un nettoyage (ni celle d'un `µevery … always: true`, qui s'arrête de lui-même à la destruction) ; celle d'une autre minuterie en est un (arrêtée au démontage, µmount rejoué au
         // retour du composant en pose une neuve)
         if (typeof res === 'function' && res._mjs_timer !== 2) {
           self._mjs_onDestroy(function() {

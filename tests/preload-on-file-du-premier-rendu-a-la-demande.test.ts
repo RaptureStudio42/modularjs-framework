@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { extractMarked } from './helpers/extract-marked.js'
-import { Bundler, projeterBlocs, terminateSharedWorkerPool } from '../src/bundler/index.js'
+import { Bundler, projectBlocks, terminateSharedWorkerPool } from '../src/bundler/index.js'
 
 const ICI     = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(ICI, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
@@ -18,7 +18,7 @@ const PROD    = { urlPrefix: '/out', env: 'prod', js: 'bundle' }
 const PORTE   = 'a[data-mjs-preload="on"]'
 const FILE    = /&\s*1023/
 // une balise de bloc restée dans un texte projeté
-const BALISE  = /^[ \t]*\/\/ <\/?(?:sans-)?precharge-on>$/m
+const BALISE  = /^[ \t]*\/\/ <\/?(?:no-)?preload-on>$/m
 const page    = (preload: string): string => `<script>\n$on = true\n</script>\n{if $on}<a href="/app/x"${preload}>x</a>{end}\n<form action="/app/y" method="post"><button>y</button></form>\n`
 
 async function construire(nom: string, source: string, reglages: Record<string, unknown> = {}): Promise<string> {
@@ -78,7 +78,7 @@ describe('préchargement `:preload="on"` : la file du premier rendu n\'entre au 
   })
 
   it('texte du cœur sans le bloc : la porte se lit à la construction — rien pour un composant sans lien `on`, une recherche à l\'image suivante sinon, aucune liste', () => {
-    const texte = projeterBlocs(UJS_SRC, { 'precharge-on': false })
+    const texte = projectBlocks(UJS_SRC, { 'preload-on': false })
     assert.ok(!texte.includes('_mjsEagerHosts') && !BALISE.test(texte), 'ni liste ni balise de bloc dans le texte projeté')
     const { µ, images, cherches, rendre } = porteDuTexte(texte)
     try {
@@ -96,7 +96,7 @@ describe('préchargement `:preload="on"` : la file du premier rendu n\'entre au 
   })
 
   it('texte du cœur avec le bloc : les composants construits attendent l\'image suivante, où leur porte se lit', () => {
-    const texte = projeterBlocs(UJS_SRC, { 'precharge-on': true })
+    const texte = projectBlocks(UJS_SRC, { 'preload-on': true })
     assert.ok(texte.includes('_mjsEagerHosts') && !BALISE.test(texte) && !/^\s*\/\/ const cfg = µ\.preload/m.test(texte), 'la file, sans le texte de repli ni balise de bloc')
     const { µ, images, cherches, rendre } = porteDuTexte(texte)
     try {

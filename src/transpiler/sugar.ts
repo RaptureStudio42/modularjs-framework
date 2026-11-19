@@ -1,15 +1,17 @@
 // transpiler/sugar — sucres du script, posés avant la compilation par le langage : dialecte Civet (applyCivetDialectSugar)
 // et runes µ (applyMjsSugarToScript, µconsole), avec leurs scanners ; appelés par transpileImpl (index.ts)
 
-import { MU_UNIVERSAL_BODY, MU_INSPECT_ARG_BODY, MU_INSPECT_ARG_OUT, ouvreUneRegex, regexEnArgument, scanRegexLiteral, finExpression, minuterieDuComposant } from '../sigils.js'
+import { MU_UNIVERSAL_BODY, MU_INSPECT_ARG_BODY, MU_INSPECT_ARG_OUT, opensRegex, scanRegexLiteral, componentTimer } from '../sigils.js'
 import { skipQuotedSpan } from '../quoted-span.js'
 import { maskNonCode } from './split-rune.js'
-import { scanDoubleQuoteAt, convertCoffeeInterpolations, longStringWatch, lostPlaces, type LostPlace } from '../lexer/index.js'
-import { reecritOuRejetteRuneChemin } from '../generator/utils.js'
+import { convertCoffeeInterpolations, scriptSpans, endOfHeregex, SPAN, opensHashBlock } from '../lexer/index.js'
+import { rewritesOrRejectsRunePath, commaParenSpaceReject } from '../generator/utils.js'
+import * as acorn from 'acorn'
+import * as walk from 'acorn-walk'
 import { t } from '../messages/index.js'
 import { maskStringsAndComments } from './lint.js'
-import { decaleLaPasse, type DeclarationsDeLaPasse } from '../languages/civet-declarations.js'
-import { commentairesDuDialecte, type CommentairesDuScript } from '../reader/script.js'
+import { shiftsPass, type PassDeclarations } from '../languages/civet-declarations.js'
+import { dialectComments, type ScriptComments } from '../reader/script.js'
 
 // ----------------------------------------------------------------------------
 // sucre universel µfoo → µ.foo, MOINS les runes réservées au lexer (cf.
@@ -21,160 +23,17 @@ import { commentairesDuDialecte, type CommentairesDuScript } from '../reader/scr
 const MU_UNIVERSAL_RE = new RegExp(MU_UNIVERSAL_BODY, 'g')
 
 // ----------------------------------------------------------------------------
-// transformCodeOnly — hissée au niveau module (ex-closure locale
-// d'applyMjsSugarToScript) : réutilisée à la fois par applyCivetDialectSugar
-// (Pass 2/2b ci-dessous) et par les réécritures µ sensibles aux chaînes
-// d'applyMjsSugarToScript (plus bas) — SOURCE UNIQUE, jamais deux copies.
-// ─── Helper : applique une transformation uniquement sur le CODE ──────────
-// Scan caractère par caractère en mémorisant si on est dans une string ou
-// un commentaire — les transforms ne touchent jamais ces zones. Évite la
-// corruption silencieuse des regex globales (ex: `for x in arr` dans une
-// string littérale, `#{x}` dans un commentaire, etc.).
-// heregex `///…///` de Coffee et de Civet en `i` : index juste après son `///` fermant et ses drapeaux, ou -1 si elle ne
-// se referme pas ; un `\` échappe le caractère qui le suit
-function finHeregex(src: string, i: number): number {
-  let j = i + 3
-  while (j < src.length) {
-    if (src[j] === '\\') { j += 2; continue }
-    if (src.startsWith('///', j)) {
-      j += 3
-      while (j < src.length && /[a-z]/.test(src[j])) j++
-      return j
-    }
-    j++
-  }
-  return -1
-}
-
-// `dialecte` : Coffee ou Civet (heregex, regex passée sans parenthèses) ; faux pour un script JavaScript ou TypeScript
-function transformCodeOnly(input: string, transform: (codeChunk: string) => string, dialecte = true): string {
-  const chunks: string[] = []
-  let buf = ''
-  let i = 0
-  const n = input.length
-  const flush = () => { if (buf) { chunks.push(transform(buf)); buf = '' } }
-  while (i < n) {
-    // heregex : zone inerte jusqu'à son `///` fermant — lue comme un commentaire `//`, ses lignes suivantes passaient
-    // pour du code, où une apostrophe ouvrait une fausse chaîne
-    if (dialecte && input.startsWith('///', i)) {
-      const fin = finHeregex(input, i)
-      if (fin !== -1) {
-        flush()
-        chunks.push(input.slice(i, fin))
-        i = fin
-        continue
-      }
-    }
-    // Comments : préservés tels quels (transforms `#`→`//` et `###`→`/* */`
-    //            ont déjà tourné via passes lang-aware ci-dessus).
-    if (input[i] === '/' && input[i + 1] === '/') {
-      flush()
-      const end = input.indexOf('\n', i)
-      const stop = end < 0 ? n : end
-      chunks.push(input.slice(i, stop))
-      i = stop
-      continue
-    }
-    if (input[i] === '/' && input[i + 1] === '*') {
-      flush()
-      const end = input.indexOf('*/', i + 2)
-      const stop = end < 0 ? n : end + 2
-      chunks.push(input.slice(i, stop))
-      i = stop
-      continue
-    }
-    if (input[i] === '#' && input[i + 1] !== undefined && !/[a-zA-Z_!]/.test(input[i + 1])) {
-      // Coffee line comment (Coffee target uniquement — le mode non-Coffee
-      // a déjà converti `#` → `//` plus haut).
-      flush()
-      const end = input.indexOf('\n', i)
-      const stop = end < 0 ? n : end
-      chunks.push(input.slice(i, stop))
-      i = stop
-      continue
-    }
-    // littéral regex `/…/` : zone inerte, même branche que generator/utils.ts::mapCodeSegments
-    // (quatrième scanner « code-only » du compilateur, même règle) — sans ce
-    // garde-fou, `re = /µTotal/` ressortait réécrit `re = /µ.Total/` (MU_UNIVERSAL_RE mordait
-    // DANS le littéral). `scanRegexLiteral` rend -1 si aucun `/` fermant avant la fin de ligne :
-    // ce `/` retombe alors dans le code ordinaire (division), traité plus bas comme avant. En Coffee et en Civet, une
-    // regex passée sans parenthèses (`s.replace /'/g, 'X'`) en est une aussi : regexEnArgument
-    if (input[i] === '/' && (ouvreUneRegex(input.slice(0, i)) || (dialecte && regexEnArgument(input, i)))) {
-      const fin = scanRegexLiteral(input, i)
-      if (fin !== -1) {
-        flush()
-        chunks.push(input.slice(i, fin))
-        i = fin
-        continue
-      }
-    }
-    // Strings : `"..."`, `'...'`, `` `...` `` (template). Respect des escapes.
-    const ch = input[i]
-    if (ch === '"' || ch === "'" || ch === '`') {
-      flush()
-      const quote = ch
-      // `let`, pas `const` : réassigné plus bas à CHAQUE interpolation d'un
-      // template literal (bug réel) —
-      // avec un `const start` figé sur l'ouverture du template, la 2e
-      // interpolation d'un même literal (`` `${a},${b}` ``) rejouait
-      // `input.slice(start, i + 2)` depuis l'ouverture ORIGINALE au lieu de
-      // la position courante, dupliquant tout le préfixe déjà flush dans
-      // `chunks` (`` `${a},${b}` `` → `` `${a},`${a},${b}` ``, Civet
-      // rejetait ensuite le `)` de trop en aval — « Failed to parse »
-      // trompeur, loin du vrai point de faute). Fix : `start` suit la tête
-      // de lecture (`start = i` juste après avoir flush le texte brut
-      // post-interpolation, cf. plus bas) — la 1ère interpolation reste
-      // inchangée (start = ouverture du literal, comme avant).
-      let start = i
-      i += 1
-      while (i < n) {
-        if (input[i] === '\\') { i += 2; continue }
-        if (input[i] === quote) { i += 1; break }
-        // Template literal `${...}` : recurse dans l'expression (qui est du code)
-        if (quote === '`' && input[i] === '$' && input[i + 1] === '{') {
-          // Capture le segment `...${` brut, puis recurse sur l'expression, dont la fin est lue par
-          // finExpression : une accolade dans une chaîne ou une regex de l'expression (`${ $a ? '{' : '' }`)
-          // ne compte pas. Jamais refermée : le reste est transformé tel quel, sans `}` ajoutée en fin de script
-          chunks.push(input.slice(start, i + 2))
-          const fin = finExpression(input, i + 1)
-          const exprStart = i + 2
-          if (fin < 0) {
-            chunks.push(transform(input.slice(exprStart)))
-            i = n
-            start = n
-            break
-          }
-          chunks.push(transform(input.slice(exprStart, fin - 1)))
-          chunks.push('}')
-          i = fin
-          // Continue dans la string template
-          const restStart = i
-          while (i < n && input[i] !== '`') {
-            if (input[i] === '\\') { i += 2; continue }
-            if (input[i] === '$' && input[i + 1] === '{') break
-            i += 1
-          }
-          chunks.push(input.slice(restStart, i))
-          // Tout ce qui précède `i` est déjà dans `chunks` (texte brut tout
-          // juste poussé ci-dessus) : une éventuelle 2e interpolation doit
-          // repartir d'ici, pas de l'ouverture du template (cf. commentaire
-          // de tête sur `let start`).
-          start = i
-          if (input[i] === '`') { chunks.push('`'); i += 1; break }
-          continue
-        }
-        i += 1
-      }
-      if (i > start && !(quote === '`' && chunks[chunks.length - 1] === '`')) {
-        chunks.push(input.slice(start, i))
-      }
-      continue
-    }
-    buf += ch
-    i += 1
-  }
-  flush()
-  return chunks.join('')
+// transformCodeOnly — applique `transform` au seul CODE du script : chaînes, gabarits, expressions régulières et commentaires gardés
+// tels quels, le code de chaque interpolation transformé à part (ses chaînes restent inertes) — les plages du lecteur du script
+// (scriptSpans, lexer), que partagent les passes de ce fichier : une regex globale ne mord jamais dans un texte (`for x in arr` écrit
+// dans une chaîne, `#{x}` dans un commentaire). Utilisée par applyCivetDialectSugar (passes 2 et 2b) et par les réécritures µ
+// d'applyMjsSugarToScript — source unique
+// `dialecte` : Coffee ou Civet (heregex, regex passée sans parenthèses) ; faux pour un script JavaScript ou TypeScript ; `coffee` :
+// CoffeeScript, où `#` ouvre toujours un commentaire
+function transformCodeOnly(input: string, transform: (codeChunk: string) => string, dialect = true, coffee = false): string {
+  let out = ''
+  for (const [kind, start, end] of scriptSpans(input, dialect, coffee)) out += kind === SPAN.CODE ? transform(input.slice(start, end)) : input.slice(start, end)
+  return out
 }
 
 // ----------------------------------------------------------------------------
@@ -201,10 +60,10 @@ function transformCodeOnly(input: string, transform: (codeChunk: string) => stri
 // skipCommentSpan — rend l'index JUSTE APRÈS un commentaire `//`/`/* … */` démarrant en `i`, ou -1
 // si `i` n'ouvre aucun commentaire : un `/* … */`
 // (mono-ligne OU multi-lignes, issu d'un `###…###` Coffee converti par la Pass 1) glissait dans les
-// 4 scanners ci-dessous comme un LITTÉRAL REGEX (`ouvreUneRegex` vrai après une virgule,
+// 4 scanners ci-dessous comme un LITTÉRAL REGEX (`opensRegex` vrai après une virgule,
 // `scanRegexLiteral` refermé sur le `/` de `*/`) — la pièce de paramètre qui suivait, non séparée
 // par une virgule, sortait GARBAGE et se faisait jeter en silence par `extractParamNames`. Posé
-// AVANT le test `ouvreUneRegex` dans chaque scanner (même ordre que `sansCommentaires` plus bas et
+// AVANT le test `opensRegex` dans chaque scanner (même ordre que `noComments` plus bas et
 // `transformCodeOnly` plus haut : `//`/`/*` toujours testés avant un littéral regex).
 function skipCommentSpan(str: string, i: number): number {
   if (str[i] === '/' && str[i + 1] === '/') {
@@ -225,15 +84,15 @@ function balancedSpan(str: string, start: number): number {
     const ch = str[i]
     // Littéral regex `/…/` : un `(`/`[` ÉCHAPPÉ ou en
     // classe À L'INTÉRIEUR faussait `depth` (`f = (re = /\(/) ->` ne refermait jamais son groupe,
-    // span PERDU, `re` jamais enregistré) ; heuristique partagée `ouvreUneRegex`/`scanRegexLiteral`
+    // span PERDU, `re` jamais enregistré) ; heuristique partagée `opensRegex`/`scanRegexLiteral`
     // (sigils.ts), même garde que transformCodeOnly plus haut
     // Commentaire `//`/`/* … */` sauté AVANT ce test : sinon un bloc
     // `/* … */` se faisait avaler comme un littéral regex (cf. bandeau skipCommentSpan ci-dessus)
     const cs = skipCommentSpan(str, i)
     if (cs !== -1) { i = cs; continue }
-    if (ch === '/' && ouvreUneRegex(str.slice(0, i))) {
-      const fin = scanRegexLiteral(str, i)
-      if (fin !== -1) { i = fin; continue }
+    if (ch === '/' && opensRegex(str.slice(0, i))) {
+      const end = scanRegexLiteral(str, i)
+      if (end !== -1) { i = end; continue }
     }
     if (ch === "'" || ch === '"' || ch === '`') { i = skipQuotedSpan(str, i); continue }
     if (ch === '[' || ch === '{' || ch === '(') { depth++; i++; continue }
@@ -385,9 +244,9 @@ function splitTopLevelCommas(str: string): string[] {
     if (cs !== -1) { i = cs; continue }
     // Même garde que balancedSpan : virgule DANS un littéral regex
     // (`/a,b,c/`) n'est jamais un séparateur de paramètres
-    if (ch === '/' && ouvreUneRegex(str.slice(0, i))) {
-      const fin = scanRegexLiteral(str, i)
-      if (fin !== -1) { i = fin; continue }
+    if (ch === '/' && opensRegex(str.slice(0, i))) {
+      const end = scanRegexLiteral(str, i)
+      if (end !== -1) { i = end; continue }
     }
     if (ch === "'" || ch === '"' || ch === '`') { i = skipQuotedSpan(str, i); continue }
     if (ch === '[' || ch === '{' || ch === '(') { depth++; i++; continue }
@@ -409,9 +268,9 @@ function firstTopLevelEquals(str: string): number {
     if (cs !== -1) { i = cs; continue }
     // Même garde : `=` DANS un littéral regex n'est jamais le séparateur
     // nom/valeur par défaut
-    if (ch === '/' && ouvreUneRegex(str.slice(0, i))) {
-      const fin = scanRegexLiteral(str, i)
-      if (fin !== -1) { i = fin; continue }
+    if (ch === '/' && opensRegex(str.slice(0, i))) {
+      const end = scanRegexLiteral(str, i)
+      if (end !== -1) { i = end; continue }
     }
     if (ch === "'" || ch === '"' || ch === '`') { i = skipQuotedSpan(str, i); continue }
     if (ch === '[' || ch === '{' || ch === '(') { depth++; i++; continue }
@@ -450,96 +309,63 @@ function extractParamNames(paramsSrc: string, reserved: Set<string>): string[] {
 // fermeture, seul — `outermostParenSpans(')')` ne rend aucun span, `a`/`b` jamais enregistrés, puis
 // réassignés dans le corps comme des variables NEUVES (Civet refuse : « Identifier 'a' has already
 // been declared »), et la valeur par défaut (`b = 1`, ligne de continuation) se fait hisser en
-// `.= undefined` fantôme comme une affectation de branche. `parenDeltaHorsChaines` (delta `(`/`)`
+// `.= undefined` fantôme comme une affectation de branche. `parenDeltaOutsideStrings` (delta `(`/`)`
 // hors chaînes/regex/commentaire, même garde que balancedSpan) repère ces listes AVANT la boucle
 // principale (cf. pré-passe `multiLineParams` plus bas) : continuation rendue inerte, fermeture
 // mémorisée avec l'indentation de la ligne D'OUVERTURE, jamais celle de la fermeture.
 // Un COMMENTAIRE sur une ligne de continuation
 // d'une liste multi-lignes (`f = (\n  a,\n  // commentaire\n  b\n) ->`) faisait échouer la jonction
 // plus bas : `joined` recollait les lignes BRUTES, commentaire compris, et `//` s'y faisait prendre
-// pour un littéral regex VIDE par `balancedSpan`/`outermostParenSpans` (`ouvreUneRegex` vrai après
+// pour un littéral regex VIDE par `balancedSpan`/`outermostParenSpans` (`opensRegex` vrai après
 // une virgule) — le texte du commentaire ensuite scanné comme du CODE (apostrophe française →
 // chaîne jamais refermée jusqu'à la fin de `joined`, ou parenthèse isolée → compte dépareillé).
-// `sansCommentaireFinal` retire ce commentaire de fin de ligne (scanner UNIQUE, réutilisé par
-// `parenDeltaHorsChaines` ci-dessous ET par la pré-passe `multiLineParams` plus bas).
-// `sansCommentaireFinal` ne connaissait que `//` :
+// `withoutTrailingComment` retire ce commentaire de fin de ligne (scanner UNIQUE, réutilisé par
+// `parenDeltaOutsideStrings` ci-dessous ET par la pré-passe `multiLineParams` plus bas).
+// `withoutTrailingComment` ne connaissait que `//` :
 // un commentaire de BLOC `/* … */` (mono-ligne OU multi-lignes, issu d'un `###…###` Coffee converti
 // par la Pass 1) sur cette même ligne de continuation subissait EXACTEMENT le même sort qu'un `//`
 // non traité — avalé comme un littéral regex par `scanRegexLiteral` (refermé sur le `/` de `*/`),
-// pièce garbage jetée en silence par `extractParamNames`. `sansCommentaireFinal` devient
-// `sansCommentaires` (MULTI-LIGNES, retire aussi `/* … */`, remplacé par un espace pour ne jamais
+// pièce garbage jetée en silence par `extractParamNames`. `withoutTrailingComment` devient
+// `noComments` (MULTI-LIGNES, retire aussi `/* … */`, remplacé par un espace pour ne jamais
 // recoller deux jetons) — mêmes deux appelants, et réutilisée par les 4 scanners (balancedSpan,
-// splitTopLevelCommas, firstTopLevelEquals, parenDeltaHorsChaines) via le helper partagé
+// splitTopLevelCommas, firstTopLevelEquals, parenDeltaOutsideStrings) via le helper partagé
 // `skipCommentSpan` posé plus haut à côté de `skipQuotedSpan`.
-function sansCommentaires(src: string): string {
+function noComments(src: string): string {
   let out = ''
-  let i   = 0
-  while (i < src.length) {
-    const ch = src[i]
-    if (ch === "'" || ch === '"' || ch === '`') { const e = skipQuotedSpan(src, i); out += src.slice(i, e); i = e; continue }
-    if (ch === '/' && src[i + 1] === '/') { i = skipCommentSpan(src, i); continue }
-    if (ch === '/' && src[i + 1] === '*') { i = skipCommentSpan(src, i); out += ' '; continue }
-    if (ch === '/' && ouvreUneRegex(src.slice(0, i))) {
-      const fin = scanRegexLiteral(src, i)
-      if (fin !== -1) { out += src.slice(i, fin); i = fin; continue }
-    }
-    out += ch
-    i++
+  for (const [kind, start, end, depth] of scriptSpans(src)) {
+    if (kind !== SPAN.COMMENT || depth > 0) out += src.slice(start, end)
+    else if (src[start + 1] === '*') out += ' '
   }
   return out
 }
 
-// blanchirCommentaires — variante de sansCommentaires qui CONSERVE la longueur et les indices de
-// ligne/colonne : `sansCommentaires` ci-dessus
+// blankComments — variante de noComments qui CONSERVE la longueur et les indices de
+// ligne/colonne : `noComments` ci-dessus
 // SUPPRIME un `//` (rien émis) et REMPLACE un `/* … */` par UN SEUL espace (peu importe sa taille)
 // — la position des caractères qui suivent GLISSE, illisible pour une passe qui doit ensuite
 // RÉÉCRIRE la ligne D'ORIGINE à un index précis. Ici, chaque caractère de commentaire devient UN
 // ESPACE (les `\n` internes à un bloc multi-lignes restent des `\n`, jamais blanchis) : même
-// parcours que `sansCommentaires` (chaînes via `skipQuotedSpan`, regex via `ouvreUneRegex`/
+// parcours que `noComments` (chaînes via `skipQuotedSpan`, regex via `opensRegex`/
 // `scanRegexLiteral`, `//`/`/* … */` reconnus par `skipCommentSpan`), mais
-// `blanchirCommentaires(s).length === s.length` et le découpage par `\n` tombe sur le MÊME nombre
+// `blankComments(s).length === s.length` et le découpage par `\n` tombe sur le MÊME nombre
 // de lignes — la Pass 4 plus bas DÉTECTE sur le texte blanchi et RÉÉCRIT sur la ligne brute, index
-// par index. `sansCommentaires` reste inchangée pour ses appelants existants (parenDeltaHorsChaines,
+// par index. `noComments` reste inchangée pour ses appelants existants (parenDeltaOutsideStrings,
 // région jointe de `multiLineParams`) : deux besoins différents, deux fonctions.
-function blanchirCommentaires(src: string): string {
+function blankComments(src: string): string {
   let out = ''
-  let i   = 0
-  while (i < src.length) {
-    const ch = src[i]
-    if (ch === "'" || ch === '"' || ch === '`') { const e = skipQuotedSpan(src, i); out += src.slice(i, e); i = e; continue }
-    if (ch === '/') {
-      const cs = skipCommentSpan(src, i)
-      if (cs !== -1) { for (let k = i; k < cs; k++) out += src[k] === '\n' ? '\n' : ' '; i = cs; continue }
-      if (ouvreUneRegex(src.slice(0, i))) {
-        const fin = scanRegexLiteral(src, i)
-        if (fin !== -1) { out += src.slice(i, fin); i = fin; continue }
-      }
-    }
-    out += ch
-    i++
-  }
+  for (const [kind, start, end, depth] of scriptSpans(src)) out += kind === SPAN.COMMENT && depth === 0 ? src.slice(start, end).replace(/[^\n]/g, ' ') : src.slice(start, end)
   return out
 }
 
-function parenDeltaHorsChaines(line: string): number {
-  const code = sansCommentaires(line)
-  let delta  = 0
-  let i      = 0
-  while (i < code.length) {
-    const ch = code[i]
-    // Commentaire sauté AVANT le test regex (cf. skipCommentSpan) : sans
-    // objet ici la plupart du temps (`code` déjà nettoyé ci-dessus), même garde que les 3 autres
-    // scanners par cohérence — un appelant qui passerait un jour du texte NON nettoyé reste protégé
-    const cs = skipCommentSpan(code, i)
-    if (cs !== -1) { i = cs; continue }
-    if (ch === '/' && ouvreUneRegex(code.slice(0, i))) {
-      const fin = scanRegexLiteral(code, i)
-      if (fin !== -1) { i = fin; continue }
+// les parenthèses de la ligne, hors des chaînes, des regex et des commentaires (plages du lecteur du script)
+function parenDeltaOutsideStrings(line: string): number {
+  let delta = 0
+  for (const [kind, start, end, depth] of scriptSpans(line)) {
+    if (kind !== SPAN.CODE || depth > 0) continue
+    for (let k = start; k < end; k++) {
+      if (line[k] === '(') delta++
+      else if (line[k] === ')') delta--
     }
-    if (ch === "'" || ch === '"' || ch === '`') { i = skipQuotedSpan(code, i); continue }
-    if (ch === '(') delta++
-    else if (ch === ')') delta--
-    i++
   }
   return delta
 }
@@ -557,11 +383,9 @@ function parenDeltaHorsChaines(line: string): number {
 // ----------------------------------------------------------------------------
 // `firstLine` : la ligne du fichier où tombe la première ligne de `src` (la balise <script>), pour citer une faute à sa ligne réelle
 // `passe` : chaque déclaration que la passe de déclaration pose (ligne, noms), vérifiée ensuite par l'arbre de Civet
-// `commentaires` : les commentaires du script sous la lecture par l'arbre (reader/script.ts, CommentairesDuScript) ; le
+// `commentaires` : les commentaires du script sous la lecture par l'arbre (reader/script.ts, ScriptComments) ; le
 // balayeur ci-dessous par défaut
-// `lost` : les chaînes `"…"` ou `'…'` écrites sur plusieurs lignes où le balayeur réécrit un `#` en `//` (le texte de la chaîne change,
-// sans erreur) — relevées à leur ligne du fichier par un témoin qui suit sa lecture sans la changer (longStringWatch, lexer)
-export function applyCivetDialectSugar(src: string, lang?: string, predeclared?: string[], firstLine = 1, declares?: Set<string>, passe?: DeclarationsDeLaPasse, commentaires: CommentairesDuScript = 'balayeur', lost?: LostPlace[]): string {
+export function applyCivetDialectSugar(src: string, lang?: string, predeclared?: string[], firstLine = 1, declares?: Set<string>, pass?: PassDeclarations, comments: ScriptComments = 'scanner'): string {
   let out = src
 
   // ─── Pass 1 : conversion `#` Coffee comment → `//` JS comment ─────────────
@@ -579,114 +403,34 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
   // Lecture du script par l'arbre (réglage interne, reader/script.ts) : le script d'un composant n'a plus de commentaire, il
   // reste tel quel ; repris, les commentaires que lit le vrai Civet, réécrits à leur position ; un script qu'il ne lit pas
   // sûrement, comme les gestionnaires, les modules et les fichiers serveur, passe par le balayeur ci-dessous
-  const parLArbre = lang !== 'coffee' && lang !== 'js' && lang !== 'ts' ? commentairesDuDialecte(out, commentaires) : null
-  if (parLArbre !== null) out = parLArbre
+  const byTree = lang !== 'coffee' && lang !== 'js' && lang !== 'ts' ? dialectComments(out, comments) : null
+  if (byTree !== null) out = byTree
   else if (lang !== 'coffee') {
-    const dialecte = lang !== 'js' && lang !== 'ts'
-    // `slash` : la dernière barre `/` lue comme du code
-    const watch = lost !== undefined && dialecte ? longStringWatch(out) : null
-    let slash   = -1
+    const dialect = lang !== 'js' && lang !== 'ts'
+    // les plages du lecteur du script (scriptSpans, lexer) : une chaîne `"…"` ou `'…'` écrite sur plusieurs lignes, un gabarit, une
+    // chaîne à trois guillemets gardent leur `#` (du texte, ou une interpolation `#{…}`) ; un commentaire `### … ###` devient
+    // `/* … */` (un `*/` de son texte, motif de chemin `src/**/*.json`, devient `*\/`, sinon il refermait le commentaire au milieu ;
+    // `####` en ouvre un d'une ligne), un `#` qui n'est pas un nom privé (`#id`, `#!`) devient `//` ; dans une regex étendue
+    // `///…///`, un `#` précédé d'un blanc ouvre un commentaire (règle de CoffeeScript), converti en `//`, que Civet y lit ; un `\#`
+    // reste un dièse
     let conv = ''
-    let ci = 0
-    const cn = out.length
-    while (ci < cn) {
-      const c = out[ci], c1 = out[ci + 1], c2 = out[ci + 2]
-      // `### ... ###` (début de ligne OU inline) → `/* ... */` ; un `*/` du contenu (motif de chemin
-      // `src/**/*.json`) devient `*\/`, sinon il refermait le commentaire au milieu
-      if (c === '#' && c1 === '#' && c2 === '#') {
-        const end = out.indexOf('###', ci + 3)
-        watch?.cut(ci, end < 0 ? cn : end + 3)
-        conv += '/*' + out.slice(ci + 3, end < 0 ? cn : end).replace(/\*\//g, '*\\/') + '*/'
-        ci = end < 0 ? cn : end + 3
+    let read = 0
+    for (const [kind, start, end, depth] of scriptSpans(out, dialect)) {
+      if (start < read) continue
+      if (depth === 0 && kind === SPAN.COMMENT && out[start] === '#') {
+        const block = opensHashBlock(out, start)
+        const e     = block ? out.indexOf('###', start + 3) : -1
+        conv       += block ? '/*' + out.slice(start + 3, e < 0 ? end : e).replace(/\*\//g, '*\\/') + '*/' : '//' + out.slice(start + 1, end)
+      }
+      else if (depth === 0 && kind === SPAN.REGEX && dialect && out.startsWith('///', start)) {
+        const end = endOfHeregex(out, start)
+        conv += out.slice(start, end).replace(/(\s)#(?!\{)/g, '$1//')
+        read = end
         continue
       }
-      // heredocs `"""..."""` / `'''...'''` → inchangés (un `#` dedans est du texte)
-      if ((c === '"' && c1 === '"' && c2 === '"') || (c === "'" && c1 === "'" && c2 === "'")) {
-        const q3 = c + c + c
-        const end = out.indexOf(q3, ci + 3)
-        const stop = end < 0 ? cn : end + 3
-        watch?.skipped(ci, stop)
-        conv += out.slice(ci, stop)
-        ci = stop
-        continue
-      }
-      // template literal `` `...` `` → MULTI-LIGNES, inchangé : un `#`
-      // dans un backtick multi-ligne est du TEXTE (ou une interpolation `${…}`),
-      // jamais un commentaire. Le borner au `\n` (comme les mono-lignes) faisait
-      // scanner les lignes SUIVANTES comme du code et y convertir `#`→`//`,
-      // corrompant silencieusement le contenu utilisateur.
-      if (c === '`') {
-        const at = ci
-        conv += c
-        ci++
-        while (ci < cn) {
-          if (out[ci] === '\\') { conv += out.slice(ci, ci + 2); ci += 2; continue }
-          conv += out[ci]
-          if (out[ci] === '`') { ci++; break }
-          ci++
-        }
-        watch?.skipped(at, ci)
-        continue
-      }
-      // chaîne `"…"` lue au niveau (lecteur du lexeur) : une interpolation `#{…}` y porte ses propres guillemets — le `#{`
-      // d'une chaîne écrite DANS l'interpolation n'est pas un commentaire (il sortait en `//{…}`)
-      if (c === '"') {
-        const e = scanDoubleQuoteAt(out, ci)
-        if (e > 0) { watch?.skipped(ci, e); conv += out.slice(ci, e); ci = e; continue }
-      }
-      // chaînes mono-ligne `"..."` `'...'` → inchangées (escapes, bornées à la ligne)
-      if (c === '"' || c === "'") {
-        const at   = ci
-        let closed = false
-        conv += c
-        ci++
-        while (ci < cn) {
-          if (out[ci] === '\\') { conv += out.slice(ci, ci + 2); ci += 2; continue }
-          if (out[ci] === '\n') break
-          conv += out[ci]
-          if (out[ci] === c) { ci++; closed = true; break }
-          ci++
-        }
-        // le témoin des chaînes écrites sur plusieurs lignes : chaîne refermée sur sa ligne, ou guillemet resté seul
-        if (closed) watch?.skipped(at, ci)
-        else watch?.lone(at, slash, ci)
-        continue
-      }
-      // heregex `///…///` (Civet) → recopiée jusqu'à son `///` fermant ; un `#` précédé d'un blanc y ouvre un
-      // commentaire (règle de CoffeeScript), converti en `//`, que Civet y lit ; un `\#` reste un dièse
-      if (dialecte && c === '/' && c1 === '/' && c2 === '/') {
-        const fin = finHeregex(out, ci)
-        if (fin !== -1) { watch?.skipped(ci, fin); conv += out.slice(ci, fin).replace(/(\s)#(?!\{)/g, '$1//'); ci = fin; continue }
-      }
-      // `//` ligne et `/* */` bloc déjà-JS → inchangés
-      if (c === '/' && c1 === '/') { const e = out.indexOf('\n', ci); const s = e < 0 ? cn : e; watch?.skipped(ci, s); conv += out.slice(ci, s); ci = s; continue }
-      if (c === '/' && c1 === '*') { const e = out.indexOf('*/', ci + 2); const s = e < 0 ? cn : e + 2; watch?.skipped(ci, s); conv += out.slice(ci, s); ci = s; continue }
-      // littéral regex `/…/` : zone inerte, même garde que transformCodeOnly plus bas —
-      // sans ce garde-fou, `re = /#\d/` voyait son `#` (suivi
-      // d'un `\`, non alphanumérique) converti par la branche `#` juste en dessous : `re = ///\d/`,
-      // échec de compilation bruyant mais FAUX (`/#\d/` est un regex légitime). Contexte gauche lu sur
-      // la source `out` : relire `conv`, en construction, l'aplatissait à chaque `/` (coût quadratique).
-      // Les deux ne diffèrent que par la marque des commentaires déjà convertis (`#` ou `//`, `###` ou
-      // `/* */`), ni signe ni mot-clé : ouvreUneRegex rend la même réponse. Une regex passée sans parenthèses
-      // (`s.replace /'/g, 'X' # fin`) en est une aussi : son apostrophe n'ouvre pas de chaîne, le `#` qui suit est un
-      // commentaire
-      if (c === '/' && (ouvreUneRegex(out.slice(0, ci)) || (dialecte && regexEnArgument(out, ci)))) {
-        const fin = scanRegexLiteral(out, ci)
-        if (fin !== -1) { watch?.skipped(ci, fin); conv += out.slice(ci, fin); ci = fin; continue }
-      }
-      // `#` commentaire (sauf champ privé `#id` / `#!`) → `//` jusqu'à la fin de ligne
-      if (c === '#' && !(c1 !== undefined && /[a-zA-Z_!]/.test(c1))) {
-        const e = out.indexOf('\n', ci); const s = e < 0 ? cn : e
-        watch?.cut(ci, s)
-        conv += '//' + out.slice(ci + 1, s)
-        ci = s
-        continue
-      }
-      if (c === '/') slash = ci
-      conv += c
-      ci++
+      else conv += out.slice(start, end)
+      read = end
     }
-    if (watch !== null) lost!.push(...lostPlaces(out, watch.lost, firstLine))
     out = conv
   }
 
@@ -701,7 +445,7 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
   if (lang !== 'coffee') {
     out = transformCodeOnly(out, (code) =>
       code.replace(
-        /\bfor(\s+[a-zA-Z_]\w*(?:\s*,\s*[a-zA-Z_]\w*)?\s+)in(\s+)/g,
+        /\bfor(\s+(?:[a-zA-Z_]\w*|\{(?:[^{}\n]|\{[^{}\n]*\})*\}|\[(?:[^\[\]\n]|\[[^\[\]\n]*\])*\])(?:\s*,\s*[a-zA-Z_]\w*)?\s+)in(\s+)/g,
         'for$1of$2'
       )
     )
@@ -710,10 +454,9 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
   // ─── Pass 2b : `isnt` (Coffee) → `is not` (que Civet transforme en `!==`).
   // Civet ne connaît PAS `isnt` : il parse `a isnt b` comme l'appel
   // `a(isnt(b))` → `ReferenceError: isnt is not defined` au runtime.
-  // DOIT tourner AVANT la Pass 3 (interpolation) : à ce stade les `"#{…}"` sont
-  // encore des strings double-quote que transformCodeOnly saute proprement —
-  // après Pass 3 ce sont des template literals que transformCodeOnly corromprait
-  // en les re-sérialisant. SKIP Coffee : `isnt` natif, et `is not` y = `=== !`.
+  // Tourne avant la Pass 3 (interpolation) : les `"#{…}"` y sont encore des chaînes `"…"`, dont transformCodeOnly garde
+  // le texte et lit le code des `#{…}` (`"#{a isnt b}"` y devient `"#{a is not b}"`). SKIP Coffee : `isnt` natif, et
+  // `is not` y = `=== !`.
   //
   // Garde-fou AVANT le remplacement : `isnt` est aussi un identifiant JS valide
   // (nom de variable) — le replace texte aveugle mangerait `$isnt = 5` en
@@ -725,7 +468,7 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
   if (lang !== 'coffee') {
     out = transformCodeOnly(out, (code) => {
       if (/\$isnt\b/.test(code) || /(^|[\n;({,])\s*isnt\s*(=(?!=)|\+=|-=|\*=|\/=|\|\|=|&&=|\?\?=|\+\+|--)/.test(code)) {
-        throw new Error(t('transpiler.isnt-identifiant-reserve'))
+        throw new Error(t('transpiler.isnt-identifier-reserved'))
       }
       return code.replace(/\bisnt\b/g, 'is not')
     })
@@ -762,15 +505,15 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
       'await', 'yield', 'delete', 'void',
     ])
     const lines = out.split('\n')
-    // `lignesCode` (blanchirCommentaires, cf. son
+    // `codeLines` (blankComments, cf. son
     // bandeau plus haut) BLANCHIT les commentaires de tout `out` EN UNE SEULE PASSE (bloc multi-lignes
     // compris) avant que la Pass 4 ne détecte quoi que ce soit dessus : `inertLines`, la pré-passe
-    // `multiLineParams` et la boucle principale plus bas lisent TOUTES `lignesCode[li]`, jamais
+    // `multiLineParams` et la boucle principale plus bas lisent TOUTES `codeLines[li]`, jamais
     // `lines[li]` directement, sauf pour la RÉÉCRITURE finale qui vise la ligne D'ORIGINE (mêmes
     // indices, grâce au blanchiment qui préserve la longueur). Invariant vérifié une fois ici : une
     // divergence signale un bug du blanchiment, jamais une entrée utilisateur.
-    const lignesCode = blanchirCommentaires(out).split('\n')
-    if (lignesCode.length !== lines.length) throw new Error('[transpiler] blanchirCommentaires a changé le nombre de lignes — invariant Pass 4 rompu')
+    const codeLines = blankComments(out).split('\n')
+    if (codeLines.length !== lines.length) throw new Error('[transpiler] blankComments a changé le nombre de lignes — invariant Pass 4 rompu')
     // Lignes dont le DÉBUT tombe dans une CHAÎNE multi-ligne (template literal
     // ou heredoc) : INERTES pour cette passe — sinon un `foo = bar` à
     // l'intérieur d'une chaîne était réécrit `foo .= bar` (contenu corrompu en
@@ -787,7 +530,7 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
     // `) ->` (`b /* x\n  y */) ->`) rendait CETTE ligne de fermeture inerte : son `)` n'était jamais
     // compté par la pré-passe `multiLineParams` plus bas, `depth` ne retombait jamais à 0, la liste
     // entière disparaissait — `a`/`b` hissés en `.= undefined` fantômes. Un commentaire n'est plus une
-    // raison de rendre une ligne inerte : c'est `lignesCode` (blanchi à espaces, cf. plus haut) qui
+    // raison de rendre une ligne inerte : c'est `codeLines` (blanchi à espaces, cf. plus haut) qui
     // absorbe désormais les commentaires pour la DÉTECTION ; seule une vraie CHAÎNE multi-lignes
     // (`` ` ``/`"""`/`'''`) encore ouverte à la fin de la ligne précédente reste inerte ici. Le mode
     // `/*` reste SUIVI dans cette IIFE (pour ne pas confondre un guillemet DANS un commentaire avec
@@ -795,40 +538,20 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
     // sur les lignes `//` pures a disparu : une telle ligne, une fois blanchie, est VIDE
     // (`codeLine.trim() === ''`), écartée par la boucle principale AVANT même de consulter
     // `inertLines` — même résultat, un test en moins.
-    const inertLines = (() => {
-      const inert = new Set<number>()
+    const inertLines = new Set<number>()
+    {
+      // ligne inerte : son début tombe dans une chaîne, une regex étendue ou le code d'une interpolation (plages du lecteur du script)
       let line = 0
-      let i = 0
-      const n = out.length
-      let mode: '`' | '"""' | "'''" | '/*' | null = null
-      while (i < n) {
-        const ch = out[i]
-        if (ch === '\n') { line++; if (mode && mode !== '/*') inert.add(line); i++; continue }
-        if (mode) {
-          if (mode === '`' && ch === '\\') { i += 2; continue }
-          if (mode === '`' && ch === '`') { mode = null; i++; continue }
-          if (mode === '"""' && out.startsWith('"""', i)) { mode = null; i += 3; continue }
-          if (mode === "'''" && out.startsWith("'''", i)) { mode = null; i += 3; continue }
-          if (mode === '/*' && out.startsWith('*/', i)) { mode = null; i += 2; continue }
-          i++; continue
+      for (const [kind, start, end, depth] of scriptSpans(out)) {
+        const inert = depth > 0 || kind === SPAN.STRING || kind === SPAN.REGEX
+        for (let k = out.indexOf('\n', start); k !== -1 && k < end; k = out.indexOf('\n', k + 1)) {
+          line++
+          if (inert) inertLines.add(line)
         }
-        if (ch === '#' || (ch === '/' && out[i + 1] === '/')) { const e = out.indexOf('\n', i); i = e === -1 ? n : e; continue }
-        if (out.startsWith('"""', i)) { mode = '"""'; i += 3; continue }
-        if (out.startsWith("'''", i)) { mode = "'''"; i += 3; continue }
-        if (ch === '`') { mode = '`'; i++; continue }
-        if (ch === '/' && out[i + 1] === '*') { mode = '/*'; i += 2; continue }
-        if (ch === '"' || ch === "'") {
-          let j = i + 1
-          while (j < n && out[j] !== ch && out[j] !== '\n') { if (out[j] === '\\') j++; j++ }
-          i = (j < n && out[j] === ch) ? j + 1 : j
-          continue
-        }
-        i++
       }
-      return inert
-    })()
+    }
     // pré-passe liste de paramètres MULTI-LIGNES (cf. bandeau
-    // `parenDeltaHorsChaines` plus haut) : une région ouverte par un delta `(`/`)` positif et refermée
+    // `parenDeltaOutsideStrings` plus haut) : une région ouverte par un delta `(`/`)` positif et refermée
     // par une ligne `)…->`/`)…=>` devient une entrée de `multiLineParams` (clé = ligne de FERMETURE,
     // valeur = paramètres joints + indentation de la ligne D'OUVERTURE) ; ses lignes de continuation
     // rejoignent `inertLines`. Une région refermée SANS flèche (appel multi-lignes `foo(\n  a\n)`) ne
@@ -839,12 +562,12 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
       let depth    = 0
       for (let li = 0; li < lines.length; li++) {
         if (inertLines.has(li)) continue
-        // `lignesCode[li]` (blanchi, cf. bandeau `lignesCode` plus haut)
+        // `codeLines[li]` (blanchi, cf. bandeau `codeLines` plus haut)
         // remplace `lines[li]` : un commentaire qui ferme EN COURS de ligne (`y */) ->`) laissait
-        // passer un `/` isolé que l'heuristique regex de `parenDeltaHorsChaines` pouvait à tort
+        // passer un `/` isolé que l'heuristique regex de `parenDeltaOutsideStrings` pouvait à tort
         // apparier plus loin sur la ligne, avalant le `)` réel — le blanchiment retire le risque à la
         // source (plus aucun caractère de commentaire ne subsiste pour l'heuristique).
-        const delta = parenDeltaHorsChaines(lignesCode[li])
+        const delta = parenDeltaOutsideStrings(codeLines[li])
         if (depth === 0) {
           if (delta > 0) { openLine = li; depth = delta }
           continue
@@ -852,16 +575,16 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
         depth += delta
         if (depth < 0) { depth = 0; openLine = -1; continue }
         if (depth === 0) {
-          const trimmedEnd = lignesCode[li].replace(/\s+$/, '')
+          const trimmedEnd = codeLines[li].replace(/\s+$/, '')
           if (trimmedEnd.endsWith('->') || trimmedEnd.endsWith('=>')) {
             const beforeArrow = trimmedEnd.slice(0, -2).replace(/\s+$/, '')
             if (beforeArrow.endsWith(')')) {
-              // `sansCommentaires` (remplace `sansCommentaireFinal`) tourne
+              // `noComments` (remplace `withoutTrailingComment`) tourne
               // sur la région JOINTE en UN seul passage (MULTI-LIGNES) : un `/* … */` qui s'étale sur
               // plusieurs lignes de continuation (`###…###` Coffee) n'était sinon jamais reconnu par un
               // nettoyage LIGNE PAR LIGNE (chaque ligne isolée n'y voyait qu'un `/*` jamais refermé, ou
               // un `*/` jamais ouvert).
-              const regionSrc = sansCommentaires(lines.slice(openLine, li + 1).join('\n')).split('\n').filter((l) => l.trim() !== '')
+              const regionSrc = noComments(lines.slice(openLine, li + 1).join('\n')).split('\n').filter((l) => l.trim() !== '')
               const joinedRaw = regionSrc.join('\n').replace(/\s+$/, '')
               const joined    = joinedRaw.slice(0, -2).replace(/\s+$/, '')
               const spans     = outermostParenSpans(joined)
@@ -906,12 +629,12 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
     // cette passe ne sait pas reconnaître comme portées) ou à côté d'une fonction écrite en ligne,
     // un homonyme local est possible : le contrôle fait APRÈS compilation sur le JavaScript
     // (const-reassign.ts, portées exactes) tranche alors, sans faux refus.
-    let niveauSur = false
+    let safeLevel = false
     // déclarations posées ici, notées (ligne, noms) pour l'arbre de Civet, qui tranche ce que le texte ne dit pas : champ de
     // classe, bloc `do` ou `then`, corps d'une `function`, première affectation que cette passe ne voit pas
-    const notesEnPlace: { ligne: number; noms: string[] }[] = []
-    const notesHisses: { ligne: number; noms: string[] }[]  = []
-    const constanteSure = (nom: string): boolean => niveauSur && scopes[scopes.length - 1].constDeclared.has(nom)
+    const notesInPlace: { line: number; names: string[] }[] = []
+    const hoistedNotes: { line: number; names: string[] }[] = []
+    const safeConstant                                      = (name: string): boolean => safeLevel && scopes[scopes.length - 1].constDeclared.has(name)
     for (let li = 0; li < lines.length; li++) {
       const line = lines[li]
       // `codeLine` (blanchi, hissé ici EN TÊTE de boucle) sert à TOUTE
@@ -919,7 +642,7 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
       // if/unless/else, déclarations explicites, fin de bloc `->`/`=>`/`then`/`do`) ; `line` (brute)
       // ne sert plus qu'à la RÉÉCRITURE finale, par découpe à un index calculé sur `codeLine` — les
       // deux chaînes ont la MÊME longueur, le même index tombe donc au même endroit dans les deux.
-      const codeLine = lignesCode[li]
+      const codeLine = codeLines[li]
       if (codeLine.trim() === '') continue
       if (inertLines.has(li)) continue
       // un commentaire de bloc peut précéder le code SUR la même ligne (`/* c */ x = 1`) : son
@@ -937,7 +660,7 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
         topScope.bodyIndent = indent
         topScope.insertAt = li
       }
-      niveauSur = indent <= topScope.bodyIndent && !/->|=>|\b(?:function|class|catch)\b|\)\s*\{/.test(codeLine)
+      safeLevel = indent <= topScope.bodyIndent && !/->|=>|\b(?:function|class|catch)\b|\)\s*\{/.test(codeLine)
       // affectation COMPOSÉE ou incrément/décrément (`w += 1`, `w++`, `--w`) : jamais reconnue
       // par le motif d'affectation SIMPLE plus bas (son `=` n'y est jamais collé directement au
       // nom) — une réaffectation quand même, soumise à la MÊME garde de constance, restreinte à
@@ -947,10 +670,10 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
       const compoundRe = /(?<![\w.$])([a-zA-Z_]\w*)\s*(?:\+\+|--|(?:\*\*|<<|>>>?|&&|\|\||\?\?|[-+*/%&|^])=)|(?:\+\+|--)\s*([a-zA-Z_]\w*)(?![\w$])/g
       let cm: RegExpExecArray | null
       while ((cm = compoundRe.exec(codeLine)) !== null) {
-        const nomCompose = cm[1] ?? cm[2]
-        if (RESERVED.has(nomCompose)) continue
-        if (constanteSure(nomCompose)) {
-          throw new Error(t('transpiler.civet-reaffectation-constante', { nom: nomCompose, ligne: li + firstLine }))
+        const compoundName = cm[1] ?? cm[2]
+        if (RESERVED.has(compoundName)) continue
+        if (safeConstant(compoundName)) {
+          throw new Error(t('transpiler.civet-reassignment-constant', { name: compoundName, line: li + firstLine }))
         }
       }
       // "bonus mémoire" — `[^=]`
@@ -1003,12 +726,12 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
               // concaténation de `lead`/`name`/`sp` (issus de `codeLine`, blanchi) : un commentaire en
               // tête (`/* c */ x = 1`) serait sinon remplacé par du blanc dans la sortie. `posEq` est
               // l'index du `=` dans `codeLine` — le MÊME index tombe sur le `=` de `line` (longueurs
-              // identiques, cf. bandeau `blanchirCommentaires`).
+              // identiques, cf. bandeau `blankComments`).
               const posEq = lead.length + name.length + sp.length
               lines[li] = line.slice(0, posEq) + '.=' + line.slice(posEq + 1)
-              notesEnPlace.push({ ligne: li, noms: [name] })
+              notesInPlace.push({ line: li, names: [name] })
             }
-          } else if (constanteSure(name)) {
+          } else if (safeConstant(name)) {
             // `name` lié par `:=` (constante) DANS CETTE MÊME portée (pas une ancêtre — même
             // politique que le bundler, « au même niveau » : une fonction imbriquée qui REÇOIT
             // juste une variable externe n'est pas suivie, seul le niveau qui a posé le `:=`
@@ -1016,7 +739,7 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
             // SEULEMENT à l'exécution (« Assignment to constant variable »), le build restant
             // vert. Refus À LA COMPILATION, message qui nomme l'identifiant, la ligne fautive et
             // la solution.
-            throw new Error(t('transpiler.civet-reaffectation-constante', { nom: name, ligne: li + firstLine }))
+            throw new Error(t('transpiler.civet-reassignment-constant', { name, line: li + firstLine }))
           }
         }
       } else {
@@ -1076,8 +799,8 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
           // `:=` refuse de compiler plutôt que de planter au chargement.
           for (const nm of names) {
             if (undeclared.includes(nm)) continue
-            if (constanteSure(nm)) {
-              throw new Error(t('transpiler.civet-reaffectation-constante', { nom: nm, ligne: li + firstLine }))
+            if (safeConstant(nm)) {
+              throw new Error(t('transpiler.civet-reassignment-constant', { name: nm, line: li + firstLine }))
             }
           }
           if (undeclared.length > 0) {
@@ -1093,7 +816,7 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
               // `lead`/`pattern`/`sp` (blanchis) qui effacerait un commentaire niché dans le motif.
               const posEq = lead.length + pattern.length + sp.length
               lines[li] = line.slice(0, posEq) + '.=' + line.slice(posEq + 1)
-              notesEnPlace.push({ ligne: li, noms: [...undeclared] })
+              notesInPlace.push({ line: li, names: [...undeclared] })
             }
           }
         } else if (/^\s*(?:if|unless|else|for|while|switch|when)\b/.test(codeLine) && !line.includes(':=') && !line.includes('.=')) {
@@ -1111,10 +834,10 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
             if (!scopes.some(s => s.declared.has(nm))) {
               topScope.declared.add(nm)
               pendingHoists.push({ insertAt: topScope.insertAt, indent: topScope.bodyIndent, name: nm })
-            } else if (constanteSure(nm)) {
+            } else if (safeConstant(nm)) {
               // même garde que l'affectation simple, restreinte à CETTE portée : `if a then x = 1`
               // reste une réaffectation, même écrite en ligne après `then`/`else`
-              throw new Error(t('transpiler.civet-reaffectation-constante', { nom: nm, ligne: li + firstLine }))
+              throw new Error(t('transpiler.civet-reassignment-constant', { name: nm, line: li + firstLine }))
             }
           }
         }
@@ -1146,21 +869,21 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
       // BLANCHIES suivantes, comme la pré-passe `multiLineParams` plus haut pour une liste de
       // paramètres ; le cas mono-ligne (immédiatement équilibré) n'entre jamais dans la boucle.
       if (codeLine[indent] === '[' || codeLine[indent] === '{') {
-        let motif  = codeLine.slice(indent)
-        let patEnd = balancedSpan(motif, 0)
-        for (let lj = li + 1; patEnd === -1 && lj < lignesCode.length; lj++) {
-          motif  += '\n' + lignesCode[lj]
-          patEnd  = balancedSpan(motif, 0)
+        let pattern = codeLine.slice(indent)
+        let patEnd  = balancedSpan(pattern, 0)
+        for (let lj = li + 1; patEnd === -1 && lj < codeLines.length; lj++) {
+          pattern += '\n' + codeLines[lj]
+          patEnd   = balancedSpan(pattern, 0)
         }
-        const opMatch = patEnd !== -1 ? motif.slice(patEnd).match(/^\s*([.:])=/) : null
+        const opMatch = patEnd !== -1 ? pattern.slice(patEnd).match(/^\s*([.:])=/) : null
         if (opMatch) {
           const scopeDecl = scopes[scopes.length - 1]
           // même distinction que declMatch ci-dessus pour un IDENT nu : `:=` lie une constante,
           // même déstructurée — `w`/`h` de `{w, h} := f()` refusent une réaffectation nue plus bas
-          const estConst = opMatch[1] === ':'
-          for (const nm of extractDestructuredNames(motif.slice(0, patEnd), RESERVED)) {
+          const isConst = opMatch[1] === ':'
+          for (const nm of extractDestructuredNames(pattern.slice(0, patEnd), RESERVED)) {
             scopeDecl.declared.add(nm)
-            if (estConst) scopeDecl.constDeclared.add(nm)
+            if (isConst) scopeDecl.constDeclared.add(nm)
             else scopeDecl.constDeclared.delete(nm)
           }
         }
@@ -1178,7 +901,7 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
       }
       // Nouveau bloc (line finit par `->`/`=>`/`then`/`do`) → push scope enfant
       // `codeLine` (commentaire retiré, cf.
-      // `sansCommentaires` plus haut) remplace `line` pour CE test ET pour `trimmedEnd`/`beforeArrow`
+      // `noComments` plus haut) remplace `line` pour CE test ET pour `trimmedEnd`/`beforeArrow`
       // juste en dessous : un `//`/`/* … */` en QUEUE de ligne (`f = (a) -> // note`) faisait échouer
       // `/(?:->|=>|then|do)\s*$/` sur la ligne BRUTE (elle ne finit plus littéralement par `->`) →
       // aucune portée poussée, `a` traité comme une affectation de la portée racine et HISSÉ à tort
@@ -1186,13 +909,13 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
       // faussait de même `beforeArrow` plus bas. Les deux tests portent désormais sur la MÊME chaîne
       // nettoyée (la comparaison de longueur `params.end === beforeArrow.length` reste cohérente).
       // `codeLine` n'est plus recalculé ici : c'est
-      // désormais la MÊME variable hissée en tête de boucle (`lignesCode[li]`, blanchie — cf. son
-      // bandeau plus haut), qui couvre en plus les blocs `/* … */` MULTI-LIGNES (`sansCommentaires`
+      // désormais la MÊME variable hissée en tête de boucle (`codeLines[li]`, blanchie — cf. son
+      // bandeau plus haut), qui couvre en plus les blocs `/* … */` MULTI-LIGNES (`noComments`
       // ne reconnaissait qu'un commentaire ouvert ET refermé sur cette ligne isolée, jamais un bloc
       // ouvert sur une ligne précédente).
       if (/(?:->|=>|then|do)\s*$/.test(codeLine)) {
         // liste de paramètres MULTI-LIGNES (cf. bandeau
-        // `parenDeltaHorsChaines` plus haut) : la portée poussée hérite de l'indentation de la
+        // `parenDeltaOutsideStrings` plus haut) : la portée poussée hérite de l'indentation de la
         // ligne D'OUVERTURE (`multi.openIndent`), jamais de celle de la ligne de fermeture `) ->` —
         // sinon une fermeture indentée au niveau du corps ferait sauter la portée dès sa 1re ligne.
         const multi = multiLineParams.get(li)
@@ -1247,28 +970,28 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
         const group  = byInsertAt.get(at)
         const decls  = group.map(h => `${h.name} .= undefined`)
         const indent = ' '.repeat(group[0].indent)
-        const tete   = lines[at].trimStart()
-        const noms   = group.map(h => h.name)
+        const head   = lines[at].trimStart()
+        const names  = group.map(h => h.name)
         if (at > 0 && lines[at - 1].trim() === '' && !inertLines.has(at - 1)) {
           lines[at - 1] = indent + decls.join('; ')
-          notesHisses.push({ ligne: at - 1, noms })
+          hoistedNotes.push({ line: at - 1, names })
         }
-        else if (/^[a-zA-Z_]/.test(tete) && !/^(?:import|export)\b/.test(tete)) {
-          const marge = lines[at].length - tete.length
-          lines[at] = lines[at].slice(0, marge) + decls.join('; ') + '; ' + tete
-          notesHisses.push({ ligne: at, noms })
+        else if (/^[a-zA-Z_]/.test(head) && !/^(?:import|export)\b/.test(head)) {
+          const margin = lines[at].length - head.length
+          lines[at] = lines[at].slice(0, margin) + decls.join('; ') + '; ' + head
+          hoistedNotes.push({ line: at, names })
         }
         else {
           lines.splice(at, 0, ...decls.map(d => indent + d))
           // lignes ajoutées : les déclarations déjà notées plus bas descendent d'autant
-          for (const n of [...notesEnPlace, ...notesHisses]) if (n.ligne >= at) n.ligne += decls.length
-          noms.forEach((nom, k) => notesHisses.push({ ligne: at + k, noms: [nom] }))
+          for (const n of [...notesInPlace, ...hoistedNotes]) if (n.line >= at) n.line += decls.length
+          names.forEach((name, k) => hoistedNotes.push({ line: at + k, names: [name] }))
         }
       }
     }
-    if (passe) {
-      for (const n of notesEnPlace) passe.enPlace.set(n.ligne, [...(passe.enPlace.get(n.ligne) ?? []), ...n.noms])
-      for (const n of notesHisses) passe.hisses.set(n.ligne, [...(passe.hisses.get(n.ligne) ?? []), ...n.noms])
+    if (pass) {
+      for (const n of notesInPlace) pass.inPlace.set(n.line, [...(pass.inPlace.get(n.line) ?? []), ...n.names])
+      for (const n of hoistedNotes) pass.hoisted.set(n.line, [...(pass.hoisted.get(n.line) ?? []), ...n.names])
     }
     out = lines.join('\n')
   }
@@ -1285,7 +1008,7 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
 //   µconsole(arg)     → l'argument tel quel : sélecteur, élément, valeur à inspecter, true/false
 //   µconsole arg      → forme Civet sans parenthèses : UN argument, chaîne ou chemin (`$$panier.x`)
 // Forme de sortie valable dans tous les dialectes (ni ternaire, absent de Coffee, ni `?.`)
-const MOTS_APRES_UNE_RUNE = new Set(['if', 'unless', 'and', 'or', 'then', 'else', 'when', 'for', 'while', 'until', 'not', 'is', 'isnt', 'in', 'of', 'instanceof'])
+const WORDS_AFTER_RUNE = new Set(['if', 'unless', 'and', 'or', 'then', 'else', 'when', 'for', 'while', 'until', 'not', 'is', 'isnt', 'in', 'of', 'instanceof'])
 
 // la position `at` de la vue masquée (commentaires blanchis) finit-elle l'instruction ? blancs, puis
 // fin du texte ou de la ligne, `;`, une fermante, ou un mot de la langue (`µconsole $x if debug`)
@@ -1299,55 +1022,55 @@ function statementEnd(src: string, blanked: string, at: number): boolean {
   }
   if (k >= blanked.length || '\n\r;)]}'.includes(blanked[k])) return true
   const word = /^[A-Za-z_]\w*/.exec(blanked.slice(k, k + 12))
-  return !!word && MOTS_APRES_UNE_RUNE.has(word[0])
+  return !!word && WORDS_AFTER_RUNE.has(word[0])
 }
 
-function consoleSansParentheses(src: string, at: number): Error {
-  const debut = src.lastIndexOf('\n', at - 1) + 1
-  const fin   = src.indexOf('\n', at)
-  return new Error(t('transpiler.console-parentheses', { ecrit: src.slice(debut, fin === -1 ? src.length : fin).trim() }))
+function consoleWithoutParens(src: string, at: number): Error {
+  const start = src.lastIndexOf('\n', at - 1) + 1
+  const end   = src.indexOf('\n', at)
+  return new Error(t('transpiler.console-parentheses', { written: src.slice(start, end === -1 ? src.length : end).trim() }))
 }
 
-function reecritRuneConsole(src: string, lang?: string): string {
-  const vue = maskNonCode(src, lang ?? 'civet')
-  const re  = /(?<![\w$.])µ\.?console(?![\w$])/g
-  let sortie = '', dernier = 0, m: RegExpExecArray | null
-  while ((m = re.exec(vue))) {
-    const apresNom = m.index + m[0].length
-    let i = apresNom
+function rewriteRuneConsole(src: string, lang?: string): string {
+  const view = maskNonCode(src, lang ?? 'civet')
+  const re   = /(?<![\w$.])µ\.?console(?![\w$])/g
+  let output = '', last = 0, m: RegExpExecArray | null
+  while ((m = re.exec(view))) {
+    const afterName = m.index + m[0].length
+    let i = afterName
     while (i < src.length && (src[i] === ' ' || src[i] === '\t')) i++
     const c = src[i]
-    let fin = apresNom, arg: string | null = null
-    if (vue[i] === '(') {
+    let end = afterName, arg: string | null = null
+    if (view[i] === '(') {
       // parenthèse fermante du même niveau, cherchée sur la vue masquée (une parenthèse dans une
       // chaîne ne compte pas) ; jamais refermée : rien réécrit, le compilateur le dira
-      let prof = 0, j = i
-      for (; j < vue.length; j++) {
-        if (vue[j] === '(') prof++
-        else if (vue[j] === ')' && --prof === 0) break
+      let depth = 0, j = i
+      for (; j < view.length; j++) {
+        if (view[j] === '(') depth++
+        else if (view[j] === ')' && --depth === 0) break
       }
-      if (j >= vue.length) continue
+      if (j >= view.length) continue
       arg = src.slice(i + 1, j).trim()
-      fin = j + 1
+      end = j + 1
     }
     else if (c === '.' || c === '[') continue   // `µ.console.log(…)` : pas la rune
-    else if ((c === "'" || c === '"') && i > apresNom) {
+    else if ((c === "'" || c === '"') && i > afterName) {
       // un texte à triples guillemets se refermerait au premier guillemet
-      if (src.startsWith(c.repeat(3), i)) throw consoleSansParentheses(src, m.index)
-      fin = skipQuotedSpan(src, i)
-      arg = src.slice(i, fin)
+      if (src.startsWith(c.repeat(3), i)) throw consoleWithoutParens(src, m.index)
+      end = skipQuotedSpan(src, i)
+      arg = src.slice(i, end)
     }
-    else if (i > apresNom && /[$A-Za-z_]/.test(c ?? '')) {
-      const jeton = /^[$\w.]+/.exec(src.slice(i))![0]
-      if (!MOTS_APRES_UNE_RUNE.has(jeton)) { arg = jeton; fin = i + jeton.length }
+    else if (i > afterName && /[$A-Za-z_]/.test(c ?? '')) {
+      const token = /^[$\w.]+/.exec(src.slice(i))![0]
+      if (!WORDS_AFTER_RUNE.has(token)) { arg = token; end = i + token.length }
     }
     // sans parenthèses, l'argument (ou la rune seule) finit l'instruction : `µconsole foo(1)`,
     // `µconsole @el`, `µconsole $x, 'label'` seraient mal découpés — les parenthèses sont demandées
-    if (vue[i] !== '(' && !statementEnd(src, vue, fin)) throw consoleSansParentheses(src, m.index)
-    sortie += src.slice(dernier, m.index) + (arg ? `(µ.console && µ.console(${arg}))` : "(µ.console && µ.console((typeof _mjsThis != 'undefined' && _mjsThis) || null))")
-    dernier = fin
+    if (view[i] !== '(' && !statementEnd(src, view, end)) throw consoleWithoutParens(src, m.index)
+    output += src.slice(last, m.index) + (arg ? `(µ.console && µ.console(${arg}))` : "(µ.console && µ.console((typeof _mjsThis != 'undefined' && _mjsThis) || null))")
+    last    = end
   }
-  return sortie + src.slice(dernier)
+  return output + src.slice(last)
 }
 
 // singletons que déclare un module (`export µ$$X = …` en tête de ligne, hors chaînes et commentaires) : les seuls noms qu'il
@@ -1362,7 +1085,67 @@ export function singletonsDeclares(src: string): string[] {
 // Reproduit les transformations CoffeeScript de transpiler.rb (µ. routing,
 // runes µ$, µ.inspect). Appliquées sur la source brute (Coffee/Civet/TS/JS).
 // ----------------------------------------------------------------------------
-export function applyMjsSugarToScript(src: string, lang?: string, predeclared?: string[], sectionLabel = '<script>', firstLine = 1, declares?: Set<string>, passe?: DeclarationsDeLaPasse, composant = false, commentaires: CommentairesDuScript = 'balayeur', lost?: LostPlace[]): string {
+// ─── `µ$X = …` dans le corps d'une fonction : une ÉCRITURE, lue sur l'arbre du code compilé ───
+// applyMjsSugarToScript écrit chaque ligne `µ$X = v` en déclaration, `µ_state.X ??= µ._mjs_univVal(v)` (Civet, JavaScript, TypeScript),
+// que CoffeeScript compile en `if (µ_state.X == null) { µ_state.X = … }` ou, valeur rendue, en `µ_state.X != null ? µ_state.X : µ_state.X = …` :
+// la première exécutée pose la valeur de départ, les suivantes gardent celle qui est là. Celle que l'arbre place dans le corps d'une
+// fonction (méthode, flèche, rappel, `µeffect`, `µafter`, champ de classe) devient une écriture, `µ_state.X = µ._mjs_univVal(v)`, faite
+// à chaque appel, quel que soit l'appelant ; le niveau du script (sous un `if`, un `for`, un `try`, dans un bloc, quel que soit le
+// retrait des lignes, bloc `do` de Civet) et une fonction appelée là où elle est écrite (`(() => { … })()`, `do ->` et liste en
+// compréhension de CoffeeScript), qui court en même temps que lui, gardent la déclaration. Les lignes restent celles du texte compilé ; un texte que l'arbre ne lit pas
+// reste tel quel
+export function writesInFunctions(js: string): string {
+  if (!js.includes('µ._mjs_univVal(')) return js
+  // `µ_state.X` : le nom X, sinon null
+  const stateName = (n: any): string | null => n?.type === 'MemberExpression' && !n.computed && n.object.type === 'Identifier' && n.object.name === 'µ_state' && n.property.type === 'Identifier' ? n.property.name : null
+  // la garde de CoffeeScript, `µ_state.X == null` (ou `!=`)
+  const guard = (n: any, op: string, name: string): boolean => n?.type === 'BinaryExpression' && n.operator === op && stateName(n.left) === name && n.right.type === 'Literal' && n.right.value === null
+  // un ancêtre fonction, sauf une fonction appelée là où elle est écrite (`f()`, `f.call(this)`) ; un générateur ne court qu'à son
+  // premier `next()`
+  const inFunction = (anc: any[]): boolean => {
+    for (let i = anc.length - 2; i >= 0; i--) {
+      const a = anc[i]
+      if (a.type === 'PropertyDefinition' && !a.static && a.value === anc[i + 1]) return true
+      if (a.type !== 'FunctionDeclaration' && a.type !== 'FunctionExpression' && a.type !== 'ArrowFunctionExpression') continue
+      const p      = anc[i - 1]
+      const called = !a.generator && ((p?.type === 'CallExpression' && p.callee === a) || (p?.type === 'MemberExpression' && p.object === a && !p.computed && /^(?:call|apply)$/.test(p.property.name) && anc[i - 2]?.type === 'CallExpression' && anc[i - 2].callee === p))
+      if (!called) return true
+    }
+    return false
+  }
+  const patches: [number, number, string][] = []
+  try {
+    walk.ancestor(acorn.parse(js, { ecmaVersion: 'latest', sourceType: 'module', allowReturnOutsideFunction: true, allowImportExportEverywhere: true, allowAwaitOutsideFunction: true }), {
+      CallExpression(n: any, _walkState: unknown, anc: any[]) {
+        const f = n.callee
+        if (f.type !== 'MemberExpression' || f.computed || f.object.type !== 'Identifier' || f.object.name !== 'µ' || f.property.name !== '_mjs_univVal' || n.arguments.length !== 1 || !inFunction(anc)) return
+        const a    = anc[anc.length - 2]
+        const name = a?.type === 'AssignmentExpression' && a.right === n ? stateName(a.left) : null
+        if (!name) return
+        if (a.operator === '??=') {
+          const op = js.indexOf('??=', a.left.end)
+          patches.push([op, op + 3, '='])
+          return
+        }
+        if (a.operator !== '=') return
+        const [g, block, ifNode] = [anc[anc.length - 3], anc[anc.length - 4], anc[anc.length - 5]]
+        if (g?.type === 'ConditionalExpression' && g.alternate === a && guard(g.test, '!=', name)) patches.push([g.start, a.start, '('], [a.end, a.end, ')'])
+        else if (g?.type === 'ExpressionStatement' && block?.type === 'BlockStatement' && block.body.length === 1 && ifNode?.type === 'IfStatement' && ifNode.consequent === block && !ifNode.alternate && guard(ifNode.test, '==', name)) patches.push([ifNode.start, block.start, ''])
+      }
+    })
+  }
+  catch {
+    return js
+  }
+  for (const [start, end, text] of patches.sort((x, y) => y[0] - x[0])) js = js.slice(0, start) + text + js.slice(end)
+  return js
+}
+
+export function applyMjsSugarToScript(src: string, lang?: string, predeclared?: string[], sectionLabel = '<script>', firstLine = 1, declares?: Set<string>, pass?: PassDeclarations, component = false, comments: ScriptComments = 'scanner'): string {
+  // `µafter (d), fn` et ses sœurs (une espace avant la parenthèse, puis une virgule) : refusées dans le <script> d'un composant en Civet
+  // ou en CoffeeScript, où elles se lisent de deux façons (generator/utils.ts) ; un script en JavaScript ou en TypeScript lit sa parenthèse
+  // comme celle de l'appel. Ligne citée : `firstLine` est celle de la balise <script>, où tombe la première ligne de `src`
+  if (component && lang !== 'js' && lang !== 'ts') commaParenSpaceReject(src, lang === 'coffee', false, (i) => firstLine + src.slice(0, i).split('\n').length - 1)
   // Sigil store CANONIQUE `µ$$X` / `$$X` : on DOUBLE le `$` de la variable
   // réactive (`µ$X`/`$X`). Même mécanisme runtime que `µ$` (universal state
   // partagé via `µ.state`), sigil distinct pour signaler la sémantique « store ».
@@ -1394,27 +1177,27 @@ export function applyMjsSugarToScript(src: string, lang?: string, predeclared?: 
   // du magasin (`export µ$$X = …`) reste permise
   for (const m of maskedForExports.matchAll(/(?<![\w$.])µ\$(\$?)([a-zA-Z0-9_]+)[ \t]*(?:\*\*|<<|>>>|>>|&&|\|\||\?\?|[-+*\/%&|^?])?=(?![=>])/g)) {
     if (m[1] && /^[ \t]*export[ \t]+$/.test(maskedForExports.slice(maskedForExports.lastIndexOf('\n', m.index) + 1, m.index))) continue
-    if (singletonExports.has(m[2])) throw new Error(t('transpiler.magasin-objet-remplace', { nom: m[2], ecrit: `µ$${m[1]}${m[2]}`, ligne: firstLine + restoreExports(maskedForExports.slice(0, m.index)).split('\n').length - 1 }))
+    if (singletonExports.has(m[2])) throw new Error(t('transpiler.store-object-replaced', { name: m[2], written: `µ$${m[1]}${m[2]}`, line: firstLine + restoreExports(maskedForExports.slice(0, m.index)).split('\n').length - 1 }))
   }
   // `µ$X++`, `--µ$X` remplacent l'objet de même (par un nombre) : même refus, la forme écrite citée ; un champ (`µ$X.n++`) reste permis
   for (const m of maskedForExports.matchAll(/(?<![\w$.])µ\$(\$?)([a-zA-Z0-9_]+)[ \t]*(\+\+|--)|(\+\+|--)[ \t]*µ\$(\$?)([a-zA-Z0-9_]+)(?![\w$]|[ \t]*(?:\?\.|\.|\[))/g)) {
-    const nom = m[2] ?? m[6]
-    if (singletonExports.has(nom)) throw new Error(t('transpiler.magasin-objet-remplace', { nom, ecrit: `µ$${m[1] ?? m[5]}${nom}`, forme: m[3] ? `µ$${m[1]}${nom}${m[3]}` : `${m[4]}µ$${m[5]}${nom}`, ligne: firstLine + restoreExports(maskedForExports.slice(0, m.index)).split('\n').length - 1 }))
+    const name = m[2] ?? m[6]
+    if (singletonExports.has(name)) throw new Error(t('transpiler.store-object-replaced', { name: name, written: `µ$${m[1] ?? m[5]}${name}`, shape: m[3] ? `µ$${m[1]}${name}${m[3]}` : `${m[4]}µ$${m[5]}${name}`, line: firstLine + restoreExports(maskedForExports.slice(0, m.index)).split('\n').length - 1 }))
   }
   let maskedOut = maskedForExports.replace(
     /^([ \t]*)export[ \t]+µ\$\$([a-zA-Z0-9_]+)([ \t]*=)/gm,
     '$1export µ$$$2$3'
   )
-  maskedOut = maskedOut.replace(/µ\$\$([a-zA-Z0-9_]+)/g, (_m: string, nom: string) => {
-    if (singletonExports.has(nom)) return '$' + nom
-    throw new Error(t('transpiler.singleton-sans-import', { nom }))
+  maskedOut = maskedOut.replace(/µ\$\$([a-zA-Z0-9_]+)/g, (_m: string, name: string) => {
+    if (singletonExports.has(name)) return '$' + name
+    throw new Error(t('transpiler.singleton-no-import', { name: name }))
   })
   let out = restoreExports(maskedOut)
 
   // dialecte Coffee/Civet des composants (commentaires #, for…in→of, isnt,
   // interpolation "#{}", auto-déclaration scope-aware) — cf. applyCivetDialectSugar
   // ci-dessus, SOURCE UNIQUE partagée avec `mjs ws` (fichiers *.server.mjs).
-  out = applyCivetDialectSugar(out, lang, predeclared, firstLine, declares, passe, commentaires, lost)
+  out = applyCivetDialectSugar(out, lang, predeclared, firstLine, declares, pass, comments)
 
   // ─── Runes µ$ ASSIGNEMENT (statement-level) — chaînes/commentaires masqués D'ABORD ───
   // Ces deux regex line-anchored réécrivent une LIGNE COMPLÈTE `µ$X = expr` (ou
@@ -1429,43 +1212,71 @@ export function applyMjsSugarToScript(src: string, lang?: string, predeclared?: 
   const { masked: maskedForDollar, restore: restoreDollar } = maskStringsAndComments(out)
   // commentaire de ligne en fin d'expression (`µ$n = 0  # compteur`) : laissé après la réécriture, sinon restauré dans
   // `µ.state(…)` il avale la `)` et le reste de la ligne
-  const sansCommentaireFinal = (rhs: string): [string, string] => {
+  const withoutTrailingComment = (rhs: string): [string, string] => {
     const m = /^(.*?\S)([ \t]+\x00MJSSTR\d+\x00)$/.exec(rhs)
     if (!m || !/^(?:\/\/|#(?!##))/.test(restoreDollar(m[2].trimStart()))) return [rhs, '']
     return [m[1], m[2]]
   }
   let maskedDollarOut = maskedForDollar
-  if ((lang ?? 'civet') === 'civet' && passe) {
+  if ((lang ?? 'civet') === 'civet' && pass) {
     // Civet, lu ensuite par son arbre : seule la tête est réécrite ici, `µ$X =` comme `export µ$X =` en `µ_state.X ?= `, notée à
     // sa ligne ; la valeur, telle que Civet la lit (sur la ligne, écrite dessous en retrait, liste ou objet sur plusieurs lignes,
-    // suite en `.`), est entourée de `µ.state(…)` dans l'arbre (entoureLesEtats), suivie pour l'export de `export var $X = µ_state.X`,
+    // suite en `.`), est entourée de `µ._mjs_univVal(…)` (`µ.state(…)` pour l'export) dans l'arbre (wrapsStates), suivie pour l'export de `export var $X = µ_state.X`,
     // relu par le getter de `µ_state` comme sur une ligne
-    let ligne = 0
-    let lu    = 0
-    maskedDollarOut = maskedForDollar.replace(/^([ \t]*)(export[ \t]+)?µ\$([a-zA-Z0-9_]+)[ \t]*=(?!=)[ \t]*/gm, (tete: string, indent: string, exporte: string | undefined, name: string, pos: number) => {
-      ligne     += restoreDollar(maskedForDollar.slice(lu, pos)).split('\n').length - 1
-      lu         = pos
-      const emis = `µ_state.${name} ?= `
-      passe.etats.set(ligne, { cible: `µ_state.${name}`, avant: tete.slice(indent.length), emis, suite: exporte ? `; export var $${name} = µ_state.${name}` : '' })
-      return indent + emis
+    let line        = 0
+    let read        = 0
+    maskedDollarOut = maskedForDollar.replace(/^([ \t]*)(export[ \t]+)?µ\$([a-zA-Z0-9_]+)[ \t]*=(?!=)[ \t]*/gm, (head: string, indent: string, exported: string | undefined, name: string, pos: number) => {
+      line         += restoreDollar(maskedForDollar.slice(read, pos)).split('\n').length - 1
+      read          = pos
+      const emitted = `µ_state.${name} ?= `
+      pass.states.set(line, { target: `µ_state.${name}`, before: head.slice(indent.length), emitted: emitted, after: exported ? `; export var $${name} = µ_state.${name}` : '' })
+      return indent + emitted
     })
   }
   else {
     //   `export µ$X = expr` → `µ_state.X ?= µ.state(expr); export $X = µ_state.X` (sur la même ligne : les lignes du script
-    //   restent celles du fichier) ; la valeur s'écrit sur sa ligne
+    //   restent celles du fichier) ; la valeur s'écrit sur sa ligne ; en JavaScript et en TypeScript, où ni `?=` ni `export $X =`
+    //   n'existent, `µ_state.X ??= µ.state(expr); export var $X = µ_state.X;`, le `;` qui finit la ligne gardé après la valeur
+    const isJs = lang === 'js' || lang === 'ts'
+    //   valeur sur plusieurs lignes en JavaScript et en TypeScript (`export µ$X = {`, ses champs dessous) : elle court jusqu'à la fin
+    //   de la ligne où ses parenthèses, crochets et accolades se referment (chaînes et commentaires masqués), entourée de même, les
+    //   lignes gardées ; le commentaire de sa dernière ligne reste après
+    if (isJs) {
+      let done = ''
+      let read = 0
+      for (const m of maskedDollarOut.matchAll(/^([ \t]*)export[ \t]+µ\$([a-zA-Z0-9_]+)[ \t]*=[ \t]*/gm)) {
+        if (m.index! < read) continue
+        const start = m.index! + m[0].length
+        let open    = 0
+        let end     = start
+        for (; end < maskedDollarOut.length && (maskedDollarOut[end] !== '\n' || open > 0); end++) open += '([{'.includes(maskedDollarOut[end]) ? 1 : ')]}'.includes(maskedDollarOut[end]) ? -1 : 0
+        const value = maskedDollarOut.slice(start, end).trimEnd()
+        if (!value.includes('\n')) continue
+        const last             = value.lastIndexOf('\n') + 1
+        const [valueEnd, note] = withoutTrailingComment(value.slice(last))
+        const pv               = /^(.*?)[ \t]*;$/.exec(valueEnd)
+        done                  += maskedDollarOut.slice(read, m.index!) + `${m[1]}µ_state.${m[2]} ??= µ.state(${value.slice(0, last)}${pv ? pv[1] : valueEnd}); export var $${m[2]} = µ_state.${m[2]};${note}`
+        read                   = start + value.length
+      }
+      maskedDollarOut = done + maskedDollarOut.slice(read)
+    }
     maskedDollarOut = maskedDollarOut.replace(
       /^([ \t]*)export[ \t]+µ\$([a-zA-Z0-9_]+)[ \t]*=[ \t]*(.+?)[ \t]*$/gm,
       (_m, indent, name, rhs) => {
-        const [expr, commentaire] = sansCommentaireFinal(rhs)
-        return `${indent}µ_state.${name} ?= µ.state(${expr}); export $${name} = µ_state.${name}${commentaire}`
+        const [expr, comment] = withoutTrailingComment(rhs)
+        if (!isJs) return `${indent}µ_state.${name} ?= µ.state(${expr}); export $${name} = µ_state.${name}${comment}`
+        const pv = /^(.*?)[ \t]*;$/.exec(expr)
+        return `${indent}µ_state.${name} ??= µ.state(${pv ? pv[1] : expr}); export var $${name} = µ_state.${name};${comment}`
       }
     )
-    //   `µ$X = expr` (sans export) → `µ_state.X ?= µ.state(expr)`
+    //   `µ$X = expr` (sans export) → `µ_state.X ?= µ._mjs_univVal(expr)` (un nombre reste un nombre, mjs_state.ts) ; en JavaScript
+    //   et en TypeScript, où `?=` n'existe pas, `µ_state.X ??= µ._mjs_univVal(expr)`, le `;` qui finit la ligne gardé après la valeur
     maskedDollarOut = maskedDollarOut.replace(
       /^([ \t]*)µ\$([a-zA-Z0-9_]+)[ \t]*=[ \t]*(.+?)[ \t]*$/gm,
       (_m, indent, name, rhs) => {
-        const [expr, commentaire] = sansCommentaireFinal(rhs)
-        return `${indent}µ_state.${name} ?= µ.state(${expr})${commentaire}`
+        const [value, comment] = withoutTrailingComment(rhs)
+        const pv               = isJs ? /^(.*?)[ \t]*;$/.exec(value) : null
+        return `${indent}µ_state.${name} ${isJs ? '??=' : '?='} µ._mjs_univVal(${pv ? pv[1] : value})${pv ? ';' : ''}${comment}`
       }
     )
   }
@@ -1485,9 +1296,9 @@ export function applyMjsSugarToScript(src: string, lang?: string, predeclared?: 
   // l'appel en morceaux dans transformCodeOnly, qui ne le reconnaissait plus — même réécriture
   // (et même refus d'un chemin invalide) que dans le gabarit, chaînes et commentaires masqués
   // (µminmax, retiré en V3, y est refusé avec la marche à suivre — d'où le second test)
-  if (out.includes('inspect') || out.includes('minmax')) out = reecritOuRejetteRuneChemin(out)
+  if (out.includes('inspect') || out.includes('minmax')) out = rewritesOrRejectsRunePath(out)
   // la rune seule (`µconsole`, `µ.console`) : un `console.log` ordinaire ne coûte pas un masquage du script
-  if (/µ\.?console/.test(out)) out = reecritRuneConsole(out, lang)
+  if (/µ\.?console/.test(out)) out = rewriteRuneConsole(out, lang)
   out = transformCodeOnly(out, (code) => {
     let c = code
     // µproxy $.path → µ._mjs_makeDeepProxy(_mjsThis, ['path'])
@@ -1519,7 +1330,7 @@ export function applyMjsSugarToScript(src: string, lang?: string, predeclared?: 
     // µread/µwrite en <script> étaient cassés pareil depuis leur naissance,
     // seuls les tests unitaires du lexer — hors pipeline — passaient)
     // µevery / µafter du <script> d'un composant (`composant`) : le composant passe en tête de l'appel (sigils.ts)
-    if (composant) c = minuterieDuComposant(c)
+    if (component) c = componentTimer(c)
     c = c.replace(MU_UNIVERSAL_RE, 'µ.$1')
 
 
@@ -1560,15 +1371,15 @@ export function applyMjsSugarToScript(src: string, lang?: string, predeclared?: 
     // µon, µsetContext / µ.getContext : le composant dont le script les porte (`_mjsThis`), comme `§` — `@` valait l'état
     // dans une fonction rangée dans l'état (`$go = -> µsetContext 'x', 1`, appelée `$go()`). Un module n'a pas de
     // composant : `@` y reste
-    const recepteur = sectionLabel === '<script module>' ? '@' : '_mjsThis.'
-    c = c.replace(/µ\.?\s*on\b/g, recepteur + '_mjs_on')
-    c = c.replace(/µ\.?\s*setContext\b/g, recepteur + '_mjs_setContext')
-    c = c.replace(/µ\.\s*getContext\b/g, recepteur + '_mjs_getContext')
+    const receiver = sectionLabel === '<script module>' ? '@' : '_mjsThis.'
+    c = c.replace(/µ\.?\s*on\b/g, receiver + '_mjs_on')
+    c = c.replace(/µ\.?\s*setContext\b/g, receiver + '_mjs_setContext')
+    c = c.replace(/µ\.\s*getContext\b/g, receiver + '_mjs_getContext')
 
     // `µ$X` (lecture) → `µ_state.X`
     c = c.replace(/µ\$([a-zA-Z0-9_]+)/g, 'µ_state.$1')
     return c
-  }, lang !== 'js' && lang !== 'ts')
+  }, lang !== 'js' && lang !== 'ts', lang === 'coffee')
 
 
   // Si µ_state utilisé, prefix la DÉCLARATION de `µ_state` au top après imports.
@@ -1579,27 +1390,38 @@ export function applyMjsSugarToScript(src: string, lang?: string, predeclared?: 
   // jamais écrit `µ_state`). On émet donc `.=` (Civet let) ou `let` (js/ts).
   // Garde anti-doublon élargie à `=`/`:=`/`.=`. (`\b` ne marche pas sur `µ`,
   // U+00B5 pas word-char en JS regex.)
-  if (out.includes('µ_state') && !/^\s*µ_state\s*[:.]?=\s*µ\.state/m.test(out)) {
+  // le `<script>` d'un composant dont le `<script module>` déclare déjà `µ_state` (dans `predeclared`) lit le sien : l'état du magasin
+  // quand le module exporte un `µ$X` (`µ.state({})`, propre au fichier), celui de la page sinon (le même objet)
+  if (out.includes('µ_state') && !(component && predeclared?.includes('µ_state')) && !/^\s*µ_state\s*[:.]?=\s*(?:\(µ\._mjs_univ \?\??= )?µ\.state/m.test(out)) {
     const lines = out.split('\n')
     let insertAt = 0
     for (let i = 0; i < lines.length; i++) {
       if (/^\s*import\b/.test(lines[i])) insertAt = i + 1
       else if (lines[i].trim() !== '') break
     }
-    const decl = lang === 'coffee'              ? 'µ_state = µ.state({})'
-               : (lang === 'js' || lang === 'ts') ? 'let µ_state = µ.state({})'
-               :                                    'µ_state .= µ.state({})'
+    // un seul état pour toute la page, posé sur `µ` par le premier script qui l'emploie : composants (chaque exemplaire) et
+    // modules y lisent le même objet `µ$x`, et une écriture faite par l'un se voit chez tous ceux qui le tiennent ; un fichier
+    // qui exporte un magasin (`export µ$$x`, ou `export µ$x` qu'en fait la passe du composant) garde le sien, que deux magasins
+    // du même nom dans deux fichiers ne se confondent pas
+    const state = !component && /^[ \t]*export[ \t]+µ\$\$?[a-zA-Z0-9_]+[ \t]*=/m.test(maskedForExports) ? 'µ.state({})'
+               : lang === 'coffee'                   ? '(µ._mjs_univ ?= µ.state({}))'
+               :                                       '(µ._mjs_univ ??= µ.state({}))'
+    // en JavaScript et en TypeScript, la ligne finit par `;` : sans lui, une instruction suivante qui commence par `(` ou `[`
+    // s'y collerait, et l'état serait appelé comme une fonction
+    const decl = lang === 'coffee'              ? `µ_state = ${state}`
+               : (lang === 'js' || lang === 'ts') ? `let µ_state = ${state};`
+               :                                    `µ_state .= ${state}`
     // sur une ligne existante (les lignes du script restent celles du fichier) : la ligne vide où elle irait, sinon devant
     // la ligne elle-même (un nom, ou un `µ_state.x ?= …` déjà réécrit) ; une autre (symbole, `import`, `export`…) en reçoit
     // une à elle
-    const tete = insertAt < lines.length ? lines[insertAt].trimStart() : ''
-    if (insertAt < lines.length && tete === '') lines[insertAt] = decl
-    else if (/^(?:[a-zA-Z_]|µ_state\.)/.test(tete) && !/^(?:import|export)\b/.test(tete)) lines[insertAt] = decl + '; ' + lines[insertAt]
+    const head = insertAt < lines.length ? lines[insertAt].trimStart() : ''
+    if (insertAt < lines.length && head === '') lines[insertAt] = decl
+    else if (/^(?:[a-zA-Z_]|µ_state\.)/.test(head) && !/^(?:import|export)\b/.test(head)) lines[insertAt] = decl + (decl.endsWith(';') ? ' ' : '; ') + lines[insertAt]
     else {
       lines.splice(insertAt, 0, decl)
       // ligne ajoutée après que la passe de déclaration a noté les siennes : les notes de cette ligne et d'en dessous
       // descendent d'une ligne
-      if (passe) decaleLaPasse(passe, insertAt, 1)
+      if (pass) shiftsPass(pass, insertAt, 1)
     }
     out = lines.join('\n')
   }

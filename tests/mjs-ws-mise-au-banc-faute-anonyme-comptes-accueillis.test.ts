@@ -63,7 +63,7 @@ describe('MJS-WS — mise au banc par défaut : la faute d’un anonyme ne ferme
 
       const anonyme = await arriver(transport, '10.0.0.9')
       assert.ok(anonyme.trames.some(f => f.t === 'µ:denied'), 'un anonyme de cette adresse est refusé au hello')
-      assert.equal(app.stats().connexions.refuseesBan, 1)
+      assert.equal(app.stats().connections.refusedBan, 1)
 
       const ailleurs = await arriver(transport, '10.0.0.10')
       assert.ok(ailleurs.trames.some(f => f.t === 'µ:welcome'), 'une autre adresse n’est pas concernée')

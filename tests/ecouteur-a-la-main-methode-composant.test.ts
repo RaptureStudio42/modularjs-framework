@@ -22,7 +22,7 @@ const SOURCE = [
   '  bouton.addEventListener \'click\', -> @@valider()',
   '  bouton.addEventListener \'mjs-essai\', -> @@compte++',
   '  bouton.addEventListener \'focus\', -> @classList.add(\'vu\')',
-  '  bouton.addEventListener \'mjs-lire\', -> window.__lu = [@nodeName, @compte]',
+  '  bouton.addEventListener \'mjs-lire\', -> window.__read = [@nodeName, @compte]',
   '</script>',
   '<button class="b" :this=!{bouton}>{$n}</button>',
 ].join('\n')
@@ -75,7 +75,7 @@ describe('écouteur posé à la main — @x lit l\'élément, @@x le composant',
     b.dispatchEvent(new window.FocusEvent('focus'))
     assert.equal(b.classList.contains('vu'), true, '@classList : l\'élément qui a reçu l\'événement')
     b.dispatchEvent(new window.Event('mjs-lire'))
-    assert.deepEqual([...window.__lu], ['BUTTON', undefined], '@compte lit l\'élément, même si le <script> pose @compte sur le composant')
+    assert.deepEqual([...window.__read], ['BUTTON', undefined], '@compte lit l\'élément, même si le <script> pose @compte sur le composant')
     assert.deepEqual(erreurs, [])
   })
 })

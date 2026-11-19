@@ -14,25 +14,25 @@
   return function(v, o) {
     var note = {};
     var x    = _mjsTChk(r, v, null, note, '');
-    var n, rendu;
+    var n, render;
     if (x[0] < 0) {
-      n     = note.refus;
+      n     = note.deny;
       n     = new µ.TypeError(n.p, n.d, n.v, c);
       // un gestionnaire qui lève n'empêche pas le signal : il part, puis l'erreur remonte
       try {
-        rendu = o.typeError ? o.typeError(n) : µ._mjs_tonErr && µ._mjs_tonErr(n);
+        render = o.typeError ? o.typeError(n) : µ._mjs_userTypeError && µ._mjs_userTypeError(n);
       }
       finally {
         // <types-signal>
         _mjsTSignal(n, o.url);
         // </types-signal>
       }
-      if (o.typeError) return rendu;
-      if (rendu !== 'warn') throw n;
+      if (o.typeError) return render;
+      if (render !== 'warn') throw n;
       µ.warn(n.message);
       return void 0;
     }
-    if (x[0] === 2) _mjsTMsg(null, 1, note.borne);
+    if (x[0] === 2) _mjsTMsg(null, 1, note.bound);
     return r.t === 'a' || r.t === 'o' || r.t === 'u' ? _mjsTChk(r, v, new WeakMap(), null, '')[1] : x[1];
   };
 };

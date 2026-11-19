@@ -125,7 +125,7 @@ for (const nom of NAVIGATEURS) for (const prod of [false, true]) describe(`<@@ch
     page.on('pageerror', (e: any) => erreurs.push(String(e)))
     page.on('console', (m: any) => { if (m.type() === 'error' || m.type() === 'warning') avis.push(m.text().slice(0, 300)) })
     await page.addInitScript('window.__name = function (f) { return f };')
-    const avant   = `<script>window.__avant = ${LECTURE}</script>`
+    const avant   = `<script>window.__before = ${LECTURE}</script>`
     const charge  = prod ? '<script type="module" src="/out/bundle.js"></script>' : `<script>${fait.bundle}</script>`
     const contenu = `<!doctype html><html lang="fr"><head><meta charset="utf-8"></head><body style="margin:0;padding:0 8px">${fait.html}\n${avant}\n${fait.hydrateScript}\n${charge}</body></html>`
     await page.route('http://tz.test/**', (route: any) => {
@@ -139,7 +139,7 @@ for (const nom of NAVIGATEURS) for (const prod of [false, true]) describe(`<@@ch
     assert.equal(await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone), VISITEUR)
     await page.waitForFunction((n: number) => { const h = document.querySelector('mjs-tz-page') as any; const c = h?.shadowRoot?.querySelectorAll('mjs-core-chart'); return !!customElements.get('mjs-core-chart') && !!c && c.length === n && [...c].every((x: any) => x.shadowRoot?.querySelector('.hit, .heat, .calendar')) }, CLASSES.length, { timeout: 15000 }).catch(() => { throw new Error(`la page servie ne démarre pas : ${erreurs.join(' | ') || 'aucune erreur'} / console : ${avis.join(' | ') || 'rien'}`) })
     await page.waitForTimeout(400)
-    const servi: any = await page.evaluate('window.__avant')
+    const servi: any = await page.evaluate('window.__before')
     const repris: any = await page.evaluate(LECTURE)
     // ce que la page servie écrivait, à Tokyo
     assert.deepEqual(servi.z1.lignes.map(heure), ['19 08:15', '19 23:30', '20 15:45'], 'sans option : les heures telles qu\'écrites')

@@ -40,7 +40,7 @@ describe('MJS-WS — core.ts, admission des trames À LA RÉCEPTION (pas seuleme
     // le débit (burst:2, rate:0) a DÉJÀ dû jouer — kick avant même que l'auth ne résolve, pas 200
     // trames retenues en silence en attendant
     const mid = app.stats()
-    assert.ok(mid.garde.kicksDebit > 0, 'le débit a agi À LA RÉCEPTION, avant même la résolution de auth()')
+    assert.ok(mid.guard.kicksRate > 0, 'le débit a agi À LA RÉCEPTION, avant même la résolution de auth()')
 
     resolveAuth({})
     await tick(30)
@@ -67,7 +67,7 @@ describe('MJS-WS — core.ts, admission des trames À LA RÉCEPTION (pas seuleme
     const mid = app.stats()
     // aucune trame « bruit » n'a pu être routée (auth toujours en vol) — mais le serveur n'a PAS
     // gardé les 5000 en attente indéfiniment : le plafond de file a fini par kicker
-    assert.ok(mid.garde.kicksDebit > 0, 'plafond de file atteint malgré un débit qui, seul, aurait tout laissé passer')
+    assert.ok(mid.guard.kicksRate > 0, 'plafond de file atteint malgré un débit qui, seul, aurait tout laissé passer')
 
     resolveAuth({})
     await tick(30)
@@ -87,7 +87,7 @@ describe('MJS-WS — core.ts, admission des trames À LA RÉCEPTION (pas seuleme
     await tick(10)
     for (let i = 0; i < nombre; i++) s.send(JSON.stringify({ t: 'bruit', p: { i } }))
     await tick(30)
-    const kicks = app.stats().garde.kicksDebit
+    const kicks = app.stats().guard.kicksRate
     resolveAuth({})
     await tick(30)
     s.close(); await app.stop()

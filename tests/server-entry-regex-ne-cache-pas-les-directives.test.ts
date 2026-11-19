@@ -5,10 +5,11 @@
 // heredoc d'une classe CoffeeScript n'est pas refusée, un fichier que Civet ne lit pas garde l'erreur de Civet, et un
 // commentaire que Civet efface avec un type (interface, type littéral) ou un bloc `###` jamais refermé reste un
 // commentaire. Un fichier qui commence par une marque d'ordre des octets ou qui importe par `@import default` est lu
-// comme les autres ; le refus cite `fichier:ligne`, fins de ligne `\r` seules ou mêlées comprises. Dans le dialecte
-// (`*.server.mjs`, `*.civet.mjs`), une ligne `####` ou une bannière de dièses ouvre un bloc jusqu'au `###` suivant, comme
-// pour la compilation ; CoffeeScript et Civet brut y lisent un commentaire de ligne. Une expression trop longue pour la
-// lecture par l'arbre ne fait pas échouer la compilation.
+// comme les autres ; le refus cite `fichier:ligne`, fins de ligne `\r` seules ou mêlées comprises. Une ligne `####`, une
+// bannière de dièses ou un `####` en fin de ligne n'ouvre aucun bloc, comme pour la compilation, dans le dialecte
+// (`*.server.mjs`, `*.civet.mjs`) comme en CoffeeScript et en Civet brut : elle ne couvre que sa ligne, et une directive
+// écrite dessous est refusée, à sa ligne ; seul un `###` suivi d'autre chose qu'un `#` ouvre un bloc, refermé au `###`
+// suivant. Une expression trop longue pour la lecture par l'arbre ne fait pas échouer la compilation.
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
@@ -158,32 +159,38 @@ describe('cli/server-entry — une regex ne cache pas la suite d\'un fichier ser
     const root = freshRoot('regex-directive')
     writeFileSync(join(root, 'lib.coffee'), [REGEX[0].code, '', '@css \'a.css\'', 'export default f', ''].join('\n'))
     writeFileSync(join(root, 'app.server.mjs'), ['@import l \'./lib.coffee\'', 'export default { setup: (app) -> l(\'x\') }', ''].join('\n'))
-    await assert.rejects(compileServerFile(join(root, 'app.server.mjs'), root), /\] lib\.coffee:3[ :]/)
+    // une bibliothèque : le refus de la construction, qui nomme chaque directive à sa ligne
+    await assert.rejects(compileServerFile(join(root, 'app.server.mjs'), root), /\] lib\.coffee : [\s\S]*- ligne 3 : la directive « @css 'a\.css' »/)
   })
 
-  it('app.server.mjs : une directive entre deux lignes `####` est dans un bloc → compilé, chargé', async () => {
-    const url = await compiler(SORTES[0], ['####', '@css \'a.css\'', '####', 'export default { setup: (app) -> 2 }', ''].join('\n'))
-    assert.equal((await import(url)).default.setup(), 2)
+  // refus d'une directive de fichier serveur, cité à sa ligne
+  const refusee = (nom: string, ligne: number) => (err: Error) => {
+    assert.match(err.message, REFUS_SERVEUR)
+    assert.match(err.message, new RegExp(`${nom.replace(/\./g, '\\.')}:${ligne}'`))
+    return true
+  }
+
+  it('app.server.mjs : une directive entre deux lignes `####` est refusée, à sa ligne', async () => {
+    await assert.rejects(compiler(SORTES[0], ['####', '@css \'a.css\'', '####', 'export default { setup: (app) -> 2 }', ''].join('\n')), refusee('app.server.mjs', 2))
   })
 
-  it('app.server.mjs : une directive entre deux bannières de dix `#` → compilé, chargé', async () => {
-    const url = await compiler(SORTES[0], ['##########', '@lang fr', '##########', 'export default { setup: (app) -> 3 }', ''].join('\n'))
-    assert.equal((await import(url)).default.setup(), 3)
+  it('app.server.mjs : une directive entre deux bannières de dix `#` est refusée, à sa ligne', async () => {
+    await assert.rejects(compiler(SORTES[0], ['##########', '@lang fr', '##########', 'export default { setup: (app) -> 3 }', ''].join('\n')), refusee('app.server.mjs', 2))
   })
 
-  it('a.civet.mjs : une directive sous `#### titre`, bloc refermé par `###` → compilé, chargé', async () => {
-    const url = await compiler({ ...SORTES[0], nom: 'a.civet.mjs' }, ['#### Ancien réglage', '@css \'a.css\'', '###', 'export default { setup: (app) -> 4 }', ''].join('\n'))
-    assert.equal((await import(url)).default.setup(), 4)
+  it('a.civet.mjs : une directive sous `#### titre` est refusée, à sa ligne, même quand un `###` la suit', async () => {
+    await assert.rejects(compiler({ ...SORTES[0], nom: 'a.civet.mjs' }, ['#### Ancien réglage', '@css \'a.css\'', '###', 'export default { setup: (app) -> 4 }', ''].join('\n')), refusee('a.civet.mjs', 2))
   })
 
-  it('app.server.mjs : `####` en fin de ligne ou jamais refermé ouvre un bloc jusqu\'à la fin du fichier → compilé', async () => {
-    assert.match(await compiler(SORTES[0], ['x := 1 #### note', '@css \'a.css\'', SORTES[0].fin, ''].join('\n')), /^file:\/\//)
-    assert.match(await compiler(SORTES[0], ['####', '@css \'a.css\'', SORTES[0].fin, ''].join('\n')), /^file:\/\//)
+  it('app.server.mjs : `####` en fin de ligne ou seul sur sa ligne ne commente que sa ligne → la directive dessous est refusée, à sa ligne', async () => {
+    await assert.rejects(compiler(SORTES[0], ['x := 1 #### note', '@css \'a.css\'', SORTES[0].fin, ''].join('\n')), refusee('app.server.mjs', 2))
+    await assert.rejects(compiler(SORTES[0], ['####', '@css \'a.css\'', SORTES[0].fin, ''].join('\n')), refusee('app.server.mjs', 2))
   })
 
-  it('app.server.mjs : une directive écrite après la fin du bloc ouvert par `####` est refusée, à sa ligne', async () => {
-    await assert.rejects(compiler(SORTES[0], ['###### @css \'a.css\'', SORTES[0].fin, ''].join('\n')), /app\.server\.mjs:1'/)
-    await assert.rejects(compiler(SORTES[0], [REGEX[0].code, '#### titre', '###', '@css \'a.css\'', SORTES[0].fin, ''].join('\n')), /app\.server\.mjs:4'/)
+  it('app.server.mjs : `###### @css` est un commentaire d\'une ligne → compilé, chargé ; une directive après la fin d\'un bloc `###` est refusée, à sa ligne', async () => {
+    const url = await compiler(SORTES[0], ['###### @css \'a.css\'', 'export default { setup: (app) -> 5 }', ''].join('\n'))
+    assert.equal((await import(url)).default.setup(), 5)
+    await assert.rejects(compiler(SORTES[0], [REGEX[0].code, '#### titre', '###', 'texte du bloc', '###', '@css \'a.css\'', SORTES[0].fin, ''].join('\n')), refusee('app.server.mjs', 6))
   })
 
   it('app.server.coffee.mjs, brut.civet et brut.coffee : `####` ne couvre que sa ligne, la directive qui suit est refusée', async () => {
@@ -252,7 +259,7 @@ describe('cli/server-entry — une regex ne cache pas la suite d\'un fichier ser
     const root = freshRoot('regex-directive')
     writeFileSync(join(root, 'lib.civet'), '###### @css \'a.css\'\nexport default 1\n')
     writeFileSync(join(root, 'app.server.mjs'), '@import l \'./lib.civet\'\nexport default { setup: (app) -> l }\n')
-    await assert.rejects(compileServerFile(join(root, 'app.server.mjs'), root), /\] lib\.civet:1[ :]/)
+    await assert.rejects(compileServerFile(join(root, 'app.server.mjs'), root), /\] lib\.civet : [\s\S]*- ligne 1 : la directive « @css »/)
   })
 
   it('écrit en \\r seuls : un commentaire qui porte un guillemet s\'arrête à sa fin de ligne, la directive dessous est refusée (.server.mjs, .civet.mjs, .civet brut)', async () => {

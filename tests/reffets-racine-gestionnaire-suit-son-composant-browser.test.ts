@@ -104,8 +104,8 @@ const CAS: [string, boolean, boolean][] = [
 ]
 
 const construits = new Map<string, Promise<Buffer>>()
-const construire = (env: string, js: boolean, sansProxy: boolean): Promise<Buffer> => {
-  const cle = `${env}-${js ? 'js' : 'civet'}-${sansProxy ? 'sans' : 'avec'}`
+const construire = (env: string, js: boolean, withoutProxy: boolean): Promise<Buffer> => {
+  const cle = `${env}-${js ? 'js' : 'civet'}-${withoutProxy ? 'sans' : 'avec'}`
   if (!construits.has(cle)) construits.set(cle, (async () => {
     const root   = mjsTmp('reffets-racine-gestionnaire-composant-' + cle)
     const srcDir = join(root, 'src')
@@ -115,7 +115,7 @@ const construire = (env: string, js: boolean, sansProxy: boolean): Promise<Buffe
     writeFileSync(join(srcDir, 'gest.mjs'), GEST)
     writeFileSync(join(srcDir, 'meth.mjs'), METH)
     const opts: any = { sourceDir: srcDir, outputDir: outDir, manifestPath: join(outDir, 'bundle.js'), urlPrefix: '/out', env, js: 'bundle', minify: env === 'prod' }
-    if (sansProxy) opts.proxy = false
+    if (withoutProxy) opts.proxy = false
     const bundler = new Bundler(opts)
     const stats   = await bundler.compile()
     await bundler.close()
@@ -175,14 +175,14 @@ for (const moteur of ['chromium', 'firefox', 'webkit'] as const) describe(`µeff
       await page.close()
     }
   }
-  for (const [nom, js, sansProxy] of CAS) for (const env of ['prod', 'dev']) it(`${nom}, ${env} : suit $x et le magasin, finit avec le composant`, async () => {
+  for (const [nom, js, withoutProxy] of CAS) for (const env of ['prod', 'dev']) it(`${nom}, ${env} : suit $x et le magasin, finit avec le composant`, async () => {
     const formes           = js ? ['directe', 'affectee', 'fleche', 'methode'] : ['directe', 'affectee', 'fleche', 'vide', 'methode']
-    const { vus, erreurs } = await jouer(await construire(env, js, sansProxy), ['re'], scenario(formes))
+    const { vus, erreurs } = await jouer(await construire(env, js, withoutProxy), ['re'], scenario(formes))
     assert.deepEqual(vus, attendu(formes))
     assert.deepEqual(erreurs, [])
   })
-  for (const [nom, js, sansProxy] of CAS) for (const env of ['prod', 'dev']) it(`${nom}, ${env} : suit une variable lue par une fonction du script, sans reffet dans le script`, async () => {
-    const { vus, erreurs } = await jouer(await construire(env, js, sansProxy), ['gest', 'meth'], SCENARIO_FONCTION)
+  for (const [nom, js, withoutProxy] of CAS) for (const env of ['prod', 'dev']) it(`${nom}, ${env} : suit une variable lue par une fonction du script, sans reffet dans le script`, async () => {
+    const { vus, erreurs } = await jouer(await construire(env, js, withoutProxy), ['gest', 'meth'], SCENARIO_FONCTION)
     assert.deepEqual(vus, ATTENDU_FONCTION)
     assert.deepEqual(erreurs, [])
   })

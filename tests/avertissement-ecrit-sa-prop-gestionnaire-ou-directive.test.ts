@@ -1,7 +1,8 @@
 // avertissement de développement « écrit sa prop » : la balise d'un enfant qui porte un gestionnaire d'événement qui
 // exécute du code (`@change={…}`, `@ferme={…}`, un événement des transitions `@introstart={…}`) le tait, le parent ayant un
 // canal pour suivre ; une directive écrite avec un `@` (`@attach`, `@class{…}`, `@this`, `@emit.x`, `@lightDom`, une prop
-// booléenne) ne le tait pas, ni un `@…` écrit sans valeur, qui n'exécute rien (`@persist`). La règle se lit
+// booléenne) ne le tait pas, ni un `@…` écrit sans valeur (`@persist`, forme nue qui appelle la fonction `persist` du <script>) : la règle ne
+// compte que le code écrit. Elle se lit
 // dans le code émis en développement : la livraison est toujours notée (`µ._mjs_oneWay`), drapeau `1` quand la balise porte un
 // gestionnaire — l'écriture de l'enfant est alors tue, seule la modification de l'objet venu de la prop reste dite. Elle est notée
 // avec le composant qui la fait (`this`, le donneur) et sa valeur, avant que la valeur ne parte vers l'enfant : un enfant déjà
@@ -21,7 +22,7 @@ const CAS: [string, string, boolean][] = [
   ['événement du composant', '@ferme={$v = null}', false],
   ['événement de transition @introstart', '@introstart={$v = 2}', false],
   ['événement de transition @outroend', '@outroend={$v = 3}', false],
-  ['@persist sans valeur', '@persist', true],
+  ['@persist sans valeur (forme nue, fonction persist du <script>)', '@persist', true],
   [':attach', ':attach={(el) -> null}', true],
   [':class{}', ':class{actif: $v}', true],
   [':style.color', ':style.color={$v}', true],
@@ -42,7 +43,7 @@ describe('avertissement « écrit sa prop » : un gestionnaire d\'événement le
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     writeFileSync(join(srcDir, 'c-ecrit.mjs'), '<script>\n$x = 0\n@ecrire = -> $x = 9\n</script>\n<p>{$x}</p>\n')
-    CAS.forEach(([, a], i) => writeFileSync(join(srcDir, `pw-${i}.mjs`), `<script>\n$v = 1\nref = null\n</script>\n<@c-ecrit x={$v} ${a}></@c-ecrit>\n`))
+    CAS.forEach(([, a], i) => writeFileSync(join(srcDir, `pw-${i}.mjs`), `<script>\n$v = 1\nref = null\npersist = (e) -> null\n</script>\n<@c-ecrit x={$v} ${a}></@c-ecrit>\n`))
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js') })
     const stats   = await bundler.compile()
     await bundler.close()

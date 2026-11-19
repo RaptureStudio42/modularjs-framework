@@ -7,7 +7,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import * as acorn from 'acorn'
-import { Bundler, terminateSharedWorkerPool, projeterBlocs } from '../src/bundler/index.js'
+import { Bundler, terminateSharedWorkerPool, projectBlocks } from '../src/bundler/index.js'
 import { transpile } from '../src/transpiler/index.js'
 import { scanCompiledFeatures, VIEW_PART } from '../src/bundler/features.js'
 import { selectFxSections } from '../src/bundler/fx-sections.js'
@@ -17,8 +17,8 @@ import { mjsTmp } from './helpers/tmp.js'
 
 const compte = (texte: string, motif: string) => texte.split(motif).length - 1
 // le fichier tel que le build le lit (cf. projeterBlocs) : les blocs `<visible>` gardés, leurs marques ôtées, en développement ou pour une page
-// qui écrit `visible` ; sinon retirés, et les lignes `<sans-visible>` reprennent leur texte
-const lire   = (fichier: string, visible = true) => projeterBlocs(readFileSync(new URL('../src/runtime/' + fichier, import.meta.url), 'utf-8'), { visible })
+// qui écrit `visible` ; sinon retirés, et les lignes `<no-visible>` reprennent leur texte
+const lire   = (fichier: string, visible = true) => projectBlocks(readFileSync(new URL('../src/runtime/' + fichier, import.meta.url), 'utf-8'), { visible })
 const client = (fichier: string) => fichier === HOLOGRAM_FILE ? hologramClient : undefined
 
 // les cinq fichiers qui portent des sections : le fichier, et une page qui n'écrit presque rien de l'effet (aucune section demandée)

@@ -71,11 +71,15 @@ export function isTrustedDevOrigin(origin: string | string[] | undefined): boole
  * seul un client qui n'EST PAS un navigateur (curl, un script, une autre machine si `dev.host`
  * est ouvert au réseau) peut l'omettre, et c'est justement le cas à ne plus laisser passer sur
  * une route qui écrit dans le code source du projet (trouvé 23/09 : `dev.host=0.0.0.0`, cas réel
- * documenté pour tester sur mobile, ouvrait l'écriture à tout le réseau local sans vérification). */
+ * documenté pour tester sur mobile, ouvrait l'écriture à tout le réseau local sans vérification).
+ * Origine admise : une page de cette machine, sur tout port — les noms de la boucle locale que le reste de `mjs dev` admet
+ * (isLoopbackName : localhost et ses sous-domaines comme `app.localhost`, 127.0.0.1, [::1]), sous leur forme exacte d'origine. */
 export function hasTrustedBrowserOrigin(origin: string | string[] | undefined): boolean {
-  if (origin === undefined) return false
   const v = Array.isArray(origin) ? origin[0] : origin
-  return LOCAL_ORIGIN_RE.test(v)
+  if (!v) return false
+  let u: URL
+  try { u = new URL(v) } catch { return false }
+  return (u.protocol === 'http:' || u.protocol === 'https:') && u.origin === v && isLoopbackName(hostnameOf(u.host) ?? '')
 }
 
 const WILDCARD_HOSTS = new Set(['0.0.0.0', '::', ''])
@@ -97,18 +101,18 @@ export function listensBeyondLoopback(listenHost: string): boolean {
  * (`0.0.0.0`, `::`), les adresses de la machine (test sur un téléphone du réseau local). La garde Host les admet d'office
  * (createDevHostCheck) ; la page servie sous l'un d'eux passe la garde d'origine quand son origine est la même que Host
  * (devOriginVerdict), jamais comme origine locale. `adresses` : pour les tests ; par défaut les interfaces réseau, relevées une fois. */
-function createDevOwnNameCheck(listenHost: string, adresses?: string[]): (nom: string) => boolean {
-  const admis   = new Set(['localhost', '127.0.0.1', '::1'])
-  const machine = hostname().toLowerCase()
-  const court   = machine.split('.')[0]
-  for (const n of [machine, court, court + '.local']) if (n && n !== '.local') admis.add(n)
-  const ecoute = hostnameOf(hostForUrl(listenHost)) ?? listenHost.toLowerCase()
-  if (!WILDCARD_HOSTS.has(ecoute)) admis.add(ecoute)
+function createDevOwnNameCheck(listenHost: string, addresses?: string[]): (name: string) => boolean {
+  const admitted = new Set(['localhost', '127.0.0.1', '::1'])
+  const machine  = hostname().toLowerCase()
+  const short    = machine.split('.')[0]
+  for (const n of [machine, short, short + '.local']) if (n && n !== '.local') admitted.add(n)
+  const listener = hostnameOf(hostForUrl(listenHost)) ?? listenHost.toLowerCase()
+  if (!WILDCARD_HOSTS.has(listener)) admitted.add(listener)
   else {
-    const liste = adresses ?? Object.values(networkInterfaces()).flatMap(l => (l ?? []).map(i => i.address))
-    for (const a of liste) admis.add(a.toLowerCase().replace(/%.*$/, ''))
+    const list = addresses ?? Object.values(networkInterfaces()).flatMap(l => (l ?? []).map(i => i.address))
+    for (const a of list) admitted.add(a.toLowerCase().replace(/%.*$/, ''))
   }
-  return (nom) => admis.has(nom) || nom.endsWith('.localhost')
+  return (name) => admitted.has(name) || name.endsWith('.localhost')
 }
 
 /** Garde contre le rebinding DNS : le nom d'une page hostile peut basculer vers 127.0.0.1, mais
@@ -116,14 +120,14 @@ function createDevOwnNameCheck(listenHost: string, adresses?: string[]): (nom: s
  * du serveur (createDevOwnNameCheck). `permis` (`dev.allowedHosts`) ouvre d'autres noms (tunnel,
  * proxy) : nom exact, `.domaine` pour ce domaine et ses sous-domaines, `true` pour tout permettre.
  * En-tête absent : refusé, sauf avec `true`. `adresses` : pour les tests. */
-export function createDevHostCheck(listenHost: string, adresses?: string[], permis?: readonly string[] | true): (host: string | string[] | undefined) => boolean {
-  if (permis === true) return () => true
-  const propre    = createDevOwnNameCheck(listenHost, adresses)
-  const nomPermis = allowedHostName(permis)
+export function createDevHostCheck(listenHost: string, addresses?: string[], allowed?: readonly string[] | true): (host: string | string[] | undefined) => boolean {
+  if (allowed === true) return () => true
+  const clean       = createDevOwnNameCheck(listenHost, addresses)
+  const allowedName = allowedHostName(allowed)
   return (host) => {
-    const nom = hostnameOf(host)
-    if (nom === undefined) return false
-    return propre(nom) || nomPermis(nom)
+    const name = hostnameOf(host)
+    if (name === undefined) return false
+    return clean(name) || allowedName(name)
   }
 }
 
@@ -131,22 +135,22 @@ export function createDevHostCheck(listenHost: string, adresses?: string[], perm
 // page de cette machine, sur tout port, et le Host qu'écrit un tunnel qui le réécrit. Le nom de la machine, `<nom>.local` et les adresses
 // du réseau n'en sont pas : dans Host, ils prouvent que la requête arrive ici ; dans une origine, pas que la page vient d'ici (un nom du
 // réseau local, une réponse mDNS se contrefont)
-function isLoopbackName(nom: string): boolean {
-  return nom === 'localhost' || nom.endsWith('.localhost') || nom === '127.0.0.1' || nom === '::1'
+function isLoopbackName(name: string): boolean {
+  return name === 'localhost' || name.endsWith('.localhost') || name === '127.0.0.1' || name === '::1'
 }
 
 // noms de `dev.allowedHosts` : nom exact, `.domaine` pour ce domaine et ses sous-domaines, `true` pour tout nom — lecture de la garde
 // Host (createDevHostCheck) ; la garde d'origine n'en garde que les noms exacts pour une origine autre que Host (devOriginVerdict)
-function allowedHostName(permis?: readonly string[] | true): (nom: string) => boolean {
-  if (permis === true) return () => true
-  const noms = new Set<string>()
-  const domaines: string[] = []
-  for (const p of permis ?? []) {
+function allowedHostName(allowed?: readonly string[] | true): (name: string) => boolean {
+  if (allowed === true) return () => true
+  const names = new Set<string>()
+  const domains: string[] = []
+  for (const p of allowed ?? []) {
     const n = p.trim().toLowerCase().replace(/^\[(.*)\]$/, '$1')
-    if (n.startsWith('.')) domaines.push(n.slice(1))
-    else if (n) noms.add(n)
+    if (n.startsWith('.')) domains.push(n.slice(1))
+    else if (n) names.add(n)
   }
-  return (nom) => noms.has(nom) || domaines.some(d => nom === d || nom.endsWith('.' + d))
+  return (name) => names.has(name) || domains.some(d => name === d || name.endsWith('.' + d))
 }
 
 /** Nom de l'en-tête Host cité par la réponse 403 : sans le port, réduit aux caractères d'un nom
@@ -161,22 +165,22 @@ const MAX_ORIGIN_WARNINGS = 20
 
 /** Verdict de la garde d'origine de `mjs dev` pour une origine présente, le même pour le rechargement à chaud et les formulaires.
  * Admise (true) : une origine de la boucle locale (isLoopbackName, sur tout port : une autre appli de la machine) ; la même origine que
- * Host (la page servie par cette connexion), quand `hoteAdmis` admet ce Host ; ou une origine dont le nom est écrit exactement dans
+ * Host (la page servie par cette connexion), quand `hostAdmitted` admet ce Host ; ou une origine dont le nom est écrit exactement dans
  * `dev.allowedHosts` (`permis` : la page d'un tunnel qui réécrit Host en `localhost`). Une entrée `.domaine` et `true` admettent des
  * Host, pas une origine autre que Host : ils couvriraient aussi les pages d'autres sites (un autre utilisateur d'un domaine partagé
  * comme `.ngrok-free.app`, n'importe quel site), qui joignent ce serveur depuis votre navigateur. Refusée : l'entrée `.domaine` qui la
  * couvre quand le Host reçu est local (un tunnel l'a réécrit : le message dit d'écrire le nom exact), false sinon. */
-function devOriginVerdict(origin: string, host: string | string[] | undefined, permis: readonly string[] | true | undefined, hoteAdmis: (host: string) => boolean): true | string | false {
+function devOriginVerdict(origin: string, host: string | string[] | undefined, allowed: readonly string[] | true | undefined, hostAdmitted: (host: string) => boolean): true | string | false {
   let u: URL
   try { u = new URL(origin) } catch { return false }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return false
-  const nom = hostnameOf(u.host) ?? ''
-  const h   = Array.isArray(host) ? host[0] : host
-  if (isLoopbackName(nom) || (h !== undefined && h.toLowerCase() === u.host && hoteAdmis(h))) return true
-  if (permis === undefined || permis === true) return false
-  if (allowedHostName(permis.filter(p => !p.trim().startsWith('.')))(nom)) return true
+  const name = hostnameOf(u.host) ?? ''
+  const h    = Array.isArray(host) ? host[0] : host
+  if (isLoopbackName(name) || (h !== undefined && h.toLowerCase() === u.host && hostAdmitted(h))) return true
+  if (allowed === undefined || allowed === true) return false
+  if (allowedHostName(allowed.filter(p => !p.trim().startsWith('.')))(name)) return true
   if (!isLoopbackName(hostnameOf(h) ?? '')) return false
-  return permis.find(p => p.trim().startsWith('.') && allowedHostName([p])(nom))?.trim() ?? false
+  return allowed.find(p => p.trim().startsWith('.') && allowedHostName([p])(name))?.trim() ?? false
 }
 
 /** Garde d'origine de `mjs dev`, une par serveur, partagée par le rechargement à chaud et les formulaires (cf. devOriginVerdict) :
@@ -184,26 +188,26 @@ function devOriginVerdict(origin: string, host: string | string[] | undefined, p
  * affiché aussi dans le terminal, une fois par nom et pour MAX_ORIGIN_WARNINGS noms au plus. `hostAllowed` : la garde Host du serveur
  * (createDevHostCheck), passée par lui pour que les deux gardes lisent les mêmes noms, relevés au même moment ; la même origine que
  * Host vaut quand ce Host passe cette garde, ou quand le serveur écoute au-delà de la boucle locale. Origine absente : false. */
-export function createDevOriginCheck(permis?: readonly string[] | true, listenHost = '127.0.0.1', hostAllowed = createDevHostCheck(listenHost, undefined, permis)): (origin: string | string[] | undefined, host: string | string[] | undefined) => true | string | false {
-  const auDela    = listensBeyondLoopback(listenHost)
-  const hoteAdmis = (h: string) => auDela || hostAllowed(h)
-  const signales  = new Set<string>()
-  let tus         = false
+export function createDevOriginCheck(allowed?: readonly string[] | true, listenHost = '127.0.0.1', hostAllowed = createDevHostCheck(listenHost, undefined, allowed)): (origin: string | string[] | undefined, host: string | string[] | undefined) => true | string | false {
+  const beyondLoopback = listensBeyondLoopback(listenHost)
+  const hostAdmitted   = (h: string) => beyondLoopback || hostAllowed(h)
+  const reported       = new Set<string>()
+  let muted            = false
   return (origin, host) => {
     const v = Array.isArray(origin) ? origin[0] : origin
     if (!v) return false
-    const motif = devOriginVerdict(v, host, permis, hoteAdmis)
-    if (typeof motif !== 'string') return motif
-    const nom     = hostNameForMessage(new URL(v).host)
-    const message = t('server.origine-nom-exact', { nom, motif, hote: hostNameForMessage(host) })
-    if (signales.has(nom) || tus) return message
-    if (signales.size < MAX_ORIGIN_WARNINGS) {
-      signales.add(nom)
+    const pattern = devOriginVerdict(v, host, allowed, hostAdmitted)
+    if (typeof pattern !== 'string') return pattern
+    const name    = hostNameForMessage(new URL(v).host)
+    const message = t('server.origin-name-exact', { name: name, pattern: pattern, host: hostNameForMessage(host) })
+    if (reported.has(name) || muted) return message
+    if (reported.size < MAX_ORIGIN_WARNINGS) {
+      reported.add(name)
       console.warn(message)
     }
     else {
-      tus = true
-      console.warn(t('server.origine-refus-tus', { max: MAX_ORIGIN_WARNINGS }))
+      muted = true
+      console.warn(t('server.origin-refusal-silenced', { max: MAX_ORIGIN_WARNINGS }))
     }
     return message
   }
@@ -212,10 +216,10 @@ export function createDevOriginCheck(permis?: readonly string[] | true, listenHo
 /** Origine acceptée pour le WebSocket de rechargement : absente (pas un navigateur : curl, un script) ou admise par la règle de la garde
  * d'origine de `mjs dev` (devOriginVerdict : boucle locale, même origine que Host, nom exact de `dev.allowedHosts`), la garde Host
  * relue ici à chaque appel. `mjs dev` lui-même passe par sa garde partagée avec les formulaires (createDevOriginCheck). */
-export function isAcceptedHmrOrigin(origin: string | string[] | undefined, host: string | string[] | undefined, listenHost: string, permis?: readonly string[] | true): boolean {
+export function isAcceptedHmrOrigin(origin: string | string[] | undefined, host: string | string[] | undefined, listenHost: string, allowed?: readonly string[] | true): boolean {
   if (origin === undefined) return true
   const v = Array.isArray(origin) ? origin[0] : origin
-  return !!v && devOriginVerdict(v, host, permis, (h) => listensBeyondLoopback(listenHost) || createDevHostCheck(listenHost, undefined, permis)(h)) === true
+  return !!v && devOriginVerdict(v, host, allowed, (h) => listensBeyondLoopback(listenHost) || createDevHostCheck(listenHost, undefined, allowed)(h)) === true
 }
 
 // formes minimales des objets de `ws` que HMRServer expose : ses déclarations publiques ne citent pas `ws`, dont les types
@@ -230,6 +234,11 @@ export interface HMRSocketServer {
   close(cb?: (err?: Error) => void): void
 }
 
+// taille d'un message reçu d'une page, au plus : le seul qu'envoie le client du framework est la réponse d'un échange à chaud
+// (`{"type":"hot-result","ok":false}`, 32 octets) ; au-delà, la connexion est fermée (code 1009) avant que le message n'occupe
+// la mémoire du serveur
+const HMR_MAX_PAYLOAD = 4096
+
 export class HMRServer {
   wss: HMRSocketServer
   clients: Set<HMRSocket>
@@ -238,6 +247,7 @@ export class HMRServer {
     const wss = new WebSocketServer({
       server: httpServer,
       path: opts.path ?? '/__mjs_hmr',
+      maxPayload: HMR_MAX_PAYLOAD,
     })
     this.wss     = wss
     this.clients = new Set()
@@ -246,11 +256,11 @@ export class HMRServer {
       const { origin, host } = request.headers
       // `mjs dev` : la garde d'origine partagée avec les formulaires (originCheck), qui dit au terminal le nom exact à écrire ; sinon la
       // même règle relue ici (listenHost), ou les seules origines locales
-      let permise: boolean
-      if (opts.originCheck) permise = origin === undefined || opts.originCheck(origin, host) === true
-      else if (opts.listenHost !== undefined) permise = isAcceptedHmrOrigin(origin, host, opts.listenHost, opts.allowedHosts)
-      else permise = isTrustedDevOrigin(origin)
-      if (!permise || (opts.isAllowedHost && !opts.isAllowedHost(host))) {
+      let allowed: boolean
+      if (opts.originCheck) allowed = origin === undefined || opts.originCheck(origin, host) === true
+      else if (opts.listenHost !== undefined) allowed = isAcceptedHmrOrigin(origin, host, opts.listenHost, opts.allowedHosts)
+      else allowed = isTrustedDevOrigin(origin)
+      if (!allowed || (opts.isAllowedHost && !opts.isAllowedHost(host))) {
         ws.close(1008, 'Origin not allowed')
         return
       }
@@ -425,7 +435,7 @@ export const hmrClientSnippet = (wsUrl: string) => `
       div.className = '__mjs_hmr_overlay'
       document.body.appendChild(div)
     }
-    div.textContent = ${JSON.stringify(t('server.hmr-compilation-echouee'))} + '\\n\\n' + msg
+    div.textContent = ${JSON.stringify(t('server.hmr-compilation-failed'))} + '\\n\\n' + msg
   }
 
   const hideError = () => {
@@ -450,7 +460,7 @@ export const hmrClientSnippet = (wsUrl: string) => `
     const ws = new WebSocket(scriptSocket || (location.protocol === 'https:' ? 'wss:' : 'ws:') + '${wsUrl}'.replace(/^wss?:/, ''))
     ws.addEventListener('open', () => {
       retries = 0
-      console.log(${JSON.stringify(t('server.hmr-connecte'))})
+      console.log(${JSON.stringify(t('server.hmr-connected'))})
     })
     ws.addEventListener('message', (ev) => {
       try {
@@ -504,14 +514,14 @@ export const hmrClientSnippet = (wsUrl: string) => `
           // <<< extrait-test hmr-hotswap-fallback
         }
         if (msg.type === 'theme-vars')  { applyThemeVars(msg.themeVars) }
-        if (msg.type === 'error')       { showError(msg.message || ${JSON.stringify(t('server.hmr-aucun-message'))}) }
+        if (msg.type === 'error')       { showError(msg.message || ${JSON.stringify(t('server.hmr-no-message'))}) }
         if (msg.type === 'error-cleared') { hideError() }
       } catch {}
     })
     ws.addEventListener('close', () => {
       retries++
       const wait = Math.min(retries * 500, 5000)
-      console.warn(${JSON.stringify(t('server.hmr-deconnecte'))}.replace('{wait}', wait))
+      console.warn(${JSON.stringify(t('server.hmr-disconnected'))}.replace('{wait}', wait))
       setTimeout(connect, wait)
     })
   }

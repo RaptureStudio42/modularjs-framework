@@ -7,6 +7,7 @@ import { existsSync } from 'node:fs'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { construire, charger, graves, variantes } from './helpers/liaison-navigateur.js'
 import type { Cible, Mode } from './helpers/liaison-navigateur.js'
+import { playTogether } from './helpers/engines-together.js'
 
 const VALEURS: Record<string, string> = { indef: 'undefined', nul: 'null', zero: '0', vide: "''", faux: 'false', texte: "'a'" }
 
@@ -70,7 +71,7 @@ const cible  = (mode: Mode) => {
   return cibles.get(mode)!
 }
 
-for (const moteur of ['chromium', 'firefox'] as const) for (const mode of ['dev-parents-avant', 'split', 'bundle', 'ssr'] as const) for (const variante of variantes(mode)) describe(`{key} de valeur quelconque (${mode}${variante ? ' ' + variante : ''}, ${moteur} réel)`, function () {
+for (const moteur of ['chromium', 'firefox'] as const) for (const mode of ['dev-parents-avant', 'split', 'bundle', 'ssr'] as const) for (const variante of variantes(mode)) playTogether(describe(`{key} de valeur quelconque (${mode}${variante ? ' ' + variante : ''}, ${moteur} réel)`, function () {
   this.timeout(180000)
   let browser: any = null
   let present = false
@@ -123,4 +124,4 @@ for (const moteur of ['chromium', 'firefox'] as const) for (const mode of ['dev-
       await o.fermer()
     }
   })
-})
+}))

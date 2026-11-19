@@ -88,7 +88,7 @@ describe('mjs-ws — chien de garde systemd (watchdog.ts)', () => {
     const { spawn } = faussSpawn((e, n) => { if (n === 1) e.emit('error', new Error('ENOENT')) })
     const { lignes, log } = faussLog()
     const codes: number[] = []
-    armWatchdog(log, { spawn, env: { WATCHDOG_USEC: '30000000' }, quitter: c => codes.push(c) })
+    armWatchdog(log, { spawn, env: { WATCHDOG_USEC: '30000000' }, exit: c => codes.push(c) })
     await tick(10)
     assert.deepEqual(codes, [1], 'sortie en 1, une seule fois')
     assert.equal(lignes.at(-1)!.niveau, 'error')
@@ -99,7 +99,7 @@ describe('mjs-ws — chien de garde systemd (watchdog.ts)', () => {
     const { spawn } = faussSpawn((e, n) => { if (n === 1) e.emit('exit', 1) })
     const { lignes, log } = faussLog()
     const codes: number[] = []
-    armWatchdog(log, { spawn, env: { WATCHDOG_USEC: '30000000' }, quitter: c => codes.push(c) })
+    armWatchdog(log, { spawn, env: { WATCHDOG_USEC: '30000000' }, exit: c => codes.push(c) })
     await tick(10)
     assert.deepEqual(codes, [1])
     assert.match(lignes.at(-1)!.message, /NotifyAccess=all/, "le message doit nommer la ligne d'unité qui manque")
@@ -110,7 +110,7 @@ describe('mjs-ws — chien de garde systemd (watchdog.ts)', () => {
     const { spawn } = faussSpawn((e, n) => { e.emit('exit', n === 1 ? 0 : 1) })
     const { log } = faussLog()
     const codes: number[] = []
-    const h = armWatchdog(log, { spawn, env: { WATCHDOG_USEC: '2000000' }, quitter: c => codes.push(c) })
+    const h = armWatchdog(log, { spawn, env: { WATCHDOG_USEC: '2000000' }, exit: c => codes.push(c) })
     await tick(2300)
     h!.stop()
     assert.deepEqual(codes, [], 'un battement raté ponctuel ne prouve rien : on ne quitte pas')

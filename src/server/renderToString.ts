@@ -32,13 +32,13 @@ import type { LintToggles } from '../diagnostics.js'
 // `computeForwardedOrigin` ne doit PAS pouvoir router happy-dom vers une cible
 // interne. Cf. forward-origin.ts pour le détail des plages bloquées.
 import { isBlockedForwardTarget } from './forward-origin.js'
-import { ecrireFeuilleRendu, creerPlanFeuilles, sansImport } from './sorties-rendu.js'
+import { writeRenderSheet, createSheetPlan, withoutImports } from './render-outputs.js'
 import { lightHostCss } from './light-host-css.js'
 import { openRenderCompileDir } from './render-compile-dir.js'
 import { outdatedHappyDomVersion, HAPPY_DOM_MINIMUM } from './happy-dom-version.js'
 import { t } from '../messages/index.js'
 import { buildSeedRoot } from './i18n-seed-root.js'
-import { propsRacine } from './props-racine.js'
+import { rootProps } from './root-props.js'
 
 export interface SSRRendererOptions {
   /** Répertoire contenant les composants `.mjs` source. */
@@ -138,7 +138,7 @@ export interface RenderOptions {
    * comme celles qu'un parent pose (`<@x a={5}>`). Chacune en attribut (objets/tableaux
    * en JSON, ré-hydratés au montage par parseProp) ; un nombre, ou une chaîne que la
    * balise relirait autrement (`'true'`, `'[1]'`), EN PLUS dans l'attribut `mjs-props`
-   * (JSON), versé au registre des props en attente avant le montage (cf. props-racine.ts).
+   * (JSON), versé au registre des props en attente avant le montage (cf. root-props.ts).
    */
   props?: Record<string, unknown>
   /**
@@ -604,7 +604,7 @@ export function topoSortFiles(ids: string[], depsById: Map<string, string[]>, id
   const blocked = ids.filter(id => !outSet.has(id))
   if (blocked.length > 0) {
     const names = blocked.map(id => idToFile.get(id) || id).sort()
-    throw new Error(t('server.ssr-import-circulaire', { names: names.join(', ') }))
+    throw new Error(t('server.ssr-import-circular', { names: names.join(', ') }))
   }
   return out
 }
@@ -655,7 +655,9 @@ export function escapeJsonForScript(json: string): string {
 // descendre deux fois dans le même sous-arbre (explosion combinatoire sinon).
 export function collectAwaitStates(el: any, out: any[] = []): any[] {
   if (!el) return out
-  const core: any = ssrCoreOf(el)
+  // seul un composant (élément personnalisé : un tiret dans son nom) porte des blocs {await} — un élément ordinaire n'est pas
+  // interrogé : `_ssrInfo` calcule aussi ses feuilles, en remontant ses ancêtres, et ce relevé repasse sur tout l'arbre toutes les 5 ms
+  const core: any = !el.localName || el.localName.includes('-') ? ssrCoreOf(el) : null
   const states: any = core && core._ssrInfo ? core._ssrInfo(el).awaitStates : null
   if (states) out.push(states)
   if (el._shadow && el._shadow !== el && el._shadow.children) {
@@ -702,7 +704,7 @@ export async function settleRender(el: any, maxMs: number): Promise<boolean> {
     elapsed += step
     const core: any = ssrCoreOf(el)
     // une requête de µload en vol (runtime/mjs_load.ts, `µ._ssrLoad(1)` : leurs adresses) retient le rendu comme un {await}
-    const busy = (el && core && core._ssrInfo && core._ssrInfo(el).renderScheduled) || hasPendingAwait(el) || (core && typeof core._ssrLoad === 'function' && core._ssrLoad(1).length > 0)
+    const busy = (el && core && core._ssrInfo && core._ssrInfo(el).renderScheduled) || hasPendingAwait(el) || (core && typeof core._ssrLoad === 'function' && core._ssrLoad(1).length > 0) || (core && typeof core._ssrAwait === 'function' && core._ssrAwait(1) > 0)
     if (busy) {
       stable = 0
     } else if (++stable >= 2) {
@@ -738,20 +740,20 @@ function ssrInfo(node: any): { baseCss: string; sheets: string[]; isLight: boole
 // déjà le bon modèle. En ligne, la balise porte l'adresse du fichier (`mjs-layout`), que le runtime relit avant la reprise
 // (runtime/mjs_layout_variant.ts) : le composant repris garde son modèle sans attendre le fichier. Sous le mode strict, un
 // `<link>` comme les autres feuilles
-function feuilleModele(node: any, feuille: FeuilleBalise, tag: string): string {
+function layoutSheet(node: any, sheet: SheetTag, tag: string): string {
   const info = ssrInfo(node)
   const css  = info.layoutCss.trim()
   if (!css) return ''
-  const out = feuille(css, tag + '--modele')
+  const out = sheet(css, tag + '--modele')
   return out.startsWith('<style>') ? `<style mjs-layout="${escapeAttr(info.layoutUrl)}">` + out.slice('<style>'.length) : out
 }
 
 // Texte d'une feuille du registre du cœur (`µ.CSS`). Le rendu serveur note le texte reçu par
-// `replaceSync` (cf. `noterTexteFeuilles`) : c'est le texte compilé, à l'octet. Une feuille bâtie
+// `replaceSync` (cf. `noteSheetTexts`) : c'est le texte compilé, à l'octet. Une feuille bâtie
 // autrement (moteur navigateur) se relit par ses règles.
-export function texteFeuille(feuilleCss: any): string {
-  if (typeof feuilleCss.__mjsTexte === 'string') return feuilleCss.__mjsTexte
-  try { return Array.from(feuilleCss.cssRules).map((r: any) => r.cssText).join('') } catch { return '' }
+export function sheetText(cssSheet: any): string {
+  if (typeof cssSheet.__mjsText === 'string') return cssSheet.__mjsText
+  try { return Array.from(cssSheet.cssRules).map((r: any) => r.cssText).join('') } catch { return '' }
 }
 
 // Feuilles du THÈME que le navigateur adopte dans chaque racine d'ombre, juste après la remise à zéro
@@ -760,17 +762,17 @@ export function texteFeuille(feuilleCss: any): string {
 // raccourcit : on les retrouve parmi les feuilles que le DOCUMENT adopte, la première par son
 // contenu (la variable `--mjs-surface`), l'autre est celle qui la suit. Aucune (module du thème
 // absent) : rien à écrire. Le texte d'une feuille vide n'écrit rien.
-function feuillesTheme(node: any): { css: string; tag: string }[] {
+function themeSheets(node: any): { css: string; tag: string }[] {
   const doc: any = node.ownerDocument
-  const adoptees: any[] = doc && doc.adoptedStyleSheets ? Array.from(doc.adoptedStyleSheets) : []
-  const i = adoptees.findIndex(f => texteFeuille(f).includes('--mjs-surface'))
+  const adopted: any[] = doc && doc.adoptedStyleSheets ? Array.from(doc.adoptedStyleSheets) : []
+  const i = adopted.findIndex(f => sheetText(f).includes('--mjs-surface'))
   if (i < 0) return []
-  const liste: { css: string; tag: string }[] = []
-  const embarquee = texteFeuille(adoptees[i]).trim()
-  if (embarquee) liste.push({ css: embarquee, tag: 'partagee-theme' })
-  const appli = adoptees[i + 1] ? texteFeuille(adoptees[i + 1]).trim() : ''
-  if (appli) liste.push({ css: appli, tag: 'partagee-theme-appli' })
-  return liste
+  const list: { css: string; tag: string }[] = []
+  const embedded = sheetText(adopted[i]).trim()
+  if (embedded) list.push({ css: embedded, tag: 'shared-theme' })
+  const appCss = adopted[i + 1] ? sheetText(adopted[i + 1]).trim() : ''
+  if (appCss) list.push({ css: appCss, tag: 'shared-theme-app' })
+  return list
 }
 
 // Les feuilles partagées d'une racine d'ombre : celles que le montage adopte avant la feuille
@@ -779,19 +781,19 @@ function feuillesTheme(node: any): { css: string; tag: string }[] {
 // Une feuille absente du registre (vide, ou différée par `css: 'lazy'`) n'écrit rien. Chaque racine
 // porte les siennes : une racine d'ombre ne voit pas les feuilles d'une autre. Les `@import` sont
 // retirés du texte : le navigateur adopte ces feuilles par `replaceSync`, qui les ignore.
-function feuillesPartagees(node: any, feuille: FeuilleBalise): string {
-  const registre: any = ssrCoreOf(node).CSS
-  if (!registre) return ''
-  const noms        = ssrInfo(node).sheets
-  const apresReset  = noms[0] === 'mjs_reset' ? 1 : 0
-  const themes      = feuillesTheme(node)
-  let out = ''
-  const ecrire = (css: string, tag: string): void => { if (css) out += feuille(css, tag) }
-  noms.forEach((nom, i) => {
-    if (i === apresReset) for (const t of themes) ecrire(t.css, t.tag)
-    ecrire(registre[nom] ? sansImport(texteFeuille(registre[nom])).trim() : '', 'partagee-' + String(nom).replace(/[^\w-]/g, '_'))
+function sharedSheets(node: any, sheet: SheetTag): string {
+  const registry: any = ssrCoreOf(node).CSS
+  if (!registry) return ''
+  const names      = ssrInfo(node).sheets
+  const afterReset = names[0] === 'mjs_reset' ? 1 : 0
+  const themes     = themeSheets(node)
+  let out          = ''
+  const write      = (css: string, tag: string): void => { if (css) out += sheet(css, tag) }
+  names.forEach((name, i) => {
+    if (i === afterReset) for (const t of themes) write(t.css, t.tag)
+    write(registry[name] ? withoutImports(sheetText(registry[name])).trim() : '', 'shared-' + String(name).replace(/[^\w-]/g, '_'))
   })
-  if (noms.length <= apresReset) for (const t of themes) ecrire(t.css, t.tag)
+  if (names.length <= afterReset) for (const t of themes) write(t.css, t.tag)
   return out
 }
 
@@ -838,22 +840,22 @@ export function noteLightPage(proto?: any): void {
 // n'y est pas encore définie. En `markers` (`marquer`), sa page passe devant ce contenu, séparée de lui par le repère `<!--mjs-l-->` (fin du
 // contenu notée par `noteLightPage`) : le client ne jette que ce qui le précède, le contenu glissé garde ses nœuds. `tous` : le moteur
 // navigateur bâtit aussi à plat un `@lightDom`, qui reçoit le même repère ; ici (happy-dom), un `@lightDom` a sa propre ombre et son repère
-// vient d'`etiqueterReprise`. La racine et sa balise restent à `RenderOptions.light`. Partagée TELLE QUELLE avec le moteur navigateur (sa
+// vient d'`labelResume`. La racine et sa balise restent à `RenderOptions.light`. Partagée TELLE QUELLE avec le moteur navigateur (sa
 // source est injectée dans la page) : aucune dépendance hors de ce corps
-export function lightPageFirst(root: any, marquer: boolean, tous: boolean): void {
+export function lightPageFirst(root: any, shouldMark: boolean, all: boolean): void {
   function walk(node: any): void {
     const kids: any[] = [...(node._shadow && node._shadow !== node ? Array.from(node._shadow.children) : []), ...Array.from(node.children || [])]
     for (const el of kids) {
       if (el._shadow === el && el.localName !== root.localName) {
-        let classe = false
+        let cls = false
         // un accesseur qui échoue ne rend pas léger, comme au constructeur du runtime
-        try { classe = el.constructor.mjsLight === true } catch { classe = false }
-        if (classe && !el.hasAttribute('mjs-light')) el.setAttribute('mjs-light', '')
-        const fin: any = el.__mjsSsrLight
-        if (marquer && (classe || tous) && fin && fin.parentNode === el) {
+        try { cls = el.constructor.mjsLight === true } catch { cls = false }
+        if (cls && !el.hasAttribute('mjs-light')) el.setAttribute('mjs-light', '')
+        const end: any = el.__mjsSsrLight
+        if (shouldMark && (cls || all) && end && end.parentNode === el) {
           const mark: any = el.ownerDocument.createComment('mjs-l')
           el.insertBefore(mark, el.firstChild)
-          while (fin.nextSibling) el.insertBefore(fin.nextSibling, mark)
+          while (end.nextSibling) el.insertBefore(end.nextSibling, mark)
         }
       }
       walk(el)
@@ -934,10 +936,10 @@ function reflectFieldsTree(node: any): void {
 // shadow propre (un sous-composant `mjs-light` n'en a pas : ses nœuds vivent dans la racine d'ombre de son parent). Chaque composant se
 // reprend par ses propres marqueurs ; sans eux, un sous-composant est rebâti au client.
 // Élément → attribut `mjs-h="<key>"` ; nœud texte → commentaire `<!--mjs-h:<key>-->` juste avant.
-function etiqueterReprise(node: any, doc: any): void {
-  const propre: boolean = !!(node._shadow && node._shadow !== node)
-  const info: any       = propre ? ssrInfo(node) : null
-  const nodes: any      = info && !info.isLight ? info.nodes : null
+function labelResume(node: any, doc: any): void {
+  const clean: boolean = !!(node._shadow && node._shadow !== node)
+  const info: any      = clean ? ssrInfo(node) : null
+  const nodes: any     = info && !info.isLight ? info.nodes : null
   if (nodes) {
     for (const key of Object.keys(nodes)) {
       const n: any = nodes[key]
@@ -964,9 +966,9 @@ function etiqueterReprise(node: any, doc: any): void {
   }
   // composant `@lightDom` : construit ici avec sa propre ombre, il s'écrit à plat, sa page d'abord, puis le contenu que la page lui a glissé ;
   // le repère `<!--mjs-l-->` les sépare, le client ne jette que ce qui le précède et garde le contenu glissé (runtime/mjs_element.ts)
-  if (propre && node.firstChild && node.hasAttribute && node.hasAttribute('mjs-light')) node.insertBefore(doc.createComment('mjs-l'), node.firstChild)
-  if (propre) { for (const child of Array.from(node._shadow.children) as any[]) etiqueterReprise(child, doc) }
-  if (node.children) { for (const child of Array.from(node.children) as any[]) etiqueterReprise(child, doc) }
+  if (clean && node.firstChild && node.hasAttribute && node.hasAttribute('mjs-light')) node.insertBefore(doc.createComment('mjs-l'), node.firstChild)
+  if (clean) { for (const child of Array.from(node._shadow.children) as any[]) labelResume(child, doc) }
+  if (node.children) { for (const child of Array.from(node.children) as any[]) labelResume(child, doc) }
 }
 
 // true si CE noeud ou un de ses descendants est un composant MJS à shadow root propre — détermine
@@ -986,19 +988,19 @@ function hasNestedShadow(node: any): boolean {
  * seulement à la racine. Un seul emetteur, décidé une fois par renderer et transmis jusqu'au fond
  * de la sérialisation : une branche qui l'oublierait rouvrirait le trou.
  */
-export type FeuilleBalise = (css: string, tag: string) => string
+export type SheetTag = (css: string, tag: string) => string
 
 /** Défaut hors mode strict : la feuille voyage en ligne, `</style` neutralisé (round-trip exact). */
-const feuilleEnLigne: FeuilleBalise = (css) => css ? `<style>${css.replace(/<\/(style)/gi, '<\\/$1')}</style>` : ''
+const inlineSheet: SheetTag = (css) => css ? `<style>${css.replace(/<\/(style)/gi, '<\\/$1')}</style>` : ''
 
 // Sérialise UN noeud (texte, commentaire ou élément). Délègue ENTIÈREMENT au natif partout où
 // AUCUN descendant ne porte de shadow propre — sortie BYTE IDENTIQUE à l'ancien `innerHTML` pour
 // tout composant sans sous-composant à shadow (zéro régression sur l'existant, la composition de
 // plusieurs sérialisations natives PAR NOEUD égale la sérialisation native du PARENT entier).
-function serializeShadowNode(node: any, shadowMode: 'open' | 'closed', lightSeen: Set<string>, feuille: FeuilleBalise): string {
+function serializeShadowNode(node: any, shadowMode: 'open' | 'closed', lightSeen: Set<string>, sheet: SheetTag): string {
   if (node.nodeType === 1) {
     if (!hasNestedShadow(node)) return node.outerHTML
-    return serializeShadowHost(node, shadowMode, lightSeen, feuille)
+    return serializeShadowHost(node, shadowMode, lightSeen, sheet)
   }
   // texte/commentaire : pas d'`outerHTML` natif sur ces types — un wrapper jetable délègue
   // l'échappement au sérialiseur natif (identique à ce qu'`innerHTML` aurait produit ici).
@@ -1012,7 +1014,7 @@ function serializeShadowNode(node: any, shadowMode: 'open' | 'closed', lightSeen
 // réinjecte son PROPRE `<template shadowrootmode>` + `<style>` s'il porte un shadow propre à LUI
 // (`node._shadow !== node`), sinon (élément normal, ou composant `mjs-light` sans vrai shadow) la
 // récursion continue directement sur ses enfants — c'est LÀ qu'un shadow plus profond sera trouvé.
-function serializeShadowHost(node: any, shadowMode: 'open' | 'closed', lightSeen: Set<string>, feuille: FeuilleBalise): string {
+function serializeShadowHost(node: any, shadowMode: 'open' | 'closed', lightSeen: Set<string>, sheet: SheetTag): string {
   const tagName = String(node.tagName).toLowerCase()
   const emptyTag = node.cloneNode(false).outerHTML
   const closeTag = `</${tagName}>`
@@ -1028,11 +1030,11 @@ function serializeShadowHost(node: any, shadowMode: 'open' | 'closed', lightSeen
   const isLight = (node.hasAttribute && node.hasAttribute('mjs-light')) || (node.constructor && node.constructor.mjsLight === true)
   if (hasOwnShadow && !isLight) {
     const nestedCss = ssrInfo(node).baseCss.trim()
-    const nestedStyleTag = feuillesPartagees(node, feuille) + feuille(nestedCss, tagName) + feuilleModele(node, feuille, tagName)
+    const nestedStyleTag = sharedSheets(node, sheet) + sheet(nestedCss, tagName) + layoutSheet(node, sheet, tagName)
     let shadowContent = ''
     // NOUVELLE frontière <template> physique : dédoublonnage propre à ELLE
     const nestedSeen = new Set<string>()
-    for (const child of Array.from(node._shadow.childNodes) as any[]) shadowContent += serializeShadowNode(child, shadowMode, nestedSeen, feuille)
+    for (const child of Array.from(node._shadow.childNodes) as any[]) shadowContent += serializeShadowNode(child, shadowMode, nestedSeen, sheet)
     inner += `<template shadowrootmode="${shadowMode}">${nestedStyleTag}${shadowContent}</template>`
   } else if (hasOwnShadow && isLight) {
     // Garde-fou — le sous-composant light aplati perdait SA feuille (aucune des
@@ -1052,11 +1054,11 @@ function serializeShadowHost(node: any, shadowMode: 'open' | 'closed', lightSeen
     const nestedCss = rawCss ? rewriteHost(rawCss, tagName) : rawCss
     if (nestedCss && !lightSeen.has(tagName)) {
       lightSeen.add(tagName)
-      inner += feuille(nestedCss, tagName)
+      inner += sheet(nestedCss, tagName)
     }
-    for (const child of Array.from(node._shadow.childNodes) as any[]) inner += serializeShadowNode(child, shadowMode, lightSeen, feuille)
+    for (const child of Array.from(node._shadow.childNodes) as any[]) inner += serializeShadowNode(child, shadowMode, lightSeen, sheet)
   }
-  for (const child of Array.from(node.childNodes) as any[]) inner += serializeShadowNode(child, shadowMode, lightSeen, feuille)
+  for (const child of Array.from(node.childNodes) as any[]) inner += serializeShadowNode(child, shadowMode, lightSeen, sheet)
   return `${openTag}${inner}${closeTag}`
 }
 
@@ -1067,42 +1069,42 @@ function serializeShadowHost(node: any, shadowMode: 'open' | 'closed', lightSeen
  * d'introspection du mode INTERNE de chaque sous-composant — toujours `'closed'` pendant le rendu
  * SSR lui-même, cf. mjs_element.ts, non pertinent pour ce que le DSD SERVEUR déclare).
  */
-export function serializeShadow(el: any, shadowMode: 'open' | 'closed' = 'open', feuille: FeuilleBalise = feuilleEnLigne): string {
+export function serializeShadow(el: any, shadowMode: 'open' | 'closed' = 'open', sheet: SheetTag = inlineSheet): string {
   const root = el._shadow ?? el
   let out = ''
   // dédoublonnage par tag des <style> de sous-composants light imbriqués — propre à CETTE
   // frontière shadow/light
   const lightSeen = new Set<string>()
-  for (const child of Array.from(root.childNodes) as any[]) out += serializeShadowNode(child, shadowMode, lightSeen, feuille)
+  for (const child of Array.from(root.childNodes) as any[]) out += serializeShadowNode(child, shadowMode, lightSeen, sheet)
   return out
 }
 
 // Retient le texte que reçoit chaque `replaceSync` de la fenêtre de rendu : une feuille construite
 // ne rend pas son texte brut, seulement ses règles reformatées. À poser AVANT l'évaluation du cœur
 // et des feuilles partagées.
-export function noterTexteFeuilles(window: any): void {
+export function noteSheetTexts(window: any): void {
   const proto: any = window.CSSStyleSheet && window.CSSStyleSheet.prototype
   if (!proto || typeof proto.replaceSync !== 'function') return
-  const noter = (feuille: any, texte: string | undefined): void => { Object.defineProperty(feuille, '__mjsTexte', { value: texte, configurable: true }) }
+  const record = (sheet: any, text: string | undefined): void => { Object.defineProperty(sheet, '__mjsText', { value: text, configurable: true }) }
   const { replaceSync, insertRule, deleteRule } = proto
   proto.replaceSync = function (this: any, css: string) {
-    noter(this, String(css))
+    record(this, String(css))
     return replaceSync.call(this, css)
   }
   // feuille changée après coup (le thème embarqué ajoute sa règle du thème en cercle) : une règle ajoutée en fin s'ajoute au
-  // texte noté ; ajoutée ailleurs, ou retirée, le texte noté est oublié et la feuille se relit par ses règles (cf. texteFeuille)
+  // texte noté ; ajoutée ailleurs, ou retirée, le texte noté est oublié et la feuille se relit par ses règles (cf. sheetText)
   if (typeof insertRule === 'function') {
-    proto.insertRule = function (this: any, regle: string, index?: number) {
-      const enFin = index !== undefined && index >= this.cssRules.length
-      const rang  = insertRule.call(this, regle, index)
-      noter(this, enFin && typeof this.__mjsTexte === 'string' ? this.__mjsTexte + '\n' + regle : undefined)
-      return rang
+    proto.insertRule = function (this: any, rule: string, index?: number) {
+      const atEnd = index !== undefined && index >= this.cssRules.length
+      const rank  = insertRule.call(this, rule, index)
+      record(this, atEnd && typeof this.__mjsText === 'string' ? this.__mjsText + '\n' + rule : undefined)
+      return rank
     }
   }
   if (typeof deleteRule === 'function') {
     proto.deleteRule = function (this: any, index: number) {
       deleteRule.call(this, index)
-      noter(this, undefined)
+      record(this, undefined)
     }
   }
 }
@@ -1180,19 +1182,19 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
   // un FICHIER UNIQUE (`js: 'bundle'`) — la recompilation forcée en `split` ci-dessous écraserait
   // sinon ce fichier par un manifeste éclaté. Sans dossier de sortie fourni, on est déjà dans un
   // temporaire à nous : rien à détourner.
-  const atelier = openRenderCompileDir({
+  const workspace = openRenderCompileDir({
     js: ownsTempDir ? undefined : opts.bundlerOpts?.js,
     outputDir: projectDir,
     manifestPath: opts.manifestPath ?? (ownsTempDir ? join(projectDir, 'bundle.js') : (opts.bundlerOpts?.manifestPath ?? join(projectDir, 'bundle.js'))),
     urlPrefix: opts.bundlerOpts?.urlPrefix,
   })
-  const outputDir = atelier.outputDir
+  const outputDir = workspace.outputDir
   // ABANDON — toute sortie en erreur de CETTE construction rend ce qu'elle a pris : le dossier de
   // travail de la compilation, et le dossier temporaire du renderer lui-même quand personne ne
   // nous a donné d'`outputDir`. Un seul geste, appelé par chaque `throw` ci-dessous : un chemin
   // d'erreur qui l'oublie laisse un dossier derrière lui, sans que rien ne le signale.
   const abandon = (): void => {
-    atelier.cleanup()
+    workspace.cleanup()
     if (ownsTempDir) { try { rmSync(projectDir, { recursive: true, force: true }) } catch { /* best-effort */ } }
   }
 
@@ -1207,8 +1209,8 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
   // seulement quand elles sont RENSEIGNÉES : les laisser telles quelles écraserait la
   // valeur résolue par un `undefined` (un appelant qui passe `bundlerOpts` ne renseigne
   // pas les clés héritées). D'où le filtrage avant le dernier spread.
-  const explicites: Record<string, unknown> = { defaultScriptLang: opts.defaultScriptLang, templateLang: opts.templateLang, sigil: opts.sigil, contextAlias: opts.contextAlias, stylesheetsDir: opts.stylesheetsDir, css: opts.css, csp: opts.csp, maxStateVars: opts.maxStateVars, a11y: opts.a11y, lint: opts.lint, colorsEnabled: opts.colorsEnabled, i18n: opts.i18n, env: opts.env, cache: opts.cache }
-  for (const k of Object.keys(explicites)) if (explicites[k] === undefined) delete explicites[k]
+  const explicit: Record<string, unknown> = { defaultScriptLang: opts.defaultScriptLang, templateLang: opts.templateLang, sigil: opts.sigil, contextAlias: opts.contextAlias, stylesheetsDir: opts.stylesheetsDir, css: opts.css, csp: opts.csp, maxStateVars: opts.maxStateVars, a11y: opts.a11y, lint: opts.lint, colorsEnabled: opts.colorsEnabled, i18n: opts.i18n, env: opts.env, cache: opts.cache }
+  for (const k of Object.keys(explicit)) if (explicit[k] === undefined) delete explicit[k]
 
   const bundler = new Bundler({
     // Options RÉSOLUES du projet en socle (cf. `SSRRendererOptions.bundlerOpts`) : le
@@ -1222,8 +1224,8 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
     // `outputDir` fourni, le repli reste LOCAL : reprendre le `manifestPath` de la CONFIG
     // écraserait un fichier RÉEL du projet par un manifeste pointant des assets temporaires,
     // supprimés au `close()`.
-    manifestPath: atelier.manifestPath,
-    ...explicites,
+    manifestPath: workspace.manifestPath,
+    ...explicit,
     // `js` forcé 'split' EN DERNIER (aucune clé, ni bundlerOpts ni explicites, ne peut
     // le recouvrir) : ce renderer recharge le cœur et chaque composant FICHIER PAR FICHIER
     // (cf. plus bas, coreCode/lire par basename), un contrat que `js: 'bundle'` (tout fusionné
@@ -1235,7 +1237,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
     // Préfixe public du VRAI build imposé quand la compilation est détournée : les URLs d'assets
     // du HTML rendu (images `µasset`, feuilles `csp`, liens) désignent ce que sert le back, jamais
     // le dossier de travail. `undefined` hors détournement : le Bundler dérive comme avant.
-    urlPrefix: atelier.urlPrefix,
+    urlPrefix: workspace.urlPrefix,
   })
   let stats
   try {
@@ -1249,18 +1251,18 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
   if (stats.errors.length) {
     await bundler.close()
     abandon()
-    throw new Error(t('server.ssr-erreurs-compilation', { errors: stats.errors.map(e => e.message).join('\n') }))
+    throw new Error(t('server.ssr-errors-compilation', { errors: stats.errors.map(e => e.message).join('\n') }))
   }
 
   // Comment la feuille scopée d'un composant sort dans le HTML rendu, à TOUT niveau de composition
-  // (cf. `FeuilleBalise`) : sous le mode strict, un fichier haché écrit dans le VRAI dossier de
+  // (cf. `SheetTag`) : sous le mode strict, un fichier haché écrit dans le VRAI dossier de
   // sortie (celui que sert le back, jamais le dossier de travail de cette compilation) et un
   // `<link>` qui le désigne — un `<style>` en ligne y serait refusé par `style-src`. Le fichier est
   // CONTENU-ADRESSÉ : deux instances d'un même composant retombent sur le même nom, écrit une fois.
-  const baliseLien = (css: string, tag: string): string => css ? `<link rel="stylesheet" href="${ecrireFeuilleRendu(atelier.assetsDir, bundler.urlPrefix, tag, css)}">` : ''
-  const feuille: FeuilleBalise = cspStrict ? baliseLien : feuilleEnLigne
+  const linkTag = (css: string, tag: string): string => css ? `<link rel="stylesheet" href="${writeRenderSheet(workspace.assetsDir, bundler.urlPrefix, tag, css)}">` : ''
+  const sheet: SheetTag = cspStrict ? linkTag : inlineSheet
   // Hors mode strict, avec un dossier de sortie à nous : les feuilles partagées passent par un plan
-  // par rendu (cf. sorties-rendu.ts) qui choisit, feuille par feuille, la forme en ligne ou liée
+  // par rendu (cf. render-outputs.ts) qui choisit, feuille par feuille, la forme en ligne ou liée
   const planPossible = !cspStrict && !ownsTempDir
 
   // Charge le core + TOUS les composants compilés (un composant racine peut en
@@ -1275,10 +1277,10 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
   if (!coreFile || !coreFiles.includes(coreFile)) {
     await bundler.close()
     abandon()
-    throw new Error(t('server.ssr-core-introuvable'))
+    throw new Error(t('server.ssr-core-not-found'))
   }
   if (coreFiles.length > 1) {
-    console.warn(t('server.ssr-plusieurs-core', { files: coreFiles.join(', '), first: coreFile }))
+    console.warn(t('server.ssr-multiple-core', { files: coreFiles.join(', '), first: coreFile }))
   }
   const coreCode = stripEsm(readFileSync(join(outputDir, coreFile), 'utf-8'))
   // libellés du runtime (modules cœur, modale, routeur, effets) : le navigateur les reçoit par le manifeste, que la fenêtre de
@@ -1317,18 +1319,18 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
   // 2.5, qui importe son cœur classé après lui, faisait échouer le rendu de toute page
   // (« Cannot access '_mjsF_mjs_u_core_45_…' before initialization »)
   const emittedBasenames = new Set(Object.values(stats.manifest as Record<string, string>).map(p => p.split('/').pop() || ''))
-  const emisCeTour       = new Set(stats.sizes.map(s => basename(s.path)))
-  const files = jsFiles.filter(f =>
+  const emittedThisTurn  = new Set(stats.sizes.map(s => basename(s.path)))
+  const files            = jsFiles.filter(f =>
     f !== coreFile && f !== 'bundle.js' && !/^mjs_(?:page|group)-[^/]*-(?:[0-9a-z]{5}|[a-f0-9]{8})\.js$/.test(f) &&
-    ((/^mjs_/.test(f) && emisCeTour.has(f)) || emittedBasenames.has(f)))
+    ((/^mjs_/.test(f) && emittedThisTurn.has(f)) || emittedBasenames.has(f)))
   // un module .js importé (`@import { chart } 'vendor/chart.js'`) est COPIÉ tel quel, sans entrée au manifeste : admis
   // quand un fichier admis l'importe, de proche en proche — jamais un .js d'un build antérieur que plus rien n'importe
   const sources = new Map<string, string>()
-  const lire    = (f: string): string => sources.get(f) ?? sources.set(f, readFileSync(join(outputDir, f), 'utf-8')).get(f)!
+  const read    = (f: string): string => sources.get(f) ?? sources.set(f, readFileSync(join(outputDir, f), 'utf-8')).get(f)!
   for (let i = 0; i < files.length; i++) {
-    for (const m of lire(files[i]).matchAll(/\b(?:from|import)\s*["']([^"']+\.js)["']/g)) {
-      const cible = m[1].split('/').pop() || ''
-      if (!/^mjs_/.test(cible) && cible !== 'bundle.js' && jsFiles.includes(cible) && !files.includes(cible)) files.push(cible)
+    for (const m of read(files[i]).matchAll(/\b(?:from|import)\s*["']([^"']+\.js)["']/g)) {
+      const target = m[1].split('/').pop() || ''
+      if (!/^mjs_/.test(target) && target !== 'bundle.js' && jsFiles.includes(target) && !files.includes(target)) files.push(target)
     }
   }
   const idByFile = new Map(files.map(f => [f, fileToId(f)]))
@@ -1338,7 +1340,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
     idByFile.get(url.split('/').pop() || '') ?? null
   const scoped = files.map((f) => {
     const id = idByFile.get(f)!
-    const { code, deps } = ssrScopeFile(lire(f), id, resolve)
+    const { code, deps } = ssrScopeFile(read(f), id, resolve)
     return { f, id, code, deps }
   })
   const depsById = new Map(scoped.map(s => [s.id, s.deps]))
@@ -1394,9 +1396,9 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
     const manifest = bundler.i18nManifestData
     // valeur COMPACTE : le seul NOM du fragment (hash en prod, nom clair en dév), plus
     // son URL entière — le fichier sur disque porte ce nom, cf. scanI18n.
-    const nom = manifest && manifest.sections[lang] && manifest.sections[lang][section]
-    if (!nom) return null
-    const filePath = join(outputDir, 'i18n', lang, `${basename(String(nom))}.json`)
+    const name = manifest && manifest.sections[lang] && manifest.sections[lang][section]
+    if (!name) return null
+    const filePath = join(outputDir, 'i18n', lang, `${basename(String(name))}.json`)
     try {
       const mtimeMs = statSync(filePath).mtimeMs
       const cached = i18nDiskCache.get(filePath)
@@ -1412,9 +1414,9 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
   // Fichier d'un variant (`<module>.<nom>.css`, à plat dans le dossier de sortie, cf. bundler/index.ts), lu sur le disque pour
   // le runtime de la fenêtre de rendu (`µ._ssrLayoutRead`, runtime/mjs_layout_variant.ts) : le variant s'applique pendant le rendu,
   // sans requête. Un nom qui n'a pas la forme d'un module ou d'un modèle ne lit rien
-  function layoutRead(mod: unknown, nom: unknown): string | null {
-    if (!/^[\w-]+(?:\.[\w-]+)*$/.test(String(mod)) || !/^[A-Za-z][\w-]*$/.test(String(nom))) return null
-    try { return readFileSync(join(outputDir, `${String(mod)}.${String(nom)}.css`), 'utf-8') } catch { return null }
+  function layoutRead(mod: unknown, name: unknown): string | null {
+    if (!/^[\w-]+(?:\.[\w-]+)*$/.test(String(mod)) || !/^[A-Za-z][\w-]*$/.test(String(name))) return null
+    try { return readFileSync(join(outputDir, `${String(mod)}.${String(name)}.css`), 'utf-8') } catch { return null }
   }
 
   // happy-dom est une dépendance optionnelle (utile seulement pour le SSR).
@@ -1425,7 +1427,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
   } catch {
     await bundler.close()
     abandon()
-    throw new Error(t('server.ssr-happydom-manquant'))
+    throw new Error(t('server.ssr-happydom-missing'))
   }
   // happy-dom plus ancien que la version exigée : refus net (version trouvée, version exigée, commande pour monter) plutôt
   // que des rendus qui varient d'un passage à l'autre — cf. happy-dom-version.ts
@@ -1433,7 +1435,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
   if (outdated !== null) {
     await bundler.close()
     abandon()
-    throw new Error(t('server.ssr-happydom-trop-ancien', { found: outdated, required: HAPPY_DOM_MINIMUM }))
+    throw new Error(t('server.ssr-happydom-too-old', { found: outdated, required: HAPPY_DOM_MINIMUM }))
   }
   const { Window } = HappyDOM
   // une valeur de style liée (`--x={…}`, `@style.prop={…}`) n'ajoute jamais une déclaration au `style` écrit dans la page (cf. isSafeStyleValue) ;
@@ -1454,11 +1456,11 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
     if (safeForwardedUrl) {
       try {
         if (isBlockedForwardTarget(new URL(safeForwardedUrl).host)) {
-          forwardBlockedWarning = t('server.ssr-forward-refuse-interne', { tag, host: new URL(safeForwardedUrl).host })
+          forwardBlockedWarning = t('server.ssr-forward-refused-internal', { tag, host: new URL(safeForwardedUrl).host })
           safeForwardedUrl = undefined
         }
       } catch {
-        forwardBlockedWarning = t('server.ssr-forward-url-invalide', { tag })
+        forwardBlockedWarning = t('server.ssr-forward-url-invalid', { tag })
         safeForwardedUrl = undefined
       }
     }
@@ -1569,22 +1571,22 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
           const manifest = bundler.i18nManifestData
           effectiveLang = (store && (store as any).__mjsLang) || manifest.default
           const defLang = manifest.default
-          const semees = (defLang && defLang !== effectiveLang) ? [effectiveLang, defLang] : [effectiveLang]
-          const langLines = semees.map(l => `µ._i18nLang(${JSON.stringify(l)}, ${JSON.stringify({ root: manifest.root[l] ?? {}, sections: manifest.sections[l] ?? {} })});`)
+          const seeded = (defLang && defLang !== effectiveLang) ? [effectiveLang, defLang] : [effectiveLang]
+          const langLines = seeded.map(l => `µ._i18nLang(${JSON.stringify(l)}, ${JSON.stringify({ root: manifest.root[l] ?? {}, sections: manifest.sections[l] ?? {} })});`)
           i18nSectionsLine = `if (typeof µ._i18nLang === 'function') { ${langLines.join(' ')} }\nµ._i18nLoadSync = window.__mjsI18nLoadSync;`
           ;(window as any).__mjsI18nLoadSync = i18nLoadSync
         }
         ;(window as any).__mjsLayoutRead = layoutRead
-        noterTexteFeuilles(window)
+        noteSheetTexts(window)
         // thèmes de l'application : le navigateur les reçoit par le manifeste (`µ._themeCss`), la fenêtre de rendu n'évalue pas le manifeste
         const themeLine = bundler.themeCss ? `µ._themeCss = ${JSON.stringify(bundler.themeCss)}; if (typeof µ._themeAdopt === 'function') { µ._themeAdopt(); }\n` : ''
         window.eval(`${coreCode}\nglobalThis.µ = µ;\n${labelsLine}\n${i18nDataLine}\n${i18nSectionsLine}\nµ._ssrLayoutRead = window.__mjsLayoutRead;\nµ._isServer = true;\nµ._i18nTrackRoot = true;\nµ.server = true;\n${themeLine}${componentCode}`)
       } catch (e: any) {
-        throw new Error(t('server.ssr-eval-echec', { message: e.message }))
+        throw new Error(t('server.ssr-eval-failed', { message: e.message }))
       }
 
       if (!window.customElements.get(tag)) {
-        throw new Error(t('server.ssr-composant-non-enregistre', { tag }))
+        throw new Error(t('server.ssr-component-not-registered', { tag }))
       }
 
       // Injecte l'état global AVANT le montage, pour que le rendu serveur l'utilise
@@ -1611,32 +1613,32 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
             `(function(__s){ if (Object.prototype.hasOwnProperty.call(__s, '__mjsLang') && !Object.prototype.hasOwnProperty.call(µ.store, '__mjsLang')) { µ._storeDeclare(['__mjsLang'], true); } for (var __k in __s) { if (Object.prototype.hasOwnProperty.call(__s, __k)) { µ._storeSet(__k, __s[__k]); } } })(${JSON.stringify(store)})`,
           )
         } catch (e: any) {
-          throw new Error(t('server.ssr-injection-store-echec', { message: e.message }))
+          throw new Error(t('server.ssr-injection-store-failed', { message: e.message }))
         }
       }
 
-      // Monte le composant avec ses props (cf. props-racine.ts) : chacune en attribut HTML
+      // Monte le composant avec ses props (cf. root-props.ts) : chacune en attribut HTML
       // (objets/tableaux en JSON, parseProp les ré-hydrate au montage) ; celles que ce texte
       // ne redonne pas, EN PLUS typées dans `mjs-props`. Le NOM de prop, concaténé dans le
       // markup, y est validé (sinon une clé `x><img onerror=…>` injecterait du HTML — XSS).
-      const { attrs: propAttrs, refusees } = propsRacine(props)
-      for (const k of refusees) console.warn(t('server.ssr-prop-invalide', { keyJson: JSON.stringify(k) }))
+      const { attrs: propAttrs, rejected } = rootProps(props)
+      for (const k of rejected) console.warn(t('server.ssr-prop-invalid', { keyJson: JSON.stringify(k) }))
       let attrs = Object.entries(propAttrs).map(([k, v]) => ` ${k}="${escapeAttr(v)}"`).join('')
       // Racine en mode léger (cf. `RenderOptions.light`) : drapeau posé sur la CLASSE du composant
       // AVANT de construire l'élément — le constructeur décide là, et l'attribut que le parseur
       // pose ensuite arriverait trop tard. L'attribut voyage quand même dans le HTML servi : c'est
       // lui que lit le client au remontage.
       if (lightRoot) {
-        const classe: any = window.customElements.get(tag)
-        if (classe) classe.mjsLight = true
+        const cls: any = window.customElements.get(tag)
+        if (cls) cls.mjsLight = true
         attrs += ' mjs-light'
       }
       // la racine est lue hors du document (même analyse du texte), puis se branche :
       // `connectedCallback` (mjs_element.ts) lit ses props typées (`mjs-props`) — le chemin du
       // client, qui relit le même attribut : le serveur rend ce que le client reprendra
-      const boite = document.createElement('div')
-      boite.innerHTML = `<${tag}${attrs}></${tag}>`
-      const el: any = boite.firstElementChild
+      const box = document.createElement('div')
+      box.innerHTML = `<${tag}${attrs}></${tag}>`
+      const el: any = box.firstElementChild
       document.body.replaceChildren(el)
 
       // Attend la fin du rendu (stabilité du scheduler + résolution des {await}),
@@ -1676,7 +1678,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
           })())`)
           const { json, omitted } = JSON.parse(probe) as { json: string, omitted: { key: string, message: string }[] }
           for (const o of omitted) {
-            const msg = t('server.ssr-serialisation-echec', { expr: `la clé "${o.key}" de ${id}`, errMsg: o.message })
+            const msg = t('server.ssr-serialization-failed', { expr: `la clé "${o.key}" de ${id}`, errMsg: o.message })
             console.warn(msg)
             globalSerializeWarnings.push(msg)
           }
@@ -1687,7 +1689,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
           // Repli si `expr` LUI-MÊME échoue à s'évaluer
           // (hors périmètre clé par clé — l'expression racine, pas une de ses clés) : était avalé
           // en silence, balise vide, divergence SSR/client SILENCIEUSE (aucun signal en dev ni CI).
-          console.warn(t('server.ssr-serialisation-echec', { expr, errMsg: e instanceof Error ? e.message : e }))
+          console.warn(t('server.ssr-serialization-failed', { expr, errMsg: e instanceof Error ? e.message : e }))
         }
         return ''
       }
@@ -1744,13 +1746,13 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
       // les données que µload a lues pendant le rendu (runtime/mjs_load.ts, `µ._ssrLoad()` : adresse → donnée) voyagent dans la même
       // balise, sous la clé `__mjsLoad` : le client les reprend sans requête, et ne les range pas dans le magasin `$$`
       const sharedScript = serializeGlobal(
-        '(function(s) { var l = typeof µ._ssrLoad === \'function\' ? µ._ssrLoad() : null; return l ? Object.assign({}, s, { __mjsLoad: l }) : s })(µ.store && µ.store.__mjsLang !== undefined ? Object.assign({}, µ.store, { __mjsLang: µ.store.__mjsLang }) : µ.store)',
+        '(function(s) { var l = typeof µ._ssrLoad === \'function\' ? µ._ssrLoad() : null, a = typeof µ._ssrAwait === \'function\' ? µ._ssrAwait() : null; if (l) s = Object.assign({}, s, { __mjsLoad: l }); return a ? Object.assign({}, s, { __mjsAwait: a }) : s })(µ.store && µ.store.__mjsLang !== undefined ? Object.assign({}, µ.store, { __mjsLang: µ.store.__mjsLang }) : µ.store)',
         '__mjs_store',
       ) + i18nScript
 
-      const racine = ssrInfo(el)
-      const light  = racine.isLight
-      const css    = racine.baseCss.trim()
+      const root  = ssrInfo(el)
+      const light = root.isLight
+      const css   = root.baseCss.trim()
 
       // Hydratation (approche A — marqueurs) : annote les nœuds réactifs avec des
       // marqueurs persistants pour que le client les retrouve et les adopte.
@@ -1766,7 +1768,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
         // 'diff' : aucun marqueur (HTML propre), l'alignement se fait côté client.
         // composant léger par sa seule classe : `mjs-light` sur sa balise, et, en 'markers', sa page devant le contenu glissé (cf. `lightPageFirst`)
         lightPageFirst(el, _mode === 'a', false)
-        if (_mode === 'a') etiqueterReprise(el, window.document)
+        if (_mode === 'a') labelResume(el, window.document)
         // (mode `csp`) — un `<script>` en ligne est bloqué par `script-src` sans
         // 'unsafe-inline' : le flag voyage alors par un ATTRIBUT du nœud racine (relu par
         // mjs_init.ts au boot) au lieu d'un script inline. `csp: false` (défaut) : chemin
@@ -1782,8 +1784,8 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
       let shadowHtml: string
       let html: string
       // plan des feuilles partagées de CE rendu : un repère par racine, résolu une fois le fragment entier connu
-      const plan = planPossible ? creerPlanFeuilles(css => feuilleEnLigne(css, ''), baliseLien) : null
-      const feuilleRendu: FeuilleBalise = plan ? (css, tag) => tag.startsWith('partagee-') ? plan.marquer(css, tag) : feuille(css, tag) : feuille
+      const plan = planPossible ? createSheetPlan(css => inlineSheet(css, ''), linkTag) : null
+      const renderSheet: SheetTag = plan ? (css, tag) => tag.startsWith('shared-') ? plan.mark(css, tag) : sheet(css, tag) : sheet
       const warnings = compileWarnings.slice()
       // Clé(s) omises pendant la sérialisation du store/i18n (cf. serializeGlobal ci-dessus).
       if (globalSerializeWarnings.length) warnings.push(...globalSerializeWarnings)
@@ -1793,9 +1795,9 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
       // On l'annonce plutôt que de laisser une divergence SSR/client silencieuse.
       if (!settled) {
         // une requête de µload encore en vol (runtime/mjs_load.ts, `µ._ssrLoad(1)` : ses adresses) : l'avertissement la nomme
-        const core: any       = ssrCoreOf(el)
-        const enVol: string[] = core && typeof core._ssrLoad === 'function' ? core._ssrLoad(1) : []
-        warnings.push(enVol.length ? t('server.ssr-load-non-stabilise', { tag, settleMs, adresses: enVol.join(', ') }) : t('server.ssr-non-stabilise', { tag, settleMs }))
+        const core: any          = ssrCoreOf(el)
+        const inFlight: string[] = core && typeof core._ssrLoad === 'function' ? core._ssrLoad(1) : []
+        warnings.push(inFlight.length ? t('server.ssr-load-not-settled', { tag, settleMs, addresses: inFlight.join(', ') }) : t('server.ssr-not-settled', { tag, settleMs }))
       }
       // Garde-fou — un `{await}` rejeté SANS branche `{error}` pour le
       // consommer (mjs_element.ts, `_mjs_updAwait` : `targetFn` reste `null` faute de `errorFn`) retombe
@@ -1803,7 +1805,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
       // serveur, mais ne ressortait nulle part de `RenderResult` — régression cliente muette (le
       // serveur avait toute l'info et ne la restituait pas). `collectAwaitStates` (déjà utilisé par
       // `hasPendingAwait`) couvre TOUT l'arbre (racine + descendants shadow/light), pas seulement la
-      // racine. Promu au catalogue (`server.ssr-await-rejete-sans-branche`), la clé
+      // racine. Promu au catalogue (`server.ssr-await-rejected-no-branch`), la clé
       // manquait à `messages/fr.ts`/`messages/en.ts`.
       for (const states of collectAwaitStates(el)) {
         if (!states || typeof states.forEach !== 'function') continue
@@ -1814,10 +1816,14 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
           // déjà le message.
           if (st && st.status === 'error' && st.unhandled) {
             const msg = st.error instanceof Error ? st.error.message : String(st.error)
-            warnings.push(t('server.ssr-await-rejete-sans-branche', { tag, message: msg }))
+            warnings.push(t('server.ssr-await-rejected-no-branch', { tag, message: msg }))
           }
         })
       }
+      // une valeur dérivée qui attend dont la demande a échoué pendant le rendu (runtime/mjs_await_derived.ts, `µ._ssrAwait(2)`, en
+      // développement) : la page part en attente, sans cette valeur, et le navigateur refait la demande ; le serveur l'écrit dans sa console
+      const renderCore: any = ssrCoreOf(el)
+      for (const r of (renderCore && typeof renderCore._ssrAwait === 'function' && renderCore._ssrAwait(2)) || []) warnings.push(t('server.ssr-derived-await-failed', { tag: r.tag, name: r.name, message: r.message }))
       // `shadowMode` interpolé dans un attribut :
       // typé 'open'|'closed' mais un appelant en `as any` pourrait injecter. Défensif : seul
       // 'closed' est retenu, tout le reste → 'open'. Calculé ICI (avant les 2 branches)
@@ -1841,14 +1847,14 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
         // runtime : la sienne quand la fenêtre du rendu l'expose, la copie serveur sinon.
         const rewriteHost = (window.µ && typeof window.µ._lightHostCss === 'function') ? window.µ._lightHostCss : lightHostCss
         const lightCss = css ? String(rewriteHost(css, tag)) : ''
-        const styleTag = feuille(lightCss, tag)
-        shadowHtml = serializeShadow(el, sm, feuilleRendu)
+        const styleTag = sheet(lightCss, tag)
+        shadowHtml = serializeShadow(el, sm, renderSheet)
         html = `<${tag}${attrs}>${styleTag}${shadowHtml}</${tag}>`
       } else {
         // Walk récursif (cf. `serializeShadow`) : un sous-composant à shadow propre
         // réinjecte son PROPRE <template shadowrootmode> + sa feuille, à tout niveau de composition
         // — et par le MÊME émetteur que la racine, donc en `<link>` sous le mode strict.
-        shadowHtml = serializeShadow(el, sm, feuilleRendu)
+        shadowHtml = serializeShadow(el, sm, renderSheet)
         // Un CSS contenant `</style`
         // (ex. `content:"</style>"`) refermait PRÉMATURÉMENT la balise → tout le
         // reste du template avalé comme texte. On neutralise la séquence (`<\/style`
@@ -1857,7 +1863,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
         // (mode `csp`) — un `<style>` en ligne DANS un `<template shadowrootmode>` est BLOQUÉ
         // par `style-src` sans 'unsafe-inline' (vérifié en navigateur) ; un `<link>`, lui,
         // s'applique dans une racine d'ombre — prouvé. `csp: false` (défaut) : chemin INCHANGÉ.
-        const styleTag = feuillesPartagees(el, feuilleRendu) + feuille(css, tag) + feuilleModele(el, feuille, tag)
+        const styleTag = sharedSheets(el, renderSheet) + sheet(css, tag) + layoutSheet(el, sheet, tag)
         html = `<${tag}${attrs}><template shadowrootmode="${sm}">${styleTag}${shadowHtml}</template></${tag}>`
         // `shadowMode:'closed'` produit un
         // DSD `<template shadowrootmode="closed">` que le NAVIGATEUR attache tel
@@ -1880,9 +1886,9 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
       }
 
       if (plan) {
-        const brut = html
-        html       = plan.finir(brut)
-        shadowHtml = plan.finir(shadowHtml, brut)
+        const raw  = html
+        html       = plan.finish(raw)
+        shadowHtml = plan.finish(shadowHtml, raw)
       }
 
       // `html.includes('mjs-fatal-error')` = FAUX POSITIF : une page dont la
@@ -1894,7 +1900,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
       // (jamais un test de texte).
       const hasFatalOverlay = (window.µ && window.µ._fatalErrors) || !!(document.querySelector && document.querySelector('.mjs-fatal-error'))
       if (hasFatalOverlay) {
-        throw new Error(t('server.ssr-erreur-non-geree', { tag }))
+        throw new Error(t('server.ssr-error-not-handled', { tag }))
       }
 
       return { html, shadowHtml, css, light, sharedScript, hydrateScript, warnings }

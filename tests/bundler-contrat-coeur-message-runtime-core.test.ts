@@ -6,7 +6,7 @@ import { fr } from '../src/messages/fr.js'
 import { en } from '../src/messages/en.js'
 
 const message = (table: Record<string, any>, manquants: string[], core: boolean): string =>
-  table['bundler.index.contrat-coeur-rompu']({ manquants: manquants.join(', '), nb: manquants.length, modules: 12, core })
+  table['bundler.index.contract-core-broken']({ missing: manquants.join(', '), count: manquants.length, modules: 12, core })
 
 describe('bundler — contrat du cœur rompu : le conseil suit la forme de `runtime`', () => {
   it('"runtime": "core" : aucun tableau à compléter, le message donne la liste à écrire', () => {

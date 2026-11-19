@@ -161,7 +161,7 @@
         mark('size', cur.size || (found ? '' : 'cover'));
         mark('pos', p ? Math.round(p.x * 1000) / 10 + '% ' + Math.round(p.y * 1000) / 10 + '%' : found ? '' : '50% 50%');
       };
-      var pose = function() {
+      var sets = function() {
         cut.style.backgroundImage = url ? shape() + 'url("' + url.replace(/["\\\n]/g, '\\$&') + '")' : 'none';
         place();
       };
@@ -171,7 +171,7 @@
           probe = null;
         }
         url = µ._mjs_fxImage(cur.image, el);
-        pose();
+        sets();
         if (url !== '' && typeof Image === 'function') {
           var u = url;
           probe = new Image();
@@ -193,7 +193,7 @@
         var k = key();
         if (k === sig) return;
         sig = k;
-        if (url !== '') pose();
+        if (url !== '') sets();
         tile();
       }) : null;
       if (mo) mo.observe(el, { attributes: true, attributeFilter: ['class', 'style'] });

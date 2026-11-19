@@ -217,7 +217,7 @@
         var v = v0 * (0.3 + Math.random() * 0.7);
         return { x: x, y: y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, r: 1 + Math.random() * 4 };
       };
-      var mesure = function() {
+      var measure = function() {
         var r = layer.getBoundingClientRect();
         W   = r.width;
         H   = r.height;
@@ -305,8 +305,8 @@
       };
       // la couleur change : l'image qui suit la lit (le moteur écrit la variable CSS aussitôt après)
       recolor = go;
-      mesure();
-      var ro = typeof ResizeObserver === 'function' ? new ResizeObserver(mesure) : null;
+      measure();
+      var ro = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null;
       if (ro) ro.observe(el);
       var io = typeof IntersectionObserver === 'function' ? new IntersectionObserver(function(e) {
         seen = e[e.length - 1].isIntersecting;

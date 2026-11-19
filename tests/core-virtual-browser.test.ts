@@ -366,7 +366,7 @@ for (const nom of NAVIGATEURS) for (const prod of [false, true]) describe(`<@@vi
   }))
 
   // place du haut de la zone visible dans la liste, comptée sur les vraies hauteurs des lignes (l'estimation du module n'y entre pas), et
-  // première ligne visible ; `__avant` garde l'état du saut au moment du geste : un saut déjà tenu donne sa ligne, sinon `null`
+  // première ligne visible ; `__before` garde l'état du saut au moment du geste : un saut déjà tenu donne sa ligne, sinon `null`
   const VUE = `window.__A = (() => { const a = new Float64Array(100001); for (let i = 0; i < 100000; i++) a[i + 1] = a[i] + 20 + (i * 37) % 201; return a })()
 window.__vue = () => { const v = __vp().getBoundingClientRect().top, l = __lignes().find((x) => x.getBoundingClientRect().bottom > v + 0.5); return l ? { id: Number(l.dataset.id), place: __A[Number(l.dataset.id)] + v - l.getBoundingClientRect().top } : null }`
   const attendue = (avant: string, ligne: string) => (avant === ligne ? ligne : 'null')
@@ -378,23 +378,23 @@ window.__vue = () => { const v = __vp().getBoundingClientRect().top, l = __ligne
     for (const [quand, geste] of [['même tâche', '__geste()'], ['une image après', 'requestAnimationFrame(__geste)'], ['trois images après', '__images(2).then(() => requestAnimationFrame(__geste))']]) {
       await page.evaluate('__vp().scrollTop = 0')
       await repos(page)
-      await page.evaluate(`window.__avant = 'aucun geste'; window.__geste = () => { window.__avant = window.__p; __vp().scrollTop = 10000 }`)
+      await page.evaluate(`window.__before = 'aucun geste'; window.__geste = () => { window.__before = window.__p; __vp().scrollTop = 10000 }`)
       await suivre(page, `(() => { const p = __vl().scrollToIndex(60000, 'start'); ${geste}; return p })()`)
       const p = await tenue(page)
       await repos(page)
-      const r = await page.evaluate('({ avant: window.__avant, vue: __vue() })')
+      const r = await page.evaluate('({ avant: window.__before, vue: __vue() })')
       assert.equal(p, attendue(r.avant, '60000'), `${quand} : saut ${r.avant} au moment du geste`)
       assert.ok(r.vue && r.vue.id > 150 && r.vue.id < 350, `${quand} : la liste reste vers 10 000 px, où la barre l'a menée (première ligne visible : ${r.vue?.id})`)
     }
     // cinq images de suite, 200 px chacune, dès la deuxième image du saut : l'utilisateur garde ses 1 000 px
     await page.evaluate('__vp().scrollTop = 0')
     await repos(page)
-    await page.evaluate(`window.__gestes = 0; window.__geste = () => { if (!window.__gestes) { window.__avant = window.__p; window.__depart = __vue() } __vp().scrollTop += 200; if (++window.__gestes < 5) requestAnimationFrame(__geste) }`)
+    await page.evaluate(`window.__gestes = 0; window.__geste = () => { if (!window.__gestes) { window.__before = window.__p; window.__depart = __vue() } __vp().scrollTop += 200; if (++window.__gestes < 5) requestAnimationFrame(__geste) }`)
     await suivre(page, `(() => { const p = __vl().scrollToIndex(20000, 'start'); requestAnimationFrame(() => requestAnimationFrame(__geste)); return p })()`)
     await page.waitForFunction(() => (window as any).__gestes === 5)
     const q = await tenue(page)
     await repos(page)
-    const s = await page.evaluate('({ avant: window.__avant, depart: window.__depart, vue: __vue() })')
+    const s = await page.evaluate('({ avant: window.__before, depart: window.__depart, vue: __vue() })')
     assert.equal(q, attendue(s.avant, '20000'), `défilement continu : saut ${s.avant} au premier geste`)
     assert.ok(s.depart && s.vue && Math.abs(s.vue.place - s.depart.place - 1000) < 1.5, `défilement continu : l'utilisateur garde ses 1 000 px (de ${s.depart?.place} à ${s.vue?.place})`)
     // sans geste, la ligne visée est en haut, au pixel
@@ -407,28 +407,28 @@ window.__vue = () => { const v = __vp().getBoundingClientRect().top, l = __ligne
   it('la molette ou une touche de défilement pendant un saut l\'interrompt : la promesse donne null, la liste reste où l\'utilisateur l\'a menée', () => essai(async (page) => {
     await montrer(page)
     await page.evaluate(VUE)
-    await page.evaluate(`for (const t of ['wheel', 'keydown']) __vl().addEventListener(t, () => { if (window.__avant === undefined) { window.__avant = window.__p; window.__auGeste = __vue() } }, { passive: true })`)
+    await page.evaluate(`for (const t of ['wheel', 'keydown']) __vl().addEventListener(t, () => { if (window.__before === undefined) { window.__before = window.__p; window.__auGeste = __vue() } }, { passive: true })`)
     // cinq crans de 300 px (Firefox borne un cran à la hauteur de la zone qui défile)
     await page.mouse.move(150, 200)
-    await page.evaluate('window.__avant = undefined')
+    await page.evaluate('window.__before = undefined')
     await suivre(page, `__vl().scrollToIndex(20000, 'start')`)
     for (let k = 0; k < 5; k++) await page.mouse.wheel(0, 300)
     const p = await tenue(page)
     await repos(page)
     await repos(page)
-    const r = await page.evaluate('({ avant: window.__avant, geste: window.__auGeste, vue: __vue() })')
+    const r = await page.evaluate('({ avant: window.__before, geste: window.__auGeste, vue: __vue() })')
     assert.equal(p, attendue(r.avant, '20000'), `molette : saut ${r.avant} au moment du geste`)
     assert.ok(r.geste && r.vue && r.vue.place - r.geste.place > 0, `molette : la liste ne remonte pas vers la ligne visée, elle reste plus bas qu'au premier cran (de ${r.geste?.place} à ${r.vue?.place})`)
     // la touche Fin sur la zone qui défile, aucune ligne n'ayant le focus : le navigateur la mène au bout
     await page.evaluate('__vp().scrollTop = 0')
     await repos(page)
-    await page.evaluate('__vp().focus(); window.__avant = undefined')
+    await page.evaluate('__vp().focus(); window.__before = undefined')
     await suivre(page, `__vl().scrollToIndex(20000, 'start')`)
     await page.keyboard.press('End')
     const q = await tenue(page)
     await repos(page)
     await repos(page)
-    const s = await page.evaluate('({ avant: window.__avant, geste: window.__auGeste, vue: __vue() })')
+    const s = await page.evaluate('({ avant: window.__before, geste: window.__auGeste, vue: __vue() })')
     assert.equal(q, attendue(s.avant, '20000'), `touche Fin : saut ${s.avant} au moment du geste`)
     assert.ok(s.geste && s.vue && s.vue.place - s.geste.place > 600, `touche Fin : la liste reste où la touche l'a menée, plus bas qu'au geste (de ${s.geste?.place} à ${s.vue?.place}, ligne ${s.vue?.id})`)
   }))

@@ -73,7 +73,7 @@ describe('mjs_devpanel — montrer les mises à jour', function () {
   const racine = () => window.document.querySelector('[data-mjs-devpanel]')?.shadowRoot
   const clic   = (el: any) => el.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
   const regler = (cle: string, valeur: string) => {
-    const el = racine().querySelector(`[data-maj="${cle}"]`)
+    const el = racine().querySelector(`[data-upd="${cle}"]`)
     el.value = valeur
     el.dispatchEvent(new window.Event('change', { bubbles: true }))
   }
@@ -84,9 +84,9 @@ describe('mjs_devpanel — montrer les mises à jour', function () {
     await attendre(() => !!comp._shadow?.querySelector('.t'))
     const sh = comp._shadow
     window.µ.console()
-    await attendre(() => !!racine()?.querySelector('[data-action="maj"]'))
-    clic(racine().querySelector('[data-action="maj"]'))
-    await attendre(() => !!racine().querySelector('[data-maj="color"]'))
+    await attendre(() => !!racine()?.querySelector('[data-action="updates"]'))
+    clic(racine().querySelector('[data-action="updates"]'))
+    await attendre(() => !!racine().querySelector('[data-upd="color"]'))
     await new Promise((r) => setTimeout(r, 50))
     eclairs.length = 0
     clic(sh.querySelector('.plus'))
@@ -104,8 +104,8 @@ describe('mjs_devpanel — montrer les mises à jour', function () {
     assert.ok(eclairs.some((e) => e.el === sh.querySelector('.t')), 'le mode tient, panneau fermé')
     // décoché
     window.µ.console()
-    await attendre(() => !!racine()?.querySelector('[data-action="maj"]'))
-    clic(racine().querySelector('[data-action="maj"]'))
+    await attendre(() => !!racine()?.querySelector('[data-action="updates"]'))
+    clic(racine().querySelector('[data-action="updates"]'))
     await new Promise((r) => setTimeout(r, 50))
     eclairs.length = 0
     clic(sh.querySelector('.plus'))
@@ -119,9 +119,9 @@ describe('mjs_devpanel — montrer les mises à jour', function () {
     await attendre(() => !!comp._shadow?.querySelector('.t'))
     const sh = comp._shadow
     window.µ.console()
-    await attendre(() => !!racine()?.querySelector('[data-action="maj"]'))
-    if (!racine().querySelector('[data-maj="color"]')) clic(racine().querySelector('[data-action="maj"]'))
-    await attendre(() => !!racine().querySelector('[data-maj="color"]'))
+    await attendre(() => !!racine()?.querySelector('[data-action="updates"]'))
+    if (!racine().querySelector('[data-upd="color"]')) clic(racine().querySelector('[data-action="updates"]'))
+    await attendre(() => !!racine().querySelector('[data-upd="color"]'))
     regler('color', '#ff00ff')
     regler('duration', '900')
     regler('style', 'glow')
@@ -134,7 +134,7 @@ describe('mjs_devpanel — montrer les mises à jour', function () {
     assert.match(JSON.stringify(e.kf), /boxShadow/, 'style glow : un halo')
     assert.equal(e.o.duration, 900)
     // un autre effet : *pulse, écrit dans l'appli (son fichier est connu)
-    const choix = Array.from(racine().querySelector('[data-maj="fx"]').options as ArrayLike<any>).map((o: any) => o.value)
+    const choix = Array.from(racine().querySelector('[data-upd="fx"]').options as ArrayLike<any>).map((o: any) => o.value)
     assert.ok(choix.includes('flash') && choix.includes('pulse'), `les effets proposés : ${choix}`)
     regler('fx', 'pulse')
     await new Promise((r) => setTimeout(r, 30))

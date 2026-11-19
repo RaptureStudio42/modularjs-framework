@@ -35,7 +35,7 @@ function makeMu(mode?: 'warn' | 'error'): any {
 }
 
 // une règle écrite comme dans <vars>, compilée comme le fait le build (textes compris)
-const DEFS = { Percent: parseRule('int 0..100', { bloc: '<types>', ligne: 1 }) }
+const DEFS = { Percent: parseRule('int 0..100', { block: '<types>', line: 1 }) }
 function regle(texte: string): any {
   const ou  = { bloc: '<vars>', ligne: 1 }
   // un texte de plusieurs lignes : les champs d'un objet en retrait, comme sous une variable du <vars>

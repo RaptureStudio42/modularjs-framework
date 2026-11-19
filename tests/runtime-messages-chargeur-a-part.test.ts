@@ -49,11 +49,11 @@ describe('chargeur des messages à part : même console qu\'avec le chargeur au 
     }
   })
 
-  // chargeur au cœur (`aPart` faux) : mjs_init.ts tel quel ; à part : l'amorce du cœur de production (bloc `<msg-chargeur>` retiré),
+  // chargeur au cœur (`aPart` faux) : mjs_init.ts tel quel ; à part : l'amorce du cœur de production (bloc `<msg-loader>` retiré),
   // qui importe le fichier du chargeur — module de Node, qui lit les globaux : la fenêtre de l'essai y est posée
   function poste(aPart: boolean, opts: Options = {}): Poste {
     const win: any = new Window({ url: 'http://localhost/' })
-    const src = (aPart ? B.projeterBlocs(INIT, { 'msg-chargeur': false }) : INIT).replace(/export\s*\{[^}]*\}/, '')
+    const src = (aPart ? B.projectBlocks(INIT, { 'msg-loader': false }) : INIT).replace(/export\s*\{[^}]*\}/, '')
     const demandes: string[] = []
     const fetchSimule = (url: string) => {
       demandes.push(url)

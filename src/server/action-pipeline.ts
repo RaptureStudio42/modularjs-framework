@@ -49,8 +49,8 @@ export function navExtras(render: RenderConfig | undefined): { target?: string, 
 // avertir non plus. Refus explicite des 3, comme `µ._mjs_safeKey` (runtime/mjs_init.ts) pour une clé unique
 // venue d'une source non fiable ; les écritures profondes du navigateur (`$o.a[k] = v`, `$$o.a[k] = v`), elles,
 // ne refusent aucun nom.
-function isUnsafeFieldName(champ: string): boolean {
-  return champ === '__proto__' || champ === 'constructor' || champ === 'prototype'
+function isUnsafeFieldName(field: string): boolean {
+  return field === '__proto__' || field === 'constructor' || field === 'prototype'
 }
 
 // une occurrence brute de `delimAfterCrlf` (CRLF + --boundary) peut être FORTUITE en plein
@@ -76,39 +76,39 @@ function parseMultipart(buffer: Buffer, boundary: string, pathname: string, form
   let pos = buffer.indexOf(delim)
   if (pos === -1) return null
   const body: Record<string, string> = {}
-  const champsAvertis = new Set<string>()   // un seul console.error par champ, pas un par partie
+  const warnedFields = new Set<string>()   // un seul console.error par champ, pas un par partie
   while (true) {
     pos += delim.length
     if (buffer.toString('latin1', pos, pos + 2) === '--') break   // --boundary-- : délimiteur terminal
     const nextCrlf = findDelimAfterCrlf(buffer, delimAfterCrlf, pos)
     const next = nextCrlf === -1 ? -1 : nextCrlf + 2   // +2 : repositionne sur le '--' (comme avant), après le CRLF
-    const fin = next === -1 ? buffer.length : next
+    const end = next === -1 ? buffer.length : next
     // fin des en-têtes cherchée dans la partie courante seulement (vue sans copie) : chercher
     // jusqu'au bout du corps à chaque partie rendait l'analyse quadratique
-    const headerEnd = buffer.subarray(0, fin).indexOf('\r\n\r\n', pos)
-    if (headerEnd !== -1 && headerEnd < fin) {
+    const headerEnd = buffer.subarray(0, end).indexOf('\r\n\r\n', pos)
+    if (headerEnd !== -1 && headerEnd < end) {
       const headers = buffer.toString('utf-8', pos, headerEnd)
-      const dispo = headers.match(/Content-Disposition\s*:\s*([^\r\n]+)/i)
-      if (dispo) {
-        const nameMatch = dispo[1].match(/name="([^"]*)"/i)
+      const disposition = headers.match(/Content-Disposition\s*:\s*([^\r\n]+)/i)
+      if (disposition) {
+        const nameMatch = disposition[1].match(/name="([^"]*)"/i)
         if (nameMatch) {
-          const champ = nameMatch[1]
-          if (/filename="[^"]*"/i.test(dispo[1])) {
-            if (!champsAvertis.has(champ)) {
-              champsAvertis.add(champ)
-              console.error(t('server.form-fichier-ignore', { pathname, champ }))
+          const field = nameMatch[1]
+          if (/filename="[^"]*"/i.test(disposition[1])) {
+            if (!warnedFields.has(field)) {
+              warnedFields.add(field)
+              console.error(t('server.form-file-ignored', { pathname, field: field }))
             }
-          } else if (isUnsafeFieldName(champ)) {
+          } else if (isUnsafeFieldName(field)) {
             // nom réservé (cf. isUnsafeFieldName) : refusé + tracé, jamais absorbé en silence.
-            if (!champsAvertis.has(champ)) {
-              champsAvertis.add(champ)
-              console.error(t('server.form-champ-reserve-ignore', { pathname, champ }))
+            if (!warnedFields.has(field)) {
+              warnedFields.add(field)
+              console.error(t('server.form-field-reserved-ignored', { pathname, field: field }))
             }
           } else {
             // CRLF séparateur juste avant le prochain délimiteur : exclu de la valeur (toléré absent)
-            const crlf = buffer.toString('latin1', fin - 2, fin) === '\r\n'
-            body[champ] = buffer.toString('utf-8', headerEnd + 4, crlf ? fin - 2 : fin)
-            form.append(champ, body[champ])
+            const crlf = buffer.toString('latin1', end - 2, end) === '\r\n'
+            body[field] = buffer.toString('utf-8', headerEnd + 4, crlf ? end - 2 : end)
+            form.append(field, body[field])
           }
         }
       }
@@ -213,9 +213,9 @@ export async function handleMutatingRequest(req: IncomingMessage, res: ServerRes
   // en mémoire sur un corps hostile), connexion fermée proprement.
   const maxBody          = config.render?.maxBody ?? RENDER_MAX_BODY_DEFAULT
   const chunks: Buffer[] = []
-  let total = 0
-  let rejected = false
-  let interrompu = false
+  let total              = 0
+  let rejected           = false
+  let interrupted        = false
   await new Promise<void>((done) => {
     req.on('data', (chunk: Buffer) => {
       if (rejected) return
@@ -234,13 +234,13 @@ export async function handleMutatingRequest(req: IncomingMessage, res: ServerRes
     // corps interrompu en route (panne réseau, client qui abandonne) : ni 'error' ni 'aborted'
     // ne garantit un corps complet — un done() muet ici laissait l'action s'exécuter avec des
     // données partielles (cf. la garde juste après la Promise)
-    req.on('error', () => { interrompu = true; done() })
-    req.on('aborted', () => { interrompu = true; done() })
+    req.on('error', () => { interrupted = true; done() })
+    req.on('aborted', () => { interrupted = true; done() })
   })
   if (rejected) return true
   // corps incomplet : refusé avant toute mutation, l'action n'est jamais appelée avec un
   // fragment — symétrique au plafond ci-dessus (413 = trop, 400 = pas assez)
-  if (interrompu) { res.statusCode = 400; res.end('Bad Request'); return true }
+  if (interrupted) { res.statusCode = 400; res.end('Bad Request'); return true }
 
   // d. parse — multipart (champs texte seulement) ou urlencoded ; dernière valeur gagne dans `body`
   // (URLSearchParams itère dans l'ordre d'insertion, parseMultipart dans l'ordre d'apparition).
@@ -253,13 +253,13 @@ export async function handleMutatingRequest(req: IncomingMessage, res: ServerRes
     const boundaryMatch = contentType.match(/boundary=(?:"([^"]*)"|([^;]+))/i)
     const boundary = (boundaryMatch ? (boundaryMatch[1] ?? boundaryMatch[2]) : '').trim()
     if (!boundary) { res.statusCode = 400; res.end('Bad Request'); return true }
-    const champs = parseMultipart(Buffer.concat(chunks), boundary, pathname, form)
-    if (!champs) { res.statusCode = 400; res.end('Bad Request'); return true }
-    Object.assign(body, champs)
+    const fields = parseMultipart(Buffer.concat(chunks), boundary, pathname, form)
+    if (!fields) { res.statusCode = 400; res.end('Bad Request'); return true }
+    Object.assign(body, fields)
   } else {
     for (const [k, v] of new URLSearchParams(Buffer.concat(chunks).toString('utf-8'))) {
       // même garde que parseMultipart (cf. isUnsafeFieldName) : nom réservé refusé + tracé.
-      if (isUnsafeFieldName(k)) { console.error(t('server.form-champ-reserve-ignore', { pathname, champ: k })); continue }
+      if (isUnsafeFieldName(k)) { console.error(t('server.form-field-reserved-ignored', { pathname, field: k })); continue }
       body[k] = v
       form.append(k, v)
     }
@@ -271,35 +271,35 @@ export async function handleMutatingRequest(req: IncomingMessage, res: ServerRes
   // f. exécution — le SENS du retour est interprété ICI (l'action elle-même ne fait que
   // router vers la bonne fonction, cf. serve-entry.ts).
   Object.defineProperty(req, 'form', { value: form, configurable: true, writable: true })
-  let resultat: unknown
+  let result: unknown
   try {
-    resultat = await actionMatch.fn(actionMatch.params, body, req)
+    result = await actionMatch.fn(actionMatch.params, body, req)
   } catch (e: any) {
-    console.error(t('server.action-exception', { pathname, erreur: e && e.message ? e.message : String(e) }))
+    console.error(t('server.action-exception', { pathname, error: e && e.message ? e.message : String(e) }))
     // (point 2 de capture).
-    recordServer({ message: e && e.message ? e.message : String(e), pile: e && e.stack, url: pathname })
+    recordServer({ message: e && e.message ? e.message : String(e), stack: e && e.stack, url: pathname })
     res.statusCode = 500; res.end('Internal Server Error'); return true
   }
-  if (isPlainObject(resultat) && 'redirect' in resultat) {
-    const cible = (resultat as any).redirect
+  if (isPlainObject(result) && 'redirect' in result) {
+    const target = (result as any).redirect
     // cible INTERNE seulement : `//evil.example` et `/\evil` commencent par `/` mais sont
     // lus comme des URL protocole-relatives par le navigateur → open redirect (sonde).
     // `/\t/evil.example` (tabulation) passait CETTE garde : Node envoie
     // l'en-tête Location tel quel, mais le navigateur RETIRE les tabulations/sauts de ligne en
     // analysant l'URL → `//evil.example` → même redirection externe. Refus de tout caractère
     // de contrôle en plus.
-    if (typeof cible === 'string' && cible.startsWith('/') && cible[1] !== '/' && cible[1] !== '\\' && !/[\x00-\x1f\x7f]/.test(cible)) {
+    if (typeof target === 'string' && target.startsWith('/') && target[1] !== '/' && target[1] !== '\\' && !/[\x00-\x1f\x7f]/.test(target)) {
       res.statusCode = 303
-      res.setHeader('Location', cible)
+      res.setHeader('Location', target)
       res.end()
       return true
     }
-    console.error(t('server.form-cible-invalide', { pathname, cible: String(cible) }))
+    console.error(t('server.form-target-invalid', { pathname, target: String(target) }))
     res.statusCode = 500; res.end('Internal Server Error'); return true
   }
-  if (isPlainObject(resultat) && isPlainObject((resultat as any).errors)) {
+  if (isPlainObject(result) && isPlainObject((result as any).errors)) {
     const version = readBuildVersion(manifestPath)
-    const propsRechargees = page ? await entry.propsFor(pathname, req).catch(() => ({})) : {}
+    const reloadedProps = page ? await entry.propsFor(pathname, req).catch(() => ({})) : {}
     res.statusCode = 422
     res.setHeader('Content-Type', 'application/json; charset=utf-8')
     res.setHeader('Vary', 'X-MJS-Nav')
@@ -307,9 +307,9 @@ export async function handleMutatingRequest(req: IncomingMessage, res: ServerRes
     // title: null — même clé que le protocole nominal, mais un 422 n'est jamais lu comme un titre : le
     // client ne fait qu'un µ._mjs_resSet(props) sur ce chemin (cf. mjs_ujs.ts, branche 422 de µ._mjs_navDispatch),
     // aucune installation n'a lieu, donc aucun contact avec document.title.
-    res.end(JSON.stringify({ module: page ? page.component : null, props: { ...propsRechargees, errors: (resultat as any).errors }, url: reqUrl, title: null, version, ...navExtras(config.render) }))
+    res.end(JSON.stringify({ module: page ? page.component : null, props: { ...reloadedProps, errors: (result as any).errors }, url: reqUrl, title: null, version, ...navExtras(config.render) }))
     return true
   }
-  console.error(t('server.form-resultat-invalide', { pathname }))
+  console.error(t('server.form-result-invalid', { pathname }))
   res.statusCode = 500; res.end('Internal Server Error'); return true
 }

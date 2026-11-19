@@ -30,7 +30,7 @@ describe('µ.smooth — avertissement échantillon non fini PAR INSTANCE', () =>
     const { µ, tasks } = makeMu((m) => warnings.push(m))
 
     const source1: any = { a: { x: 0, y: 0 } }
-    const out1 = µ.smooth(source1, { retard: 5 })
+    const out1 = µ.smooth(source1, { delay: 5 })
     const task1 = tasks[0]
     task1._mjs_step(0)
     source1.a = { x: Infinity, y: 1 }
@@ -38,7 +38,7 @@ describe('µ.smooth — avertissement échantillon non fini PAR INSTANCE', () =>
     assert.equal(warnings.length, 1, 'le 1er flux avertit bien une fois')
 
     const source2: any = { b: { x: 0, y: 0 } }
-    const out2 = µ.smooth(source2, { retard: 5 })
+    const out2 = µ.smooth(source2, { delay: 5 })
     const task2 = tasks[1]
     task2._mjs_step(0)
     source2.b = { x: NaN, y: 1 }
@@ -52,7 +52,7 @@ describe('µ.smooth — avertissement échantillon non fini PAR INSTANCE', () =>
     const warnings: any[] = []
     const { µ, tasks } = makeMu((m) => warnings.push(m))
     const source: any = { a: { x: 0, y: 0 } }
-    const out = µ.smooth(source, { retard: 5 })
+    const out = µ.smooth(source, { delay: 5 })
     const task = tasks[0]
     task._mjs_step(0)
     for (let i = 1; i <= 5; i++) { source.a = { x: Infinity, y: i }; task._mjs_step(i * 10) }

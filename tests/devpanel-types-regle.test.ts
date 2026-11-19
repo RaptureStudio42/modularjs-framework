@@ -80,14 +80,14 @@ describe('mjs_devpanel — la règle de chaque variable typée', function () {
   })
 
   const racine = () => window.document.querySelector('[data-mjs-devpanel]')?.shadowRoot
-  const ligne  = (motif: RegExp) => Array.from(racine().querySelectorAll('.ligne') as ArrayLike<any>).find((b: any) => motif.test(b.textContent))
+  const ligne  = (motif: RegExp) => Array.from(racine().querySelectorAll('.line') as ArrayLike<any>).find((b: any) => motif.test(b.textContent))
   const clic   = (el: any) => el.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
   // la ligne de l'inspecteur dont la clé est `cle`, et le texte de sa règle (null : aucune)
-  const rangee = (cle: string) => Array.from(racine().querySelectorAll('.detail .di-ligne') as ArrayLike<any>).find((l: any) => l.querySelector('.di-cle')?.textContent === cle)
+  const rangee = (cle: string) => Array.from(racine().querySelectorAll('.detail .di-line') as ArrayLike<any>).find((l: any) => l.querySelector('.di-key')?.textContent === cle)
   const regle  = (cle: string) => {
     const l = rangee(cle)
     assert.ok(l, `aucune ligne « ${cle} » :\n${racine().querySelector('.detail').textContent}`)
-    return l.querySelector('.di-regle')?.textContent ?? null
+    return l.querySelector('.di-rule')?.textContent ?? null
   }
 
   async function ouvrirSur(balise: string, pret: (el: any) => boolean) {
@@ -110,13 +110,13 @@ describe('mjs_devpanel — la règle de chaque variable typée', function () {
     await ouvrirSur('mjs-dpt-player', (el) => el._shadow?.querySelector('.v')?.textContent === '50 red ann 3')
     clic(ligne(/dpt-player/))
     assert.equal(regle('pseudo'), '· string /^[<a-z]+$/')
-    assert.equal(rangee('pseudo').querySelector('.di-regle').children.length, 0)
+    assert.equal(rangee('pseudo').querySelector('.di-rule').children.length, 0)
   })
 
   it('écrire dans le panneau passe par la règle', async () => {
     const el = await ouvrirSur('mjs-dpt-player', (e) => e._shadow?.querySelector('.v')?.textContent === '50 red ann 3')
     clic(ligne(/dpt-player/))
-    const champ = rangee('volume').querySelector('input.di-valeur')
+    const champ = rangee('volume').querySelector('input.di-value')
     champ.value = '150'
     champ.dispatchEvent(new window.Event('change', { bubbles: true }))
     assert.equal(el._state.volume, 100, '150 ramené à 100')

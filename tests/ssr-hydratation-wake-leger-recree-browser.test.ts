@@ -15,6 +15,7 @@ import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { findConfig, resolveBundlerOpts } from '../src/bundler/config.js'
 import { createRenderHandler } from '../src/server/render-request.js'
+import { playTogether } from './helpers/engines-together.js'
 
 const ENVS    = ['dev', 'prod'] as const
 const MOTEURS = ['chromium', 'firefox', 'webkit'] as const
@@ -168,7 +169,7 @@ async function ouvrir(browser: any, p: Projet, chemin: string, tag: string, csr:
 
 after(async () => { await terminateSharedWorkerPool() })
 
-for (const nom of MOTEURS) describe(`composant léger paresseux recréé par le navigateur — ${nom}`, function () {
+for (const nom of MOTEURS) playTogether(describe(`composant léger paresseux recréé par le navigateur — ${nom}`, function () {
   this.timeout(120000)
   let browser: any
   // l'arbre de la page bâtie par le navigateur seul, ses cartes cliquées une fois, par projet et par page
@@ -219,4 +220,4 @@ for (const nom of MOTEURS) describe(`composant léger paresseux recréé par le 
       }
     })
   }
-})
+}))

@@ -164,7 +164,7 @@ const TEMOINS: Temoin[] = [
 // ce que fait `*filter` sans rien écrire : l'atelier de retouche, la pose et le retrait du filtre, le suivi d'une variable
 const RESTE = [
   'function _mjsFxHolder(el, id) {',
-  'var _mjsFxFilN = 0;',
+  'var _mjsFxFilterN = 0;',
   'function _mjsFxPlan(',
   'var _MJS_FX_FILTERS = {',
   'µ._mjs_fxDefs.filter = {',

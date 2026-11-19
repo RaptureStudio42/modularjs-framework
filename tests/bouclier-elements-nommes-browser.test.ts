@@ -36,11 +36,11 @@ const CAS: Record<string, string> = {
 // devient un accesseur propre qui compte ses lectures et rend la vraie valeur. `nodeType` n'est pas compté : la recherche des feuilles
 // d'une vue le lit sur la racine de la balise, le document, où une valeur recouverte (un élément, jamais 11) l'arrête de même
 const COMPTER = `(() => {
-  window.__lu = {}
+  window.__read = {}
   for (const k of ['parentNode', 'host', '_shadow', 'shadowRoot']) {
     let P = Object.getPrototypeOf(document), d
     while (P && !(d = Object.getOwnPropertyDescriptor(P, k))) P = Object.getPrototypeOf(P)
-    Object.defineProperty(document, k, { configurable: true, get() { __lu[k] = (__lu[k] || 0) + 1; return d ? (d.get ? d.get.call(this) : d.value) : undefined } })
+    Object.defineProperty(document, k, { configurable: true, get() { __read[k] = (__read[k] || 0) + 1; return d ? (d.get ? d.get.call(this) : d.value) : undefined } })
   }
 })()`
 
@@ -155,7 +155,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`bouclier
       else await borne(page.close(), 3000, undefined)
     }
     const { page, vu } = await visite(browser, base + '/compte', COMPTER)
-    const lu = vu === true ? await borne(page.evaluate('window.__lu'), 3000, 'page gelée') : `page gelée, ou composant ni rendu ni visible (${vu})`
+    const lu = vu === true ? await borne(page.evaluate('window.__read'), 3000, 'page gelée') : `page gelée, ou composant ni rendu ni visible (${vu})`
     if (vu !== true) await relancer()
     else await borne(page.close(), 3000, undefined)
     if (JSON.stringify(lu) !== '{}') fautes.push(`page témoin, lectures faites sur document : ${JSON.stringify(lu)}`)

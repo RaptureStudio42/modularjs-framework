@@ -1,6 +1,7 @@
 // Une page à un seul formulaire, qui reste dans la page, une page sans formulaire, un champ hors de tout formulaire : les réponses du
 // serveur s'y lisent comme dans le sac commun `µres.errors`, sans rien de plus — ce que montre chaque <@@field>, l'objet formulaire, et le
-// nombre de passages des µeffect de la page (avec et sans `µform`) sont ceux d'avant le rangement des réponses par formulaire. Refus,
+// nombre de passages des µeffect d'une page sans `µform` sont ceux d'avant le rangement des réponses par formulaire ; avec `µform`, chaque
+// µeffect a lu à son dernier passage la valeur du moment (un µeffect ne repasse que pour ce qu'il a lu : ses passages ne se comptent pas). Refus,
 // succès, deux succès de suite, frappe, lien qui répond `errors: null` ou une autre clé, écritures de l'application dans `µres.errors`.
 // moteurs exigés : chromium firefox webkit
 
@@ -86,7 +87,7 @@ const CAS: Cas[] = [
     }
   },
   {
-    titre: 'un formulaire avec objet et trois µeffect (validité, sac, autre clé) : passages comptés sur des succès de suite, deux liens, un refus',
+    titre: 'un formulaire avec objet et trois µeffect (validité, sac, autre clé) : la valeur que chacun a lue en dernier, sur des succès de suite, deux liens, un refus',
     sources: { 'u3.mjs': `<vars>
   $q5 string 3..10
 </vars>
@@ -95,11 +96,11 @@ const CAS: Cas[] = [
   $q5   = 'okok'
   $form = µform(this)
   µeffect ->
-    window.__compte('eff-valid', $form.valid)
+    window.__seenMark('eff-valid', $form.valid)
   µeffect ->
-    window.__compte('eff-errors', µres.errors)
+    window.__seenMark('eff-errors', µres.errors)
   µeffect ->
-    window.__compte('eff-autre', µres.autre)
+    window.__seenMark('eff-autre', µres.autre)
 </script>
 
 <p id="ex">{JSON.stringify([$form.q5.error])}</p>
@@ -111,32 +112,38 @@ const CAS: Cas[] = [
     objet: true,
     refus: { fr5: { q5: 'Q5 refuse' } },
     attendu: [
-      'depart | compteurs={"eff-valid":2,"eff-errors":2,"eff-autre":2}',
-      'null-1 | compteurs={"eff-valid":6,"eff-errors":6,"eff-autre":6}',
-      'null-3 | compteurs={"eff-valid":12,"eff-errors":12,"eff-autre":12}',
-      'lien-null | compteurs={"eff-valid":12,"eff-errors":12,"eff-autre":12}',
-      'lien-autre | compteurs={"eff-valid":13,"eff-errors":13,"eff-autre":13}',
-      '422 | compteurs={"eff-valid":19,"eff-errors":19,"eff-autre":19}',
+      'depart | eff-valid=true eff-errors=undefined eff-autre=undefined',
+      'null-1 | eff-valid=true eff-errors=null eff-autre=undefined',
+      'null-3 | eff-valid=true eff-errors=null eff-autre=undefined',
+      'lien-null | eff-valid=true eff-errors=null eff-autre=undefined',
+      'lien-autre | eff-valid=true eff-errors=null eff-autre=1',
+      '422 | eff-valid=false eff-errors={"q5":"Q5 refuse"} eff-autre=1',
       'champ | q5=["error","Q5 refuse"] ex=["Q5 refuse"]',
-      'repos | compteurs={"eff-valid":19,"eff-errors":19,"eff-autre":19}'
+      'repos | eff-valid=false eff-errors={"q5":"Q5 refuse"} eff-autre=1',
+      'succes | eff-valid=true eff-errors=null eff-autre=1',
+      'champ-succes | q5=["ok",""] ex=[""]'
     ],
     jouer: async (h) => {
-      await h.compter('depart')
+      await h.vus('depart')
       await h.envoyer('fr5')
-      await h.compter('null-1')
+      await h.vus('null-1')
       await h.envoyer('fr5')
       await h.envoyer('fr5')
-      await h.compter('null-3')
+      await h.vus('null-3')
       await h.lien('ln5')
-      await h.compter('lien-null')
+      await h.vus('lien-null')
       await h.lien('la5', '/lien-autre')
-      await h.compter('lien-autre')
+      await h.vus('lien-autre')
       await h.remplir('q5', 'bad')
       await h.envoyer('fr5')
-      await h.compter('422')
+      await h.vus('422')
       await h.voir('champ')
       await h.attendre(1000)
-      await h.compter('repos')
+      await h.vus('repos')
+      await h.remplir('q5', 'okok')
+      await h.envoyer('fr5')
+      await h.vus('succes')
+      await h.voir('champ-succes')
     }
   },
   {

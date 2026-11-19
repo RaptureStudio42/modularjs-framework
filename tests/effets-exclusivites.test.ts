@@ -573,13 +573,13 @@ describe('effets — exclusivités MJS', function () {
     await monter('mjs-fx-direct-auto', '.r')
     await attendre(() => !!sock._mjs_fxPackages?.['reactions:'])
     assert.deepEqual(Object.keys(sock._mjs_fxPackages).sort(), ['heatmap:', 'reactions:'])
-    assert.equal(sock._mjs_fxPackages['heatmap:'].paquet, 'heatmapPackage')
+    assert.equal(sock._mjs_fxPackages['heatmap:'].pack, 'heatmapPackage')
     const sock2 = fauxSocket()
     await monter('mjs-fx-suivre-auto', '.m')
-    assert.equal(sock2._mjs_fxPackages?.['follow:']?.paquet, 'followPackage')
+    assert.equal(sock2._mjs_fxPackages?.['follow:']?.pack, 'followPackage')
     const sock3 = fauxSocket()
     await monter('mjs-fx-curseurs', '.c')
-    assert.equal(sock3._mjs_fxPackages?.['cursors:']?.paquet, 'cursorsPackage')
+    assert.equal(sock3._mjs_fxPackages?.['cursors:']?.pack, 'cursorsPackage')
   })
 
   it('*cursors(max) : au plus max curseurs à l\'écran (20 par défaut) — un nouveau prend la place de celui qui a bougé le moins récemment ; positions une à une ou regroupées par le serveur ; une variable le change', async () => {

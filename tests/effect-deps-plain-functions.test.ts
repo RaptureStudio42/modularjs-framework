@@ -66,7 +66,9 @@ let helper2 = function() { if ($.d) { return helper() } return $.d }
     const src = `function outer() { let helper = function() { return $.g }; return helper }
 µ.effect(function() { return helper() })`
     const out = annotateEffectDeps(src)
-    assert.match(out, /,\s*\[\]\)/, `deps attendues [] (helper locale à outer, invisible au top-level). got:\n${out}`)
+    // la liste reste vide ; `helper`, nom que le script lie ailleurs sans que le relevé y trouve une fonction, est appelé pendant le
+    // passage : la marque du doute devant un état partagé (3e argument) est posée
+    assert.match(out, /,\s*\[\], 1\)/, `deps attendues [] et la marque du doute (helper locale à outer, invisible au top-level). got:\n${out}`)
   })
 
   it('forme FunctionDeclaration top-level : function helper() { return $.d }', () => {

@@ -152,6 +152,9 @@ export function computeForwardedOrigin(
 ): { forwardedUrl?: string; forwardedCookie?: string } {
   const cfg = render?.forwardOrigin
   if (cfg === false) return {}
+  // chemin de la requête, toujours absolu : sans « / » initial, `@evil.example/` collé à l'origine composerait une adresse vers
+  // un autre hôte (`https://back.example@evil.example/`) — repli sûr
+  if (!pathname.startsWith('/')) return {}
   const first = (v: string | string[] | undefined): string | undefined => Array.isArray(v) ? v[0] : v
   const cookie = first(headers['cookie'])
   const cookieOut = cookie ? { forwardedCookie: cookie } : {}

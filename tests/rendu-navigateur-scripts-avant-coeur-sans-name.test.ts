@@ -74,9 +74,9 @@ describe('rendu par navigateur — les scripts posés avant le cœur tournent se
     for (const retouche of ['insertRule', 'deleteRule', 'replace']) {
       const f: any = new bac.window.CSSStyleSheet()
       f.replaceSync('a { color: red }')
-      assert.equal(f.__mjsTexte, 'a { color: red }', 'texte retenu')
+      assert.equal(f.__mjsText, 'a { color: red }', 'texte retenu')
       f[retouche]('b { color: blue }')
-      assert.equal(f.__mjsTexte, undefined, retouche + ' : le texte retenu est oublié')
+      assert.equal(f.__mjsText, undefined, retouche + ' : le texte retenu est oublié')
     }
   })
 

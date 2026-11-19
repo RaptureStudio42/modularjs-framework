@@ -30,7 +30,7 @@ describe('MJS-WS — suivre l’écran : le débit de la souris n’est jamais r
     try {
     const { app, ecouteurs, envois } = appli()
     const pkg: any = followPackage({ onLog: () => {}, canLead: () => true } as any)
-    pkg.installer(app)
+    pkg.install(app)
     const souris  = ecouteurs.get('follow:cursor')!
     const meneur  = client('meneur')
     const p       = { room: 'cours', p: [0.5, 0.5] }

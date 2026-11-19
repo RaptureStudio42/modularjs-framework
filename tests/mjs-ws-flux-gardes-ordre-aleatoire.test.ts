@@ -242,7 +242,7 @@ async function banc(graines: number[], longueur: number, ou: boolean, delai?: nu
 }
 
 const plage = (de: number, n: number) => Array.from({ length: n }, (_, i) => de + i)
-const echuMessage = t('ws.streams.garde-sans-reponse')
+const echuMessage = t('ws.streams.guard-no-response')
 
 describe('MJS-WS — gardes des flux : suites d’événements dans un ordre aléatoire, contre le droit réel', function () {
   this.timeout(60000)

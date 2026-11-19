@@ -135,7 +135,7 @@ window.__libelles = function () {
   voir(document, '')
   return out
 }
-window.__avant = window.__libelles()
+window.__before = window.__libelles()
 window.__sauts = []
 var __texte = function (n) { return n.nodeType === 3 && n.textContent.trim() !== '' }
 var __obs = new MutationObserver(function (liste) {
@@ -147,7 +147,7 @@ var __obs = new MutationObserver(function (liste) {
     window.__sauts.push(m.type + ' ' + (m.attributeName || '') + ' sur ' + (cible && cible.localName) + '.' + (cible && cible.getAttribute('class')) + ' : ' + (m.type === 'attributes' ? m.target.getAttribute(m.attributeName) : m.target.textContent) + ajoutes.map(function (n) { return ' +' + n.textContent }).join('') + retires.map(function (n) { return ' -' + n.textContent }).join(''))
   })
 })
-window.__avant.forEach(function (x) { __obs.observe(x[0], { attributes: true, attributeFilter: ['aria-label'], characterData: true, childList: true, subtree: true }) })
+window.__before.forEach(function (x) { __obs.observe(x[0], { attributes: true, attributeFilter: ['aria-label'], characterData: true, childList: true, subtree: true }) })
 `
 
 describe('modules cœur : la page servie reprise dans Chromium réel garde leurs libellés', function () {
@@ -198,12 +198,12 @@ describe('modules cœur : la page servie reprise dans Chromium réel garde leurs
     // sa barre d'outils (mêmes textes, mêmes classes), que le rendu serveur pose ses libellés ou non : défaut à part, sans
     // rapport avec les libellés — ses nœuds ne sont comparés que par leurs textes
     const etat = await page.evaluate(() => {
-      const w = window as any
-      const apres = w.__libelles()
-      const ecrit = (l: any[]) => l.map((x: any) => x[0].localName + '.' + x[1] + '=' + x[2])
-      const refaits = w.__avant.filter((x: any, i: number) => x[3] !== 'mjs-core-chart' && (!x[0].isConnected || !apres[i] || apres[i][0] !== x[0])).map((x: any) => x[3] + ' ' + x[0].localName + '.' + x[0].getAttribute('class'))
-      const gardes  = w.__avant.filter((x: any) => x[3] !== 'mjs-core-chart').length
-      return { avant: ecrit(w.__avant), apres: ecrit(apres), refaits, gardes, sauts: w.__sauts, hydrate: (document.querySelector('mjs-lib-ssr') as any)._mjs_hydrated }
+      const w       = window as any
+      const apres   = w.__libelles()
+      const ecrit   = (l: any[]) => l.map((x: any) => x[0].localName + '.' + x[1] + '=' + x[2])
+      const refaits = w.__before.filter((x: any, i: number) => x[3] !== 'mjs-core-chart' && (!x[0].isConnected || !apres[i] || apres[i][0] !== x[0])).map((x: any) => x[3] + ' ' + x[0].localName + '.' + x[0].getAttribute('class'))
+      const gardes  = w.__before.filter((x: any) => x[3] !== 'mjs-core-chart').length
+      return { avant: ecrit(w.__before), apres: ecrit(apres), refaits, gardes, sauts: w.__sauts, hydrate: (document.querySelector('mjs-lib-ssr') as any)._mjs_hydrated }
     })
     if (!cas.prod) assert.equal(etat.hydrate, true, 'la page est reprise, pas refaite')
     const t = attendus(cas)

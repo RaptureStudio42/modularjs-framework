@@ -56,11 +56,11 @@ for (const [nom, K] of [['Map', Map], ['WeakMap', WeakMap], ['Set', Set], ['Weak
 }`
 
 // aides des fonctionnalités : époques (objet partagé, objet tenu), mise à jour fine, compteurs des lignes propres
-const AIDES = ['_mjsDeepSuite', '_mjsDeepLong', '_mjsDeepEpoque', '_mjsDeepEpoqueObjet', '_mjsDeepMilieu', 'µ._mjs_bumpEpoch', '_mjsFineEcrite', '_mjsFineSet', '_mjsFineStruct', '_mjsFineCompte']
+const AIDES = ['_mjsDeepRest', '_mjsDeepLong', '_mjsDeepEpoch', '_mjsDeepEpochObject', '_mjsDeepMiddle', 'µ._mjs_bumpEpoch', '_mjsFineWritten', '_mjsFineSet', '_mjsFineStruct', '_mjsFineCount']
 // le niveau d'avant ces fonctionnalités, par écriture : µ._mjs_deepSet, ses trois aides fondues (chemin, racine, objet interdit), la
 // notification (_mjs_notifyMutationAliased, _mjs_notifyMutation, _mjs_invalidate, _mjs_varHasUserEffect) ; rawSet.has (racine µraw),
 // rootsByTarget.get (variables qui atteignent l'objet) et la clé mise en file de la boucle. La recherche de l'objet écrit parmi les
-// objets tenus (`µ._mjs_tenus`) se fait une fois par objet et par tour, pas à chaque écriture (cf. _mjsDeepTenu, mjs_deep.ts)
+// objets tenus (`µ._mjs_holders`) se fait une fois par objet et par tour, pas à chaque écriture (cf. _mjsDeepHeld, mjs_deep.ts)
 const APPELS_MAX = 8
 const OPS_MAX    = 3
 const N1 = 200
@@ -86,7 +86,7 @@ describe('écriture profonde : chaque opération ajoutée n\'est payée que par 
     const coeur = files.find((f) => /^mjs_core-/.test(f))!
     code = files.filter((f) => f !== coeur).reduce((acc, f) => acc + '\n' + stripEsm(readFileSync(join(outDir, f), 'utf-8')), stripEsm(readFileSync(join(outDir, coeur), 'utf-8')))
     // le cœur de ces applis porte la mise à jour fine (le gabarit lit `$o.a.b.c`, champ nommé) : celui du banc
-    assert.match(code, /function _mjsFineEcrite\(/, 'le cœur construit ne porte pas la mise à jour fine : le banc la porte')
+    assert.match(code, /function _mjsFineWritten\(/, 'le cœur construit ne porte pas la mise à jour fine : le banc la porte')
     session.connect()
     await session.post('Profiler.enable')
     await session.post('Profiler.startPreciseCoverage', { callCount: true, detailed: false })
@@ -155,14 +155,14 @@ describe('écriture profonde : chaque opération ajoutée n\'est payée que par 
     assert.deepEqual(AIDES.filter((f) => appels.has(f)), [], `aides appelées par écriture : ${texte(appels)}`)
     assert.ok(somme(appels) <= APPELS_MAX, `${somme(appels)} appels par écriture (au plus ${APPELS_MAX}) : ${texte(appels)}`)
     assert.ok(somme(ops) <= OPS_MAX, `${somme(ops)} opérations sur les collections par écriture (au plus ${OPS_MAX}) : ${texte(ops)}`)
-    // la recherche de l'objet écrit parmi les objets tenus (`µ._mjs_tenus`) : une fois par objet et par tour, la réponse « tenu par
+    // la recherche de l'objet écrit parmi les objets tenus (`µ._mjs_holders`) : une fois par objet et par tour, la réponse « tenu par
     // personne » retenue ; une boucle qui écrit le même objet ne la refait pas (une par écriture, que la 3.1 ne faisait pas)
     assert.equal(ops.get('WeakMap.has'), undefined, `recherches parmi les objets tenus par écriture : ${texte(ops)}`)
     assert.equal(µ._mjs_extW, extW, 'compteur des écritures d\'objets tenu sans liste aux lignes propres pour le lire')
     assert.equal(el._mjs_selfW, undefined, 'compteur des écritures du composant tenu sans liste aux lignes propres pour le lire')
     // la sortie de la boucle n'ajoute aucun champ au composant : sa forme reste celle que la boucle optimisée a vue
     assert.equal(Object.prototype.hasOwnProperty.call(el, '_mjs_lqf'), false, 'file fine des boucles posée sur un composant qui n\'en a pas')
-    assert.equal(µ._mjs_partage, false)
+    assert.equal(µ._mjs_sharing, false)
   })
 
   it('écritures de trois segments et méthode d\'une liste sous la racine : la recherche parmi les objets tenus ne se refait pas pour le même objet', async () => {
@@ -187,7 +187,7 @@ describe('écriture profonde : chaque opération ajoutée n\'est payée que par 
     assert.equal(b.c, 2, 'dernière valeur écrite')
     assert.equal((µ._mjs_epochs.get(b) || 0) - avant, 1, 'époque de l\'objet, avancée par la seule écriture faite après qu\'une variable le tient')
     await tic()
-    assert.equal(µ._mjs_nonTenu, undefined, 'réponse retenue oubliée à la fin du tour')
+    assert.equal(µ._mjs_notHeld, undefined, 'réponse retenue oubliée à la fin du tour')
   })
 
   it('liste aux lignes propres dans la page : chaque écriture d\'un autre composant est comptée pour elle', async () => {
@@ -202,7 +202,7 @@ describe('écriture profonde : chaque opération ajoutée n\'est payée que par 
     await tic()
     const extW  = win.µ._mjs_extW, selfW = el._mjs_selfW || 0
     const { appels } = await parEcriture(win, el)
-    assert.equal(appels.get('_mjsFineCompte'), 1, `appels par écriture : ${texte(appels)}`)
+    assert.equal(appels.get('_mjsFineCount'), 1, `appels par écriture : ${texte(appels)}`)
     assert.equal(win.µ._mjs_extW - extW, N1 + N2, 'écritures d\'objets comptées')
     assert.equal(el._mjs_selfW - selfW, N1 + N2, 'écritures du composant comptées')
   })
@@ -214,9 +214,9 @@ describe('écriture profonde : chaque opération ajoutée n\'est payée que par 
     const o   = brut(win, el._state.o).a.b
     const avant = µ._mjs_epochs.get(o) || 0
     const { appels } = await parEcriture(win, el)
-    assert.equal(appels.get('_mjsDeepEpoqueObjet'), 1, `appels par écriture : ${texte(appels)}`)
+    assert.equal(appels.get('_mjsDeepEpochObject'), 1, `appels par écriture : ${texte(appels)}`)
     assert.equal(µ._mjs_epochs.get(o) - avant, N1 + N2, 'époque de l\'objet tenu')
-    assert.equal(µ._mjs_partage, false)
+    assert.equal(µ._mjs_sharing, false)
   })
 
   it('objet du milieu du chemin tenu par un enfant : son époque avance à chaque écriture plus bas, les écritures de deux et trois segments ne paient rien de plus', async () => {
@@ -224,24 +224,24 @@ describe('écriture profonde : chaque opération ajoutée n\'est payée que par 
     const el  = win.document.querySelector('mjs-milieu')
     const µ   = win.µ
     const a   = brut(win, el._state.o).a
-    assert.equal(µ._mjs_milieu, true, 'objet lu dans l\'état, reçu par un enfant')
+    assert.equal(µ._mjs_middle, true, 'objet lu dans l\'état, reçu par un enfant')
     const avant = µ._mjs_epochs.get(a) || 0
     const { appels } = await parEcriture(win, el)
-    assert.equal(appels.get('_mjsDeepMilieu'), 1, `appels par écriture : ${texte(appels)}`)
+    assert.equal(appels.get('_mjsDeepMiddle'), 1, `appels par écriture : ${texte(appels)}`)
     assert.equal(µ._mjs_epochs.get(a) - avant, N1 + N2, 'époque de l\'objet du milieu tenu')
     for (const m of ['ecrire2', 'ecrire3']) {
       const r = await parEcriture(win, el, m)
-      assert.deepEqual(AIDES.filter((f) => f !== '_mjsDeepSuite' && f !== '_mjsFineEcrite' && f !== '_mjsFineSet' && r.appels.has(f)), [], `${m}, aides appelées par écriture : ${texte(r.appels)}`)
+      assert.deepEqual(AIDES.filter((f) => f !== '_mjsDeepRest' && f !== '_mjsFineWritten' && f !== '_mjsFineSet' && r.appels.has(f)), [], `${m}, aides appelées par écriture : ${texte(r.appels)}`)
     }
     assert.equal(µ._mjs_epochs.get(a) - avant, N1 + N2, 'époque inchangée par les écritures qui ne traversent pas l\'objet')
-    assert.equal(µ._mjs_partage, false)
+    assert.equal(µ._mjs_sharing, false)
   })
 
   it('racine tenue par deux composants : l\'époque de la racine avance à chaque écriture', async () => {
     const win = await appli('<mjs-partage></mjs-partage>')
     const el  = win.document.querySelector('mjs-partage')
     const µ   = win.µ
-    assert.equal(µ._mjs_partage, true, 'objet tenu par deux composants')
+    assert.equal(µ._mjs_sharing, true, 'objet tenu par deux composants')
     const root  = brut(win, el._state.o)
     const avant = µ._mjs_epochs.get(root) || 0
     const { appels } = await parEcriture(win, el)

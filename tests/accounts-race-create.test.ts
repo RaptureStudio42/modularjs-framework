@@ -1,5 +1,5 @@
 // race TOCTOU sur account:create — `byName.has(key)` vérifié
-// AVANT l'`await hacherSecret` (accounts.ts), deux créations concurrentes du MÊME pseudo passaient
+// AVANT l'`await hashSecret` (accounts.ts), deux créations concurrentes du MÊME pseudo passaient
 // TOUTES LES DEUX ce contrôle synchrone. Deux comptes
 // distincts persistés sous le même pseudo, un seul joignable par account:login, l'autre devenant un
 // compte FANTÔME (jeton reçu valide, secret d'origine ne permet plus jamais de se reconnecter).

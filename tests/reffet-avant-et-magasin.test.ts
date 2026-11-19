@@ -160,7 +160,7 @@ const SOURCES: Record<string, string> = {
     '',
     '  @plus = ->',
     '    $n++',
-    '    window.__lu = p.textContent',
+    '    window.__read = p.textContent',
     '</script>',
     '<p class="n" :this=!{p}>{$n}</p>',
     '<p class="vus">{$vus}</p>',
@@ -290,7 +290,7 @@ for (const moteur of ['chromium', 'firefox', 'webkit'] as const) describe(`µeff
         await jusqua(o.page, `window.__ordre.length >= 2 && ${ombre('mjs-rv-ordre')}.querySelector('.vus').textContent === '2'`)
         await o.page.waitForTimeout(100)
         assert.deepEqual(await o.page.evaluate('window.__ordre.slice()'), ['pre 1 0', 'apres 1 1'], 'le reffet d\'avant voit 0, celui d\'après 1')
-        assert.equal(await o.page.evaluate('window.__lu'), '1', 'le DOM relu juste après l\'écriture voit la valeur')
+        assert.equal(await o.page.evaluate('window.__read'), '1', 'le DOM relu juste après l\'écriture voit la valeur')
         assert.equal(await o.page.evaluate(`${ombre('mjs-rv-ordre')}.querySelector('.vus').textContent`), '2', 'un passage au montage, un au clic : son écriture ne le relance pas')
         assert.deepEqual(o.erreurs, [])
       } finally {

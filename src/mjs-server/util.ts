@@ -8,6 +8,6 @@ import { suggestKey } from '../mjs-ws/package-helpers.js'
 
 export function keyUnknown(prefix: string, k: string, known: Iterable<string>): Error {
   const suggestion = suggestKey(k, known)
-  const hint = suggestion ? t('serveur.cle-inconnue-suggestion', { suggestion: suggestion }) : ''
-  return new Error(t('serveur.cle-inconnue', { prefix: prefix, k: k, hint: hint, clesValides: Array.from(known).join(', ') }))
+  const hint = suggestion ? t('mjs-server.key-unknown-suggestion', { suggestion: suggestion }) : ''
+  return new Error(t('mjs-server.key-unknown', { prefix: prefix, k: k, hint: hint, validKeys: Array.from(known).join(', ') }))
 }

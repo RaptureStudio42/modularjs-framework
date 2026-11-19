@@ -112,64 +112,64 @@ describe('theme-viewer.mjs — une variable lue avec un défaut est montrée pou
   })
 
   it('une lecture a son groupe, nommé et en lecture seule, hors du groupe des déclarations', () => {
-    assert.deepEqual(texte('.tete .source'), ['core-checkbox', 'core-radio', 'hote'])
-    assert.deepEqual(texte('.tete .variante'), ['valeurs par défaut', 'valeurs par défaut'])
-    assert.equal(c.findAll('.tete .lecture-seule').length, 2, 'les deux groupes de lectures, pas celui de l\'application')
-    assert.deepEqual(texte('.tete .compte'), ['2 variables', '3 variables', '2 variables'])
+    assert.deepEqual(texte('.head .source'), ['core-checkbox', 'core-radio', 'hote'])
+    assert.deepEqual(texte('.head .variant'), ['valeurs par défaut', 'valeurs par défaut'])
+    assert.equal(c.findAll('.head .read-only').length, 2, 'les deux groupes de lectures, pas celui de l\'application')
+    assert.deepEqual(texte('.head .count'), ['2 variables', '3 variables', '2 variables'])
   })
 
   it('la ligne d\'une lecture dit « par défaut » et non « ligne 0 », sans « ailleurs » pour de simples lectures', () => {
-    assert.deepEqual(texte('.ligne .emplacement'), ['par défaut', 'par défaut', 'par défaut', 'par défaut', 'par défaut', 'ligne 3', 'ligne 2'])
-    assert.deepEqual(texte('.ligne .ailleurs'), [], 'les autres entrées de check-size sont des lectures : rien n\'est déclaré ailleurs')
+    assert.deepEqual(texte('.row .location'), ['par défaut', 'par défaut', 'par défaut', 'par défaut', 'par défaut', 'ligne 3', 'ligne 2'])
+    assert.deepEqual(texte('.row .elsewhere'), [], 'les autres entrées de check-size sont des lectures : rien n\'est déclaré ailleurs')
   })
 
   it('un composant qui lit un même nom avec deux défauts a une ligne pour chacun', () => {
-    assert.deepEqual(texte('.groupes section:nth-child(2) .ligne .nom'), ['check-pad', 'check-pad', 'check-size'])
-    assert.deepEqual(texte('.groupes section:nth-child(2) .ligne .valeur'), ['4px', '8px', '20px'])
+    assert.deepEqual(texte('.groups section:nth-child(2) .row .name'), ['check-pad', 'check-pad', 'check-size'])
+    assert.deepEqual(texte('.groups section:nth-child(2) .row .value'), ['4px', '8px', '20px'])
   })
 
   it('déplier une lecture dit qui la lit, d\'où vient le défaut et comment la régler', async () => {
-    await c.click('.groupes section:nth-child(1) .variable:nth-child(1)')
-    const detail = c.find('.groupes section:nth-child(1) .variable:nth-child(1) .detail')
+    await c.click('.groups section:nth-child(1) .variable:nth-child(1)')
+    const detail = c.find('.groups section:nth-child(1) .variable:nth-child(1) .detail')
     assert.ok(detail, 'le détail est ouvert')
     assert.match(detail.textContent, /core-checkbox lit cette variable avec ce défaut, écrit dans son CSS\./)
     assert.match(detail.textContent, /déclarez-la dans le thème de l'application, sur :root ou sur un ancêtre du composant/)
-    assert.deepEqual([...detail.querySelectorAll('.lecteur')].map((n: any) => n.textContent), ['core-checkbox'])
+    assert.deepEqual([...detail.querySelectorAll('.reader')].map((n: any) => n.textContent), ['core-checkbox'])
     assert.doesNotMatch(detail.textContent, /Aucun lecteur|déclaré ailleurs|Enregistrement vers|:0/)
     assertAbsent(detail.querySelector('.cascade'), 'aucune déclaration de ce nom : pas de cascade à raconter')
   })
 
   it('une lecture dont le nom est aussi déclaré le dit, et ne liste que les déclarations', async () => {
-    await c.click('.groupes section:nth-child(1) .variable:nth-child(2)')
-    const detail = c.find('.groupes section:nth-child(1) .variable:nth-child(2) .detail')
+    await c.click('.groups section:nth-child(1) .variable:nth-child(2)')
+    const detail = c.find('.groups section:nth-child(1) .variable:nth-child(2) .detail')
     assert.match(detail.querySelector('.cascade').textContent, /^Des déclarations existent pour ce nom — la cascade s'applique, la plus proche du composant l'emporte sur ce défaut\.$/)
     const declarations = [...detail.querySelectorAll('.declaration')].map((n: any) => n.textContent.replace(/\s+/g, ' ').trim())
     assert.equal(declarations.length, 1, 'l\'application seule : la lecture du radio n\'est pas une déclaration')
     assert.match(declarations[0], /hote.*30px.*src\/hote\.mjs:3/)
-    assert.deepEqual([...detail.querySelectorAll('.lecteur')].map((n: any) => n.textContent), ['core-checkbox', 'core-radio'])
+    assert.deepEqual([...detail.querySelectorAll('.reader')].map((n: any) => n.textContent), ['core-checkbox', 'core-radio'])
   })
 
   it('une déclaration que des composants lisent a ses lecteurs, sans cascade ni « ailleurs » pour de simples lectures', async () => {
-    await c.click('.groupes section:nth-child(3) .variable:nth-child(1)')
-    const detail = c.find('.groupes section:nth-child(3) .variable:nth-child(1) .detail')
-    assert.deepEqual([...detail.querySelectorAll('.lecteur')].map((n: any) => n.textContent), ['core-checkbox', 'core-radio'])
+    await c.click('.groups section:nth-child(3) .variable:nth-child(1)')
+    const detail = c.find('.groups section:nth-child(3) .variable:nth-child(1) .detail')
+    assert.deepEqual([...detail.querySelectorAll('.reader')].map((n: any) => n.textContent), ['core-checkbox', 'core-radio'])
     assertAbsent(detail.querySelector('.cascade'), 'pas de cascade : les autres entrées sont des lectures')
-    assertAbsent(detail.querySelector('.sans-lecteur'), 'ses lecteurs sont connus')
+    assertAbsent(detail.querySelector('.no-reader'), 'ses lecteurs sont connus')
   })
 
   it('une déclaration que personne ne lit garde son « Aucun lecteur — déclaré mais jamais consommé. »', async () => {
-    await c.click('.groupes section:nth-child(3) .variable:nth-child(2)')
-    assert.equal(c.find('.groupes section:nth-child(3) .variable:nth-child(2) .sans-lecteur').textContent, 'Aucun lecteur — déclaré mais jamais consommé.')
+    await c.click('.groups section:nth-child(3) .variable:nth-child(2)')
+    assert.equal(c.find('.groups section:nth-child(3) .variable:nth-child(2) .no-reader').textContent, 'Aucun lecteur — déclaré mais jamais consommé.')
   })
 
   it('armé, choisir une couleur sur une lecture repeint les pages mais n\'écrit rien, et le détail le dit', async () => {
-    c.find('.bascule input').checked = true
-    await c.fire('.bascule input', 'change')
-    assert.ok(c.find('.precision.ecrit'), 'l\'interrupteur « Enregistrer dans le source » est allumé')
-    await c.type('.groupes section:nth-child(1) .variable:nth-child(1) input.pastille', '#ff0000')
+    c.find('.toggle input').checked = true
+    await c.fire('.toggle input', 'change')
+    assert.ok(c.find('.precision.written'), 'l\'interrupteur « Enregistrer dans le source » est allumé')
+    await c.type('.groups section:nth-child(1) .variable:nth-child(1) input.swatch', '#ff0000')
     assert.deepEqual(apercus.at(-1), { vars: { 'check-color': '#ff0000' } }, 'l\'aperçu en direct marche pour une lecture')
     assert.deepEqual(ecritures, [], 'une lecture n\'a pas de ligne où s\'écrire')
-    const cible = c.find('.groupes section:nth-child(1) .variable:nth-child(1) .cible')
+    const cible = c.find('.groups section:nth-child(1) .variable:nth-child(1) .target')
     assert.equal(cible.textContent, 'Aucune écriture possible : ce défaut n\'est pas une déclaration.')
   })
 })

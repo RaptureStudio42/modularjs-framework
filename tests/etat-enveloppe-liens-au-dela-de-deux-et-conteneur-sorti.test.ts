@@ -69,8 +69,8 @@ for (const [nom, opts] of REGLAGES) describe(`état : liens au-delà de deux, co
     const files = readdirSync(outDir).filter((f) => f.endsWith('.js')).sort((a, b) => rang(a) - rang(b))
     code = files.map((f) => stripEsm(readFileSync(join(outDir, f), 'utf-8'))).join('\n')
     // le repli de la remontée, compté là où il se décide
-    assert.equal(code.split('repli = true;').length, 2, 'le repli de la remontée ne se décide plus en un seul endroit du cœur')
-    code = code.split('repli = true;').join('repli = true; globalThis.__replis = (globalThis.__replis || 0) + 1;')
+    assert.equal(code.split('fallback = true;').length, 2, 'le repli de la remontée ne se décide plus en un seul endroit du cœur')
+    code = code.split('fallback = true;').join('repli = true; globalThis.__replis = (globalThis.__replis || 0) + 1;')
   })
 
   after(async () => {

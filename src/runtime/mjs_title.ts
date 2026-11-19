@@ -557,10 +557,10 @@ function __titleOnTouchEnd(e) {
   // le minuteur de survie n'enregistrait PAS pour quel élément il avait été posé, seul du
   // fichier à casser le motif d'identité (`if (__titleCurrent === el)`). Appui long sur A, relâcher,
   // appui long sur B avant l'échéance : le réveil du minuteur de A fermait la bulle de B.
-  var cible = __titleCurrent;
+  var target = __titleCurrent;
   __titleTouchHideTimer = setTimeout(function() {
     __titleTouchHideTimer = null;
-    if (__titleCurrent !== cible) { return; }   // une autre bulle a pris la place : pas la nôtre à fermer
+    if (__titleCurrent !== target) { return; }   // une autre bulle a pris la place : pas la nôtre à fermer
     __titleHide();
   }, TITLE_TOUCH_LINGER_MS);
 }

@@ -458,14 +458,14 @@ Pour un nom **conditionnel**, ou un nom écrit à la main, l'attribut de style n
 
 ### Bibliothèque de préréglages
 
-Au-delà de la forme **nue** `:viewTransition` (fondu natif — réservée à l'attribut du `<style>` de base d'un module, cf. encadré plus haut), chaque niveau accepte une **chaîne** : `none` (coupé) ou un nom de **base**. Les 8 bases **directionnelles** (`slide`, `volet`, `reveal`, `flip`, `cube`, `turn`, `swipe`, `bars`) déclinent la **même animation** selon `left`/`right`/`up`/`down`, réglée par l'option `direction`/`dir` — `cube={ dir: up }`, `turn={ dir: right }`, `bars={ dir: left }`… Sans direction précisée, chaque base a son défaut (cf. tableau *Valeurs par défaut* ci-dessous).
+Au-delà de la forme **nue** `:viewTransition` (fondu natif — réservée à l'attribut du `<style>` de base d'un module, cf. encadré plus haut), chaque niveau accepte une **chaîne** : `none` (coupé) ou un nom de **base**. Les 8 bases **directionnelles** (`slide`, `cover`, `reveal`, `flip`, `cube`, `turn`, `swipe`, `bars`) déclinent la **même animation** selon `left`/`right`/`up`/`down`, réglée par l'option `direction`/`dir` — `cube={ dir: up }`, `turn={ dir: right }`, `bars={ dir: left }`… Sans direction précisée, chaque base a son défaut (cf. tableau *Valeurs par défaut* ci-dessous).
 
 | Base | Effet | Directions |
 |---|---|---|
 | `fade` | fondu croisé (.5 s) | — |
 | `slide` | glissement | ✓ (défaut `left`) |
 | `zoom` / `zoom-out` | zoom avant / arrière franc | — |
-| `volet` | la nouvelle recouvre, l'ancienne immobile dessous | ✓ (défaut `down` : store qui descend) |
+| `cover` | la nouvelle recouvre, l'ancienne immobile dessous | ✓ (défaut `down` : store qui descend) |
 | `reveal` | l'ancienne sort, la nouvelle attend dessous en retrait | ✓ (défaut `up`) |
 | `flip` | vrai retournement en place (passation à la tranche) | ✓ (défaut `left`) |
 | `cube` | rotation cube 3D, axe partagé (maths adaptées d'une implémentation interne antérieure) | ✓ (défaut `left`) |
@@ -485,7 +485,7 @@ Au-delà de la forme **nue** `:viewTransition` (fondu natif — réservée à l'
 <@view main :viewTransition.zoom>
 ```
 
-Un nom **hors de cette liste** est rejeté à la validation de `mjs.config.json` (config statique) ; posé dynamiquement au runtime (`µ.viewTransition = 'n-importe-quoi'`), c'est tolérant : no-op + avertissement, jamais un crash. Le mécanisme reste **ouvert** : pendant la transition, le runtime pose `html[data-mjs-vt="nom"]` pour chaque préréglage **natif** (`fade`, `slide`, `zoom`, `zoom-out`, `volet`, `reveal`, `flip`, `cube`, `turn`) et pour un **nom inconnu** de la bibliothèque — le cas où le hook devient utile, puisque MJS n'injecte alors aucun CSS pour vous : un projet peut définir ses propres règles `html[data-mjs-vt="mon-nom"] { ::view-transition-old(root){…} }` dans sa feuille globale, MJS pose l'attribut, votre CSS prend le relais. L'attribut est retiré dès la fin de la transition. Les quatre **rideaux** (`iris`, `swipe`, `bars`, `blocks`) ne passent jamais par l'API View Transitions et ne posent JAMAIS cet attribut : leur habillage vient des classes de leur propre calque (`#mjs-vt-curtain`/`.mjs-vtc-*`).
+Un nom **hors de cette liste** est rejeté à la validation de `mjs.config.json` (config statique) ; posé dynamiquement au runtime (`µ.viewTransition = 'n-importe-quoi'`), c'est tolérant : no-op + avertissement, jamais un crash. Le mécanisme reste **ouvert** : pendant la transition, le runtime pose `html[data-mjs-vt="nom"]` pour chaque préréglage **natif** (`fade`, `slide`, `zoom`, `zoom-out`, `cover`, `reveal`, `flip`, `cube`, `turn`) et pour un **nom inconnu** de la bibliothèque — le cas où le hook devient utile, puisque MJS n'injecte alors aucun CSS pour vous : un projet peut définir ses propres règles `html[data-mjs-vt="mon-nom"] { ::view-transition-old(root){…} }` dans sa feuille globale, MJS pose l'attribut, votre CSS prend le relais. L'attribut est retiré dès la fin de la transition. Les quatre **rideaux** (`iris`, `swipe`, `bars`, `blocks`) ne passent jamais par l'API View Transitions et ne posent JAMAIS cet attribut : leur habillage vient des classes de leur propre calque (`#mjs-vt-curtain`/`.mjs-vtc-*`).
 
 > 🎨 **Tous les préréglages ci-dessus sont du CSS pur** (`perspective`/`rotateY`/`preserve-3d`/`clip-path` sur les pseudo-éléments racine) — **aucune librairie n'est nécessaire**, même pour la 3D. Le navigateur capture l'ancien/nouvel état de la page comme une vraie image (texture), transformable en 3D exactement comme n'importe quel élément.
 
@@ -519,7 +519,7 @@ Tout ce que `:viewTransition` applique **sans que vous précisiez rien** :
 | `slide` | pseudo | `left` | 260 ms |
 | `zoom` | pseudo | — (non directionnelle) | 450 ms |
 | `zoom-out` | pseudo | — (non directionnelle) | 450 ms |
-| `volet` | pseudo | `down` | 380 ms |
+| `cover` | pseudo | `down` | 380 ms |
 | `reveal` | pseudo | `up` | 380 ms |
 | `flip` | pseudo | `left` | 550 ms |
 | `cube` | pseudo | `left` | 600 ms |

@@ -14,7 +14,7 @@ const BALISE = 'mjs-vidage-blur-ligne'
 const SOURCES: Record<string, string> = {
   'vidage-blur-ligne.mjs': `<script lang="coffee">
   $rows = [ { id: 1, label: 'A' }, { id: 2, label: 'B' }, { id: 3, label: 'C' } ]
-  noter = (r) -> window.__vu.push(if Array.isArray(r) then 'tableau' else if r? and r.label? then r.label else 'autre')
+  noter = (r) -> window.__seenMark.push(if Array.isArray(r) then 'tableau' else if r? and r.label? then r.label else 'autre')
   @vider = -> $rows = []
 </script>
 <div>
@@ -50,12 +50,12 @@ for (const moteur of ['chromium', 'firefox', 'webkit'] as const) describe(`{for}
     try {
       await o.page.waitForFunction(`document.querySelector('${BALISE}')?._shadow?.querySelectorAll('section.row').length === 3`, null, { timeout: 10000 })
       const vu = await o.page.evaluate(`(async () => {
-        window.__vu = []
+        window.__seenMark = []
         const h = document.querySelector('${BALISE}'), sh = h._shadow
         sh.querySelectorAll('input.f')[1].focus()
         h.vider()
         await new Promise((r) => setTimeout(r, 150))
-        return { lignes: sh.querySelectorAll('section.row').length, vu: window.__vu }
+        return { lignes: sh.querySelectorAll('section.row').length, vu: window.__seenMark }
       })()`)
       assert.equal(vu.lignes, 0, 'liste vidée')
       assert.ok(vu.vu.every((x: string) => x === 'B'), `le gestionnaire parti pendant le retrait lit l'élément de sa ligne : ${JSON.stringify(vu.vu)}`)

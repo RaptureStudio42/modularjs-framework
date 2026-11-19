@@ -202,8 +202,8 @@ describe(`*fluid (${NOM} réel)`, function () {
         }
       }
       // un navigateur qui n'a plus de contexte WebGL à donner : `getContext` rend null (et les refus sont comptés)
-      w.__plein = false
-      w.__refus = 0
+      w.__plein  = false
+      w.__reject = 0
       // les dessins de la simulation : chaque appel de `drawArrays` d'un contexte WebGL (une image d'effet en fait une vingtaine)
       w.__dessins = 0
       for (const nom of ['WebGLRenderingContext', 'WebGL2RenderingContext']) {
@@ -222,7 +222,7 @@ describe(`*fluid (${NOM} réel)`, function () {
       HTMLCanvasElement.prototype.getContext = function (this: any, type: string, ...rest: any[]) {
         // un navigateur qui ne connaît que WebGL1 : le contexte WebGL2 est refusé
         if (w.__sans2 && type === 'webgl2') return null
-        if (w.__plein && /webgl/.test(type)) { w.__refus++; return null }
+        if (w.__plein && /webgl/.test(type)) { w.__reject++; return null }
         const c = (ouvrir as any).call(this, type, ...rest)
         if (c && /webgl/.test(type) && !w.__gl.includes(c)) w.__gl.push(c)
         return c
@@ -1248,10 +1248,10 @@ describe(`*fluid (${NOM} réel)`, function () {
         const rayons = regler({ rays: 0.9 })
         const sans = regler({ rays: 0 })
         const halo = regler({ glow: 1.5 })
-        return { enAttente, rayons: diff(nu, rayons), retour: diff(nu, sans), halo: diff(nu, halo) }
+        return { waiting: enAttente, rayons: diff(nu, rayons), retour: diff(nu, sans), halo: diff(nu, halo) }
       })
       console.log(`  ℹ️  rayons et halo : ${JSON.stringify(m)}`)
-      assert.equal(m.enAttente, 0, 'la boucle est arrêtée une fois le mouvement calmé')
+      assert.equal(m.waiting, 0, 'la boucle est arrêtée une fois le mouvement calmé')
       assert.ok(m.rayons > 300, `les rayons changent l'image : ${m.rayons} points`)
       assert.ok(m.halo > 300, `le halo change l'image : ${m.halo} points`)
       assert.ok(m.retour < 30, `rays à zéro rend l'image d'avant : ${m.retour} points de différence`)
@@ -2161,11 +2161,11 @@ describe(`*fluid (${NOM} réel)`, function () {
         const [suivante] = image()
         w.__vide()
         w.__manuel = false
-        return { fin: dessins.slice(-2), reelles, enAttente, suivante }
+        return { fin: dessins.slice(-2), reelles, waiting: enAttente, suivante }
       })
       assert.equal(r.fin[1], 1, `la série finit par le rappel, un seul dessin : ${JSON.stringify(r)}`)
       assert.ok(r.reelles > 10 && r.fin[0] > 1, `des images de mouvement avant le rappel : ${JSON.stringify(r)}`)
-      assert.equal(r.enAttente, 1, `le rappel attend : ${JSON.stringify(r)}`)
+      assert.equal(r.waiting, 1, `le rappel attend : ${JSON.stringify(r)}`)
       assert.ok(r.suivante > 1, `l'image qui suit le geste est une vraie image, pas le rappel : ${r.suivante} dessin(s)`)
       assert.deepEqual(erreurs, [])
     } finally {
@@ -2268,7 +2268,7 @@ describe(`*fluid (${NOM} réel)`, function () {
     try {
       const r = await rect(page, 'mjs-fl-boite')
       const toiles = () => page.evaluate(() => (document.querySelector('mjs-fl-boite') as any)._shadow.querySelector('.f').querySelectorAll('canvas').length)
-      const refus = () => page.evaluate(() => (window as any).__refus)
+      const refus = () => page.evaluate(() => (window as any).__reject)
       // le navigateur n'a plus de contexte à donner : le premier geste le demande
       await page.evaluate(() => { (window as any).__plein = true })
       await geste(page, r)

@@ -33,7 +33,7 @@ Avec une règle, la variable se protège elle-même. Un volume de 150 devient 10
 
 - **Un seul** bloc par composant, **avant** le `<script>` (la règle se lit avant le code qui écrit la variable) ; placé après, le build s'arrête et le dit.
 - Une ligne par variable : son nom, puis sa règle. `$nom` pour une variable ou une prop, `$$nom` pour un store.
-- `#` commence un commentaire (hors d'un texte entre guillemets) ; une règle d'objet peut tenir sur plusieurs lignes tant que son accolade est ouverte.
+- `#` commence un commentaire (hors d'un texte entre guillemets) ; une règle tient sur sa ligne, et un objet s'écrit en retrait sous sa variable, un champ par ligne (exemple juste en dessous).
 - Aucun attribut sur la balise. Un partiel `<@include>` ne porte pas de `<vars>` : déclarez les types dans le composant qui l'inclut.
 
 ```html
@@ -189,7 +189,7 @@ Avant la règle d'un champ, `= valeur` donne sa valeur de départ (`price = 0 in
 
 L'ordre compte : conversion, puis plage, puis interdits. `int 0..10 ! 10` refuse donc `15` (ramené à `10`, et `10` est interdit).
 
-Une liste ou un objet est contrôlé **en entier** : si un seul élément est refusé, toute l'écriture l'est, et rien n'est modifié à moitié. Accepté, il est corrigé **sur place** (l'objet reçu lui-même) : ses nombres ramenés, ses conversions faites.
+Une liste ou un objet est contrôlé **en entier** : si un seul élément est refusé, toute l'écriture l'est, et rien n'est modifié à moitié. Accepté, il est corrigé **sur place** (l'objet reçu lui-même) : ses nombres ramenés, ses conversions faites. Une liste ou un objet gelé (`Object.freeze`) ne s'écrit pas : ce qu'il faut convertir ou poser (une valeur de départ) va dans une copie, gelée à son tour, que la variable reçoit ; l'original, lui, ne change pas. Scellé (`Object.seal`) ou fermé aux ajouts (`Object.preventExtensions`), il est corrigé sur place comme les autres ; seul un objet qui doit recevoir une valeur de départ, un champ qu'il n'a pas, passe dans une copie, que la variable reçoit.
 
 ### `strict` : la valeur exacte
 
@@ -227,6 +227,7 @@ Une valeur de départ n'est pas une conversion : un champ absent la prend, puis 
 | une prop posée par le parent : `<@player volume={150}>` ou `volume="42"` | oui (le texte d'un attribut se convertit) |
 | un composant enfant lié en deux sens : `<@panneau data=!{$settings}>` | oui — le parent est prévenu et corrige, des deux côtés |
 | un composant enfant qui reçoit l'objet en liaison simple : `<@panneau data={$settings}>` | **non** — l'enfant surveille l'objet de son côté : liez en deux sens, ou déclarez le type dans le `<vars>` de l'enfant |
+| une variable dérivée : `$total = $a + $b` | en développement : un avertissement quand sa valeur sort de sa règle (la valeur reste celle du calcul) ; rien en production (cf. [En développement](#en-développement--avertissement-ou-erreur)) |
 
 **La variable d'un `{for}` sur un store typé.** Dans un `{for}` sur un store typé, la variable de boucle est l'élément même de la liste, et elle écrit sous la règle du champ : `@click={f.id = 'zz'}` est refusé comme `$$flux[i].id = 'zz'` ou `$$flux.find((f) -> f.id == id).id = 'zz'`, avec le même message, et l'élément garde sa valeur d'avant. La variable d'une boucle du `<script>` aussi, dans les trois langues : Civet `for f of $$flux` (ou `for f in $$flux`), JavaScript `for (const f of $$flux)`, CoffeeScript `for f in $$flux`.
 
@@ -328,6 +329,7 @@ created = await µajax '/app/rewards', method: 'POST', data: draft, type: Reward
 
 - `µajax url, options` fait un `GET` (une autre méthode : `method: 'POST'`, avec `data:`) ; sa promesse rend le corps de la réponse. Les autres options sont celles des appels par verbe, sous leur nom : `timeout`, `headers`, `signal`, `success`, `error`, `always`. Avec `signal:`, `timeout:` est ignoré : le signal de l'appelant décide seul, comme pour les verbes. µajax s'appelle directement : son code n'entre dans l'appli que si elle écrit un appel direct — `µajax(…)`, `µajax '/url', …`, `µajax?(…)` ou `µajax?.(…)`, de même par `µ.ajax`. Pris comme valeur — passé en argument (`localGet(µ.ajax, …)`), rangé (`f = µajax`), décomposé (`{ ajax } = µ`, `{ ajax: r } = µ`), lu par `µ['ajax']`, appelé par `.call`, `.bind` ou `.apply` —, il arrête la construction, en développement comme en production, et le message montre l'appel direct à écrire ; les verbes (`µajax.get(…)`), l'écriture du gestionnaire global (`µ.ajax.error = …`) et une garde d'existence (`typeof µajax`, `µajax?`, `if µajax`, `µ.ajax and µ.ajax.get(…)`, `µ.ajax ? … : …`) restent permis, sans ce code. Un appel que la construction ne peut pas lire (`µ[k]`, `m = µ` puis `m.ajax()`, `{ ...reste } = µ`, `µ.ajax[k]`) échoue en production ; le développement le dit, une fois.
 - `type: Reward[]` : une liste de `Reward` ; `type: Reward` : un seul. Le nom s'écrit tel quel, sans guillemets : le build le remplace par la règle, et un nom inconnu l'arrête, avec une suggestion (`vouliez-vous dire « Reward » ?`). Seule la clé `type:` du premier niveau des options de cette forme contrôle la réponse, ce premier niveau étant celui de l'objet tel que le langage le range (en CoffeeScript, `data: kind: 'a', type: Reward` met `type:` dans `data`) : dans `data:`, dans un objet imbriqué, dans un rappel ou dans un appel par verbe (`µajax.post '/x', {type: kind}, f`, dont les rappels gardent leur place), `type:` est une donnée, envoyée telle quelle. Dans les arguments d'un appel par verbe, `type: Reward[]`, qui ne peut pas être une donnée, et `type: Reward` quand `Reward` est un type déclaré que rien ne lie dans une portée qui englobe l'appel (il lèverait « Reward is not defined ») arrêtent le build et montrent la forme à écrire (`µajax '/url', type: Reward`) ; `type: Reward[]` écrit après un rappel l'arrête de même. Seule une liaison qui englobe l'appel fait de `Reward` une donnée — déclaration, affectation, paramètre, import, déstructuration, fonction ou classe, au premier niveau du fichier ou dans une fonction qui contient l'appel, lue sur le code compilé ; une liaison faite dans un rappel ou dans une autre fonction ne compte pas, un nom seulement écrit (`console.log Reward`, `[r, Reward]`) non plus. Il en va de même d'un nom de règle cité dans une expression : `type: [Reward]` ou `type: Reward.id`, que rien ne lie autour de l'appel, arrête le build. Pour envoyer une variable globale, écrivez `type: window.Reward`. Le corps d'un rappel passé à un verbe n'est pas un de ses arguments : la forme appelable s'y écrit comme ailleurs.
+- `type: Reward | null` passe la construction, puis l'appel échoue (`Reward is not defined`) : pour une réponse qui peut valoir `null`, déclarez la règle dans le fichier `*.types.mjs` (`MaybeReward  Reward | null`), puis écrivez `type: MaybeReward`.
 - La forme appelable et `type:` s'écrivent pareil dans un composant, un `<script module>`, un module `.coffee.mjs`, `.civet.mjs` ou `.js.mjs` importé et le fichier d'un magasin : un seul appel, où qu'il soit, suffit à joindre son code à l'appli. Un fichier `.js` est une bibliothèque, copiée telle quelle, sans µ ni réécriture de `µajax` ou de `type:` — seuls ses imports d'autres bibliothèques de l'appli sont réécrits vers leur nom à empreinte : s'il lit `µ` ou une rune (`µajax`, `µafter`, `µt`…), écrite en clair ou par un échappement Unicode, sans la lier (aucune portée qui englobe cette lecture ne la déclare ; le nom d'une fonction ou d'une classe nommée est lié dans son propre corps), la construction s'arrête, en développement comme en production, et dit de le nommer `nom.js.mjs`. Un `nom.js.mjs` est un module MJS écrit en JavaScript, compilé comme un module `.civet.mjs` ou `.coffee.mjs` — µ fourni par un import du cœur, même importé pour son seul effet (`@import 'effets.js.mjs'`), `@import`, la forme appelable et `type:`, recompilé quand un fichier `*.types.mjs` change ; jamais un composant ; les modules du cœur qu'il nomme (`µ.ajax.get`…) entrent dans l'appli.
 - La réponse passe la règle comme une écriture : conversions (`'42'` → `42`), nombres ramenés à leur borne, valeurs de départ des champs absents. Puis plus rien : la liste reçue est une valeur ordinaire, sans contrôle à chaque écriture.
 - Une erreur du serveur — pas de réponse, code 4xx ou 5xx, délai `timeout:` dépassé — va à l'option `error:` de l'appel, comme pour les verbes, sans passer par la règle : ce qu'elle rend devient le résultat de `await`. Sans `error:`, `µ.ajax.error` l'affiche (dans la console, par défaut) et `await` rend `undefined` : une erreur du serveur ne rejette jamais la promesse. Un abandon voulu par l'appelant (`signal:`, un `AbortController` arrêté) rend `undefined`, en silence, comme pour les verbes : ni `error:` ni `µ.ajax.error`.
@@ -344,9 +346,25 @@ rewards = await µajax '/app/rewards', type: Reward[], typeError: (e) ->
 
 Le code de ce contrôle n'entre dans l'appli que si elle écrit `type:` dans un appel `µajax`, et celui de la forme appelable que si elle l'écrit : un seul appel suffit, en développement comme en production, sans rien déclarer dans `mjs.config.json` (cf. [32 · CLI & configuration](32-cli-et-configuration.md)).
 
+## La réponse d'une valeur qui attend
+
+Une valeur qui attend (`$r = await charger($q)`, cf. [3](03-reactivite.md)) déclarée dans le `<vars>` reçoit chaque réponse comme une écriture : `300` pour `$r int 0..100` devient `100`. Une réponse que la règle refuse — un texte qui n'est pas un nombre pour `int` (`"abc"` ; `"12"` devient `12`), ou `300` avec `strict` — fait échouer la demande : la valeur d'avant reste, `µpending($r)` repasse à faux, et `µfailed($r)` donne l'erreur, dont le message nomme, en développement, la variable, la valeur refusée et le composant (en production, la variable seule).
+
+```html
+<vars>
+  $r int 0..100
+</vars>
+<script>
+  $q      = 0
+  charger = (q) -> fetch("/api/note-#{q}").then((r) -> r.json())
+  $r      = await charger($q)
+</script>
+<b>{$r}</b><u>{µfailed($r)?.message}</u>
+```
+
 ## Les stores (`$$x`)
 
-Un store se règle comme une variable, dans le `<vars>` de n'importe quel composant : la règle vaut **pour toute l'appli**, quel que soit le composant qui écrit (`$$cart.quantity = 500`, `µ.store.cart = …`). La valeur déjà présente la passe dès que la règle arrive. Deux composants qui donnent deux règles **différentes** au même store font échouer le build (la même règle répétée ailleurs est permise).
+Un store se règle comme une variable, dans le `<vars>` de n'importe quel composant : la règle vaut **pour toute l'appli**, quel que soit le composant qui écrit (`$$cart.quantity = 500`, `µ.store.cart = …`), dès que le composant qui la pose est chargé. Avant, une écriture passe sans contrôle : sur une page qui ne charge pas encore ce composant, `µ.store.cart = 'x'` est accepté. La valeur déjà présente passe la règle dès que la règle arrive. Pour qu'une règle agisse dès le départ, posez-la dans le `<vars>` d'un composant chargé sur toutes les pages. Deux composants qui donnent deux règles **différentes** au même store font échouer le build (la même règle répétée ailleurs est permise).
 
 ## En développement : avertissement ou erreur
 
@@ -358,6 +376,14 @@ En production, rien ne s'affiche : une valeur est ramenée ou refusée, c'est to
 ```
 
 Un message qui nomme un élément de liste donne son chemin : `$messages[4].id`, `$board.rows[2].cells[0?].v`. Un chemin marqué `?` nomme la dernière position connue : l'élément a été retiré, ou sa liste a été remplacée ou ramassée depuis.
+
+Une **variable dérivée** réglée dans le `<vars>` (`$total  int 0..100` pour `$total = $a + $b`) n'est jamais ramenée, convertie ni corrigée : sa valeur reste celle du calcul. En développement, quand cette valeur sort de sa règle — une écriture la ramènerait, la refuserait ou la convertirait (`'5'` sous `int`) —, un avertissement le dit, à son premier calcul et à chaque recalcul qui la change, jamais à une lecture ; une fois par composant et par variable tant qu'une de ses instances reste dehors (une liste de vingt `<mjs-ligne>` dont la moitié sort de sa règle n'en donne qu'un), de nouveau quand toutes y sont revenues et qu'une en ressort. Tant qu'une valeur qui attend du composant (`$r = await charger($q)`) n'a pas donné sa première réponse, rien n'est jugé : `$moitie = $r * 2` vaudrait `NaN` ; toutes ses variables dérivées réglées le sont à cette réponse. La règle d'un objet, écrite sur ses lignes dans le `<vars>`, se dit sur une seule (`permis : { n int }`) :
+
+```
+[ModularJS] La variable dérivée « $total » du composant <mjs-panier> sort de sa règle : $total vaut 160 — permis : int 0..100. Sa valeur reste celle du calcul : corrigez le calcul ou la règle. Cet avertissement n'existe qu'en développement.
+```
+
+C'est un avertissement avec `"warn"`, `"error"` comme `"throw"` : le calcul ne s'arrête pas, et `µtypes.onError` ne le reçoit pas, puisque rien n'est refusé. Une valeur qui attend (`$r = await charger($q)`) n'en dit pas plus : sa réponse passe déjà par la règle, comme une écriture (cf. [La réponse d'une valeur qui attend](#la-réponse-dune-valeur-qui-attend)). Un store n'a pas de variable dérivée : `$$total = $$a * 2` dans un script est une écriture, qui passe la règle de `$$total`. Après un rendu serveur, le navigateur le dit au réveil de la page. Sous `mjs dev`, une règle modifiée dans le `<vars>` recharge la page entière : la variable est jugée sous sa nouvelle règle. En production, ce contrôle n'existe pas : ni code, ni calcul, ni texte dans les fichiers de messages, à tous les niveaux de console.
 
 La clé `types` de `mjs.config.json` choisit la forme de ce message :
 
@@ -488,6 +514,8 @@ export default {
 | `{ lang: 'en' }` | la langue des messages : `'fr'` (par défaut), `'en'` ; une autre langue parle anglais |
 
 Une entrée serveur importe le module par la directive `@import`, comme un composant (un `import` natif y est refusé, cf. [23 · mjs ws](23-mjs-ws.md)) ; Node résout le paquet lui-même, comme pour un fichier du projet : dans le `node_modules` du projet puis dans celui de chaque dossier parent. L'action garde ses trois arguments ; le formulaire entier est `req.form` (un `URLSearchParams` : champs répétés compris, cf. [19 · SSR](19-ssr.md)) : `validate(req.form)` en tire la liste `tags`, la case `news` (`false` décochée) et les nombres. `body`, lui, ne garde que la dernière valeur de chaque champ, en texte.
+
+Quand tout est permis, `validate` rend `{ value }`. `value` garde les champs que la règle ne déclare pas : ne l'écrivez pas tel quel en base.
 
 Une règle mal écrite est refusée dès sa création, avec le même message qu'au build. Les erreurs ainsi rendues, clé par clé, sont celles qu'un formulaire refusé (422) renvoie à la page : `<@@field>` les affiche sous leur champ (cf. [21 · Navigation](21-navigation.md), [30 · Modules du cœur](30-modules-coeur.md)).
 

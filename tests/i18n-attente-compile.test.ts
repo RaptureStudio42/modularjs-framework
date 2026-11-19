@@ -156,7 +156,7 @@ describe('attente des textes traduits — détection (le code d\'un effet de cha
 
   it('plusieurs sections avec un effet : le bloc des sections multiples est encore détecté', async () => {
     const used = await signaux('@i18nPlaceholder *loader(dots)', "@i18n 'accueil' 'onglets'")
-    assert.equal(used.has('i18n_paquets'), true)
+    assert.equal(used.has('i18n_packs'), true)
   })
 })
 

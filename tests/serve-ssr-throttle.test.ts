@@ -24,7 +24,7 @@ import { mjsTmp } from './helpers/tmp.js'
 import { StaticServer } from '../src/server/index.js'
 import { createRenderHandler } from '../src/server/render-request.js'
 import { startRenderServer } from '../src/server/render-server.js'
-import { terminateSharedWorkerPool, MARQUE_SORTIE } from '../src/bundler/index.js'
+import { terminateSharedWorkerPool, OUTPUT_MARK } from '../src/bundler/index.js'
 
 after(async () => { await terminateSharedWorkerPool() })
 
@@ -93,7 +93,7 @@ describe('en-tête Retry-After sur mjs dev (StaticServer) — plafond serré pou
     // même remède, même garantie.
     writeFileSync(join(srcDir, 'produit.mjs'), LENT_SRC)
     // manifeste d'une construction précédente, avec la marque des sorties : le rendu le remplace en recompilant (un fichier que ModularJS n'a pas produit ne l'est jamais)
-    writeFileSync(join(outDir, 'manifest.js'), `${MARQUE_SORTIE}\nµ.paths = {};\nµ.version = "abcd1234";\n`)
+    writeFileSync(join(outDir, 'manifest.js'), `${OUTPUT_MARK}\nµ.paths = {};\nµ.version = "abcd1234";\n`)
     const config: any = {
       sourceDir: 'src', outputDir: 'out', manifestPath: 'out/manifest.js',
       render: {

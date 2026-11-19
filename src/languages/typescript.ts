@@ -9,7 +9,8 @@ export const tsAdapter: LanguageAdapter = {
     const esbuild = await import('esbuild')
     const result = await esbuild.transform(source, {
       loader: 'ts',
-      format: 'esm',
+      // le `<script>` d'un composant garde son `this` : aucune conversion de module (CompileSourceOpts.dansLeComposant)
+      ...(opts.inComponent ? {} : { format: 'esm' as const }),
       target: 'es2022',
       // `µ` et les accents écrits tels quels, comme dans un script Civet ou JavaScript : sans `charset`, esbuild les échappe
       // (`µ.t("x")`) et les passes qui suivent, qui cherchent `µ` en clair (préfixe de la section sous `@i18n`), ne le voient plus

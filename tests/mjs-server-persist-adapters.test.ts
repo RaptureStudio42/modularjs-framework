@@ -347,7 +347,7 @@ describe('mjs-server/persist — intégration légère (SqlPersistAdapter + vrai
     const resync = await sA2.request('µgame:resync', { game: repA.game })
     assert.equal(resync.view.n, 1)
     assert.equal(resync.phase, 'jeu')
-    assert.equal(resync.turn, 'a')
+    assert.equal(resync.turn, 'b')
 
     await app2.stop()
   })

@@ -86,8 +86,8 @@ describe('écritures profondes vues par le compilateur', function () {
   })
 
   it('méthodes qui modifient une Date, à la racine et en profondeur', () => {
-    assert.match(corps(sans, 6), /\(\$\.d instanceof Date \? µ\._mjs_deepCall\(_mjsThis, \["d"\], 'setUTCDate', \[5\]\) : \$\.d\.setUTCDate\(5\)\)/)
-    assert.match(corps(sans, 7), /\(\$\.o\.when instanceof Date \? µ\._mjs_deepCall\(_mjsThis, \["o", "when"\], 'setUTCHours', \[3\]\) : \$\.o\.when\.setUTCHours\(3\)\)/)
+    assert.match(corps(sans, 6), /\(_mjsThis\._state\.d instanceof Date \? µ\._mjs_deepCall\(_mjsThis, \["d"\], 'setUTCDate', \[5\]\) : _mjsThis\._state\.d\.setUTCDate\(5\)\)/)
+    assert.match(corps(sans, 7), /\(_mjsThis\._state\.o\.when instanceof Date \? µ\._mjs_deepCall\(_mjsThis, \["o", "when"\], 'setUTCHours', \[3\]\) : _mjsThis\._state\.o\.when\.setUTCHours\(3\)\)/)
   })
 
   it('paramètre d\'un rappel de liste : écrit par son indice, vérifié par identité', () => {

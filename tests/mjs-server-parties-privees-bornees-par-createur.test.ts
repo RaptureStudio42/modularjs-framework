@@ -187,15 +187,15 @@ describe('MJS-Server — parties privées en cours bornées par créateur', () =
   })
 })
 
-describe('mjs.config.json — serveur.antiCheat.privateGamesPerCreator', () => {
+describe('mjs.config.json — server.antiCheat.privateGamesPerCreator', () => {
   it('accepté (entier ≥ 1 ou null), refusé sinon', () => {
     for (const valeur of [3, null]) {
       const root = mjsTmp('cfg')
-      writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({ serveur: { antiCheat: { privateGamesPerCreator: valeur } } }))
-      assert.equal((findConfig(root)!.config.serveur as any).antiCheat.privateGamesPerCreator, valeur)
+      writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({ server: { antiCheat: { privateGamesPerCreator: valeur } } }))
+      assert.equal((findConfig(root)!.config.server as any).antiCheat.privateGamesPerCreator, valeur)
     }
     const root = mjsTmp('cfg')
-    writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({ serveur: { antiCheat: { privateGamesPerCreator: 0 } } }))
+    writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({ server: { antiCheat: { privateGamesPerCreator: 0 } } }))
     assert.throws(() => findConfig(root), /privateGamesPerCreator/)
   })
 })

@@ -24,6 +24,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
 
 type Moteur = 'chromium' | 'firefox' | 'webkit'
 
@@ -285,7 +286,7 @@ function construit(prod = false): Promise<string> {
 }
 
 for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
-  describe(`*count : la place du nombre mis en forme, sans saut de mise en page (${nom} réel)`, function () {
+  playTogether(describe(`*count : la place du nombre mis en forme, sans saut de mise en page (${nom} réel)`, function () {
     this.timeout(120000)
     let present = false
     let script  = ''
@@ -535,5 +536,5 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
         assert.ok(w.minWidth.length > 0, 'la place est écrite')
       }, 'mjs-cl-ancetre', 'h')
     })
-  })
+  }))
 }

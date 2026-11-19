@@ -123,7 +123,7 @@ describe('mjs_modal — µ.modal.notify (toast)', function () {
     µ.modal.notify('x', { duration: 0 })
     await wait(30)
     assert.equal(toasts(document).length, 1, 'toujours présent')
-    assertAbsent(toasts(document)[0].querySelector('.mjs-toast-barre'), 'pas de décompte sans durée')
+    assertAbsent(toasts(document)[0].querySelector('.mjs-toast-bar'), 'pas de décompte sans durée')
   })
 
   it('duration par défaut = 4000ms (setTimeout intercepté, aucune attente réelle)', function () {
@@ -161,14 +161,14 @@ describe('mjs_modal — µ.modal.notify (toast)', function () {
     const { document, µ } = loadModal()
     µ.config.notifyDuration = 9000
     µ.modal.notify('x', { duration: 0 })
-    assertAbsent(toasts(document)[0].querySelector('.mjs-toast-barre'), 'duration:0 explicite reste permanent, prime sur la config')
+    assertAbsent(toasts(document)[0].querySelector('.mjs-toast-bar'), 'duration:0 explicite reste permanent, prime sur la config')
   })
 
   it('µ.config.notifyDuration = 0 — défaut GLOBAL permanent quand opts.duration est absent (aucune barre de vie)', function () {
     const { document, µ } = loadModal()
     µ.config.notifyDuration = 0
     µ.modal.notify('x')
-    assertAbsent(toasts(document)[0].querySelector('.mjs-toast-barre'), 'notifyDuration:0 rend le défaut global permanent, comme opts.duration:0')
+    assertAbsent(toasts(document)[0].querySelector('.mjs-toast-bar'), 'notifyDuration:0 rend le défaut global permanent, comme opts.duration:0')
   })
 
   it('µ.config.notifyDuration invalide (négatif) : repli silencieux sur 4000, aucun crash', function () {
@@ -181,10 +181,10 @@ describe('mjs_modal — µ.modal.notify (toast)', function () {
     assert.ok(delays.includes(4000), `repli 4000 attendu parmi ${JSON.stringify(delays)}`)
   })
 
-  it('barre de vie (i.mjs-toast-barre) présente quand duration > 0, durée posée via --mjs-toast-duration (setProperty, pas de style inline classique)', function () {
+  it('barre de vie (i.mjs-toast-bar) présente quand duration > 0, durée posée via --mjs-toast-duration (setProperty, pas de style inline classique)', function () {
     const { document, µ } = loadModal()
     µ.modal.notify('x', { duration: 1234 })
-    const barre = toasts(document)[0].querySelector('.mjs-toast-barre')
+    const barre = toasts(document)[0].querySelector('.mjs-toast-bar')
     assert.ok(barre, 'barre de vie attendue')
     assert.equal(barre.tagName, 'I')
     assert.equal(barre.style.getPropertyValue('--mjs-toast-duration').trim(), '1234ms')

@@ -7,11 +7,11 @@ import * as acorn from 'acorn'
 // (transform-reactive → path-tracker → effect-deps) relit alors l'arbre déjà construit au lieu de reparser le
 // module. Les passes ne modifient jamais l'arbre (MagicString travaille sur le texte) ; une erreur d'analyse
 // n'est pas gardée, elle se relève à chaque appel
-let derniere: { js: string, ast: acorn.Node } | null = null
+let last: { js: string, ast: acorn.Node } | null = null
 export function parseModule(js: string): acorn.Node {
-  if (derniere?.js === js) return derniere.ast
+  if (last?.js === js) return last.ast
   const ast = acorn.parse(js, { ecmaVersion: 'latest', sourceType: 'module' })
-  derniere = { js, ast }
+  last = { js, ast }
   return ast
 }
 

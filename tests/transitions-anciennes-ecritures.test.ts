@@ -132,7 +132,7 @@ describe('anciennes transitions : le message propose une écriture qui compile e
     [':in.draw={ duration: 1200, easing: \'linear\' }',                    ':in=*draw(duration: 1200ms, easing: linear)'],
     [':in.typewriter={speed: 10}',                                         ':in=*typewriter(speed: 10)'],
     [':in.iris={ duration: 500 }',                                         ':in=*iris(duration: 500ms)'],
-    [':in.volet={ dir: \'down\' }',                                        ':in=*volet(down)'],
+    [':in.volet={ dir: \'down\' }',                                        ':in=*cover(down)'],
     [':in.reveal={ direction: \'left\', duration: 400 }',                  ':in=*reveal(left, duration: 400ms)'],
     [':out.swipe={ dir: \'left\' }',                                       ':out=*swipe(left)'],
     [':in.flip={ dir: \'right\' }',                                        ':in=*flip(right)'],

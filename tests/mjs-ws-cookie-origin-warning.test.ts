@@ -9,7 +9,7 @@ import { mjsWs } from '../src/mjs-ws/index.js'
 import { MemoryTransport } from '../src/mjs-ws/transport.js'
 import { t } from '../src/messages/index.js'
 
-const MESSAGE = t('ws.core.origine-non-verifiee-avec-cookie')
+const MESSAGE = t('ws.core.origin-not-checked-with-cookie')
 
 describe('MJS-WS — avertissement démarrage : auth SANS verifyOrigin', () => {
   it('émet l\'avertissement quand opts.auth est fourni et verifyOrigin absent', async () => {

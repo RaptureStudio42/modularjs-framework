@@ -90,7 +90,7 @@ describe('mjs_devpanel — focus et sélection, dans de vrais navigateurs', func
 
       const ouvrirPanneau = async (page: any) => {
         await page.evaluate(() => (window as any).µ.console('mjs-dpb-page'))
-        await page.waitForFunction(() => !!(document.querySelector('[data-mjs-devpanel]') as any)?.shadowRoot?.querySelector('[data-action="maj"]'))
+        await page.waitForFunction(() => !!(document.querySelector('[data-mjs-devpanel]') as any)?.shadowRoot?.querySelector('[data-action="updates"]'))
       }
       // un clic du DOM sur un contrôle du panneau (le panneau se réécrit toutes les 700 ms : pas de souris réelle ici)
       const cliquer = (page: any, sel: string) => page.evaluate((s: string) => { (document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector(s).click() }, sel)
@@ -103,7 +103,7 @@ describe('mjs_devpanel — focus et sélection, dans de vrais navigateurs', func
           a = r.activeElement
         }
         if (!a) return null
-        return a.tagName + (a.className && typeof a.className === 'string' ? '.' + a.className : '') + (a.id ? '#' + a.id : '') + (a.getAttribute('data-maj') ? '[data-maj=' + a.getAttribute('data-maj') + ']' : '') + (a.getAttribute('data-cle') ? '[data-cle=' + a.getAttribute('data-cle') + ']' : '')
+        return a.tagName + (a.className && typeof a.className === 'string' ? '.' + a.className : '') + (a.id ? '#' + a.id : '') + (a.getAttribute('data-upd') ? '[data-upd=' + a.getAttribute('data-upd') + ']' : '') + (a.getAttribute('data-key') ? '[data-key=' + a.getAttribute('data-key') + ']' : '')
       })
       const panneauPresent = (page: any) => page.evaluate(() => !!document.querySelector('[data-mjs-devpanel]'))
       // le contrôle `sel` du panneau retenu dans `window.__vieux`, puis l'attente de son remplaçant redessiné, qui a le focus ; chaque attente
@@ -116,16 +116,16 @@ describe('mjs_devpanel — focus et sélection, dans de vrais navigateurs', func
         if (!present) { this.skip(); return }
         await avec(async (page) => {
           await ouvrirPanneau(page)
-          await cliquer(page, '[data-action="maj"]')
-          await page.waitForFunction(() => !!(document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('[data-maj="style"]'))
-          await page.evaluate(() => { const s = (document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('[data-maj="style"]'); (window as any).__vieux = s; (window as any).__valeur = s.value })
-          await page.focus('[data-maj="style"]')
+          await cliquer(page, '[data-action="updates"]')
+          await page.waitForFunction(() => !!(document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('[data-upd="style"]'))
+          await page.evaluate(() => { const s = (document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('[data-upd="style"]'); (window as any).__vieux = s; (window as any).__valeur = s.value })
+          await page.focus('[data-upd="style"]')
           await page.keyboard.press('ArrowDown')
-          await attendreRedessin(page, '[data-maj="style"]', 'après la flèche', 100)
-          const r = await page.evaluate(() => { const s = (document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('[data-maj="style"]'); return { valeur: s.value, avant: (window as any).__valeur, redessine: s !== (window as any).__vieux } })
+          await attendreRedessin(page, '[data-upd="style"]', 'après la flèche', 100)
+          const r = await page.evaluate(() => { const s = (document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('[data-upd="style"]'); return { valeur: s.value, avant: (window as any).__valeur, redessine: s !== (window as any).__vieux } })
           assert.notEqual(r.valeur, r.avant, 'la flèche a changé le réglage')
           assert.equal(r.redessine, true, 'le panneau a été redessiné')
-          assert.equal(await actif(page), 'SELECT[data-maj=style]', 'le focus est revenu au menu')
+          assert.equal(await actif(page), 'SELECT[data-upd=style]', 'le focus est revenu au menu')
         })
       })
 
@@ -133,12 +133,12 @@ describe('mjs_devpanel — focus et sélection, dans de vrais navigateurs', func
         if (!present) { this.skip(); return }
         await avec(async (page) => {
           await ouvrirPanneau(page)
-          await cliquer(page, '[data-action="maj"]')
-          await page.waitForFunction(() => !!(document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('[data-maj="style"]'))
-          await page.focus('[data-maj="style"]')
-          await retenir(page, '[data-maj="style"]')
+          await cliquer(page, '[data-action="updates"]')
+          await page.waitForFunction(() => !!(document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('[data-upd="style"]'))
+          await page.focus('[data-upd="style"]')
+          await retenir(page, '[data-upd="style"]')
           await page.keyboard.press('ArrowDown')
-          await attendreRedessin(page, '[data-maj="style"]', 'après la flèche', 100)
+          await attendreRedessin(page, '[data-upd="style"]', 'après la flèche', 100)
           await page.keyboard.press('Escape')
           await ferme(page, 'Échap', 300)
           assert.equal(await panneauPresent(page), false, 'Échap venue du panneau le ferme')
@@ -149,17 +149,17 @@ describe('mjs_devpanel — focus et sélection, dans de vrais navigateurs', func
         if (!present) { this.skip(); return }
         await avec(async (page) => {
           await ouvrirPanneau(page)
-          await cliquer(page, '[data-action="maj"]')
-          await page.waitForFunction(() => !!(document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('[data-maj="style"]'))
-          await page.focus('[data-maj="style"]')
-          await retenir(page, '[data-maj="style"]')
+          await cliquer(page, '[data-action="updates"]')
+          await page.waitForFunction(() => !!(document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('[data-upd="style"]'))
+          await page.focus('[data-upd="style"]')
+          await retenir(page, '[data-upd="style"]')
           await page.keyboard.press('ArrowDown')
-          await attendreRedessin(page, '[data-maj="style"]', 'après la flèche', 100)
-          await page.evaluate(() => { (window as any).__vieux = (document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('[data-maj="style"]') })
-          await attendreRedessin(page, '[data-maj="style"]', 'au battement suivant', 1500)
-          const redessine = await page.evaluate(() => (document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('[data-maj="style"]') !== (window as any).__vieux)
+          await attendreRedessin(page, '[data-upd="style"]', 'après la flèche', 100)
+          await page.evaluate(() => { (window as any).__vieux = (document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('[data-upd="style"]') })
+          await attendreRedessin(page, '[data-upd="style"]', 'au battement suivant', 1500)
+          const redessine = await page.evaluate(() => (document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('[data-upd="style"]') !== (window as any).__vieux)
           assert.equal(redessine, true, 'le battement a redessiné le panneau')
-          assert.equal(await actif(page), 'SELECT[data-maj=style]', 'le focus a suivi le menu redessiné')
+          assert.equal(await actif(page), 'SELECT[data-upd=style]', 'le focus a suivi le menu redessiné')
         })
       })
 
@@ -167,23 +167,23 @@ describe('mjs_devpanel — focus et sélection, dans de vrais navigateurs', func
         if (!present) { this.skip(); return }
         await avec(async (page) => {
           await ouvrirPanneau(page)
-          await cliquer(page, '.onglet[data-onglet="effets"]')
-          const bloc = (effet: string) => page.evaluate((e: string) => Array.from((document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelectorAll('.fx')).findIndex((b: any) => b.querySelector('.fx-nom').textContent === '*' + e), effet)
+          await cliquer(page, '.tab[data-tab="effects"]')
+          const bloc = (effet: string) => page.evaluate((e: string) => Array.from((document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelectorAll('.fx')).findIndex((b: any) => b.querySelector('.fx-name').textContent === '*' + e), effet)
           const lift = await bloc('lift')
           const neon = await bloc('neon')
           assert.ok(lift >= 0 && neon >= 0, 'les deux effets sont dans l\'onglet')
           // un menu : la flèche bas
-          await page.focus(`.fx[data-fx="${lift}"] [data-cle="on"]`)
-          await retenir(page, `.fx[data-fx="${lift}"] [data-cle="on"]`)
+          await page.focus(`.fx[data-fx="${lift}"] [data-key="on"]`)
+          await retenir(page, `.fx[data-fx="${lift}"] [data-key="on"]`)
           await page.keyboard.press('ArrowDown')
-          await attendreRedessin(page, `.fx[data-fx="${lift}"] [data-cle="on"]`, 'menu, après la flèche', 100)
-          assert.equal(await actif(page), 'SELECT[data-cle=on]', 'menu : le focus est revenu au contrôle')
+          await attendreRedessin(page, `.fx[data-fx="${lift}"] [data-key="on"]`, 'menu, après la flèche', 100)
+          assert.equal(await actif(page), 'SELECT[data-key=on]', 'menu : le focus est revenu au contrôle')
           // un nombre : une valeur, puis Entrée
-          await page.fill(`.fx[data-fx="${neon}"] [data-cle="size"]`, '3')
-          await retenir(page, `.fx[data-fx="${neon}"] [data-cle="size"]`)
+          await page.fill(`.fx[data-fx="${neon}"] [data-key="size"]`, '3')
+          await retenir(page, `.fx[data-fx="${neon}"] [data-key="size"]`)
           await page.keyboard.press('Enter')
-          await attendreRedessin(page, `.fx[data-fx="${neon}"] [data-cle="size"]`, 'nombre, après Entrée', 100)
-          assert.equal(await actif(page), 'INPUT[data-cle=size]', 'nombre : le focus est revenu au contrôle')
+          await attendreRedessin(page, `.fx[data-fx="${neon}"] [data-key="size"]`, 'nombre, après Entrée', 100)
+          assert.equal(await actif(page), 'INPUT[data-key=size]', 'nombre : le focus est revenu au contrôle')
           await page.keyboard.press('Escape')
           await ferme(page, 'Échap', 300)
           assert.equal(await panneauPresent(page), false, 'Échap venue du panneau le ferme')
@@ -194,14 +194,14 @@ describe('mjs_devpanel — focus et sélection, dans de vrais navigateurs', func
         if (!present) { this.skip(); return }
         await avec(async (page) => {
           await ouvrirPanneau(page)
-          await cliquer(page, '.onglet[data-onglet="effets"]')
-          const neon = await page.evaluate(() => Array.from((document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelectorAll('.fx')).findIndex((b: any) => b.querySelector('.fx-nom').textContent === '*neon'))
-          const champ = `.fx[data-fx="${neon}"] [data-cle="size"]`
+          await cliquer(page, '.tab[data-tab="effects"]')
+          const neon = await page.evaluate(() => Array.from((document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelectorAll('.fx')).findIndex((b: any) => b.querySelector('.fx-name').textContent === '*neon'))
+          const champ = `.fx[data-fx="${neon}"] [data-key="size"]`
           await page.fill(champ, '3')
           await retenir(page, champ)
           await page.keyboard.press('Enter')
           await attendreRedessin(page, champ, 'après Entrée', 100)
-          assert.equal(await actif(page), 'INPUT[data-cle=size]', 'le focus est revenu au champ')
+          assert.equal(await actif(page), 'INPUT[data-key=size]', 'le focus est revenu au champ')
           await page.keyboard.type('1')
           await page.evaluate((sel: string) => { (window as any).__champ = (document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector(sel) }, champ)
           // pause gardée : vérification négative, deux battements de 700 ms au moins passent sans réécrire le champ (aucun évènement ne le dit)
@@ -209,7 +209,7 @@ describe('mjs_devpanel — focus et sélection, dans de vrais navigateurs', func
           const r = await page.evaluate((sel: string) => { const c = (document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector(sel); return { memeChamp: c === (window as any).__champ, valeur: c.value } }, champ)
           assert.equal(r.memeChamp, true, 'le champ en cours de frappe n\'a pas été réécrit')
           assert.notEqual(r.valeur, '3', 'la frappe est toujours là : ' + r.valeur)
-          assert.equal(await actif(page), 'INPUT[data-cle=size]', 'le focus est resté dans le champ')
+          assert.equal(await actif(page), 'INPUT[data-key=size]', 'le focus est resté dans le champ')
         })
       })
 
@@ -244,9 +244,9 @@ describe('mjs_devpanel — focus et sélection, dans de vrais navigateurs', func
         await avec(async (page) => {
           await page.evaluate(() => { Object.defineProperty(navigator, 'clipboard', { value: { writeText: () => Promise.reject(new Error('refusé')) }, configurable: true }) })
           await ouvrirPanneau(page)
-          await cliquer(page, '.onglet[data-onglet="effets"]')
-          await cliquer(page, '[data-action="fx-copier"]')
-          await page.waitForFunction(() => /Ctrl\+C/.test((document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('[data-action="fx-copier"]').textContent))
+          await cliquer(page, '.tab[data-tab="effects"]')
+          await cliquer(page, '[data-action="fx-copy"]')
+          await page.waitForFunction(() => /Ctrl\+C/.test((document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('[data-action="fx-copy"]').textContent))
           const ligne = await page.evaluate(() => { const c = (document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('.fx-code'); (window as any).__code = c; return c.textContent })
           assert.equal(await page.evaluate(() => String(window.getSelection())), ligne, 'la ligne est sélectionnée')
           // pause gardée, vérification négative : plus que les 700 ms du battement, plus que les 1,6 s de la remise à zéro du bouton
@@ -263,7 +263,7 @@ describe('mjs_devpanel — focus et sélection, dans de vrais navigateurs', func
         if (!present) { this.skip(); return }
         await avec(async (page) => {
           await ouvrirPanneau(page)
-          await cliquer(page, '.onglet[data-onglet="effets"]')
+          await cliquer(page, '.tab[data-tab="effects"]')
           const pos = await page.evaluate(() => { const c = (document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('.fx-code'); const r = c.getBoundingClientRect(); return { x: r.left + 12, y: r.top + r.height / 2, ligne: c.textContent } })
           await page.mouse.click(pos.x, pos.y, { clickCount: 3 })
           await page.evaluate(() => { (window as any).__code = (document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('.fx-code') })

@@ -21,6 +21,7 @@ import assert from 'node:assert/strict'
 import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { playTogether } from './helpers/engines-together.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -40,7 +41,7 @@ const PAGE    = '<!doctype html><html lang="fr"><head><meta charset="utf-8"><tit
 const MOUVEMENTS = `document.addEventListener('pointermove', () => { window.__mouv = performance.now() }, true)`
 const IMMOBILE   = `performance.now() - (window.__mouv || 0) > 130`
 
-for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`µ.modal.notify — glisser pour fermer (${nom} réel)`, function () {
+for (const nom of ['chromium', 'firefox', 'webkit'] as const) playTogether(describe(`µ.modal.notify — glisser pour fermer (${nom} réel)`, function () {
   this.timeout(120000)
   let present = false
   let browser: any
@@ -57,7 +58,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`µ.modal
   const boite  = (n = 0): Promise<{ x: number; y: number; width: number; height: number }> => page.evaluate(`(() => { const r = document.querySelectorAll('.mjs-toast')[${n}].getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height } })()`)
   const nombre = (): Promise<number> => page.evaluate(`document.querySelectorAll('.mjs-toast').length`)
   const marque = (classe: string, n = 0): Promise<boolean> => page.evaluate(`document.querySelectorAll('.mjs-toast')[${n}].classList.contains('${classe}')`)
-  const barre  = (): Promise<string> => page.evaluate(`document.querySelector('.mjs-toast-barre').getAnimations()[0].playState`)
+  const barre  = (): Promise<string> => page.evaluate(`document.querySelector('.mjs-toast-bar').getAnimations()[0].playState`)
   const proche = (a: number, b: number, msg: string, ecart = 3) => assert.ok(Math.abs(a - b) <= ecart, `${msg} : ${a} contre ${b} (écart permis ${ecart})`)
   // deux images rendues : le style et la mise en page posés par ce qui précède sont à jour
   const image  = (): Promise<void> => page.evaluate(`new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(0))))`)
@@ -571,7 +572,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`µ.modal
       await retour()
       assert.equal(await barre(), 'paused', 'le toast est revenu mais la souris est encore dessus : la pause du survol prend le relais')
       await page.mouse.move(2, 2)
-      await page.waitForFunction(`document.querySelector('.mjs-toast-barre').getAnimations()[0].playState === 'running'`)
+      await page.waitForFunction(`document.querySelector('.mjs-toast-bar').getAnimations()[0].playState === 'running'`)
     })
 
     it('swipe: false — rien ne se passe : le toast ne bouge pas, la souris reste libre', async function () {
@@ -708,4 +709,4 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`µ.modal
       await doigts('touchEnd', [])
     })
   })
-})
+}))

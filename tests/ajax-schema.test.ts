@@ -9,7 +9,7 @@ import { strict as assert } from 'node:assert'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { creerRegistre, defSchema, encode as coreEncode, hashRegistre, serialiserDefinitions, list, bits } from '../src/schema/core.js'
+import { createRegistry, defineSchema, encode as coreEncode, hashRegistry, serializeDefinitions, list, bits } from '../src/schema/core.js'
 import type { MjschemaFields } from '../src/schema/core.js'
 import { poserMessages } from './helpers/messages-stub.js'
 
@@ -65,8 +65,8 @@ function arrayBufferResponse(bytes: Uint8Array, opts: { status?: number, url?: s
 
 describe('µ.ajax.binary — µschema-HTTP', function () {
   it('1. POST avec schema : corps envoyé en binaire, 8 premiers octets = hash du registre client, reste = trame µschema valide', async function () {
-    const registre = creerRegistre()
-    defSchema(registre, 'pos', { x: 'i16', y: 'i16' })
+    const registre = createRegistry()
+    defineSchema(registre, 'pos', { x: 'i16', y: 'i16' })
 
     let capturedBody: Uint8Array | undefined
     let capturedContentType: string | undefined
@@ -85,14 +85,14 @@ describe('µ.ajax.binary — µschema-HTTP', function () {
     assert.ok(capturedBody instanceof Uint8Array, 'le corps doit être un Uint8Array, jamais une string JSON')
     assert.equal(capturedContentType, 'application/octet-stream')
     const versionRecue = Buffer.from(capturedBody!.slice(0, 8)).toString('ascii')
-    assert.equal(versionRecue, hashRegistre(registre), 'les 8 premiers octets = hash FNV-1a du registre client, en ASCII')
+    assert.equal(versionRecue, hashRegistry(registre), 'les 8 premiers octets = hash FNV-1a du registre client, en ASCII')
     assert.equal(capturedBody![8], 0, "l'octet 9 = id du schéma 'pos' (0, premier déclaré)")
   })
 
   it("2. GET avec schema : réponse binaire valide → success reçoit l'objet décodé, UN SEUL appel fetch (pas de rafraîchissement)", async function () {
-    const registre = creerRegistre()
-    defSchema(registre, 'etat', { hp: 'u8', pseudo: 'str8' })
-    const hash   = hashRegistre(registre)
+    const registre = createRegistry()
+    defineSchema(registre, 'etat', { hp: 'u8', pseudo: 'str8' })
+    const hash   = hashRegistry(registre)
     const charge = coreEncode(registre, 'etat', { hp: 42, pseudo: 'Zora' })
     const trame  = trameSchema(hash, charge)
 
@@ -110,17 +110,17 @@ describe('µ.ajax.binary — µschema-HTTP', function () {
   })
 
   it('3. désaccord de version : un GET du schéma est déclenché en arrière-plan, PUIS la réponse déjà reçue est re-décodée avec succès', async function () {
-    const registreV2 = creerRegistre()
-    defSchema(registreV2, 'pos', { x: 'i16', y: 'i16' })
-    defSchema(registreV2, 'etat', { hp: 'u8' })   // schéma AJOUTÉ côté serveur — hash différent, id 'pos' inchangé
-    const hashV2 = hashRegistre(registreV2)
+    const registreV2 = createRegistry()
+    defineSchema(registreV2, 'pos', { x: 'i16', y: 'i16' })
+    defineSchema(registreV2, 'etat', { hp: 'u8' })   // schéma AJOUTÉ côté serveur — hash différent, id 'pos' inchangé
+    const hashV2 = hashRegistry(registreV2)
     const trame  = trameSchema(hashV2, coreEncode(registreV2, 'pos', { x: 3, y: 9 }))
 
     const appels: string[] = []
     const fakeFetch = async (url: string) => {
       appels.push(url)
       if (url.indexOf('schema=1') !== -1) {
-        return { status: 200, ok: true, url, headers: { get: () => 'application/json' }, json: async () => serialiserDefinitions(registreV2) }
+        return { status: 200, ok: true, url, headers: { get: () => 'application/json' }, json: async () => serializeDefinitions(registreV2) }
       }
       return arrayBufferResponse(trame, { url })
     }
@@ -137,18 +137,18 @@ describe('µ.ajax.binary — µschema-HTTP', function () {
     assert.ok(appels[1].indexOf('schema=1') !== -1, 'le 2e appel est le GET schéma (convention par défaut : ?schema=1)')
   })
 
-  it('4. après rafraîchissement, µ._mjs_mjschemaRegistre est mis à jour EN PLACE : un appel SUIVANT à la même version ne redéclenche pas de GET schéma', async function () {
-    const registreV2 = creerRegistre()
-    defSchema(registreV2, 'pos', { x: 'i16', y: 'i16' })
-    defSchema(registreV2, 'etat', { hp: 'u8' })
-    const hashV2 = hashRegistre(registreV2)
+  it('4. après rafraîchissement, µ._mjs_mjschemaRegistry est mis à jour EN PLACE : un appel SUIVANT à la même version ne redéclenche pas de GET schéma', async function () {
+    const registreV2 = createRegistry()
+    defineSchema(registreV2, 'pos', { x: 'i16', y: 'i16' })
+    defineSchema(registreV2, 'etat', { hp: 'u8' })
+    const hashV2 = hashRegistry(registreV2)
     const trame  = trameSchema(hashV2, coreEncode(registreV2, 'pos', { x: 1, y: 2 }))
 
     let appelsSchema = 0
     const fakeFetch = async (url: string) => {
       if (url.indexOf('schema=1') !== -1) {
         appelsSchema++
-        return { status: 200, ok: true, url, headers: { get: () => 'application/json' }, json: async () => serialiserDefinitions(registreV2) }
+        return { status: 200, ok: true, url, headers: { get: () => 'application/json' }, json: async () => serializeDefinitions(registreV2) }
       }
       return arrayBufferResponse(trame, { url })
     }
@@ -191,10 +191,10 @@ describe('µ.ajax.binary — µschema-HTTP', function () {
     assert.equal(fetchCalled, false, "fail fast : aucune requête réseau n'a dû partir")
   })
 
-  it("7. options.codec : un registre EXPLICITE (construit via src/schema/core.ts) est utilisé, sans toucher au singleton global µ._mjs_mjschemaRegistre", async function () {
-    const registre = creerRegistre()
-    defSchema(registre, 'prive', { n: 'u16' })
-    const hash  = hashRegistre(registre)
+  it("7. options.codec : un registre EXPLICITE (construit via src/schema/core.ts) est utilisé, sans toucher au singleton global µ._mjs_mjschemaRegistry", async function () {
+    const registre = createRegistry()
+    defineSchema(registre, 'prive', { n: 'u16' })
+    const hash  = hashRegistry(registre)
     const trame = trameSchema(hash, coreEncode(registre, 'prive', { n: 777 }))
 
     const fakeFetch = async () => arrayBufferResponse(trame)
@@ -206,14 +206,14 @@ describe('µ.ajax.binary — µschema-HTTP', function () {
     })
 
     assert.deepEqual(resultat, { n: 777 })
-    assert.ok(!µ._mjs_mjschemaRegistre.parNom.has('prive'), 'le singleton global ne doit pas avoir été modifié par options.codec')
+    assert.ok(!µ._mjs_mjschemaRegistry.byName.has('prive'), 'le singleton global ne doit pas avoir été modifié par options.codec')
   })
 
   it('8. aller-retour de plusieurs types de champs (u8, i16, str8, bool, list, bits)', async function () {
     const champs: MjschemaFields = { id: 'u8', score: 'i16', pseudo: 'str8', actif: 'bool', tags: list('u8'), drapeaux: bits(['vip', 'banni']) }
-    const registre = creerRegistre()
-    defSchema(registre, 'fiche', champs)
-    const hash   = hashRegistre(registre)
+    const registre = createRegistry()
+    defineSchema(registre, 'fiche', champs)
+    const hash   = hashRegistry(registre)
     const valeur = { id: 9, score: -321, pseudo: 'Rin', actif: true, tags: [1, 2, 3], drapeaux: { vip: true, banni: false } }
     const trame  = trameSchema(hash, coreEncode(registre, 'fiche', valeur))
 

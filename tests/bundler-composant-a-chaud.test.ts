@@ -351,11 +351,11 @@ describe('bundler — à chaud seulement sans fuite ni état faux', function () 
     try {
       for (const lang of ['fr', 'en']) {
         setMessagesLang(lang)
-        const ligne = t('cli.composants-recharges-a-chaud' as any, { noms: 'mjs-a, mjs-b' })
+        const ligne = t('cli.components-hot-reloaded' as any, { names: 'mjs-a, mjs-b' })
         assert.match(ligne, /mjs-a, mjs-b/, `${lang} : ${ligne}`)
-        assert.doesNotMatch(ligne, /\{noms\}/)
+        assert.doesNotMatch(ligne, /\{names\}/)
         // la page n'a pas pu échanger et s'est rechargée : jamais « état gardé »
-        const recharge = t('cli.composants-page-rechargee' as any, { noms: 'mjs-a' })
+        const recharge = t('cli.components-page-reloaded' as any, { names: 'mjs-a' })
         assert.match(recharge, /mjs-a/, `${lang} : ${recharge}`)
         assert.doesNotMatch(recharge, /état gardé|state kept|\{noms\}/)
       }
@@ -430,8 +430,8 @@ describe('bundler — lecture du script : ce qui fuit recharge, ce qui ne fait q
 
   it('valeur de départ qui calcule sur une $ ou lit une dérivée : hors de la liste blanche ; copiée telle quelle : à chaud', () => {
     const verdict = (js: string) => hotScriptFacts(js, 'export default 1')
-    for (const v of ['[$.depart * 2]', '$.liste.length', '`${$.depart}`', '-$.depart']) assert.deepEqual([v, verdict(`µ._set(_mjsThis, 'x', ${v})`).raison], [v, 'valeur de départ : calcul sur une $'])
-    assert.equal(verdict('µ._mjs_setComputed(_mjsThis, \'d\', () => ($.a * 2))\nµ._set(_mjsThis, \'x\', $.d)').raison, 'valeur de départ : calcul sur une $')
+    for (const v of ['[$.depart * 2]', '$.liste.length', '`${$.depart}`', '-$.depart']) assert.deepEqual([v, verdict(`µ._set(_mjsThis, 'x', ${v})`).reason], [v, 'valeur de départ : calcul sur une $'])
+    assert.equal(verdict('µ._mjs_setComputed(_mjsThis, \'d\', () => ($.a * 2))\nµ._set(_mjsThis, \'x\', $.d)').reason, 'valeur de départ : calcul sur une $')
     for (const v of ['$.depart', '[1, $.depart]', '{ a: $.depart, b: 2 }', '$.depart ?? 0', '$.a ? $.b : !$.c', '$.a === null']) assert.equal(verdict(`µ._set(_mjsThis, 'x', ${v})`).pure, true, v)
   })
 
@@ -441,24 +441,24 @@ describe('bundler — lecture du script : ce qui fuit recharge, ce qui ne fait q
     for (const e of ['µ.t("admin.titre")', 'µ.t("admin.n", { n: $.count, total: $.items.length })', 'µ.t(`${$.scope}.colonnes`)', 'µ.store.panier', 'µ.store.panier.total * $.count', 'µ.store.panier?.lignes.length', 'µ.store.__mjsLang === \'fr\' ? µ.t("a.fr") : µ.t("a.autre")', 'µ.t("admin.n", { n: µ.store.compte })']) assert.equal(derivee(e).pure, true, e)
     const refus: [string, string][] = [
       ['µ.t(cle)', 'dérivée : nom lu (constante, variable ordinaire ou fonction)'],
-      ['µ.t("a", {}, "wait")', 'dérivée : appel'],
-      ['µ.t()', 'dérivée : appel'],
-      ['µ.t(...$.args)', 'dérivée : appel'],
-      ['µ.t.call(null, "a")', 'dérivée : appel'],
-      ['µ.tr("a")', 'dérivée : appel'],
-      ['µ.store.panier.somme()', 'dérivée : appel'],
+      ['µ.t("a", {}, "wait")', 'dérivée : call'],
+      ['µ.t()', 'dérivée : call'],
+      ['µ.t(...$.args)', 'dérivée : call'],
+      ['µ.t.call(null, "a")', 'dérivée : call'],
+      ['µ.tr("a")', 'dérivée : call'],
+      ['µ.store.panier.somme()', 'dérivée : call'],
       ['µ.store[$.cle]', 'dérivée : champ lu'],
       ['µ.store?.panier', 'dérivée : champ lu'],
       ['µ?.store.panier', 'dérivée : champ lu'],
-      ['µ?.t("a")', 'dérivée : appel'],
-      ['µ.t?.("a")', 'dérivée : appel'],
+      ['µ?.t("a")', 'dérivée : call'],
+      ['µ.t?.("a")', 'dérivée : call'],
       ['µ.store', 'dérivée : champ lu'],
       ['µ.t("a", { n: window.x })', 'dérivée : champ lu'],
     ]
-    for (const [e, raison] of refus) assert.deepEqual([e, derivee(e).raison], [e, raison])
+    for (const [e, raison] of refus) assert.deepEqual([e, derivee(e).reason], [e, raison])
     // une valeur de départ se rejoue à chaque échange, même pour une variable gardée : ni traduction (elle peut demander une section), ni magasin
-    assert.equal(verdict('µ._set(_mjsThis, \'x\', µ.t("a"))').raison, 'valeur de départ : appel')
-    assert.equal(verdict('µ._set(_mjsThis, \'x\', µ.store.panier)').raison, 'valeur de départ : champ lu')
+    assert.equal(verdict('µ._set(_mjsThis, \'x\', µ.t("a"))').reason, 'valeur de départ : call')
+    assert.equal(verdict('µ._set(_mjsThis, \'x\', µ.store.panier)').reason, 'valeur de départ : champ lu')
     // un module qui réécrit µ.t ou µ.store
     for (const s of ['µ.t = (k) => k', 'µ.store = {}']) assert.equal(derivee('µ.t("a") + µ.store.n', `${s}\nexport default 1`).pure, false, s)
   })
@@ -480,11 +480,11 @@ describe('bundler — lecture du script : ce qui fuit recharge, ce qui ne fait q
       '$.items.findIndex((x) => x.id === µ.store.courant) >= 0 ? $.items.join(", ") : ""',
       '[1, 2, $.count].every((n) => n > 0)',
     ]
-    for (const e of admis) assert.deepEqual([e, derivee(e).raison], [e, undefined])
+    for (const e of admis) assert.deepEqual([e, derivee(e).reason], [e, undefined])
     const refus: [string, string][] = [
       ['$.items.filter((x) => x.n = 1)', 'dérivée : rappel : forme AssignmentExpression'],
       ['$.items.filter((x) => x.n++)', 'dérivée : rappel : forme UpdateExpression'],
-      ['$.items.filter((x) => aide(x))', 'dérivée : rappel : appel'],
+      ['$.items.filter((x) => aide(x))', 'dérivée : rappel : call'],
       ['$.items.filter(function(x) { const y = x.n; return y > 1 })', 'dérivée : rappel : corps en bloc'],
       ['$.items.filter((x) => { window.__x = 1; return x })', 'dérivée : rappel : corps en bloc'],
       ['$.items.filter(async (x) => x)', 'dérivée : rappel : forme'],
@@ -497,18 +497,18 @@ describe('bundler — lecture du script : ce qui fuit recharge, ce qui ne fait q
       ['$.items.find((x) => x.ok).filter((y) => y)', 'dérivée : méthode de liste : receveur'],
       ['$.items.at(0).map((y) => y)', 'dérivée : méthode de liste : receveur'],
       ['window.liste.filter((x) => x)', 'dérivée : méthode de liste : receveur'],
-      ...['sort()', 'reverse()', 'splice(0, 1)', 'push(1)', 'pop()', 'shift()', 'unshift(1)', 'fill(0)', 'copyWithin(0, 1)', 'concat([1])', 'flat()', 'flatMap((x) => x)', 'forEach((x) => x)'].map((m): [string, string] => [`$.items.${m}`, 'dérivée : appel']),
-      ['$.items["filter"]((x) => x)', 'dérivée : appel'],
-      ['$.items.filter?.((x) => x)', 'dérivée : appel'],
-      ['$.items.filter((x) => x, $.ctx)', 'dérivée : appel'],
-      ['$.items.filter(...$.f)', 'dérivée : appel'],
+      ...['sort()', 'reverse()', 'splice(0, 1)', 'push(1)', 'pop()', 'shift()', 'unshift(1)', 'fill(0)', 'copyWithin(0, 1)', 'concat([1])', 'flat()', 'flatMap((x) => x)', 'forEach((x) => x)'].map((m): [string, string] => [`$.items.${m}`, 'dérivée : call']),
+      ['$.items["filter"]((x) => x)', 'dérivée : call'],
+      ['$.items.filter?.((x) => x)', 'dérivée : call'],
+      ['$.items.filter((x) => x, $.ctx)', 'dérivée : call'],
+      ['$.items.filter(...$.f)', 'dérivée : call'],
     ]
-    for (const [e, raison] of refus) assert.deepEqual([e, derivee(e).raison], [e, raison])
+    for (const [e, raison] of refus) assert.deepEqual([e, derivee(e).reason], [e, raison])
     // une dérivée qui rend une liste en est un receveur ; une dérivée qui rend un élément, non
-    assert.equal(derivee('$.v.slice(0, 2)', 'µ._mjs_setComputed(_mjsThis, \'v\', () => ($.items.filter((x) => x.ok)))\n').raison, undefined)
-    assert.equal(derivee('$.v.filter((y) => y)', 'µ._mjs_setComputed(_mjsThis, \'v\', () => ($.items.find((x) => x.ok)))\n').raison, 'dérivée : méthode de liste : receveur')
+    assert.equal(derivee('$.v.slice(0, 2)', 'µ._mjs_setComputed(_mjsThis, \'v\', () => ($.items.filter((x) => x.ok)))\n').reason, undefined)
+    assert.equal(derivee('$.v.filter((y) => y)', 'µ._mjs_setComputed(_mjsThis, \'v\', () => ($.items.find((x) => x.ok)))\n').reason, 'dérivée : méthode de liste : receveur')
     // une valeur de départ, rejouée à chaque échange, n'en appelle aucune
-    assert.equal(verdict('µ._set(_mjsThis, \'x\', $.items.filter((x) => x))').raison, 'valeur de départ : appel')
+    assert.equal(verdict('µ._set(_mjsThis, \'x\', $.items.filter((x) => x))').reason, 'valeur de départ : call')
   })
 
   it('dérivées qui appellent filter, map, find, some avec des rappels simples, mêlées à µt et au magasin, gabarit changé : à chaud', async () => {

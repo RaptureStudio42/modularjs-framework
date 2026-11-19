@@ -61,7 +61,7 @@ describe('magasin : le carnet des objets gardés dans une appli qui a des routes
   for (const [nom, opts] of Object.entries(CAS)) it(`le cœur se charge entier et l'objet gardé suit le magasin : ${nom}`, async () => {
     const { window, erreur, coeur } = await charger(nom.replace(/\W+/g, '-'), opts)
     try {
-      if (opts.env !== 'prod') assert.ok(coeur.includes('µ._mjs_carnetVoit = function'), 'le carnet est au cœur')
+      if (opts.env !== 'prod') assert.ok(coeur.includes('µ._mjs_ledgerSees = function'), 'le carnet est au cœur')
       assert.equal(erreur, '', 'le cœur se charge sans erreur')
       assert.equal(window.eval('typeof µ.Element'), 'function', 'le cœur est entier')
       assert.equal(window.eval('µ.url.path'), '/', 'le routeur a écrit µ.url au chargement')

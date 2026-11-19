@@ -66,11 +66,11 @@ describe('MJS-WS — exception d’un serve()/on() : rien d’interne ne part au
       const c   = await connecter(transport)
       const ack = await requete(c, 'profil', 1)
       assert.equal(ack.e, true)
-      assert.equal(ack.p, t('ws.core.erreur-interne-client'), 'message générique, jamais le TypeError interne')
+      assert.equal(ack.p, t('ws.core.error-internal-client'), 'message générique, jamais le TypeError interne')
       c.ws.send(JSON.stringify({ t: 'note', p: {} }))
       await tick(10)
       const erreur = c.trames.find(f => f.t === 'µ:error')
-      assert.equal(erreur.p.message, t('ws.core.erreur-interne-client'))
+      assert.equal(erreur.p.message, t('ws.core.error-internal-client'))
       assert.ok(!JSON.stringify(c.trames).includes('10.0.3.4'), 'ni hôte ni utilisateur de la base côté client')
       const details = journal.filter(l => l.niveau === 'error').map(l => String(l.meta?.err?.message))
       assert.ok(details.some(m => m.includes('Cannot read properties')), 'le détail du serve() est au journal')
@@ -87,7 +87,7 @@ describe('MJS-WS — exception d’un serve()/on() : rien d’interne ne part au
       const ack = await requete(c, 'commande', 2)
       assert.equal(ack.e, true)
       assert.equal(ack.p, 'commande-refusee')
-      assert.equal((await requete(c, 'tour', 4)).p, t('ws.core.erreur-interne-client'), 'une phrase en Error nue peut porter un détail interne : générique en production')
+      assert.equal((await requete(c, 'tour', 4)).p, t('ws.core.error-internal-client'), 'une phrase en Error nue peut porter un détail interne : générique en production')
     } finally {
       await app.stop()
     }
@@ -99,7 +99,7 @@ describe('MJS-WS — exception d’un serve()/on() : rien d’interne ne part au
     try {
       const c   = await connecter(transport)
       const ack = await requete(c, 'pilote', 5)
-      assert.equal(ack.p, t('ws.core.erreur-interne-client'))
+      assert.equal(ack.p, t('ws.core.error-internal-client'))
       assert.ok(journal.some(l => l.niveau === 'error' && l.meta?.err instanceof ErreurDePilote), 'le détail est au journal')
     } finally {
       await app.stop()

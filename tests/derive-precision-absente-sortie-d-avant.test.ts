@@ -1,19 +1,19 @@
 // la précision des valeurs calculées est le défaut : sans la clé `derived`, la sortie est celle de `derived: "precise"`, à
 // l'octet ; `derived: "clock"` (mjs.config.json) rend le code de la règle de l'horloge — ni sources posées sur une valeur calculée,
 // ni écho de liaison marqué, ni machinerie de précision au cœur, et chaque fichier du runtime redevient son texte sans la
-// précision (blocs `<precision>` ôtés, blocs `<horloge>` rendus) ; avec la précision, l'inverse
+// précision (blocs `<precision>` ôtés, blocs `<clock>` rendus) ; avec la précision, l'inverse
 import { describe, it, before, after } from 'mocha'
 import assert from 'node:assert/strict'
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as acorn from 'acorn'
-import { Bundler, projeterPrecision, terminateSharedWorkerPool } from '../src/bundler/index.js'
+import { Bundler, projectPrecision, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 
 const ICI     = dirname(fileURLToPath(import.meta.url))
 const RUNTIME = join(ICI, '..', 'src', 'runtime')
-const MARQUE  = /^[ \t]*\/\/ <\/?(precision|horloge)>$/m
+const MARQUE  = /^[ \t]*\/\/ <\/?(precision|clock)>$/m
 
 const SOURCES: Record<string, string> = {
   'pa-paire.mjs': `<script>
@@ -77,8 +77,8 @@ describe('"clock" : le code de la règle de l\'horloge ; sans la clé, la préci
   it('avec "clock", le cœur n\'a ni machinerie de précision ni marque de bloc', () => {
     assert.ok(horloge.includes('_mjs_setComputed(k, fn) {'), 'accesseur des valeurs calculées de la règle de l\'horloge')
     assert.ok(horloge.includes('_set(k, v) {'), 'écriture de l\'état sans drapeau du code du composant')
-    for (const nom of ['_mjsDoute(', '_mjs_src', '_MJS_RATES', '_mjsPrecisFin(']) assert.ok(!horloge.includes(nom), `${nom} absent du cœur`)
-    assert.doesNotMatch(horloge, /<\/?(precision|horloge)>/)
+    for (const nom of ['_mjsDoubtKeys(', '_mjs_src', '_MJS_RATES', '_mjsPreciseEnd(']) assert.ok(!horloge.includes(nom), `${nom} absent du cœur`)
+    assert.doesNotMatch(horloge, /<\/?(precision|clock)>/)
   })
 
   it('sans la clé, la sortie de "precise", à l\'octet', () => {
@@ -89,8 +89,8 @@ describe('"clock" : le code de la règle de l\'horloge ; sans la clé, la préci
     assert.match(precis, SOURCES_PAIRE)
     assert.match(precis, ECHO_MARQUE)
     assert.ok(precis.includes('_mjs_setComputed(k, fn, src) {'), 'accesseur des valeurs précises')
-    for (const nom of ['_mjsDoute(', '_mjs_src', '_mjsPrecisFin(']) assert.ok(precis.includes(nom), `${nom} présent au cœur`)
-    assert.doesNotMatch(precis, /<\/?(precision|horloge)>/)
+    for (const nom of ['_mjsDoubtKeys(', '_mjs_src', '_mjsPreciseEnd(']) assert.ok(precis.includes(nom), `${nom} présent au cœur`)
+    assert.doesNotMatch(precis, /<\/?(precision|clock)>/)
   })
 })
 
@@ -98,19 +98,19 @@ describe('fichiers du runtime : les deux textes, avec et sans l\'option', () => 
   const fichiers = readdirSync(RUNTIME).filter((f) => f.endsWith('.ts')).sort()
   const balises  = fichiers.filter((f) => MARQUE.test(readFileSync(join(RUNTIME, f), 'utf-8')))
 
-  it('des fichiers portent des blocs `<precision>` ou `<horloge>`', () => {
+  it('des fichiers portent des blocs `<precision>` ou `<clock>`', () => {
     assert.ok(balises.includes('mjs_element.ts') && balises.includes('mjs_init.ts'), `fichiers balisés : ${balises.join(', ')}`)
   })
 
   for (const f of balises) {
-    it(`${f} : un bloc <horloge> ne contient que des lignes en commentaire, et chaque texte se lit sans marque`, () => {
+    it(`${f} : un bloc <clock> ne contient que des lignes en commentaire, et chaque texte se lit sans marque`, () => {
       const brut = readFileSync(join(RUNTIME, f), 'utf-8')
-      for (const bloc of brut.match(/^[ \t]*\/\/ <horloge>\n[\s\S]*?^[ \t]*\/\/ <\/horloge>\n/gm) ?? []) {
+      for (const bloc of brut.match(/^[ \t]*\/\/ <clock>\n[\s\S]*?^[ \t]*\/\/ <\/clock>\n/gm) ?? []) {
         const lignes = bloc.split('\n').slice(1, -2)
-        assert.ok(lignes.length > 0 && lignes.every((l) => /^[ \t]*\/\//.test(l)), `bloc <horloge> de ${f} :\n${bloc}`)
+        assert.ok(lignes.length > 0 && lignes.every((l) => /^[ \t]*\/\//.test(l)), `bloc <clock> de ${f} :\n${bloc}`)
       }
       for (const precise of [false, true]) {
-        const texte = projeterPrecision(brut, precise)
+        const texte = projectPrecision(brut, precise)
         assert.doesNotMatch(texte, MARQUE, `${f}, précision ${precise}`)
         // un fichier qui exporte se lit en module, les autres en script
         try {
@@ -126,12 +126,12 @@ describe('fichiers du runtime : les deux textes, avec et sans l\'option', () => 
   // le redessin sans reffet (`rw`, pour `µrefresh` et `$x = $x`) a son propre bloc : il n'entre qu'avec une unité qui l'écrit
   it('mjs_element.ts à l\'horloge : les signatures de l\'horloge ; en précision : celles de la précision ; avec le redessin : celles de `rw`', () => {
     const brut     = readFileSync(join(RUNTIME, 'mjs_element.ts'), 'utf-8')
-    const horloge  = projeterPrecision(brut, false)
-    const precis   = projeterPrecision(brut, true)
-    const redessin = projeterPrecision(brut, true, true)
+    const horloge  = projectPrecision(brut, false)
+    const precis   = projectPrecision(brut, true)
+    const redessin = projectPrecision(brut, true, true)
     for (const s of ['  _set(k, v) {', '  _mjs_setComputed(k, fn) {', '  _mjs_notifyMutation(k, oldValue) {', '  _mjs_invalidate(k) {']) assert.ok(horloge.includes('\n' + s + '\n'), `horloge : ${s}`)
     for (const s of ['  _set(k, v, code) {', '  _mjs_setComputed(k, fn, src) {', '  _mjs_notifyMutation(k, oldValue) {', '  _mjs_invalidate(k) {']) assert.ok(precis.includes('\n' + s + '\n'), `précision : ${s}`)
     for (const s of ['  _mjs_notifyMutation(k, oldValue, rw) {', '  _mjs_invalidate(k, rw) {']) assert.ok(redessin.includes('\n' + s + '\n') && !precis.includes('\n' + s + '\n'), `redessin : ${s}`)
-    assert.ok(!horloge.includes('_mjsDoute') && precis.includes('_mjsDoute'), 'machinerie de précision : en précision seulement')
+    assert.ok(!horloge.includes('_mjsDoubtKeys') && precis.includes('_mjsDoubtKeys'), 'machinerie de précision : en précision seulement')
   })
 })

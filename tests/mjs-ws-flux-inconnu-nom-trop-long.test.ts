@@ -34,7 +34,7 @@ describe('MJS-WS — flux inconnu au nom trop long : réponse courte, sans le no
         assert.ok(b.length < 300, `trame de ${b.length} caractères pour un nom inconnu`)
         const trame = JSON.parse(b)
         assert.equal(trame.t, 'µ:error')
-        assert.equal(trame.p.message, t('ws.streams.nom-trop-long', { max: 200 }))
+        assert.equal(trame.p.message, t('ws.streams.name-too-long', { max: 200 }))
       }
       brutes.length = 0
       const ordinaire = 'g'.repeat(200)

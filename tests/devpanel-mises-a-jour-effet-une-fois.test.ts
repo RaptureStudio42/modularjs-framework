@@ -64,7 +64,7 @@ describe('mjs_devpanel — mises à jour : l\'effet du panneau ne se relance pas
   const racine = () => window.document.querySelector('[data-mjs-devpanel]')?.shadowRoot
   const clic   = (el: any) => el.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
   const regler = (cle: string, valeur: string) => {
-    const el = racine().querySelector(`[data-maj="${cle}"]`)
+    const el = racine().querySelector(`[data-upd="${cle}"]`)
     el.value = valeur
     el.dispatchEvent(new window.Event('change', { bubbles: true }))
   }
@@ -74,9 +74,9 @@ describe('mjs_devpanel — mises à jour : l\'effet du panneau ne se relance pas
     const comp = window.document.querySelector('mjs-maj-boucle')
     await attendre(() => !!comp._shadow?.querySelector('.t'))
     window.µ.console()
-    await attendre(() => !!racine()?.querySelector('[data-action="maj"]'))
-    if (racine().querySelector('[data-action="maj"]').getAttribute('aria-pressed') !== 'true') clic(racine().querySelector('[data-action="maj"]'))
-    await attendre(() => !!racine().querySelector('[data-maj="color"]'))
+    await attendre(() => !!racine()?.querySelector('[data-action="updates"]'))
+    if (racine().querySelector('[data-action="updates"]').getAttribute('aria-pressed') !== 'true') clic(racine().querySelector('[data-action="updates"]'))
+    await attendre(() => !!racine().querySelector('[data-upd="color"]'))
     return comp._shadow
   }
 
@@ -106,7 +106,7 @@ describe('mjs_devpanel — mises à jour : l\'effet du panneau ne se relance pas
     finally {
       window.µ._mjs_fx = orig
       window.µ.console()
-      await attendre(() => !!racine()?.querySelector('[data-maj="fx"]'))
+      await attendre(() => !!racine()?.querySelector('[data-upd="fx"]'))
       regler('fx', 'flash')
       regler('duration', '600')
       window.µ.console(false)

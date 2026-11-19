@@ -10,7 +10,7 @@ import { join } from 'node:path'
 import { EFFECTS, parseEffect, checkPlacement, checkLife, devCatalog } from '../src/effects/catalog.js'
 import { setMessagesLang } from '../src/messages/index.js'
 import * as features from '../src/bundler/features.js'
-import { Bundler, projeterBlocs, terminateSharedWorkerPool } from '../src/bundler/index.js'
+import { Bundler, projectBlocks, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 
 const RUNTIME = new URL('../src/runtime/', import.meta.url)
@@ -132,11 +132,11 @@ describe('visible : la part de on: view réglable (construction)', function () {
   it('le cœur d\'une appli qui n\'écrit pas visible : les déclencheurs d\'avant, rien de visible', () => {
     for (const f of ['mjs_fx.ts', 'mjs_fx_transition.ts']) {
       const src  = readFileSync(new URL(f, RUNTIME), 'utf-8')
-      const sans = projeterBlocs(src, { visible: false })
+      const sans = projectBlocks(src, { visible: false })
       assert.doesNotMatch(sans, /_mjsFxPart|_mjs_fxSight|_mjs_part|<\/?(?:sans-)?visible>/, f)
-      assert.doesNotMatch(projeterBlocs(src, { visible: true }), /<\/?(?:sans-)?visible>/, f)
+      assert.doesNotMatch(projectBlocks(src, { visible: true }), /<\/?(?:sans-)?visible>/, f)
     }
-    const sans = projeterBlocs(readFileSync(new URL('mjs_fx.ts', RUNTIME), 'utf-8'), { visible: false })
+    const sans = projectBlocks(readFileSync(new URL('mjs_fx.ts', RUNTIME), 'utf-8'), { visible: false })
     assert.equal(sans.split('var io = new IntersectionObserver(function(entries) {').length - 1, 4)
     assert.match(sans, /return µ\._mjs_fxKeep \? µ\._mjs_fxKeep\(def, el, name, s, comp\) : def\.setup\(el, s, comp\);/)
   })

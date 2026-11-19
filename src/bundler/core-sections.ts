@@ -107,7 +107,7 @@ export function selectCoreSections(file: string, src: string, decide: (kind: Cor
   const out: string[] = []
   const read = (label: string): { kind: CoreKind, attr: string } => {
     const m = REGEX_LABEL.exec(label)
-    if (!m) throw new Error(t('bundler.core-sections.etiquette-illisible', { fichier: file, jeton: label }))
+    if (!m) throw new Error(t('bundler.core-sections.label-unreadable', { file, token: label }))
     return { kind: m[1] ? 'dev' : m[2] ? 'alt' : 'piece', attr: m[3] }
   }
   const inside = () => stack.length === 0 || stack[stack.length - 1].keep
@@ -123,8 +123,8 @@ export function selectCoreSections(file: string, src: string, decide: (kind: Cor
       }
       else {
         const open = stack.pop()
-        if (!open) throw new Error(t('bundler.core-sections.section-sans-ouverture', { fichier: file }))
-        if (open.syntax !== mark.syntax) throw new Error(t('bundler.core-sections.section-non-fermee', { fichier: file }))
+        if (!open) throw new Error(t('bundler.core-sections.section-no-opening', { file }))
+        if (open.syntax !== mark.syntax) throw new Error(t('bundler.core-sections.section-not-closed', { file }))
       }
       out.push('')
       continue
@@ -145,10 +145,10 @@ export function selectCoreSections(file: string, src: string, decide: (kind: Cor
         const { kind, attr } = read(label)
         return decide(kind, attr) ? body : ''
       })
-      if (text.includes('<!-- @@')) throw new Error(t('bundler.core-sections.section-non-fermee', { fichier: file }))
+      if (text.includes('<!-- @@')) throw new Error(t('bundler.core-sections.section-not-closed', { file }))
     }
     out.push(stack.some(s => s.alt) ? awake(text) : text)
   }
-  if (stack.length > 0) throw new Error(t('bundler.core-sections.section-non-fermee', { fichier: file }))
+  if (stack.length > 0) throw new Error(t('bundler.core-sections.section-not-closed', { file }))
   return out.join('\n')
 }

@@ -8,31 +8,36 @@ Chaque piège est présenté **symptôme → cause → solution**. La plupart vi
 
 **Symptôme** : un affichage ne se met pas à jour alors que la donnée a changé. Le binding semble correct, mais reste figé sur sa valeur de départ.
 
-**Cause** : MJS détecte les dépendances réactives par **analyse statique** du binding — il lit les `$x` qui apparaissent **directement** dans l'expression. Un `$x` lu *à l'intérieur* d'une fonction appelée par le binding n'est **pas** vu : l'effet est alors classé « mount-only » (joué une fois au montage, jamais re-déclenché).
+**Cause** : MJS détecte les dépendances réactives par **analyse statique**, à la construction. Il lit les `$x` écrits dans l'expression, et ceux que lisent les méthodes (`{@compute()}`) et les fonctions du `<script>` (`{compute()}`) qu'elle appelle, de proche en proche ([chapitre 3](03-reactivite.md)). Une fonction du `<script>` n'est lue que si elle y est écrite sur place, au premier niveau, et affectée une seule fois. Un `$x` lu dans une fonction que MJS ne lit pas n'est **pas** vu : une fonction affectée deux fois au premier niveau ou rendue par un appel (la construction le signale), une fonction réaffectée dans une autre fonction, importée ou du `<script module>` (sans avertissement). L'expression ne suit alors que les autres `$` qu'elle lit ; sans aucun, elle est jouée une fois au montage, jamais relancée.
 
 ```html
 <script>
-  $hidden = 1
-  compute = -> $hidden * 2     # $hidden lu DANS la fonction → invisible au compilateur
+  $prix   = 10
+  $remise = 0
+  compute = -> $prix                # écrite sur place, une seule fois : {compute()} suivrait $prix
+  µmount ->
+    compute = -> $prix - $remise    # affectée une deuxième fois : MJS ne sait plus laquelle lire
 </script>
 
-<!-- ✗ figé : {compute()} ne dépend (visiblement) d'aucun $ → mount-only -->
+<!-- ✗ figé, sans avertissement : ni $prix ni $remise ne sont suivis -->
 <p>{compute()}</p>
 
-<!-- ✓ : $hidden apparaît en clair dans le binding → tracké -->
-<p>{compute($hidden)}</p>
+<!-- ✓ : les $ apparaissent en clair dans le binding → suivis -->
+<p>{compute($prix, $remise)}</p>
 ```
 
-**Solution** : faites apparaître le `$` **en clair** dans le binding (en l'argument), ou utilisez une **valeur dérivée** `$resultat = compute($hidden)` (le dérivé, lui, voit le `$hidden` qu'il lit). La règle : *ce que le binding doit suivre doit être lisible dans le binding*.
+**Solution** : écrivez la fonction une seule fois, au premier niveau du `<script>`, et faites-lui lire une variable `$` pour ce qui change ; ou faites apparaître le `$` **en clair** dans le binding (en argument) ; ou utilisez une **valeur dérivée** `$resultat = compute($prix)` (le dérivé, lui, voit le `$prix` qu'il lit). La règle : *ce que le binding doit suivre doit être lisible, dans le binding ou dans une fonction du composant qu'il appelle*.
 
 <details>
 <summary>🎓 <b>Pour débutants</b> — pourquoi MJS ne « regarde pas dans » la fonction&nbsp;?</summary>
 
 D'autres frameworks enveloppent vos données dans un Proxy et notent *au moment de l'exécution* quelle donnée a été lue. MJS, lui, fait ce travail **à la compilation** : il lit le texte de votre binding et y repère les `$`. C'est ce qui le rend rapide (zéro surcoût au runtime).
 
-Le revers : il ne peut voir que ce qui est **écrit dans le binding**. Si la donnée réactive est planquée dans le corps d'une fonction, le compilateur ne la « voit » pas et ne sait pas qu'il faut rafraîchir quand elle change. D'où la règle : montrez-lui le `$`.
+Le revers : il ne voit que ce qu'il peut lire — le binding, et les fonctions et méthodes du composant qu'il appelle. Si la donnée réactive est lue par une fonction venue d'ailleurs (importée), ou dont le corps change en cours de route (affectée deux fois), le compilateur ne la « voit » pas et ne sait pas qu'il faut rafraîchir quand elle change. D'où la règle : montrez-lui le `$`.
 
 </details>
+
+**Une fonction rangée dans une variable `$`** suit la même règle : rangée par le code (`$f = -> $a * 10`, écrit dans une méthode), puis appelée dans le gabarit (`{$f()}`), elle n'est pas relue quand `$a` change — le gabarit ne voit que `$f`. Après avoir changé `$a`, écrivez `µrefresh($f)`.
 
 ## 2. Mutation imbriquée échappée — objet qui « sort » de la portée trackée
 
@@ -197,7 +202,7 @@ Feuille externe (Google Fonts…) : même principe, avec un `<link>` au lieu d'u
 
 ## 8. Outils de débogage — `µdebug`, `µinspect`, `µ.debugMode`
 
-Trois outils, tous **dev-only** : aucun ne doit rester dans du code livré, car la minification de production n'en retire qu'une partie. Au-dessus du niveau `'log'` de la clé `logLevel` (le défaut de production est `'error'`), elle retire les appels `console.log`, `console.info` et `console.debug`, mais pas le `debugger` de `µdebug`, ni sa trace `µ.log` — un `µ.log` de composant, que ce niveau rend seulement muet à l'exécution —, ni les `console.group` et `console.groupEnd` de `µinspect`, qui ouvrent encore un groupe vide à chaque changement. Les `console.error` restent aussi, sauf au niveau `'silent'` (détail des niveaux : [34 · Déboguer](34-deboguer.md), « Le niveau de la console »).
+Trois outils, tous **dev-only** : aucun ne doit rester dans du code livré, car la minification de production n'en retire qu'une partie. Une construction de production qui embarque `µinspect` vous le dit par un avertissement qui nomme le fichier. Au-dessus du niveau `'log'` de la clé `logLevel` (le défaut de production est `'error'`), elle retire les appels `console.log`, `console.info` et `console.debug`, mais pas le `debugger` de `µdebug`, ni sa trace `µ.log` — un `µ.log` de composant, que ce niveau rend seulement muet à l'exécution —, ni les `console.group` et `console.groupEnd` de `µinspect`, qui copient encore `$x` entier et ouvrent un groupe vide à chaque changement. Les `console.error` restent aussi, sauf au niveau `'silent'` (détail des niveaux : [34 · Déboguer](34-deboguer.md), « Le niveau de la console »).
 
 **`µdebug $x`** — point d'arrêt **réactif** : sucre pur, réécrit en reffet qui `console.log` la valeur **et** pose un `debugger;` à **chaque** changement de `$x`.
 
@@ -207,7 +212,7 @@ Trois outils, tous **dev-only** : aucun ne doit rester dans du code livré, car 
 </script>
 ```
 
-**`µinspect $x`** — appelé à l'initialisation du composant, active un suivi console (`console.group`) qui affiche **From**/**To** à chaque mutation de `$x`, y compris les mutations profondes (`_mjs_deepSet`/`_mjs_deepCall`) — pratique pour traquer *où* une valeur change sans poser de `debugger` qui bloque l'exécution.
+**`µinspect $x`** — appelé à l'initialisation du composant, active un suivi console (`console.group`) qui affiche **From**/**To** à chaque mutation de `$x`, y compris les mutations profondes (`$x.a.b = v`, `$x.a.liste.push(v)`, ou par un nom : `t = $x.a` puis `t.b = v`) : **From** est la valeur de `$x` juste avant la mutation, **To** celle d'après, copiées au moment du changement — pratique pour traquer *où* une valeur change sans poser de `debugger` qui bloque l'exécution. La copie descend jusqu'à 64 niveaux sous `$x` (plus bas, la console montre l'objet tel qu'il est quand vous le lisez), rend une instance de classe en objet simple (ses champs, sans sa classe ; une classe qui se nomme elle-même par `Symbol.toStringTag` est montrée telle quelle, et son **From** peut alors montrer la valeur d'après), montre tel quel, sans le copier, un objet à état interne (erreur, élément de la page, `RegExp`, tableau typé) et met, à la place d'un accesseur qui lève, l'erreur qu'il lève. Elle a un coût : chaque changement copie `$x` entier trois fois — 30 000 objets par écriture pour une liste de 10 000 lignes ; avec un chemin, `$x` une fois, plus trois copies de la valeur du chemin.
 
 ```html
 <script>
@@ -338,12 +343,15 @@ MJS calcule au build où se trouve chaque valeur `{…}` dans l'arbre que le nav
 - **`<template>`** : son contenu est rangé à part (`template.content`), hors de la page. Une valeur `{…}`, un bloc (`{if}`, `{for}`…) ou un gestionnaire placé dedans est refusé à la construction ; un `<template>` entièrement statique reste permis. Sortez la partie dynamique du `<template>`, ou affichez-la dans un sous-composant.
 - **`<?…?>`, `<!…>`** : le navigateur en fait des commentaires ; ils comptent comme tels et ne décalent rien.
 - **`<textarea>` et `<title>`** : leur contenu est du texte pour le navigateur, aucun commentaire n'y est lu — `<textarea>a<!-->b</textarea>` affiche `a<!-->b`, `<textarea><!-- x --></textarea>` affiche `<!-- x -->`. MJS les garde de même, tels qu'écrits (une valeur `{…}` écrite dans ce commentaire n'est pas lue), et la fermante `</textarea>` l'emporte sur un `-->` écrit plus loin. Une balise écrite dedans y est un texte aussi : `<textarea><b x={$v}>gras</b></textarea>` affiche `<b x={$v}>gras</b>`, sans élément ni liaison. Une valeur `{…}` écrite dans le contenu, elle, est lue : elle écrit le texte de l'élément, au premier rendu puis à chaque changement (`<title>{$titre}</title>`, `<textarea>Bonjour {$nom}</textarea>`). Pour un champ, ce texte est sa valeur de départ, que la saisie remplace : pour suivre la saisie, liez `value=!{$x}` (cf. [07 — Liaisons](07-bindings.md)). Dans un `<svg>` ou un `<math>`, `<title>` est un élément ordinaire : un commentaire y reste un commentaire.
+- **Une expression `{…}` qui finit par un opérateur** (`{$a +}`, `{if $a ==}`) : refusée à la construction, avec la forme à écrire — Civet en ferait une fonction, affichée telle quelle. Un commentaire `# …` ou `### … ###` se lit comme un commentaire dans le texte `{…}` (`{$t # note}` affiche `$t`) ; dans les blocs `{if}`, `{elsif}`, `{key}`, `{for … in …}`, `{await}` et `{const}` ; dans une valeur d'attribut calculée `nom={…}`, interpolée `nom="… {…} …"` ou `nom="{…}"` ; dans l'étalement `{...$o}`, la classe `:class{…}` et le style `:style.prop={…}`. Un `### … ###` écrit sur une ligne se ferme au `###` suivant ; quatre dièses ou plus (`{$a ###### + note}`, `{$a #### x ### + note}`) n'ouvrent aucun bloc et commentent, comme dans le script, la fin de leur ligne (`$a`). Dans un gestionnaire, `=:` suivi d'un `#` est refusé ; ailleurs, `@click={…}` accepte un `#` ; dans une liaison `value=!{…}`, un `#` est refusé à la construction. Un `#` dans une chaîne (`{"#" + $t}`) reste du texte.
+- **Un paramètre de rappel nommé `$nom`** (`{$l.map(($v) => $v * 2)}`) : refusé à la construction — `$` est réservé à l'état, le rappel l'écrirait à chaque rendu ; écrivez `(v) => v * 2`.
 - **`</script>` dans une valeur d'attribut** : permis entre guillemets, dans une expression `{…}` (chaînes comprises) et dans une valeur sans guillemets, qui va jusqu'au blanc ou au `>` comme dans le navigateur (`<p title=a</script>b>` donne le titre `a</script` et le texte `b>`). Dans le gabarit et les valeurs que pose le code produit, il est écrit `<\/script>` (même valeur) : il ne refermerait pas la balise `<script>` d'une page où ce code serait mis en ligne. Un `</script>` dans le texte reste refusé.
 - **Un guillemet jamais refermé dans une valeur d'attribut** (`<a href="/contact>Nous écrire</a>`) : le navigateur lirait tout le reste du fichier comme cette valeur, et la balise disparaîtrait avec tout ce qui la suit. La construction s'arrête sur `[GUILLEMET JAMAIS REFERMÉ]`, avec le fichier, la ligne et la colonne du guillemet ouvrant (`main.mjs:12:9`) : refermez-le. Un guillemet de l'autre sorte dans la valeur (`title="l'été"`), dans une expression `{…}`, un gestionnaire, un texte, un commentaire, un `<textarea>` ou un `<title>` ne compte pas, ni une balise écrite dans le contenu d'un `<xmp>`, d'un `<iframe>`, d'un `<noembed>` ou d'un `<noframes>` : le navigateur n'y lit que du texte. Dans un `<noscript>`, il compte : un navigateur sans JavaScript y lit des balises.
 - **Tableaux** : un élément (un composant compris) ou du texte placé directement dans un `<table>`, `<tbody>`, `<thead>`, `<tfoot>` ou `<tr>` est refusé à la construction — le navigateur le retire du tableau et le pose avant lui ; un `<form>`, lui, y reste, vide et refermé sur place, et son contenu sort du formulaire (refusé de même : placez le `<form>` autour du `<table>`, ou dans une cellule). Seuls les rangées, cellules, sections, `<caption>`, `<col>`/`<colgroup>`, `<template>` et `<input type="hidden">` y restent : placez le reste dans une cellule `<td>`.
 - **`<form>` dans un `<form>`, `<select>` dans un `<select>`**, `<a>` dans un `<a>` à travers un bloc : refusés à la construction — le navigateur ignore le second, ou déplace ce qui les sépare.
 - **SVG et MathML** : une balise HTML de texte ou de bloc (`<span>`, `<div>`, `<p>`, `<b>`…) posée dans un `<svg>` hors d'un `<foreignObject>` en fait sortir : le navigateur referme le `<svg>` et la pose après lui, MJS aussi. Un `<![CDATA[…]]>` y est un texte, jusqu'au `]]>` : un `<` ou une accolade n'y ouvrent ni balise ni valeur, et la section part telle qu'écrite ; sans `]]>`, elle avalerait toute la suite du composant, elle est refusée.
 - **`<html>`, `<head>`, `<body>`** dans un gabarit sont ignorés, comme par le navigateur (leur contenu reste) ; `<image>` y devient `<img>`.
+- **Deux écarts avec le navigateur** : une fermante s'écrit dans la casse de son ouvrante (`<DIV>x</DIV>` ; `<DIV>x</div>` arrête la construction sur une fermante orpheline), et une valeur d'attribut qui finit par `/` s'écrit entre guillemets (`<a href="/a/b/">` ; sans guillemets, `<a href=/a/b/>` est lue comme une balise refermée sur place, et sa fermante `</a>` arrête la construction).
 
 ## 16. « Imbrication trop profonde » à la construction
 

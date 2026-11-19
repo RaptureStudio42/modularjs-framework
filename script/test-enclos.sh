@@ -7,7 +7,21 @@
 # machine. Réglages par variables d'environnement :
 #   MJS_TEST_MEM      plafond mémoire du run entier (défaut 4G)
 #   MJS_TEST_MAXSEC   garde-temps du GROUPE en secondes, 0 = aucune (défaut 0) — tue aussi les
-#                     mocha orphelins, ce qu'un `timeout npm test` ne sait pas faire
+#                     mocha orphelins, ce qu'un `timeout npm test` ne sait pas faire ; `auto` : 3 fois
+#                     la durée relevée des fichiers passés (relevé des tests, tests/helpers/test-trace.ts)
+#                     plus 60 s, 300 s au moins ; elle court depuis le départ de mocha, jamais pendant
+#                     l'attente d'un jeton
+#   MJS_TEST_JETONS   file commune à toute la machine : nombre de runs à la fois (défaut 3, 0 = sans
+#                     file) ; un jeton est un fichier verrouillé (flock) sous MJS_TEST_JETONS_DIR (défaut
+#                     /tmp/claude-<uid>/mjs-test-jetons, le même pour tous les arbres), pris AVANT mocha,
+#                     tenu par ce script et par mocha, qui hérite de son descripteur : il ne tombe qu'à la
+#                     sortie du dernier des deux, même tués ; TERM, INT ou HUP reçus par ce script arrêtent
+#                     mocha avant sa sortie ; dossier ou jeton impossible à ouvrir : dit, et le run part sans
+#                     file ; les runs que les tests lancent eux-mêmes passent sans file
+#   MJS_MOTEURS       les seuls moteurs de Playwright que les tests lancent (chromium, firefox, webkit
+#                     ou tous ; défaut : les trois) — tests/helpers/engine-filter.ts, chargé par tmp-sweep.ts
+#   MJS_TEST_DISPLAY  1 : DISPLAY gardé ; sinon retiré pour mocha (hérité d'une session graphique, il
+#                     prive Chromium de WebGL ; les tests qui veulent un écran lancent leur Xvfb)
 # Sans systemd utilisateur (CI, conteneur, bac à sable), garde de repli : la mémoire réelle (RSS
 # cumulée) de l'arbre de processus de mocha est relevée toutes les 0,5 s, et l'arbre entier tué
 # au-delà de MJS_TEST_MEM, avec le même verdict, ou au-delà de MJS_TEST_MAXSEC (un nombre de
@@ -50,6 +64,149 @@ if [ "$SOCKET_BYTES" -gt 107 ]; then
     echo "⚠  TMPDIR trop long pour une socket Unix ($SOCKET_BYTES octets avec celle de tsx, 107 au plus) et aucun dossier court sous /tmp — les tests qui lancent tsx échoueront par « listen EINVAL » : prenez un TMPDIR court (ex. /tmp/claude-1000/t1)"
   fi
 fi
+
+# --- 1 ter. Sans DISPLAY, sauf MJS_TEST_DISPLAY=1 ---
+
+if [ -n "${DISPLAY:-}" ] && [ "${MJS_TEST_DISPLAY:-0}" != 1 ]; then
+  echo "🖥  DISPLAY=$DISPLAY retiré pour mocha (hérité, il prive Chromium de WebGL) — MJS_TEST_DISPLAY=1 pour le garder"
+  unset DISPLAY
+fi
+
+# --- 1 quater. Garde calculée : MJS_TEST_MAXSEC=auto ---
+
+# 3 × la durée relevée des fichiers passés + 60 s, 300 s au moins ; durée lue pour le réglage de moteurs du run (MJS_MOTEURS), à défaut
+# pour les trois ; un fichier absent du relevé compte 28 s s'il lance Playwright, 10 s sinon ; sans fichier passé, toute la suite relevée
+if [ "$MAXSEC" = 'auto' ]; then
+  AUTO="$(node - "$ROOT" "$@" <<'EOF'
+const fs   = require('node:fs')
+const path = require('node:path')
+const [root, ...args] = process.argv.slice(2)
+const v     = process.env.MJS_TEST_TRACE
+const dir   = v && v !== '0' ? path.resolve(v) : path.join(root, 'node_modules', '.cache', 'mjs-tests')
+let known   = {}
+try { known = JSON.parse(fs.readFileSync(path.join(dir, 'releve.json'), 'utf-8')).files ?? {} } catch { /* pas de relevé : tout est estimé */ }
+const words = (process.env.MJS_MOTEURS ?? '').toLowerCase().split(/[\s,]+/).filter(Boolean)
+const key   = !words.length || words.includes('tous') ? 'tous' : [...new Set(words)].sort().join(',')
+const files = args.filter((a) => /\.(test\.ts|mts)$/.test(a)).map((a) => path.resolve(a))
+const keys  = files.length ? files.map((f) => f.startsWith(root + path.sep) ? path.relative(root, f).split(path.sep).join('/') : f) : Object.keys(known)
+let ms      = 0
+let found   = 0
+for (const [i, k] of keys.entries()) {
+  const m = known[k]?.ms ?? {}
+  const d = m[key] ?? m.tous ?? Object.values(m)[0]
+  if (d !== undefined) {
+    ms += d
+    found++
+    continue
+  }
+  let source = ''
+  try { source = fs.readFileSync(files[i] ?? path.join(root, k), 'utf-8') } catch { /* illisible : compté comme un test sans navigateur */ }
+  ms += /playwright/.test(source) ? 28000 : 10000
+}
+console.log(`${Math.max(300, Math.ceil(3 * ms / 1000) + 60)} ${keys.length} ${found} ${Math.round(ms / 1000)}`)
+EOF
+)"
+  AUTO_RE='^([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+)$'
+  if [[ "$AUTO" =~ $AUTO_RE ]]; then
+    MAXSEC="${BASH_REMATCH[1]}"
+    echo "⏱  MJS_TEST_MAXSEC=auto : 3 × ${BASH_REMATCH[4]} s relevées ou estimées (${BASH_REMATCH[3]} fichier(s) sur ${BASH_REMATCH[2]} au relevé) + 60 s, 300 s au moins → $MAXSEC s"
+  else
+    echo "⚠  MJS_TEST_MAXSEC=auto incalculable (rendu illisible : « $AUTO ») — tests lancés SANS garde-temps"
+    MAXSEC=0
+  fi
+fi
+
+# --- 1 quinquies. File commune : un jeton pour toute la machine, pris avant mocha ---
+
+# MJS_TEST_JETONS fichiers jeton-<n> sous MJS_TEST_JETONS_DIR ; un jeton libre se prend par flock -n, relu chaque seconde ; le verrou vit sur
+# un descripteur de ce script, dont mocha hérite : il ne tombe qu'à la sortie du dernier des deux, même tués (un mocha resté seul garde sa place) ;
+# mocha reçoit MJS_TEST_JETONS=0 — un run lancé par un test passe sans file (il attendrait sinon un jeton que son parent tient) ; dossier ou
+# fichier jeton impossible à ouvrir : dit, et le run part sans file
+JETONS="${MJS_TEST_JETONS:-3}"
+JETONS_DIR="${MJS_TEST_JETONS_DIR:-/tmp/claude-$UID/mjs-test-jetons}"
+JETON=''
+JETON_FD=''
+NO_QUEUE=''
+if ! [[ "$JETONS" =~ ^[0-9]+$ ]]; then
+  echo "⚠  MJS_TEST_JETONS « $JETONS » illisible (attendu : un nombre, 0 = sans file) — tests lancés SANS file commune"
+elif [ "$(( 10#$JETONS ))" -gt 0 ]; then
+  if ! command -v flock >/dev/null; then NO_QUEUE='flock absent'
+  elif ! WHY="$(mkdir -p "$JETONS_DIR" 2>&1)"; then NO_QUEUE="$WHY"
+  else
+    for n in $(seq 1 "$(( 10#$JETONS ))"); do
+      if ! WHY="$( { : >> "$JETONS_DIR/jeton-$n"; } 2>&1 )"; then
+        NO_QUEUE="$WHY"
+        break
+      fi
+    done
+  fi
+  if [ -n "$NO_QUEUE" ]; then
+    echo "⚠  file commune impossible ($NO_QUEUE) — tests lancés SANS file commune"
+  else
+    WAIT_START="$SECONDS"
+    WAITED=''
+    TOLD=-60
+    while :; do
+      for n in $(seq 1 "$(( 10#$JETONS ))"); do
+        if ! exec {JETON_FD}>>"$JETONS_DIR/jeton-$n"; then
+          NO_QUEUE="jeton $JETONS_DIR/jeton-$n refusé en route"
+          break 2
+        fi
+        if flock -n "$JETON_FD"; then
+          JETON="$n"
+          break
+        fi
+        exec {JETON_FD}>&-
+      done
+      [ -n "$JETON" ] && break
+      if [ $(( SECONDS - TOLD )) -ge 60 ]; then
+        echo "⏳ file commune : tous les jetons de la machine sont pris ($(( 10#$JETONS )), $JETONS_DIR) — attente depuis $(( SECONDS - WAIT_START )) s ; la garde-temps ne court pas encore"
+        TOLD="$SECONDS"
+      fi
+      WAITED=1
+      sleep 1
+    done
+    if [ -n "$NO_QUEUE" ]; then echo "⚠  file commune impossible ($NO_QUEUE) — tests lancés SANS file commune"
+    elif [ -n "$WAITED" ]; then echo "🎫 jeton $JETON sur $(( 10#$JETONS )) pris après $(( SECONDS - WAIT_START )) s d'attente"
+    fi
+  fi
+fi
+export MJS_TEST_JETONS=0
+
+# --- 1 sexies. Arrêt : TERM, INT ou HUP reçus par ce script arrêtent mocha avant sa sortie ---
+
+# mocha tourne en tâche de fond, attendu par wait (un signal y est servi aussitôt) ; à l'arrêt, son arbre est relevé d'un coup, reçoit TERM, 2 s
+# pour finir (les navigateurs se ferment), KILL à ce qui reste ; le jeton, que mocha tient aussi, tombe avec le dernier d'entre eux
+RUN_PID=''
+tree_pids() {
+  ps -eo pid=,ppid= | awk -v root="$1" '{ parent[$1] = $2 } END { keep[root] = 1; do { added = 0; for(p in parent) if(!(p in keep) && (parent[p] in keep)) { keep[p] = 1; added++ } } while(added); for(p in keep) if(p in parent) print p }'
+}
+stop_run() {
+  local i
+  local -a pids=()
+  trap '' TERM INT HUP
+  if [ -n "$RUN_PID" ]; then mapfile -t pids < <(tree_pids "$RUN_PID"); fi
+  if [ "${#pids[@]}" -gt 0 ]; then
+    echo "🛑 signal $1 reçu : mocha et ses ${#pids[@]} processus arrêtés avant la sortie"
+    kill -TERM "${pids[@]}" 2>/dev/null
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+      kill -0 "${pids[@]}" 2>/dev/null || break
+      sleep 0.2
+    done
+    kill -KILL "${pids[@]}" 2>/dev/null
+  fi
+  exit "$2"
+}
+trap 'stop_run TERM 143' TERM
+trap 'stop_run INT 130' INT
+trap 'stop_run HUP 129' HUP
+
+# la commande de mocha (ou l'enclos qui le porte) en tâche de fond, attendue : son code est celui de wait
+run_waited() {
+  "$@" &
+  RUN_PID=$!
+  wait "$RUN_PID"
+}
 
 # --- 2. Verdict d'un run tué (enclos ou garde de repli) ---
 
@@ -178,14 +335,15 @@ if ! systemd-run --user --scope --quiet -- /bin/true >/dev/null 2>&1; then
     echo "⏱  garde-temps de repli : arbre mocha tué au-delà de $TIME_LIMIT s"
   fi
   if [ -z "$LIMIT_KB" ] && [ "$TIME_LIMIT" -eq 0 ]; then
-    "${MOCHA[@]}"
+    run_waited "${MOCHA[@]}"
     exit $?
   fi
   printf -v DEADLINE '%(%s)T' -1
   DEADLINE=$(( DEADLINE + TIME_LIMIT ))
-  guard &
+  # la garde n'a pas besoin du jeton (mocha le tient) : son sous-shell le referme, et le jeton tombe dès la fin de mocha
+  ( [ -z "$JETON" ] || exec {JETON_FD}>&-; guard ) &
   GUARD=$!
-  "${MOCHA[@]}"
+  run_waited "${MOCHA[@]}"
   CODE=$?
   if [ -e "/proc/$GUARD" ]; then kill "$GUARD"; fi
   wait "$GUARD"
@@ -204,7 +362,7 @@ SCOPE=(systemd-run --user --scope --quiet --collect -p MemoryMax="$MEM" -p Memor
 if [ "$MAXSEC" != "0" ]; then SCOPE+=(-p RuntimeMaxSec="$MAXSEC"); fi
 
 echo "🧪 enclos cgroup : mémoire max $MEM, swap interdit$([ "$MAXSEC" != "0" ] && echo ", $MAXSEC s max")"
-"${SCOPE[@]}" -- "${MOCHA[@]}"
+run_waited "${SCOPE[@]}" -- "${MOCHA[@]}"
 CODE=$?
 
 # --- 5. Verdict ---

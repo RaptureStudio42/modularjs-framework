@@ -1,8 +1,8 @@
 // mjs_signals — noyau du graphe des signaux : boîtes paresseuses, dérivées relues par versions, reffets en file en deux
 // temps, propriétaires. Joint au cœur seulement quand une unité du build a une valeur dérivée précise (son calcul note ses
 // lectures) ou un reffet (bundler/index.ts, `wantsSignals`), avant tout fichier qui écrit ; les écritures du cœur y sont
-// branchées (blocs `<signaux>` : composant, magasin global, `µ.Store`, `µ.state`), retirés de tout cœur qui ne le porte pas.
-// Chaque valeur dérivée précise d'un composant est un nœud (mjs_element.ts, `_mjsPrecis`) ; une valeur à l'horloge garde la
+// branchées (blocs `<signals>` : composant, magasin global, `µ.Store`, `µ.state`), retirés de tout cœur qui ne le porte pas.
+// Chaque valeur dérivée précise d'un composant est un nœud (mjs_element.ts, `_mjsPrecise`) ; une valeur à l'horloge garde la
 // règle de toujours, hors du graphe : un calcul qui la lit note ses racines à sa place (`_mjs_computedDeps`). Chaque reffet
 // d'un composant (`µeffect`, `µeffect.before`) est un nœud mené par la passe de son composant (`µ._mjs_sigHost`) : marqué, il
 // réveille son composant au lieu d'entrer dans la file, et sa passe le rejoue si une source lue à son dernier passage a vraiment
@@ -12,7 +12,7 @@
 //   lecture hors calcul reste `$.x`, sans aucun coût de plus
 // - une boîte `{ ver, subs, ep, state }` ne naît que pour une variable qu'un calcul en cours (dérivée, reffet) a lue ; le
 //   code compilé note la lecture dans le code d'une dérivée, d'un reffet ou d'une fonction qu'ils appellent :
-//   `(µ._mjs_sigCur != null && µ._mjs_sigRead(_mjsThis, 'x'), $.x)` (generator/transform-reactive.ts, `noterLectures` ; une lecture
+//   `(µ._mjs_sigCur != null && µ._mjs_sigRead(_mjsThis, 'x'), $.x)` (generator/transform-reactive.ts, `recordReads` ; une lecture
 //   faite dans un rappel est notée une fois, en tête du calcul)
 // - une écriture (`µ._mjs_sigWrite(propriétaire, 'x')`, une fois la valeur rangée, seulement si elle a changé) avance la
 //   version de la boîte et marque ses lecteurs « à vérifier », avec leurs propres lecteurs ; rien n'est recalculé là. Un
@@ -34,7 +34,7 @@
 // - champs posés sur un propriétaire, à déclarer dans sa classe pour garder sa forme : `_mjs_sigBoxes` (boîtes par nom de
 //   variable ; false une fois nettoyé), `_mjs_sigNodes` (ses nœuds), `_mjs_sigBurst` et `_mjs_sigRuns` (garde). Un composant
 //   retiré de la page pour de bon, ou échangé à chaud, perd ses nœuds sans mourir (`µ._mjs_sigDrop`) : ses boîtes restent
-// - la file des reffets qui ne sont pas d'un composant et leurs propriétaires (blocs `<signaux-file>` : `µ._mjs_sigEffect`, la passe,
+// - la file des reffets qui ne sont pas d'un composant et leurs propriétaires (blocs `<signal-queue>` : `µ._mjs_sigEffect`, la passe,
 //   `µ._mjs_sigRoot`, `µ._mjs_sigDispose`) part du paquet quand aucune unité du build ne s'en sert (bundler/index.ts, SIG_QUEUE) : les
 //   reffets d'un composant n'y passent pas
 
@@ -64,14 +64,14 @@ var _mjsSigIds   = 0;      // ordre de création des nœuds, ordre de passage de
 var _mjsSigStack = [];     // pile du marquage, réutilisée (le marquage ne joue aucun code de l'appli)
 var _mjsSigBurst = 0;      // rafale de microtâches en cours (garde des 10 000 reprises)
 var _mjsSigTimer = null;   // minuterie qui clôt la rafale : elle ne passe que si la chaîne de microtâches s'arrête
-// <signaux-file>
+// <signal-queue>
 // l'écran, entre les deux temps de la file (posé par le runtime)
 µ._mjs_sigScreen = null;
 var _mjsSigLanes   = [[], []];   // file des reffets : avant l'écran, après l'écran
 var _mjsSigPlanned = false;      // passe de la file déjà demandée
 var _mjsSigBusy    = false;      // passe en cours : un appel imbriqué ne la relance pas
 var _mjsSigErrors  = [];         // exceptions des reffets sans gestionnaire d'erreurs, relevées hors de la passe
-// </signaux-file>
+// </signal-queue>
 
 
 // ################################################################################################
@@ -125,6 +125,11 @@ function _mjsSigTrack(t, x) {
   // valeur dérivée à l'horloge (hors du graphe) : ses racines sont notées avec elle, le calcul repart à leur écriture ; une
   // racine du magasin (`$$x`) l'est dans les boîtes du magasin (mjs_store_globals.ts)
   var cs = owner._mjs_computeds, v, r, i;
+  // <reffets-state>
+  // valeur dérivée servie à l'horloge, dans un composant dont une valeur dérivée lit un état partagé : elle a pu être refaite avant ce
+  // passage, sans que le reffet voie l'état — dans le doute, il passe au prochain rendu demandé par un état partagé (cf. µ._mjs_uRead)
+  if (cs != null && t.wake !== null && (v = cs[k]) != null && (v._mjs_n == null || v._mjs_src === null) && _mjsUDeriv.has(cs)) t.uh = t.ep;
+  // </reffets-state>
   if (cs == null || (v = cs[k]) == null || v._mjs_n != null || (r = owner._mjs_computedDeps) == null || (r = r[k]) == null) return;
   for (i = 0; i < r.length; i++) {
     if (r[i].charCodeAt(0) !== 36) µ._mjs_sigRead(owner, r[i]);
@@ -158,6 +163,42 @@ function _mjsSigTrack(t, x) {
   if (rw && t !== null && t.kind !== _MJS_SIG_DERIVED) for (j = 0; j < t.deps.length; j++) if (t.deps[j] === b && t.vers[j] === b.ver - 1) t.vers[j] = b.ver;
   if (b.subs.length !== 0) _mjsSigMark(b, !!rw);
 };
+// <reffets-state>
+
+// LECTURE D'UN ÉTAT PARTAGÉ (`µ.state`, contexte `§§x`, `µStore` : clé `k` de `owner`, le propriétaire de ses boîtes) pendant le passage d'un
+// reffet de composant : rangée à part de ses sources (`u` les boîtes lues, `uv` leur version, `ue` le passage qui les a notées), elle ne le
+// réveille pas et ne change pas sa règle — un reffet qui ne lit qu'un état partagé passe encore à chaque mise à jour. Son composant, prévenu
+// par l'état, la regarde quand il se redessine pour cet état seul (_mjsUGo, mjs_element.ts). La boîte naît à la première lecture ; les
+// écritures de l'état l'avancent déjà (blocs `<signals>` de mjs_state.ts et de mjs_store.ts, avis de mjs_runes.ts). Lue par le calcul d'une
+// valeur dérivée pendant le passage, elle est notée pour le reffet qui passe ; un gestionnaire déclenché pendant le passage lit pour lui seul.
+// Une valeur dérivée dont le calcul lit un état partagé marque la table des valeurs dérivées de son composant (`_mjsUDeriv`), que ses
+// miroirs partagent : le reffet d'un miroir qui lit une valeur refaite par l'original est dans le même doute (cf. µ._mjs_sigRead)
+var _mjsUDeriv = new WeakSet();
+µ._mjs_uRead = function(owner, k) {
+  var t = µ._mjs_sigCur, c = µ._mjs_computing, e, boxes, b;
+  if (c != null && c._mjs_computeds != null) _mjsUDeriv.add(c._mjs_computeds);
+  if (t !== null && t.wake === null) t = (e = µ._mjs_effRun) != null && e.n !== undefined ? e.n : null;
+  if (t === null) return;
+  if (t.ue !== t.ep) {
+    t.ue = t.ep;
+    t.u  = [];
+    t.uv = [];
+  }
+  boxes = owner._mjs_sigBoxes;
+  // propriétaire nettoyé, ou `__proto__` (jamais une boîte) : lecture qui ne peut pas être notée, le reffet est dans le doute pour ce passage
+  if (boxes === false || k === '__proto__') {
+    t.uh = t.ep;
+    return;
+  }
+  if (!boxes) boxes = owner._mjs_sigBoxes = {};
+  b = boxes[k];
+  if (b === undefined || b.subs === undefined) b = boxes[k] = { ver: 0, subs: [], ep: 0, state: _MJS_SIG_CLEAN };
+  if (t.u.indexOf(b) < 0) {
+    t.u.push(b);
+    t.uv.push(b.ver);
+  }
+};
+// </reffets-state>
 
 // une source a changé : ses lecteurs passent « à vérifier », avec leurs propres lecteurs, et un reffet marqué entre dans
 // la file (ou réveille son composant, qui le mène) ; rien n'est recalculé ici. Un lecteur qui n'est pas propre a déjà été
@@ -179,9 +220,9 @@ function _mjsSigMark(src, rw) {
         if (n.state === _MJS_SIG_CLEAN) n.state = _MJS_SIG_CHECK;
         else if (n.wake === null || n.state === _MJS_SIG_DEAD) continue;
         if (n.wake !== null) n.wake(n);
-        // <signaux-file>
+        // <signal-queue>
         else _mjsSigQueue(n);
-        // </signaux-file>
+        // </signal-queue>
         continue;
       }
       if (n.state === _MJS_SIG_CLEAN) {
@@ -199,7 +240,8 @@ function _mjsSigMark(src, rw) {
   }
 }
 
-// inscription d'un nœud auprès des sources de son dernier calcul ; mêmes sources dans le même ordre : rien ne bouge
+// inscription d'un nœud auprès des sources de son dernier calcul ; mêmes sources dans le même ordre : rien ne bouge. Une
+// dérivée nettoyée pendant ce calcul (son composant a quitté la page pour de bon) ne prend plus de lecteur
 function _mjsSigLink(n, old) {
   var deps = n.deps, i = 0;
   if (old !== null) {
@@ -209,7 +251,7 @@ function _mjsSigLink(n, old) {
     }
     for (i = 0; i < old.length; i++) _mjsSigLeave(old[i], n);
   }
-  for (i = 0; i < deps.length; i++) deps[i].subs.push(n);
+  for (i = 0; i < deps.length; i++) if (deps[i].state !== _MJS_SIG_DEAD) deps[i].subs.push(n);
 }
 
 // `n` quitte les lecteurs de `x` (leur ordre est sans importance : le dernier prend sa place)
@@ -337,7 +379,7 @@ function _mjsSigCompute(n) {
 // REFFETS, FILE EN DEUX TEMPS
 // ################################################################################################
 
-// <signaux-libre>
+// <signals-free-handler>
 // gestionnaire d'un `<@window>`, `<@document>`… (transpiler/macros.ts) : il tourne hors du calcul en cours, comme un gestionnaire du
 // gabarit (mjs_element.ts) et un `µon` (mjs_on.ts) ; déclenché pendant le passage d'un reffet (`window.dispatchEvent`), de son composant
 // ou d'un autre, ses lectures sont les siennes, jamais celles du reffet (sinon un gestionnaire qui cumule le relançait sans fin)
@@ -353,9 +395,9 @@ function _mjsSigCompute(n) {
     }
   };
 };
-// </signaux-libre>
+// </signals-free-handler>
 
-// <signaux-file>
+// <signal-queue>
 // reffet de `owner` (sinon du propriétaire courant), avant l'écran si `before` ; refusé sans propriétaire, avec
 // l'avertissement d'aujourd'hui (mjs_effect.ts) ; son premier passage part à la prochaine passe de la file
 µ._mjs_sigEffect = function(owner, f, before) {
@@ -370,7 +412,7 @@ function _mjsSigCompute(n) {
   _mjsSigQueue(n);
   return n;
 };
-// </signaux-file>
+// </signal-queue>
 
 // reffet d'un composant, mené par la passe de son composant (mjs_element.ts) : marqué, il appelle `wake` au lieu d'entrer
 // dans la file ; jamais passé, il passe à la première passe qui le regarde
@@ -429,7 +471,7 @@ function _mjsSigCompute(n) {
   n.state = _MJS_SIG_CLEAN;
 };
 
-// <signaux-file>
+// <signal-queue>
 // un reffet entre dans la file de son temps ; la passe est demandée une fois, en microtâche
 function _mjsSigQueue(n) {
   if (n.queued) return;
@@ -575,7 +617,7 @@ function _mjsSigRaise(err) {
     throw err;
   });
 }
-// </signaux-file>
+// </signal-queue>
 
 // garde des 10 000 reprises : les reffets d'un propriétaire qui reprennent sans fin dans la même rafale de microtâches
 // sont suspendus jusqu'à sa fin, avec un avertissement (une fois par rafale) ; l'écran, lui, continue
@@ -610,7 +652,7 @@ function _mjsSigName(owner) {
 // PROPRIÉTAIRES
 // ################################################################################################
 
-// <signaux-file>
+// <signal-queue>
 // racine explicite : propriétaire des reffets et des dérivées créés pendant `fn` sans autre propriétaire ; rend sa
 // fonction de fin
 µ._mjs_sigRoot = function(fn) {
@@ -643,7 +685,7 @@ function _mjsSigName(owner) {
     if (c !== null) _mjsSigCleanup(c);
   }
 };
-// </signaux-file>
+// </signal-queue>
 
 // nœuds d'un propriétaire qui reste en vie : le nœud `which`, ses reffets (`which` = 1) ou tous ses nœuds quittent leurs sources
 // et ne jouent plus, sans nettoyage (celui d'un reffet de composant est à son composant) ; ses boîtes restent, celles qu'il partage

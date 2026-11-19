@@ -24,11 +24,8 @@ import * as walk from 'acorn-walk'
 import MagicString from 'magic-string'
 import { passResult, type PassResult } from './pass-map.js'
 import { COMPOUND_OPS, forEachPatternLeaf, parseModule } from './ast-helpers.js'
-import { asiGuard, closeRhs, emitAssign, emitPattern, emitUpdate, instructionSeule, poserBloc, rhsStart, writeValueUnused, type WriteTarget } from './emit-write.js'
+import { asiGuard, closeRhs, emitAssign, emitPattern, emitUpdate, loneStatement, setBlock, rhsStart, writeValueUnused, type WriteTarget } from './emit-write.js'
 import { selfWriteError, SELF_WRITE_VAR } from '../sigils.js'
-
-// historique : path-tracker.ts et des appelants les importaient d'ici
-export { asiGuard, closeRhs, isInlineHandlerReturn, rhsStart, writeValueUnused } from './emit-write.js'
 
 // clé calculée qu'on peut relire sans rien changer (identifiant, littéral, membre de ces formes…) :
 // la forme courte la relit ; toute autre (appel, `i++`…) est évaluée UNE fois
@@ -46,13 +43,13 @@ function isPureKey(n: any): boolean {
 // `await` / `yield` hors d'une fonction imbriquée : une valeur qui en contient ne peut pas passer dans
 // une flèche
 function hasAwaitOrYield(n: any): boolean {
-  let trouve = false
+  let found = false
   walk.recursive(n, null, {
     Function() {},
-    AwaitExpression() { trouve = true },
-    YieldExpression() { trouve = true },
+    AwaitExpression() { found = true },
+    YieldExpression() { found = true },
   })
-  return trouve
+  return found
 }
 
 // `$` lu comme une valeur, et non comme l'objet de `$.x` ou de `$[k]` (cf. visiteur Identifier plus bas) : l'état enveloppé
@@ -216,8 +213,8 @@ export function transformReactiveWritesMapped(js: string): PassResult {
           const sources = (node.right as any).properties.find((p: any) => p.key && (p.key.name === '_mjs_s' || p.key.value === '_mjs_s'))
           ms.overwrite(node.start, fnNode.value.start, `µ._mjs_setComputed(_mjsThis, '${varName}', `)
           ms.overwrite(fnNode.value.end, node.end, !sources ? ')' : sources.value.type === 'ArrayExpression' ? `, ${js.slice(sources.value.start, sources.value.end)})` : ', 1)')
-          // valeur précise : un nœud du graphe des signaux, qui note ses lectures pendant son calcul (cf. noterLectures)
-          if (sources && sources.value.type === 'ArrayExpression') noterLectures(ms, fnNode.value)
+          // valeur précise : un nœud du graphe des signaux, qui note ses lectures pendant son calcul (cf. recordReads)
+          if (sources && sources.value.type === 'ArrayExpression') recordReads(ms, fnNode.value)
           changed = true
           return
         }
@@ -258,7 +255,7 @@ export function transformReactiveWritesMapped(js: string): PassResult {
     },
 
     UpdateExpression(node: any, _st: any, ancestors: any[]) {
-      // `$.x++` / `++$.x` → `µ._set(_mjsThis, 'x', $.x + 1)` (et retourne post-/pre-).
+      // `$.x++` / `++$.x` → `((_mjs_n, _mjs_v = _mjs_n++) => (µ._set(_mjsThis, 'x', _mjs_n), _mjs_v))($.x)` : la valeur lue une fois, rendue avant ou après l'écriture selon la forme.
       // `$[k]++` (clé DYNAMIQUE) accepté de la même façon que dans AssignmentExpression.
       if (
         node.argument.type !== 'MemberExpression' ||
@@ -271,7 +268,7 @@ export function transformReactiveWritesMapped(js: string): PassResult {
       const op = node.operator
       const unused = writeValueUnused(ancestors)
       const guard = unused ? '' : asiGuard(ancestors)
-      const bloc = instructionSeule(ancestors)
+      const block = loneStatement(ancestors)
 
       // --- `$[k]++` / `--$[k]` : clé dynamique — la clé reste en place (1er argument
       // de `_set`), une copie de son texte ACTUEL (`ms.slice`) est injectée pour la ou
@@ -288,7 +285,7 @@ export function transformReactiveWritesMapped(js: string): PassResult {
         }
         else {
           const keyText = ms.slice(keyNode.start, keyNode.end)
-          if (bloc) {
+          if (block) {
             prefix = `(_mjs_n = $[${keyText}], µ._set(_mjsThis, `
             suffix = `, ${op}_mjs_n))`
           }
@@ -307,7 +304,7 @@ export function transformReactiveWritesMapped(js: string): PassResult {
         }
         ms.overwrite(node.start, keyNode.start, prefix)
         ms.overwrite(keyNode.end, node.end, suffix)
-        if (bloc && isPureKey(keyNode)) poserBloc(ms, bloc)
+        if (block && isPureKey(keyNode)) setBlock(ms, block)
         changed = true
         return
       }
@@ -332,8 +329,8 @@ export function transformReactiveWritesMapped(js: string): PassResult {
       // Pre-fix `++$.x` rend la nouvelle valeur (écrite par `_set`) ; post-fix `$.x++` rend
       // l'ANCIENNE valeur, convertie comme en JavaScript — jamais la chaîne d'origine.
       // En tête d'instruction (`$x++ || f()`), le point-virgule protecteur coupe l'ASI. Cf. emitUpdate
-      emitUpdate(ms, node, ancestors, localTarget(varName), !!bloc)
-      if (bloc) poserBloc(ms, bloc)
+      emitUpdate(ms, node, ancestors, localTarget(varName), !!block)
+      if (block) setBlock(ms, block)
       changed = true
     },
   })
@@ -350,22 +347,22 @@ export function transformReactiveWritesMapped(js: string): PassResult {
 // sans le graphe n'a pas `µ._mjs_sigCur`, rien n'est noté). Une lecture faite dans une fonction intérieure (rappel de `filter`,
 // `map`…) est notée une seule fois, en tête du calcul, et non à chaque appel du rappel : la surestimation est sûre, au pire un
 // calcul de trop quand le rappel n'aurait pas été appelé
-export function noterLectures(ms: MagicString, fn: any): void {
-  const tete = new Set<string>()
+export function recordReads(ms: MagicString, fn: any): void {
+  const head = new Set<string>()
   const note = (x: string) => `µ._mjs_sigRead(_mjsThis, '${x}')`
   walk.ancestor(fn.body, {
     MemberExpression(n: any, _st: any, anc: any[]) {
       if (n.computed || n.object.type !== 'Identifier' || n.object.name !== '$' || n.property.type !== 'Identifier') return
       const x = n.property.name
-      if (anc.some((a: any) => a !== fn && /Function/.test(a.type))) tete.add(x)
+      if (anc.some((a: any) => a !== fn && /Function/.test(a.type))) head.add(x)
       else {
         ms.appendLeft(n.start, `(µ._mjs_sigCur && ${note(x)}, `)
         ms.prependRight(n.end, ')')
       }
     },
   })
-  if (tete.size === 0) return
-  const notes = `µ._mjs_sigCur && (${[...tete].map(note).join(', ')})`
+  if (head.size === 0) return
+  const notes = `µ._mjs_sigCur && (${[...head].map(note).join(', ')})`
   if (fn.body.type === 'BlockStatement') ms.appendLeft(fn.body.start + 1, ` ${notes};`)
   else {
     ms.appendLeft(fn.body.start, `(${notes}, `)
@@ -405,8 +402,8 @@ function collectStateTargets(pattern: any, out: any[]): void {
 }
 
 // `$.nom` lu tel quel, sans clé calculée (cf. `$x = $x`, refusé)
-function isSameStateRead(node: any, nom: string): boolean {
-  return node.type === 'MemberExpression' && !node.computed && node.object.type === 'Identifier' && node.object.name === '$' && node.property.type === 'Identifier' && node.property.name === nom
+function isSameStateRead(node: any, name: string): boolean {
+  return node.type === 'MemberExpression' && !node.computed && node.object.type === 'Identifier' && node.object.name === '$' && node.property.type === 'Identifier' && node.property.name === name
 }
 
 // cible `$.x` de l'état local (cf. emit-write.ts)

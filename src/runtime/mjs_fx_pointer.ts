@@ -85,10 +85,10 @@ var _MJS_FX_POINTER_TOP = ':where(dialog:modal,:popover-open,:fullscreen:not(htm
   setup: function(el, s) {
     // un écran sans souris : rien à poser
     if (typeof matchMedia === 'function' && matchMedia('(hover: none)').matches) return function() {};
-    var vars   = µ._mjs_fxDefs.pointer.vars;
-    var clic   = 'a[href], button, input, select, textarea, summary, label, [role="button"], [data-pointer]';
-    var lens   = { grayscale: 'grayscale(1)', invert: 'invert(1)', blur: 'blur(6px)', saturate: 'saturate(2.5)', sepia: 'sepia(1)', hue: 'hue-rotate(160deg)' };
-    var style  = /^(disc|ring|dot|lens)$/.test(s.style) ? s.style : 'disc';
+    var vars      = µ._mjs_fxDefs.pointer.vars;
+    var clickable = 'a[href], button, input, select, textarea, summary, label, [role="button"], [data-pointer]';
+    var lens      = { grayscale: 'grayscale(1)', invert: 'invert(1)', blur: 'blur(6px)', saturate: 'saturate(2.5)', sepia: 'sepia(1)', hue: 'hue-rotate(160deg)' };
+    var style     = /^(disc|ring|dot|lens)$/.test(s.style) ? s.style : 'disc';
     // le filtre inverse ne vaut que pour la lentille
     var outside = style === 'lens' && !!s.outside;
     var calm   = µ._mjs_fxCalm();
@@ -392,7 +392,7 @@ var _MJS_FX_POINTER_TOP = ':where(dialog:modal,:popover-open,:fullscreen:not(htm
       var roots = [];
       for (; n && n.nodeType === 1; n = µ._mjs_fxParent(n)) {
         if (hide && n.parentNode && n.parentNode.nodeType === 11) roots.push(n.parentNode);
-        if (!hit && µ._mjs_dom.matches(n, clic)) hit = n;
+        if (!hit && µ._mjs_dom.matches(n, clickable)) hit = n;
         // la couche du dessus où vit le calque ne l'éteint pas
         if (!top && n !== home0 && onTop(n)) top = true;
         if (n === el) {

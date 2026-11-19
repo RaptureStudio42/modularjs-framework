@@ -10,7 +10,7 @@
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
-import { lireFichier } from '../src/reader/index.js'
+import { readFile } from '../src/reader/index.js'
 
 export interface SourceDesLints { fichier: string, racine: string, nom: string, coeur: boolean, module: boolean }
 
@@ -48,8 +48,8 @@ function masqueDuBundler(html: string): string {
 // ligne gardés : son gabarit, aux lignes du fichier
 function gabaritSeul(src: string): string {
   let out = src
-  for (const n of lireFichier(src, { compiler: false }).enfants) {
-    if (n.sorte === 'script' || n.sorte === 'style' || n.sorte === 'section' || n.sorte === 'directive') out = out.slice(0, n.debut) + out.slice(n.debut, n.fin).replace(/[^\n]/g, ' ') + out.slice(n.fin)
+  for (const n of readFile(src, { compiler: false }).children) {
+    if (n.kind === 'script' || n.kind === 'style' || n.kind === 'section' || n.kind === 'directive') out = out.slice(0, n.start) + out.slice(n.start, n.end).replace(/[^\n]/g, ' ') + out.slice(n.end)
   }
   return out
 }

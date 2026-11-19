@@ -204,14 +204,14 @@ var _mjsFxAnnotateWhen = function(a, body) {
       // pose ; les suivants se calent sur l'horloge commune des effets qui se répètent, le prochain un tour entier au moins après le dernier
       // (la cadence relue à chaque tracé ; la série repart quand la durée ou l'attente change)
       var at   = 0;
-      var tour = function() { return Math.max(100, µ._mjs_fxMs(wait, 0) + µ._mjs_fxMs(dur, 800) + µ._mjs_fxEvery(el, s.every, 3000)); };
+      var lap  = function() { return Math.max(100, µ._mjs_fxMs(wait, 0) + µ._mjs_fxMs(dur, 800) + µ._mjs_fxEvery(el, s.every, 3000)); };
       var turn = function() {
         at = Date.now();
         play();
       };
       plan = function() {
         if (loop) loop();
-        loop = µ._mjs_fxBeat(tour, turn, Math.max(0, at + tour() - Date.now()));
+        loop = µ._mjs_fxBeat(lap, turn, Math.max(0, at + lap() - Date.now()));
       };
       turn();
       if (!µ._mjs_fxCalm()) plan();

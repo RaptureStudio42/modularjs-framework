@@ -2,7 +2,8 @@
 // pour un nom à risque (cf. attributs-filtre-pour-les-seuls-noms-a-risque.test.ts). La page ne porte aucune valeur
 // dangereuse (adresse `javascript:`, gestionnaire `on…`, `srcdoc`, nom calculé d'un étalement), et les attributs sans
 // risque (`class`, `data-id`, `aria-label`, `title`, `alt`, `aria-*` à `false`) portent leur valeur, à la racine comme
-// dans une ligne de `{for}`.
+// dans une ligne de `{for}`. Un `on…` calculé écrit sur une balise (`onclick={$o}`) est refusé dès la construction :
+// l'étalement, nom calculé, en apporte encore un au filtre.
 
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
@@ -17,13 +18,12 @@ $c = 'actif'
 $d = 7
 $a = 'etiquette'
 $t = 'titre'
-$o = 'alert(2)'
 $s = '<script>alert(3)</script>'
 $f = false
 $lignes = [{id: 1, u: 'javascript:alert(4)', d: 8, c: 'ligne'}]
 $etale = {onclick: 'alert(5)', 'data-x': 'x'}
 </script>
-<a id="lien" href={$u} class={$c} data-id={$d} aria-label={$a} aria-expanded={$f} title={$t} onclick={$o} onMouseOver={$o} srcdoc={$s} formaction={$u} ping={$u}>x</a>
+<a id="lien" href={$u} class={$c} data-id={$d} aria-label={$a} aria-expanded={$f} title={$t} srcdoc={$s} formaction={$u} ping={$u}>x</a>
 <img src={$u} alt={$t}>
 <object data={$u}></object>
 <p class="etale" {...$etale}>e</p>

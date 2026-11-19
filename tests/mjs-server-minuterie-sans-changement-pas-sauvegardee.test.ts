@@ -123,7 +123,7 @@ describe('MJS-Server — une minuterie qui ne change rien ne fait pas sauvegarde
     const def  = resolveGameDef('circulaire', { seats: 1, state: () => { const s: any = { n: 0 }; s.moi = s; return s }, moves: {}, timers: { veille: () => {} } })
     const game = createGame({ send() {} } as any, def, () => {}, 'circulaire1')
     game._onMutate = () => { marks++ }
-    game._guardApplicativeTimer('veille')
+    game._guardAppTimer('veille')
     await tick()
     assert.equal(marks, 1, 'l\'empreinte illisible a été prise pour « rien n\'a changé »')
     game._destroy()

@@ -5,7 +5,7 @@
 import { strict as assert } from 'node:assert'
 import { cleanJsExpr } from '../src/generator/utils.js'
 import { readFileSync as lireFige } from 'node:fs'
-import { compteursExpressions } from '../src/reader/expression.js'
+import { expressionCounters } from '../src/reader/expression.js'
 
 type LectureDesExpressions = 'ancienne' | 'arbre'
 // sorties et messages de l'ancienne lecture des expressions, relevés avant son retrait
@@ -19,12 +19,12 @@ function lire(expr: string, lecture: LectureDesExpressions, externes: string[]):
     if (!fige || fige.expr !== expr || JSON.stringify(fige.externes) !== JSON.stringify(externes)) throw new Error(`sortie de l'ancienne lecture non relevée : ${expr}`)
     return { ...fige, arbre: 0, relues: 0, raison: '' } as any
   }
-  const relues = compteursExpressions.relues
+  const relues = expressionCounters.reread
   try {
-    return { texte: cleanJsExpr(expr, externes, 'essai'), relues: compteursExpressions.relues - relues }
+    return { texte: cleanJsExpr(expr, externes, 'essai'), relues: expressionCounters.reread - relues }
   }
   catch (e) {
-    return { texte: `ERREUR ${(e as Error).message}`, relues: compteursExpressions.relues - relues }
+    return { texte: `ERREUR ${(e as Error).message}`, relues: expressionCounters.reread - relues }
   }
 }
 
@@ -68,7 +68,7 @@ describe('écritures rares du gabarit : lues par l\'arbre, comme l\'ancienne lec
     for (const [expr, externes] of CAS) {
       const a = lire(expr, 'ancienne', externes)
       const b = lire(expr, 'arbre', externes)
-      assert.equal(b.relues, 0, `${expr} : lue par l'arbre (raison du refus : ${compteursExpressions.derniere})`)
+      assert.equal(b.relues, 0, `${expr} : lue par l'arbre (raison du refus : ${expressionCounters.last})`)
       assert.equal(b.texte, a.texte, expr)
     }
   })

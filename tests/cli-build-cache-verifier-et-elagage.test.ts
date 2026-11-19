@@ -1,4 +1,4 @@
-// `mjs build --cache=verifier` et l'élagage du cache, sur un petit projet fabriqué ici. Vérifier : la construction servie par le cache
+// `mjs build --cache=verify` et l'élagage du cache, sur un petit projet fabriqué ici. Vérifier : la construction servie par le cache
 // est comparée à l'octet à une construction complète faite à part ; égale, une ligne le dit (code 0) ; un fichier du cache faussé à la
 // main est vu, le cache est jeté, la sortie reçoit les fichiers justes (code 1). Élagage : après cinq configurations successives, quatre
 // clés restent, et `files/` ne garde aucun fichier que seule la clé retirée citait.
@@ -31,17 +31,17 @@ function project(prefix: string): string {
 
 const keys = (cache: string): string[] => existsSync(cache) ? readdirSync(cache).filter(f => /^[0-9a-f]{16}\.json$/.test(f)) : []
 
-describe('mjs build --cache=verifier et élagage du cache', function () {
+describe('mjs build --cache=verify et élagage du cache', function () {
   this.timeout(300_000)
 
-  it('--cache=verifier : sortie égale à une construction complète, une ligne le dit, code 0', function () {
+  it('--cache=verify : sortie égale à une construction complète, une ligne le dit, code 0', function () {
     const root  = project('cache-verifier')
-    const first = build(root, ['--cache=verifier'])
+    const first = build(root, ['--cache=verify'])
     assert.equal(first.status, 0, first.out)
     assert.equal(first.reason, 'premier passage', first.out)
     assert.ok(Number(CHECKED.exec(first.out)?.[1] ?? 0) >= 8, `ligne de vérification attendue\n${first.out}`)
     appendFileSync(join(root, 'app/modularjs/carte.mjs'), '<i hidden>tour 2</i>\n')
-    const second = build(root, ['--cache=verifier'])
+    const second = build(root, ['--cache=verify'])
     assert.equal(second.status, 0, second.out)
     assert.equal(second.cold, 1, second.out)
     assert.ok(CHECKED.test(second.out), second.out)
@@ -50,7 +50,7 @@ describe('mjs build --cache=verifier et élagage du cache', function () {
     assert.deepEqual(left, [], second.out)
   })
 
-  it('--cache=verifier : un fichier du cache faussé à la main est vu, le cache est jeté, la sortie reçoit les fichiers justes, code 1', function () {
+  it('--cache=verify : un fichier du cache faussé à la main est vu, le cache est jeté, la sortie reçoit les fichiers justes, code 1', function () {
     const root  = project('cache-verifier-fausse')
     const cache = join(root, 'node_modules/.cache/mjs/build')
     const init  = build(root, ['--cache'])
@@ -60,7 +60,7 @@ describe('mjs build --cache=verifier et élagage du cache', function () {
     assert.ok(kept !== undefined, `fichier gardé de la carte : ${[...files(join(cache, 'files')).keys()].join(', ')}`)
     appendFileSync(join(cache, 'files', kept), '\n// faussé à la main\n')
     const neuf    = join(root, 'essai/neuf')
-    const checked = build(root, ['--cache=verifier', '--output', neuf, '--manifest', join(neuf, 'bundle.js')])
+    const checked = build(root, ['--cache=verify', '--output', neuf, '--manifest', join(neuf, 'bundle.js')])
     assert.equal(checked.status, 1, checked.out)
     assert.equal(checked.cold, 0, checked.out)
     assert.match(checked.out, /cache jeté/, checked.out)

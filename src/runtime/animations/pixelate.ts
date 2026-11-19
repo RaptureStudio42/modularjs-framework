@@ -77,14 +77,14 @@
       var sy = oh > 0 ? rect.height / oh : 1;
       var tf = cs.transform;
       var mx = tf && tf !== 'none' ? /^matrix\(([^)]+)\)$/.exec(tf) : null;
-      var sure = true;
+      var safe = true;
       if (tf && tf !== 'none') {
         // matrix3d ou rotation : la boîte lue à l'écran n'est plus celle du repère de la balise
         var mv = mx ? mx[1].split(',').map(num) : null;
-        sure = !!mv && Math.abs(mv[1]) < 1e-6 && Math.abs(mv[2]) < 1e-6 && Math.abs(mv[0] * ow - rect.width) < 1 && Math.abs(mv[3] * oh - rect.height) < 1;
+        safe = !!mv && Math.abs(mv[1]) < 1e-6 && Math.abs(mv[2]) < 1e-6 && Math.abs(mv[0] * ow - rect.width) < 1 && Math.abs(mv[3] * oh - rect.height) < 1;
       }
-      else sure = Math.abs(rect.width - ow) < 1 && Math.abs(rect.height - oh) < 1;
-      if (sure) {
+      else safe = Math.abs(rect.width - ow) < 1 && Math.abs(rect.height - oh) < 1;
+      if (safe) {
         var g = document.createRange();
         g.selectNodeContents(el);
         var q = g.getBoundingClientRect();

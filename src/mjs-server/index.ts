@@ -194,7 +194,7 @@ export interface MjsServerAntiCheatOptions {
    *  que def.limits.moves (cf. mjs-server/matchmaking.ts::identityQuotaOk). Défaut `undefined`/`null`
    *  = AUCUN contrôle (opt-in explicite, MÊME politique que def.limits.moveIntervalMs). Registre
    *  tenu par matchmaking.ts (seul point qui voit toutes les parties vivantes d'un coup d'œil),
-   *  nettoyé quand l'identité ne siège plus nulle part (cf. son commentaire de tête). */
+   *  purgé quand l'identité n'a plus joué depuis `fenêtreMs`, jamais à son départ d'un siège (cf. matchmaking.ts::purgeExpiredIdentityQuotas). */
   movesPerIdentity?: [number, number] | null
   /** anti-brute-force sur le CODE de partie privée (cf. matchmaking.ts
    *  ::DEFAULT_CODE_PAR_IP_*) — `[n, fenêtreMs]`, MÊME convention TokenBucket que movesPerIdentity
@@ -210,7 +210,7 @@ export interface MjsServerAntiCheatOptions {
 
 export interface MjsServerOptions extends MjsWsOptions {
   /** persistance optionnelle (persist.ts) — absent = AUCUN hook armé, zéro coût. Adaptateur NU ou
-   *  `{ adaptateur, debounce?, snapshotEvery? }`, cf. persist.ts pour le contrat complet. */
+   *  `{ adapter, debounce?, snapshotEvery? }`, cf. persist.ts pour le contrat complet. */
   persist?: MjsServerPersistOption
   /** anti-triche — cf. MjsServerAntiCheatOptions. Nom DÉLIBÉRÉMENT distinct de `limits`
    *  (héritée de MjsWsOptions — transport : rate/burst/maxPayload/maxConnections… — jamais
@@ -254,12 +254,12 @@ export function mjsServer(opts: MjsServerOptions = {}): MjsServerApp {
   const movesPerIdentity = opts.antiCheat?.movesPerIdentity ?? null
   if (movesPerIdentity !== null) {
     if (!Array.isArray(movesPerIdentity) || movesPerIdentity.length !== 2) {
-      throw new Error(t('serveur.index-movesperidentity-invalide', { received: receivedReadable(movesPerIdentity) }))
+      throw new Error(t('mjs-server.index-movesperidentity-invalid', { received: receivedReadable(movesPerIdentity) }))
     }
     // fenêtre FINIE : NaN donnait un taux NaN (quota désactivé en silence), Infinity un taux nul (tout bloqué après n coups)
     const [n, window] = movesPerIdentity
     if (!Number.isInteger(n) || n < 1 || typeof window !== 'number' || !Number.isFinite(window) || window <= 0) {
-      throw new Error(t('serveur.index-movesperidentity-invalide', { received: receivedReadable(movesPerIdentity) }))
+      throw new Error(t('mjs-server.index-movesperidentity-invalid', { received: receivedReadable(movesPerIdentity) }))
     }
   }
   // cf. MjsServerAntiCheatOptions.codePerIp ; `undefined` (option absente)
@@ -269,17 +269,17 @@ export function mjsServer(opts: MjsServerOptions = {}): MjsServerApp {
   const codePerIp = opts.antiCheat?.codePerIp
   if (codePerIp !== undefined && codePerIp !== null) {
     if (!Array.isArray(codePerIp) || codePerIp.length !== 2) {
-      throw new Error(t('serveur.index-codeperip-invalide', { received: receivedReadable(codePerIp) }))
+      throw new Error(t('mjs-server.index-codeperip-invalid', { received: receivedReadable(codePerIp) }))
     }
     const [n, window] = codePerIp
     if (!Number.isInteger(n) || n < 1 || typeof window !== 'number' || !Number.isFinite(window) || window <= 0) {
-      throw new Error(t('serveur.index-codeperip-invalide', { received: receivedReadable(codePerIp) }))
+      throw new Error(t('mjs-server.index-codeperip-invalid', { received: receivedReadable(codePerIp) }))
     }
   }
   // cf. MjsServerAntiCheatOptions.privateGamesPerCreator — même résolution que codePerIp : absent = défaut de createMatchmaking
   const privateGamesPerCreator = opts.antiCheat?.privateGamesPerCreator
   if (privateGamesPerCreator !== undefined && privateGamesPerCreator !== null && (!Number.isInteger(privateGamesPerCreator) || privateGamesPerCreator < 1)) {
-    throw new Error(t('serveur.index-privategamespercreator-invalide', { received: receivedReadable(privateGamesPerCreator) }))
+    throw new Error(t('mjs-server.index-privategamespercreator-invalid', { received: receivedReadable(privateGamesPerCreator) }))
   }
 
   // µschema × 'µgame:' — le préfixe réservé vaut AUSSI pour les schémas binaires.
@@ -290,8 +290,8 @@ export function mjsServer(opts: MjsServerOptions = {}): MjsServerApp {
   // s'encode en valeur ZÉRO sans lever : l'état du jeu partirait VIDE sur le fil, panne muette.
   // Refusé aux DEUX portes — `opts.schemas` ici (consommé par mjsWs avant tout greffage), app.schema
   // plus bas. Contre-preuve du danger réel : tests/mjs-server-core.test.ts, test 15.
-  for (const nom of Object.keys(opts.schemas ?? {})) {
-    if (nom.startsWith(RESERVED_PREFIX)) throw new Error(t('serveur.index-schema-prefixe-reserve', { type: nom, prefix: RESERVED_PREFIX }))
+  for (const name of Object.keys(opts.schemas ?? {})) {
+    if (name.startsWith(RESERVED_PREFIX)) throw new Error(t('mjs-server.index-schema-prefix-reserved', { type: name, prefix: RESERVED_PREFIX }))
   }
 
   const app = mjsWs({
@@ -316,17 +316,17 @@ export function mjsServer(opts: MjsServerOptions = {}): MjsServerApp {
   matchmaking = createMatchmaking(app, gameDefs, baseServe, baseOn, persistEngine, gameStats, movesPerIdentity, codePerIp, undefined, privateGamesPerCreator)
 
   app.serve = (type, handler) => {
-    if (type.startsWith(RESERVED_PREFIX)) throw new Error(t('serveur.index-serve-prefixe-reserve', { type: type, prefix: RESERVED_PREFIX }))
+    if (type.startsWith(RESERVED_PREFIX)) throw new Error(t('mjs-server.index-serve-prefix-reserved', { type: type, prefix: RESERVED_PREFIX }))
     baseServe(type, handler)
   }
   app.on = (type, handler) => {
-    if (type.startsWith(RESERVED_PREFIX)) throw new Error(t('serveur.index-on-prefixe-reserve', { type: type, prefix: RESERVED_PREFIX }))
+    if (type.startsWith(RESERVED_PREFIX)) throw new Error(t('mjs-server.index-on-prefix-reserved', { type: type, prefix: RESERVED_PREFIX }))
     baseOn(type, handler)
   }
   // cf. la garde `opts.schemas` plus haut — MÊME motif, seconde porte
-  app.schema = (nom, champs) => {
-    if (nom.startsWith(RESERVED_PREFIX)) throw new Error(t('serveur.index-schema-prefixe-reserve', { type: nom, prefix: RESERVED_PREFIX }))
-    baseSchema(nom, champs)
+  app.schema = (name, fields) => {
+    if (name.startsWith(RESERVED_PREFIX)) throw new Error(t('mjs-server.index-schema-prefix-reserved', { type: name, prefix: RESERVED_PREFIX }))
+    baseSchema(name, fields)
   }
   // anti-triche — greffe ADDITIVE de `game` sur l'instantané MJS-WS (cf. MjsServerStatsSnapshot
   // en tête de fichier) : COPIE défensive (jamais `gameStats` lui-même, MÊME politique que
@@ -357,7 +357,7 @@ export function mjsServer(opts: MjsServerOptions = {}): MjsServerApp {
   }
 
   app.game = (type, def) => {
-    if (gameDefs.has(type)) throw new Error(t('serveur.index-game-deja-declare', { type: type }))
+    if (gameDefs.has(type)) throw new Error(t('mjs-server.index-game-already-declared', { type: type }))
     // le journal de l'app (opts.onLog ?? defaultLog, gardé, cf. `log` plus haut) — MÊME patron que persistEngine :
     // resolveGameDef reste une fonction PURE par défaut (log no-op si appelée directement, cf. les
     // ~15 call-sites de tests) ; seule CETTE app réelle branche le vrai logger (anti-triche,

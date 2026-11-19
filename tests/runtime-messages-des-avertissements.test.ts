@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url'
 import * as acorn from 'acorn'
 import * as walk from 'acorn-walk'
 import { runtimeMessagesFor } from '../src/runtime-labels.js'
-import { WARNING_ONLY_MESSAGES, TRACE_ONLY_MESSAGES, TRACE_READ_MESSAGES, DEV_ONLY_MESSAGES, messagesWithoutTraces } from '../src/bundler/minify.js'
+import { WARNING_ONLY_MESSAGES, TRACE_ONLY_MESSAGES, TRACE_READ_MESSAGES, DEV_ONLY_MESSAGES, DEV_BLOCK_MESSAGES, messagesWithoutTraces } from '../src/bundler/minify.js'
 
 const SRC         = join(dirname(fileURLToPath(import.meta.url)), '../src')
 const RUNTIME_DIR = join(SRC, 'runtime')
@@ -103,9 +103,12 @@ describe('messages des avertissements — l\'aide de la construction', () => {
 
   it('messagesWithoutTraces aux niveaux \'error\' et \'silent\' : ôte aussi les textes des seuls avertissements, rien d\'autre', () => {
     const avant = Object.keys(table).length
+    // partent : les textes des traces, ceux du développement seul (lus par un µ.warn ou un µ.error, ou par un seul bloc
+    // `<wait-dev>` ou `<derived-check>`, que la production n'emporte pas), ceux des seuls avertissements
+    const partent = new Set([...TRACE_ONLY_MESSAGES, ...DEV_ONLY_MESSAGES, ...DEV_BLOCK_MESSAGES, ...WARNING_ONLY_MESSAGES])
     for (const niveau of ['error', 'silent'] as const) {
       const reste = messagesWithoutTraces(table, niveau)
-      assert.equal(Object.keys(reste).length, avant - TRACE_ONLY_MESSAGES.length - WARNING_ONLY_MESSAGES.length, niveau)
+      assert.equal(Object.keys(reste).length, avant - partent.size, niveau)
       for (const k of WARNING_ONLY_MESSAGES) assert.equal(k in reste, false, k)
       assert.ok(reste['fxLoad'], 'un texte lu par une erreur reste')
     }
@@ -114,7 +117,7 @@ describe('messages des avertissements — l\'aide de la construction', () => {
 
   it('messagesWithoutTraces au niveau \'warn\' (et sans niveau) : les textes des avertissements restent, sauf ceux du développement seul', () => {
     for (const reste of [messagesWithoutTraces(table, 'warn'), messagesWithoutTraces(table)]) {
-      for (const k of WARNING_ONLY_MESSAGES) assert.equal(typeof reste[k], DEV_ONLY_MESSAGES.includes(k) ? 'undefined' : 'string', k)
+      for (const k of WARNING_ONLY_MESSAGES) assert.equal(typeof reste[k], DEV_ONLY_MESSAGES.includes(k) || DEV_BLOCK_MESSAGES.includes(k) ? 'undefined' : 'string', k)
     }
   })
 })

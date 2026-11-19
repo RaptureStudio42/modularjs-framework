@@ -202,13 +202,13 @@ describe('sécurité stricte : une appli sous require-trusted-types-for (navigat
           // la navigation : la confirmation répond oui, la page suivante arrive par la navigation du framework et remplace le contenu
           await page.evaluate(() => {
             const w: any = window
-            w.__meme = true
+            w.__unchanged = true
             w.µ.config.confirm = false
             w.confirm = () => true
           })
           await page.click('mjs-tst-tt-app a.lien', { timeout: 10000 })
           await attendre(page, messages, 'la page suivante', () => !!(window as any).__profond('p.deux', (el) => el.textContent === 'page 2'))
-          assert.equal(await page.evaluate(() => (window as any).__meme === true), true, 'la page doit être échangée par le framework, pas rechargée')
+          assert.equal(await page.evaluate(() => (window as any).__unchanged === true), true, 'la page doit être échangée par le framework, pas rechargée')
           assert.deepEqual(messages.filter((m) => REFUS.test(m)), [], 'aucun refus Trusted Types')
         }
         finally {
@@ -299,13 +299,13 @@ describe('sécurité stricte : une appli sous require-trusted-types-for (navigat
         try {
           await attendre(page, messages, 'le gabarit', () => !!document.querySelector('mjs-tst-tt-app h1.gabarit'))
           await page.keyboard.press('Control+Shift+Space')
-          await attendre(page, messages, 'l\'arbre du panneau', () => !!(window as any).__profond('.arbre .ligne'))
-          const ligne = await page.evaluateHandle(() => Array.from((window as any).__profond('.arbre').querySelectorAll('.ligne')).find((b: any) => /tst-tt-app/.test(b.textContent)))
+          await attendre(page, messages, 'l\'arbre du panneau', () => !!(window as any).__profond('.tree .line'))
+          const ligne = await page.evaluateHandle(() => Array.from((window as any).__profond('.tree').querySelectorAll('.line')).find((b: any) => /tst-tt-app/.test(b.textContent)))
           await ligne.asElement().click()
-          await attendre(page, messages, 'les onglets du composant', () => !!(window as any).__profond('.onglet'))
-          const onglets = await page.evaluate(() => (window as any).__profond('.onglet').parentNode.querySelectorAll('.onglet').length)
+          await attendre(page, messages, 'les onglets du composant', () => !!(window as any).__profond('.tab'))
+          const onglets = await page.evaluate(() => (window as any).__profond('.tab').parentNode.querySelectorAll('.tab').length)
           for (let i = 0; i < onglets; i++) {
-            await page.evaluate((n: number) => (window as any).__profond('.onglet').parentNode.querySelectorAll('.onglet')[n].click(), i)
+            await page.evaluate((n: number) => (window as any).__profond('.tab').parentNode.querySelectorAll('.tab')[n].click(), i)
             await page.waitForTimeout(100)
           }
           assert.equal(onglets > 1, true, 'plusieurs onglets')

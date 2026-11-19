@@ -67,7 +67,7 @@ function protoEcouteurs(window: any): any {
 }
 
 const toasts = (document: any): any[] => Array.from(document.body.querySelectorAll('.mjs-toast'))
-const barre  = (t: any): any => t.querySelector('.mjs-toast-barre')
+const barre  = (t: any): any => t.querySelector('.mjs-toast-bar')
 const croix  = (t: any): any => t.querySelector('.mjs-toast-close')
 const PAUSE  = 'mjs-toast-paused'
 
@@ -671,9 +671,9 @@ describe('mjs_modal — µ.modal.notify : pause du décompte au survol et au foc
 
     it('la marque de pause met l\'animation de la barre en pause, après la règle de la barre (qui la remet en marche)', function () {
       assert.ok(m, 'texte de la feuille repérable')
-      const regle = css.indexOf(':where(.mjs-toast-paused .mjs-toast-barre){animation-play-state:paused}')
+      const regle = css.indexOf(':where(.mjs-toast-paused .mjs-toast-bar){animation-play-state:paused}')
       assert.ok(regle !== -1, 'règle de pause de la barre')
-      assert.ok(regle > css.indexOf(':where(.mjs-toast-barre){'), 'posée après la règle de la barre : même poids, la dernière gagne')
+      assert.ok(regle > css.indexOf(':where(.mjs-toast-bar){'), 'posée après la règle de la barre : même poids, la dernière gagne')
     })
 
     it('zéro style inline : la pause ne pose aucun attribut style sur le toast', function () {

@@ -23,13 +23,13 @@ describe('messages — catalogue fr/en (clé lang)', function () {
 
   it('défaut fr', function () {
     assert.equal(getMessagesLang(), 'fr')
-    assert.equal(t('cli.flag-valeur-manquante', { flag: '--port' }), '⚠️  --port ignoré : valeur manquante.')
+    assert.equal(t('cli.flag-value-missing', { flag: '--port' }), '⚠️  --port ignoré : valeur manquante.')
   })
 
   it('lang en', function () {
     setMessagesLang('en')
     assert.equal(getMessagesLang(), 'en')
-    assert.equal(t('cli.flag-valeur-manquante', { flag: '--port' }), '⚠️  --port ignored: missing value.')
+    assert.equal(t('cli.flag-value-missing', { flag: '--port' }), '⚠️  --port ignored: missing value.')
   })
 
   it('valeur inconnue → fr', function () {
@@ -75,7 +75,7 @@ describe('messages — catalogue fr/en (clé lang)', function () {
 
       // exécute le VRAI message (une valeur de test distincte par paramètre, jamais '${' dedans)
       // plutôt que d'analyser son texte par regex : un ${nom} peut apparaître dans du texte
-      // littéral autour d'une VRAIE interpolation (ex. transpiler.theme-double : `name="${nom}"`,
+      // littéral autour d'une VRAIE interpolation (ex. transpiler.theme-duplicate : `name="${nom}"`,
       // 'name' n'est pas un paramètre — un faux positif, pas un bug)
       const vars: MsgVars = {}
       for (const p of new Set([...fParams, ...eParams])) vars[p] = `TEST_${p}`

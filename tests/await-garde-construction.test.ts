@@ -110,7 +110,7 @@ describe('{await.keep …} à la construction : forme, lectures du gabarit, code
   }
 
   // les traces de chaque option dans un cœur : la relecture gardée, l'état « en cours », les contrôleurs d'annulation
-  const traces = (c: string) => [/\bgarde\b.*arguments\[6\]|_mjs_srv = 2/.test(c), /\.pending = (?:true|false)/.test(c), /_mjsAwaitLire|_mjs_awaitCtrls/.test(c)]
+  const traces = (c: string) => [/\bguard\b.*arguments\[6\]|_mjs_srv = 2/.test(c), /\.pending = (?:true|false)/.test(c), /_mjsAwaitRead|_mjs_awaitCtrls/.test(c)]
 
   // la marque de chaque option dans un cœur, que lit un composant construit pour le développement (cf. compileAwait)
   const marques = (c: string) => ['Keep', 'Pending', 'Signal'].map((m) => c.includes(`_mjs_awaitHas${m} = 1`))
@@ -120,7 +120,7 @@ describe('{await.keep …} à la construction : forme, lectures du gabarit, code
     assert.ok(c.includes('_mjs_updAwait'), 'le bloc {await} est au cœur')
     assert.deepEqual(traces(c), [false, false, false])
     assert.deepEqual(marques(c), [false, false, false])
-    assert.ok(!/<attente-(?:gardee|en-cours|signal)>/.test(c), 'les blocs balisés sont retirés')
+    assert.ok(!/<wait-(?:kept|pending|signal)>/.test(c), 'les blocs balisés sont retirés')
   })
 
   it('cœur de développement d\'une appli à {await} sans option : les trois options y restent, pour un composant compilé à part', async () => {
@@ -218,10 +218,10 @@ describe('{await.keep …} à la construction : forme, lectures du gabarit, code
       assert.ok(!/_mjs_pnd/.test(js) && /_mjs_cst_1\b/.test(js), `${corps} (${tl}) : ni µpending lu, ni temporaire renommé`)
       assert.ok(!features.scanCompiledFeatures(js).has(features.AWAIT_PENDING), `${corps} (${tl}) : le bloc de µpending n'entre pas au cœur`)
     }
-    // ce qui n'est pas un commentaire reste une lecture : `#` et `###` d'une expression Civet (`this.length`)
+    // un `# …` et un `### … ###` d'une expression du gabarit sont des commentaires, lus comme tels : µpending cité dedans n'est pas lu
     for (const [corps, tl] of [['<p>{$q # µpending\n  }</p>', 'civet'], ['<p>{$q ### µpending ###}</p>', 'civet']] as const) {
       const js = await compiler(source(corps), tl)
-      assert.ok(/_mjs_pnd/.test(js) && !/µ\.pending/.test(js), `${corps} (${tl}) : µpending lu dans l'état du bloc`)
+      assert.ok(!/_mjs_pnd/.test(js), `${corps} (${tl}) : µpending cité dans un commentaire, jamais lu`)
     }
     // une branche qui lit µpending : le gestionnaire qui ne le cite qu'en commentaire ne recrée pas sa valeur
     for (const tl of ['civet'] as const) {

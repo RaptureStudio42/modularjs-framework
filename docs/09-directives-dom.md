@@ -8,7 +8,7 @@ Quand le déclaratif ne suffit pas — appeler une méthode native (`canvas.getC
 
 ## Référence au nœud — `:this=!{ref}`
 
-`:this=!{ref}` stocke une **référence vivante** au nœud dans une variable **simple** (sans `$`). Au montage, `ref` reçoit l'élément DOM ; avant montage, il vaut `null`. D'où l'usage de `µmount` (ou `µeffect`) pour le code qui dépend du nœud. Quand le composant quitte la page, la référence reste lisible pendant `µsleep`, `µdestroy` et le nettoyage rendu par `µmount` ; elle repasse à `null` après eux.
+`:this=!{ref}` stocke une **référence vivante** au nœud dans une variable **simple** (sans `$`). Au montage, `ref` reçoit l'élément DOM ; avant montage, il vaut `null`. D'où l'usage de `µmount` (ou `µeffect`) pour le code qui dépend du nœud. Quand le composant quitte la page, la référence reste lisible pendant `µsleep`, `µdestroy` et le nettoyage rendu par `µmount` ; elle repasse à `null` après eux. Un composant seulement déplacé (retiré puis remis dans le même tour, par exemple `autreZone.append(el)`) garde ses références : `ref` désigne toujours sa balise, et un bloc qui retire ensuite cette balise (`{if}` fermé) remet `ref` à `null`. Ses attaches (`:attach`) et ses effets (`*nom`), eux, sont défaits puis refaits, avec `µsleep` et `µawake`.
 
 ```html
 <script>
@@ -89,6 +89,19 @@ Une valeur rendue qui n'est pas une fonction n'est pas un nettoyage : elle est i
 Cela vaut pour `:attach` et `:attach.once`, avec `_node`, avec `el` ou avec la fonction passée telle quelle. Ne rien rendre reste silencieux : terminez la fonction par une ligne `return`, ou rendez `null`. La construction de production n'en garde rien : ni ce contrôle, ni son texte.
 
 > ⚠️ Deux écritures équivalentes : passer la fonction telle quelle (`:attach={trapFocus}` — MJS l'appelle avec le nœud), ou l'appeler explicitement avec le nœud (`:attach={trapFocus(_node)}` ou `:attach={trapFocus(el)}` : `_node` et `el` sont deux noms du nœud courant, au choix, à la racine comme dans une ligne de `{for}` ou une branche de `{await}`, avec `:attach.once` comme sans). Les deux marchent ; la première est la plus directe quand l'action ne prend que le nœud. Écrire `_node` ou `el` dans l'expression, c'est faire l'attache vous-même : l'expression est exécutée telle quelle, avec le nœud, et sa valeur de retour est le nettoyage. Un paramètre que vous nommez `el` (`:attach={(el) -> …}`) est le vôtre, la fabrique reçoit le nœud sous le nom que vous lui donnez ; et si le `<script>` du composant déclare lui-même une variable `el` (ou la lie par `:this=!{el}`), `el` reste la vôtre dans l'expression : le nœud n'y est alors connu que sous `_node`. Un `el` déclaré dans le `<script module>` ou importé par `@import` n'est pas reconnu comme le vôtre : ne le nommez pas ainsi.
+
+Une fonction écrite dans l'attribut tient autant d'instructions qu'il en faut, séparées par `;` ou chacune sur sa ligne, en retrait sous la flèche, en Civet (`->`) comme en JavaScript (`=>`) : tout le corps lui appartient, et sa dernière valeur est le nettoyage. Terminez-la par une fonction, appelée quand la balise quitte la page, ou par `return` quand il n'y a rien à défaire :
+
+```html
+<canvas :attach={(el) -> el.width = 300; el.height = 150; return}></canvas>
+<input :attach={(el) ->
+  el.dataset.pret = '1'
+  el.focus()
+  -> el.dataset.pret = '0'
+}>
+```
+
+Une attache que la construction ne lit ni en une seule expression ni en une seule fonction (corps illisible, ou flèche nue après une instruction, comme `el.focus(); -> el.blur()`) est refusée, par un message qui dit quoi écrire : vérifiez son texte, ou écrivez-la en fonction, le corps entre accolades (`(el) => { a(); b() }`).
 
 <details>
 <summary>🎓 <b>Pour débutants</b> — pourquoi pas un simple <code>µmount</code> sur le composant&nbsp;?</summary>

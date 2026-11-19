@@ -102,7 +102,7 @@ const placesValueOk = (text: string): boolean => Number.isInteger(Number(text)) 
 
 // `line` : un saut de ligne précède le jeton (dans un commentaire compris) ; `indent` : le retrait de sa ligne, vide sur la première (l'expression se
 // compile entre parenthèses, sa première ligne n'a pas de retrait)
-type Token = { kind: 'text' | 'word' | 'sign', value: string, sure: boolean, line: boolean, indent: string }
+type Token = { kind: 'text' | 'word' | 'sign', value: string, safe: boolean, line: boolean, indent: string }
 
 /**
  * Les jetons d'une expression écrite, lus hors des chaînes et des commentaires, de ligne (`// …`) comme de bloc : ses textes (`sure` faux quand un échappement
@@ -113,9 +113,9 @@ function tokensOf(expr: string): Token[] | null {
   if (/\$\{|#\{/.test(expr)) return null
   const toks: Token[] = []
   let line = false
-  const push = (kind: Token['kind'], value: string, sure: boolean, at: number): void => {
+  const push = (kind: Token['kind'], value: string, safe: boolean, at: number): void => {
     const start = expr.lastIndexOf('\n', at - 1) + 1
-    toks.push({ kind, value, sure, line, indent: start === 0 ? '' : /^[ \t]*/.exec(expr.slice(start))![0] })
+    toks.push({ kind, value, safe, line, indent: start === 0 ? '' : /^[ \t]*/.exec(expr.slice(start))![0] })
     line = false
   }
   for (let i = 0; i < expr.length;) {
@@ -132,16 +132,16 @@ function tokensOf(expr: string): Token[] | null {
     }
     else if (c === '"' || c === '\'' || c === '`') {
       let j    = i + 1
-      let sure = true
+      let safe = true
       while (j < expr.length && expr[j] !== c) {
         if (expr[j] === '\\') {
-          sure = false
+          safe = false
           j++
         }
         j++
       }
       if (j >= expr.length) return null
-      push('text', expr.slice(i + 1, j), sure, i)
+      push('text', expr.slice(i + 1, j), safe, i)
       i = j + 1
     }
     else if (/[\w$]/.test(c)) {
@@ -175,7 +175,7 @@ function writtenValues(expr: string, key: string): string[] {
   const alone = (j: number): boolean => {
     const next = toks[j]
     if (!next || (next.kind === 'sign' && (next.value === ',' || next.value === '}'))) return true
-    return next.line && next.indent === toks[j - 1].indent && (next.kind === 'word' || (next.kind === 'text' && next.sure)) && isSign(toks[j + 1], ':')
+    return next.line && next.indent === toks[j - 1].indent && (next.kind === 'word' || (next.kind === 'text' && next.safe)) && isSign(toks[j + 1], ':')
   }
   // la clé : en tête d'objet ou après une virgule, suivie de « : » puis d'un texte sûr ou d'un nombre écrits seuls (cf. alone), le nombre lu
   // comme le module le lit (`color: 1.0` vaut « 1 », `color: -0` vaut « 0 ») ; une valeur suivie d'autre chose (`'droite' + $s`, `'gauche' if
@@ -186,7 +186,7 @@ function writtenValues(expr: string, key: string): string[] {
     if (toks[k].value !== key || toks[k].kind === 'sign' || !isSign(toks[k + 1], ':')) continue
     if (before && !(before.kind === 'sign' && (before.value === '{' || before.value === ','))) continue
     if (value.kind === 'text') {
-      if (value.sure && alone(k + 3)) out.push(value.value)
+      if (value.safe && alone(k + 3)) out.push(value.value)
       continue
     }
     // un nombre : ses jetons (signe, chiffres, point, exposant) joints
@@ -223,7 +223,7 @@ function splitTopLevel(toks: Token[]): Token[][] | null {
 // la valeur écrite d'une clé : un texte sûr, ou un nombre écrit seul, lu comme le module le lit (`key: 1.0` vaut « 1 ») ; null pour une
 // valeur calculée ou un texte qui s'échappe
 function writtenValue(toks: Token[]): string | null {
-  if (toks.length === 1 && toks[0].kind === 'text') return toks[0].sure ? toks[0].value : null
+  if (toks.length === 1 && toks[0].kind === 'text') return toks[0].safe ? toks[0].value : null
   const text = toks.map((x) => x.value).join('')
   return toks.length > 0 && toks.every((x) => x.kind !== 'text') && /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(text) ? String(Number(text)) : null
 }
@@ -241,18 +241,18 @@ function writtenSeries(expr: string): Map<string, string | null>[] {
   for (const el of splitTopLevel(toks.slice(1, -1)) ?? []) {
     if (!isSign(el[0], '{') || !isSign(el[el.length - 1], '}') || el.length < 2) continue
     const members = splitTopLevel(el.slice(1, -1))
-    let serie: Map<string, string | null> | null = members ? new Map() : null
+    let series: Map<string, string | null> | null = members ? new Map() : null
     for (const m of members ?? []) {
       if (m.length === 0) continue
       const [name, colon] = m
-      if (m.length === 1 && name.kind === 'word') serie!.set(name.value, null)
-      else if (name.kind === 'sign' || !name.sure || !isSign(colon, ':')) {
-        serie = null
+      if (m.length === 1 && name.kind === 'word') series!.set(name.value, null)
+      else if (name.kind === 'sign' || !name.safe || !isSign(colon, ':')) {
+        series = null
         break
       }
-      else serie!.set(name.value, writtenValue(m.slice(2)))
+      else series!.set(name.value, writtenValue(m.slice(2)))
     }
-    if (serie) out.push(serie)
+    if (series) out.push(series)
   }
   return out
 }
@@ -307,55 +307,55 @@ export function chartProblems(ref: { file: string, kind: string, attrs?: TagRefA
   const attrs = ref.attrs
   if (!attrs?.texts) return []
   const texts  = attrs.texts
-  const tag    = ref.kind === 'litteral-coeur' ? 'mjs-core-chart' : '@@chart'
+  const tag    = ref.kind === 'literal-core' ? 'mjs-core-chart' : '@@chart'
   const out: string[] = []
   const said   = (name: string): string | null => typeof texts[name] === 'string' ? texts[name]!.trim() : null
   const stats  = said('stats')
   const marks  = stats ? wordsOf(stats) : []
   for (const name of ['shape', 'step', 'axis'] as const) {
     const word = said(name)
-    if (word && !CHART_WORDS[name].includes(word)) out.push(t('bundler.index.chart-mot-inconnu', { fichier: ref.file, tag, attribut: name, valeur: texts[name]!, mot: word, connus: CHART_WORDS[name].join(' ') }))
+    if (word && !CHART_WORDS[name].includes(word)) out.push(t('bundler.index.chart-word-unknown', { file: ref.file, tag, attribute: name, value: texts[name]!, word, known: CHART_WORDS[name].join(' ') }))
   }
   // les listes de mots : les statistiques, les outils de la barre, les formes de son menu
   for (const name of ['stats', 'toolbar', 'shapes'] as const) {
     const text = said(name)
     for (const word of text ? wordsOf(text) : []) {
-      if (!CHART_WORDS[name].includes(word)) out.push(t('bundler.index.chart-mot-inconnu', { fichier: ref.file, tag, attribut: name, valeur: texts[name]!, mot: word, connus: CHART_WORDS[name].join(' ') }))
+      if (!CHART_WORDS[name].includes(word)) out.push(t('bundler.index.chart-word-unknown', { file: ref.file, tag, attribute: name, value: texts[name]!, word, known: CHART_WORDS[name].join(' ') }))
     }
   }
   for (const raw of writtenColors(attrs.exprs?.series ?? '')) {
     const color = raw.trim()
     if (color === '' || CHART_HUES.includes(color.toLowerCase()) || (/^\d+$/.test(color) && Number(color) > 0) || (CHART_SAFE_COLOR.test(color) && !unknownColor(color))) continue
-    out.push(t('bundler.index.chart-couleur-refusee', { fichier: ref.file, tag, couleur: color, teintes: CHART_HUES.join(' ') }))
+    out.push(t('bundler.index.chart-color-refused', { file: ref.file, tag, color, hues: CHART_HUES.join(' ') }))
   }
   // l'axe d'une série écrite : `left` ou `right`, tel quel (le module ne retire que les espaces autour) ; vide, l'axe de gauche
   for (const raw of writtenValues(attrs.exprs?.series ?? '', 'axis')) {
     const side = raw.trim()
-    if (side !== '' && !CHART_SERIES_AXES.includes(side)) out.push(t('bundler.index.chart-axe-serie-inconnu', { fichier: ref.file, tag, mot: side, connus: CHART_SERIES_AXES.join(' ') }))
+    if (side !== '' && !CHART_SERIES_AXES.includes(side)) out.push(t('bundler.index.chart-axis-series-unknown', { file: ref.file, tag, word: side, known: CHART_SERIES_AXES.join(' ') }))
   }
   // le fuseau des heures : local, ou une zone qu'Intl connaît ; la précision, écrite en texte (`decimals="2"`) ou en nombre (`decimals={2}`) :
   // une autre expression se vérifie à l'exécution
   const zone = said('timezone')
-  if (zone && zone !== 'local' && !knownZone(zone)) out.push(t('bundler.index.chart-fuseau-inconnu', { fichier: ref.file, tag, valeur: zone }))
+  if (zone && zone !== 'local' && !knownZone(zone)) out.push(t('bundler.index.chart-timezone-unknown', { file: ref.file, tag, value: zone }))
   const places = said('decimals')
-  const nombre = attrs.exprs?.decimals?.trim()
-  if (places && !placesOk(places)) out.push(t('bundler.index.chart-decimales', { fichier: ref.file, tag, ecrit: `decimals="${texts.decimals}"`, valeur: places }))
-  else if (nombre !== undefined && /^[+-]?\d+(?:\.\d*)?$/.test(nombre) && !placesValueOk(nombre)) out.push(t('bundler.index.chart-decimales', { fichier: ref.file, tag, ecrit: `decimals={${nombre}}`, valeur: nombre }))
+  const number = attrs.exprs?.decimals?.trim()
+  if (places && !placesOk(places)) out.push(t('bundler.index.chart-decimals', { file: ref.file, tag, written: `decimals="${texts.decimals}"`, value: places }))
+  else if (number !== undefined && /^[+-]?\d+(?:\.\d*)?$/.test(number) && !placesValueOk(number)) out.push(t('bundler.index.chart-decimals', { file: ref.file, tag, written: `decimals={${number}}`, value: number }))
   const shape = said('shape')
   if (!shape || attrs.spread) return out
   // des statistiques sur une forme qui n'en trace pas (tous les mots, connus ou non : elle n'en veut aucun), la tendance sur une forme qui trace
   // les autres sans elle
   const wrong = CHART_WORDS.shape.includes(shape) ? marks.filter((m) => !CHART_STATS_SHAPES.includes(shape) || (m === 'trend' && !CHART_TREND_SHAPES.includes(shape))) : []
-  if (wrong.length) out.push(t('bundler.index.chart-sans-statistiques', { fichier: ref.file, tag, forme: shape, valeur: texts.stats!, mots: wrong.join(' '), formes: CHART_STATS_SHAPES.join(' '), tendance: CHART_TREND_SHAPES.join(' ') }))
+  if (wrong.length) out.push(t('bundler.index.chart-no-stats', { file: ref.file, tag, shape, value: texts.stats!, words: wrong.join(' '), shapes: CHART_STATS_SHAPES.join(' '), trend: CHART_TREND_SHAPES.join(' ') }))
   if (shape === 'calendar') {
     for (const name of ['step', 'axis'] as const) {
       const word = said(name)
-      if (word && CHART_WORDS[name].includes(word) && !CALENDAR[name].includes(word)) out.push(t('bundler.index.chart-combinaison', { fichier: ref.file, tag, forme: shape, attribut: name, valeur: word, connus: CALENDAR[name].join(' ') }))
+      if (word && CHART_WORDS[name].includes(word) && !CALENDAR[name].includes(word)) out.push(t('bundler.index.chart-combination', { file: ref.file, tag, shape, attribute: name, value: word, known: CALENDAR[name].join(' ') }))
     }
   }
   const rows = attrs.exprs?.rows
   const n    = shape === 'radar' && rows !== undefined ? writtenRows(rows) : null
-  if (n !== null && n > 0 && n < 3) out.push(t('bundler.index.chart-radar-axes', { fichier: ref.file, tag, nb: n }))
+  if (n !== null && n > 0 && n < 3) out.push(t('bundler.index.chart-radar-axes', { file: ref.file, tag, count: n }))
   return out
 }
 
@@ -375,6 +375,6 @@ export function chartWarnings(ref: { file: string, kind: string, attrs?: TagRefA
   if (rows !== null && rows > 0 && rows < 3) return []
   const right = writtenSeries(attrs.exprs?.series ?? '').filter((s) => s.get('key') && s.get('axis')?.trim() === 'right' && (!s.has('kind') || (s.get('kind') ?? 'text') !== 'text')).map((s) => s.get('key')!)
   if (right.length === 0) return []
-  const tag = ref.kind === 'litteral-coeur' ? 'mjs-core-chart' : '@@chart'
-  return [t('bundler.index.chart-axe-droite-ignore', { fichier: ref.file, tag, forme: shape, cles: right.join(' '), formes: CHART_TWIN_SHAPES.join(' ') })]
+  const tag = ref.kind === 'literal-core' ? 'mjs-core-chart' : '@@chart'
+  return [t('bundler.index.chart-axis-right-ignored', { file: ref.file, tag, shape, keys: right.join(' '), shapes: CHART_TWIN_SHAPES.join(' ') })]
 }

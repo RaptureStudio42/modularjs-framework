@@ -62,7 +62,7 @@ export async function prerenderOnDevRecompile(
     if (opts.bundler) await (opts.startupFn ?? emitStartup)(opts.bundler, config.render, report, { prod: false, log })
     return report
   } catch (e: any) {
-    warn(t('cli.dev-prerender.echec', { erreur: e?.message || e }))
+    warn(t('cli.dev-prerender.failed', { error: e?.message || e }))
     return undefined
   }
 }

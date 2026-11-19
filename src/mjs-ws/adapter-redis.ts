@@ -69,7 +69,7 @@ function tryParseOne(buf: Buffer, offset: number, hint?: { need: number }): Pars
   if (type === 0x2d) return { value: new RespError(line), next: afterLine } // '-' erreur
   if (type === 0x3a) {   // ':' entier — peut légitimement être négatif (DECR), jamais NaN
     const n = parseInt(line, 10)
-    if (!Number.isFinite(n)) throw new Error(t('ws.adapter-redis.entier-invalide', { line }))
+    if (!Number.isFinite(n)) throw new Error(t('ws.adapter-redis.integer-invalid', { line }))
     return { value: n, next: afterLine }
   }
 
@@ -81,7 +81,7 @@ function tryParseOne(buf: Buffer, offset: number, hint?: { need: number }): Pars
     // est renvoyée SANS jamais consommer le tampon (`next` lui aussi NaN→0) → boucle infinie
     // dans push() (event loop entièrement bloqué, tout le process gelé — pas juste l'adaptateur)
     // à la première longueur bulk mal formée reçue du pair Redis. Prouvé par repro.
-    if (!Number.isFinite(len) || len < 0) throw new Error(t('ws.adapter-redis.longueur-bulk-invalide', { line }))
+    if (!Number.isFinite(len) || len < 0) throw new Error(t('ws.adapter-redis.length-bulk-invalid', { line }))
     const need = afterLine + len + 2
     if (buf.length < need) { if (hint) hint.need = need; return null }
     return { value: buf.toString('utf8', afterLine, afterLine + len), next: need }
@@ -90,7 +90,7 @@ function tryParseOne(buf: Buffer, offset: number, hint?: { need: number }): Pars
   if (type === 0x2a) {   // '*' tableau (imbriqué — push SUBSCRIBE/message)
     const n = parseInt(line, 10)
     if (n === -1) return { value: null, next: afterLine }
-    if (!Number.isFinite(n) || n < 0) throw new Error(t('ws.adapter-redis.longueur-tableau-invalide', { line }))
+    if (!Number.isFinite(n) || n < 0) throw new Error(t('ws.adapter-redis.length-array-invalid', { line }))
     const items: RespValue[] = []
     let cursor = afterLine
     for (let i = 0; i < n; i++) {
@@ -102,7 +102,7 @@ function tryParseOne(buf: Buffer, offset: number, hint?: { need: number }): Pars
     return { value: items, next: cursor }
   }
 
-  throw new Error(t('ws.adapter-redis.octet-inattendu', { hex: type.toString(16) }))
+  throw new Error(t('ws.adapter-redis.byte-unexpected', { hex: type.toString(16) }))
 }
 
 /** parseur incrémental — `push(chunk)` retourne les valeurs COMPLÈTES désormais disponibles. Les tronçons
@@ -152,9 +152,9 @@ export interface ParsedRedisUrl {
 export function parseRedisUrl(raw: string): ParsedRedisUrl {
   let u: URL
   try { u = new URL(raw) }
-  catch { throw new Error(t('ws.adapter-redis.url-invalide', { raw })) }
+  catch { throw new Error(t('ws.adapter-redis.url-invalid', { raw })) }
   if (u.protocol !== 'redis:' && u.protocol !== 'rediss:') {
-    throw new Error(t('ws.adapter-redis.url-schema-invalide', { raw, protocol: u.protocol }))
+    throw new Error(t('ws.adapter-redis.url-schema-invalid', { raw, protocol: u.protocol }))
   }
   const host     = u.hostname || '127.0.0.1'
   const port     = u.port ? parseInt(u.port, 10) : 6379
@@ -164,7 +164,7 @@ export function parseRedisUrl(raw: string): ParsedRedisUrl {
   let db: number | undefined
   if (path !== '') {
     const n = parseInt(path, 10)
-    if (!Number.isFinite(n) || String(n) !== path) throw new Error(t('ws.adapter-redis.url-base-invalide', { raw, path }))
+    if (!Number.isFinite(n) || String(n) !== path) throw new Error(t('ws.adapter-redis.url-base-invalid', { raw, path }))
     db = n
   }
   const parsed: ParsedRedisUrl = { host, port, password, db, tls: u.protocol === 'rediss:' }
@@ -280,7 +280,7 @@ export class RedisConnection {
   // `true` seulement APRÈS AUTH/SELECT (pas juste « socket ouvert ») — RedisAdapter.subscribe()
   // s'en sert pour éviter un envoi voué à l'échec avant start() (cf. son commentaire).
   get ready(): boolean { return this._ready }
-  /** reconnexions RÉUSSIES cumulées sur CETTE connexion (jamais la 1re) — cf. RedisAdapter.reconnexions */
+  /** reconnexions RÉUSSIES cumulées sur CETTE connexion (jamais la 1re) — cf. RedisAdapter.reconnects */
   get reconnectCount(): number { return this._reconnectCount }
 
   connect(): void { this._open() }
@@ -318,13 +318,12 @@ export class RedisConnection {
     try { await this._raw(['AUTH', username, password]) }
     catch (err) {
       if (!(err instanceof Error) || !/wrong number of arguments/i.test(err.message)) throw err
-      this._opts.onLog('warn', t('ws.adapter-redis.auth-sans-utilisateur', { role: this._opts.role, username }))
+      this._opts.onLog('warn', t('ws.adapter-redis.auth-no-user', { role: this._opts.role, username }))
       await this._raw(['AUTH', password])
     }
   }
 
   private async _onSocketConnected(): Promise<void> {
-    this._backoffAttempt = 0
     try {
       if (this._opts.password) await this._auth(this._opts.password)
       if (this._opts.db != null) await this._raw(['SELECT', String(this._opts.db)])
@@ -334,12 +333,15 @@ export class RedisConnection {
       this._everConnected = true
       this._clearReadyTimer()
       this._ready = true
+      // l'attente ne repart de 1 s qu'une fois la connexion PRÊTE : un Redis qui accepte la connexion puis refuse AUTH/SELECT (mot de
+      // passe faux, base en chargement) faisait sinon réessayer chaque seconde, pour toujours
+      this._backoffAttempt = 0
       for (const w of this._readyWaiters.splice(0)) w.resolve()   // débloque les send() en attente — dans l'ORDRE d'appel
       this._opts.onConnected()
     } catch (err) {
       // un délai dépassé (poignée de main muette) a déjà été rejeté et avertit lui-même, cf. _onReadyTimeout : ce n'est pas un refus d'AUTH/SELECT
       if (err instanceof Error && TIMED_OUT_ERRORS.has(err)) return
-      const message = t('ws.adapter-redis.auth-echec', { role: this._opts.role, err: errMessage(err) })
+      const message = t('ws.adapter-redis.auth-failed', { role: this._opts.role, err: errMessage(err) })
       this._opts.onLog('error', message)
       // AUTH/SELECT refusé (mot de passe faux, base inexistante…) — un Redis réel NE COUPE PAS la
       // connexion pour autant (contrairement à une erreur réseau) : sans ce rejet explicite ni ce
@@ -365,7 +367,7 @@ export class RedisConnection {
     let values: RespValue[]
     try { values = this._parser.push(chunk) }
     catch (err) {
-      this._opts.onLog('error', t('ws.adapter-redis.flux-corrompu', { role: this._opts.role, err: errMessage(err) }))
+      this._opts.onLog('error', t('ws.adapter-redis.stream-corrupt', { role: this._opts.role, err: errMessage(err) }))
       this._socket?.destroy()
       return
     }
@@ -400,13 +402,13 @@ export class RedisConnection {
     // parseur neuf à CHAQUE nouvelle connexion — un fragment retenu de l'ancienne (trame RESP
     // coupée en plein milieu) ne doit JAMAIS se recoller à la première réponse de la SUIVANTE.
     this._parser = new RespParser()
-    const err = new Error(t('ws.adapter-redis.connexion-perdue', { role: this._opts.role }))
+    const err = new Error(t('ws.adapter-redis.connection-lost', { role: this._opts.role }))
     for (const p of this._pending.splice(0)) p.reject(err)
     for (const w of this._readyWaiters.splice(0)) w.reject(err)
     if (this._stopped) return
     const delay = backoffDelayMs(this._backoffAttempt)
     this._backoffAttempt++
-    this._opts.onLog('warn', t('ws.adapter-redis.reconnexion-backoff', { role: this._opts.role, delay }))
+    this._opts.onLog('warn', t('ws.adapter-redis.reconnect-backoff', { role: this._opts.role, delay }))
     this._reconnectTimer = setTimeout(() => { this._reconnectTimer = null; this._open() }, delay)
   }
 
@@ -415,7 +417,7 @@ export class RedisConnection {
    *  réglée : elle fermerait la connexion suivante. Jamais unref() : la commande attend sur un socket ouvert, qui retient déjà le process */
   private _raw(args: Array<string | number>): Promise<RespValue> {
     return new Promise((resolve, reject) => {
-      if (!this._socket) { reject(new Error(t('ws.adapter-redis.connexion-indisponible', { role: this._opts.role }))); return }
+      if (!this._socket) { reject(new Error(t('ws.adapter-redis.connection-unavailable', { role: this._opts.role }))); return }
       const timer = setTimeout(() => this._onCommandTimeout(), COMMAND_TIMEOUT_MS)
       this._pending.push({ resolve: (v) => { clearTimeout(timer); resolve(v) }, reject: (err) => { clearTimeout(timer); reject(err) } })
       this._socket.write(encodeCommand(args))
@@ -428,10 +430,10 @@ export class RedisConnection {
   // journal qui lève ne laisse pas la connexion ouverte
   private _onCommandTimeout(): void {
     const waiting = this._pending.splice(0)
-    const err     = new Error(t('ws.adapter-redis.commande-sans-reponse', { role: this._opts.role, delai: COMMAND_TIMEOUT_MS / 1000 }))
+    const err     = new Error(t('ws.adapter-redis.command-no-response', { role: this._opts.role, delay: COMMAND_TIMEOUT_MS / 1000 }))
     for (const p of waiting) p.reject(err)
     this._socket?.destroy()
-    this._opts.onLog('warn', t('ws.adapter-redis.commande-delai-depasse', { role: this._opts.role, nb: waiting.length, delai: COMMAND_TIMEOUT_MS / 1000 }))
+    this._opts.onLog('warn', t('ws.adapter-redis.command-timeout', { role: this._opts.role, count: waiting.length, delay: COMMAND_TIMEOUT_MS / 1000 }))
   }
 
   private _clearReadyTimer(): void {
@@ -444,14 +446,14 @@ export class RedisConnection {
   // ne sont pas rejetées une seconde fois). L'avertissement vient en dernier, et ne compte que les commandes de l'appelant, pas AUTH/SELECT
   private _onReadyTimeout(): void {
     this._readyTimer = null
-    const waiting = this._readyWaiters.splice(0)
-    const pending = this._pending.splice(0)
-    const err     = new Error(t('ws.adapter-redis.connexion-pas-prete', { role: this._opts.role, delai: READY_TIMEOUT_MS / 1000 }))
+    const waiting    = this._readyWaiters.splice(0)
+    const pending    = this._pending.splice(0)
+    const err        = new Error(t('ws.adapter-redis.connection-not-ready', { role: this._opts.role, delay: READY_TIMEOUT_MS / 1000 }))
     TIMED_OUT_ERRORS.add(err)
     for (const w of waiting) w.reject(err)
     for (const p of pending) p.reject(err)
     this._socket?.destroy()
-    this._opts.onLog('warn', t('ws.adapter-redis.connexion-delai-depasse', { role: this._opts.role, nb: waiting.length, delai: READY_TIMEOUT_MS / 1000 }))
+    this._opts.onLog('warn', t('ws.adapter-redis.connection-timeout', { role: this._opts.role, count: waiting.length, delay: READY_TIMEOUT_MS / 1000 }))
   }
 
   // attend AUTH/SELECT AVANT d'écrire quoi que ce soit — AVANT, une commande partait dès que
@@ -468,7 +470,7 @@ export class RedisConnection {
     if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null }
     this._clearReadyTimer()
     if (this._socket) { this._socket.destroy(); this._socket = null }
-    const err = new Error(t('ws.adapter-redis.adaptateur-arrete', { role: this._opts.role }))
+    const err = new Error(t('ws.adapter-redis.adapter-stopped', { role: this._opts.role }))
     for (const p of this._pending.splice(0)) p.reject(err)
     for (const w of this._readyWaiters.splice(0)) w.reject(err)
   }
@@ -495,7 +497,7 @@ export class RedisAdapter implements MjsWsAdapter {
   private _cmd: RedisConnection
   private _sub: RedisConnection
   private _handlers = new Map<string, Set<MjsWsAdapterHandler>>()
-  private _ignoresOrigin = 0   // cf. le getter ignoresOrigin ci-dessous pour le détail/la limite
+  private _ignoredOrigin = 0   // cf. le getter ignoredOrigin ci-dessous pour le détail/la limite
 
   constructor(opts: RedisAdapterOpts) {
     this.processId = randomBytes(8).toString('hex')
@@ -514,17 +516,17 @@ export class RedisAdapter implements MjsWsAdapter {
     })
   }
 
-  // compteurs LOCAUX — ignoresOrigin (skip-self pub/sub, cf. _deliver ci-dessous)
-  // + reconnexions (reconnexion RÉUSSIE du mini-client RESP, cumul _cmd+_sub, cf.
+  // compteurs LOCAUX — ignoredOrigin (skip-self pub/sub, cf. _deliver ci-dessous)
+  // + reconnects (reconnexion RÉUSSIE du mini-client RESP, cumul _cmd+_sub, cf.
   // RedisConnection._onSocketConnected/.reconnectCount) : MÊMES familles que
-  // MjsWsStatsAdaptateur (stats.ts), mais PAS ENCORE branchées sur le registre app-wide
-  // (ctx.stats.adaptateur, core.ts createClusterEngine) — ce câblage exigerait de faire
+  // MjsWsStatsAdapter (stats.ts), mais PAS ENCORE branchées sur le registre app-wide
+  // (ctx.stats.adapter, core.ts createClusterEngine) — ce câblage exigerait de faire
   // transiter le registre jusqu'à RedisAdapterOpts (core.ts/index.ts,
   // cf. docs/23-mjs-ws.md « L'état du serveur »). Lisibles dès maintenant en DIRECT
-  // sur l'instance (adapter.ignoresOrigin/.reconnexions) — suivi : à brancher dans
+  // sur l'instance (adapter.ignoredOrigin/.reconnects) — suivi : à brancher dans
   // createClusterEngine plus tard.
-  get ignoresOrigin(): number { return this._ignoresOrigin }
-  get reconnexions(): number { return this._cmd.reconnectCount + this._sub.reconnectCount }
+  get ignoredOrigin(): number { return this._ignoredOrigin }
+  get reconnects(): number { return this._cmd.reconnectCount + this._sub.reconnectCount }
 
   // appelé depuis l'écouteur `data` du socket : rien ne doit en sortir en exception (elle ferait tomber le
   // process, et chaque process abonné recevrait le même message). Un message non JSON, ou dont un rappel lève
@@ -534,7 +536,7 @@ export class RedisAdapter implements MjsWsAdapter {
     try { envelope = JSON.parse(body) }
     catch (err) { this._ignore(channel, errMessage(err)); return }
     if (!envelope || typeof envelope.origin !== 'string') return
-    if (envelope.origin === this.processId) { this._ignoresOrigin++; return }   // jamais ses propres messages (écho pub/sub) — compté
+    if (envelope.origin === this.processId) { this._ignoredOrigin++; return }   // jamais ses propres messages (écho pub/sub) — compté
     const hs = this._handlers.get(channel)
     if (!hs) return
     for (const h of hs) {
@@ -552,7 +554,7 @@ export class RedisAdapter implements MjsWsAdapter {
     const seen = this._ignored.get(channel)
     if (seen && now - seen.at < IGNORED_WARN_MS) { seen.n++; return }
     this._ignored.set(channel, { n: 0, at: now })
-    this._onLog('warn', t('ws.adapter-redis.messages-ignores', { channel, n: (seen?.n ?? 0) + 1, cause }))
+    this._onLog('warn', t('ws.adapter-redis.messages-ignored', { channel, n: (seen?.n ?? 0) + 1, cause }))
   }
 
   async start(): Promise<void> {
@@ -569,7 +571,7 @@ export class RedisAdapter implements MjsWsAdapter {
   publish(channel: string, message: unknown): void {
     const body = JSON.stringify({ origin: this.processId, payload: message })
     // fire-and-forget — un échec (coupure en cours) est un warn, jamais bloquant (cf. docs/23-mjs-ws.md §10.7)
-    this._cmd.send(['PUBLISH', channel, body]).catch(err => this._onLog('warn', t('ws.adapter-redis.publish-echec', { channel, err: errMessage(err) })))
+    this._cmd.send(['PUBLISH', channel, body]).catch(err => this._onLog('warn', t('ws.adapter-redis.publish-failed', { channel, err: errMessage(err) })))
   }
 
   subscribe(channel: string, handler: MjsWsAdapterHandler): void {
@@ -584,7 +586,7 @@ export class RedisAdapter implements MjsWsAdapter {
     // propagées dès le 1er coup) — sans cette garde, c'est un avertissement systématique et
     // sans conséquence à CHAQUE démarrage normal (onConnected rattrape de toute façon).
     if (isNew && this._sub.ready) {
-      this._sub.send(['SUBSCRIBE', channel]).catch(err => this._onLog('warn', t('ws.adapter-redis.subscribe-echec', { channel, err: errMessage(err) })))
+      this._sub.send(['SUBSCRIBE', channel]).catch(err => this._onLog('warn', t('ws.adapter-redis.subscribe-failed', { channel, err: errMessage(err) })))
     }
   }
 

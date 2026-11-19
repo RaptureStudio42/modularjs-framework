@@ -8,7 +8,7 @@ import { fr } from '../src/messages/fr.js'
 import { en } from '../src/messages/en.js'
 
 const message = (table: Record<string, any>, manquants: string[]): string =>
-  table['bundler.index.contrat-coeur-rompu']({ manquants: manquants.join(', '), nb: manquants.length, modules: 12 })
+  table['bundler.index.contract-core-broken']({ missing: manquants.join(', '), count: manquants.length, modules: 12 })
 
 describe('bundler — contrat du cœur rompu : le message d\'une fonction publique', () => {
   it('µ.Store manquant : la fonction, son module, le réglage runtime — ni symbole interne ni this.<nom>', () => {

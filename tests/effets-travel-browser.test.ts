@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
 
 const ICI = dirname(fileURLToPath(import.meta.url))
 
@@ -213,7 +214,7 @@ describe('*travel (navigateurs réels) — la balise voyage d\'une place à l\'a
   after(async () => { await terminateSharedWorkerPool() })
 
   for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
-    describe(nom, function () {
+    playTogether(describe(nom, function () {
       let present = false
       let browser: any = null
 
@@ -969,6 +970,6 @@ describe('*travel (navigateurs réels) — la balise voyage d\'une place à l\'a
         assert.ok(!/setTimeout|setInterval/.test(src))
         assert.ok(!/\.(top|left|width|height)\s*=[^=]/.test(src), 'jamais top/left/width/height par image')
       })
-    })
+    }))
   }
 })

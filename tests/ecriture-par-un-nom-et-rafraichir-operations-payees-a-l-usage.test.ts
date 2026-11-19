@@ -1,7 +1,7 @@
 // Écriture par un nom qui garde un objet de l'état (`t = $o.a.b; t.c = v`) et `µrefresh($o)` : ce qui prévient l'enfant tenant un objet
 // donné par son parent (`item={$o.a}`) se paie à l'usage, en opérations COMPTÉES. Chaque objet enveloppé garde un lien vers le conteneur
 // par lequel il a été lu ; l'écriture par un nom remonte ces liens et fait avancer l'époque des conteneurs qu'un autre composant tient
-// (µ._mjs_monte). Une appli qui ne donne aucun objet à un composant fait, par écriture et par `µrefresh`, les opérations d'avant ; un objet
+// (µ._mjs_lift). Une appli qui ne donne aucun objet à un composant fait, par écriture et par `µrefresh`, les opérations d'avant ; un objet
 // de l'état rangé dans une autre variable du même composant ajoute une remontée de quelques lectures ; avec un enfant, une écriture par un
 // nom coûte ce que coûte l'écriture directe du même champ, à quelques lectures près, quelle que soit la taille des données ; la table qui
 // reçoit ses 10 000 lignes (`<@vt rows={$rows}>`) se monte avec les opérations de la même table tenue par le parent, à la réception
@@ -89,10 +89,13 @@ for (const [nom, opts] of [['prod', { env: 'prod' }], ['prod sans enveloppe', { 
     await tic()
     return { win, el: win.document.querySelector('mjs-' + balise) }
   }
+  // les fonctions internes de Node (`node:…` : file des tâches, crochets asynchrones, flux de sortie) ne comptent pas : leur nombre suit
+  // l'activité du processus, jamais l'écriture ; un `get` de Node se confondait par son nom avec le piège `get` du cœur (14,0225 appels
+  // par µrefresh au lieu de 14, dans un processus chargé)
   async function releve(): Promise<Map<string, number>> {
     const { result } = await session.post('Profiler.takePreciseCoverage') as any
     const n = new Map<string, number>()
-    for (const s of result) for (const f of s.functions) if (f.ranges[0].count > 0 && f.functionName !== '__espion') n.set(f.functionName || '(anonyme)', (n.get(f.functionName || '(anonyme)') || 0) + f.ranges[0].count)
+    for (const s of result) if (!s.url.startsWith('node:')) for (const f of s.functions) if (f.ranges[0].count > 0 && f.functionName !== '__espion') n.set(f.functionName || '(anonyme)', (n.get(f.functionName || '(anonyme)') || 0) + f.ranges[0].count)
     return n
   }
   // par opération : deux fenêtres, synchrone puis avec le rendu qui suit
@@ -126,7 +129,7 @@ for (const [nom, opts] of [['prod', { env: 'prod' }], ['prod sans enveloppe', { 
     for (const [m, cle] of [['nom', 'nom'], ['raf', 'raf']]) {
       const r = await parOp(win, el, m)
       const max: [number, number] = m === 'nom' && direct ? [direct.appels + 2, direct.ops] : AVANT[cle]
-      assert.ok(!('_mjsMonte' in r.app) && r.appels <= max[0] && r.ops <= max[1], `${m} : ${r.appels} appels, ${r.ops} opérations (au plus : ${max}) ${JSON.stringify(r.app)} ${JSON.stringify(r.sync)}`)
+      assert.ok(!('_mjsLift' in r.app) && r.appels <= max[0] && r.ops <= max[1], `${m} : ${r.appels} appels, ${r.ops} opérations (au plus : ${max}) ${JSON.stringify(r.app)} ${JSON.stringify(r.sync)}`)
     }
     el.poser()
     await tic()
@@ -134,16 +137,16 @@ for (const [nom, opts] of [['prod', { env: 'prod' }], ['prod sans enveloppe', { 
     console.log(`R|${nom}|objet rangé dans une autre variable|nom ${n.appels} appels ${n.ops} opérations|direct ${d.appels} appels ${d.ops} opérations|µrefresh ${r.appels} appels ${r.ops} opérations`)
     // deux conteneurs au-dessus de l'objet écrit : trois lectures du relevé, deux de la table des objets tenus ; aucune époque n'avance (l'écrivain seul les tient)
     // avec `"proxy": false`, comme plus haut : l'écriture directe du même composant, plus les deux lectures brutes de la garde
-    assert.ok((n.app['_mjsMonte'] ?? 0) === (nom === 'prod' ? 1 : 0) && (direct ? n.appels <= d.appels + 2 && n.ops <= d.ops : n.appels <= AVANT.aliasnom[0] + 1 && n.ops <= AVANT.aliasnom[1] + 5), `nom : ${n.appels} appels, ${n.ops} opérations (avant : ${AVANT.aliasnom}, direct : ${d.appels}, ${d.ops}) ${JSON.stringify(n.app)} ${JSON.stringify(n.sync)}`)
+    assert.ok((n.app['_mjsLift'] ?? 0) === (nom === 'prod' ? 1 : 0) && (direct ? n.appels <= d.appels + 2 && n.ops <= d.ops : n.appels <= AVANT.aliasnom[0] + 1 && n.ops <= AVANT.aliasnom[1] + 5), `nom : ${n.appels} appels, ${n.ops} opérations (avant : ${AVANT.aliasnom}, direct : ${d.appels}, ${d.ops}) ${JSON.stringify(n.app)} ${JSON.stringify(n.sync)}`)
     assert.ok(r.appels <= AVANT.aliasraf[0] && r.ops <= AVANT.aliasraf[1], `µrefresh : ${r.appels} appels, ${r.ops} opérations (avant : ${AVANT.aliasraf}) ${JSON.stringify(r.app)}`)
   })
   it('enfant qui tient un objet du parent : une écriture par un nom remonte une fois et coûte l\'écriture directe, à quelques lectures près ; µrefresh ne remonte pas', async () => {
     const { win, el } = await appli('eo-enfant')
     const n = await parOp(win, el, 'nom'), d = await parOp(win, el, 'direct'), r = await parOp(win, el, 'raf')
     console.log(`R|${nom}|enfant qui tient $o.a|nom ${n.appels} appels ${n.ops} opérations ${JSON.stringify(n.sync)}|direct ${d.appels} appels ${d.ops} opérations ${JSON.stringify(d.sync)}|µrefresh ${r.appels} appels ${r.ops} opérations`)
-    assert.equal(n.app['_mjsMonte'] ?? 0, nom === 'prod' ? 1 : 0, `écriture : ${JSON.stringify(n.app)}`)
+    assert.equal(n.app['_mjsLift'] ?? 0, nom === 'prod' ? 1 : 0, `écriture : ${JSON.stringify(n.app)}`)
     assert.ok(n.ops <= d.ops + 6, `écriture par un nom : ${n.ops} opérations ${JSON.stringify(n.sync)} ; directe : ${d.ops} ${JSON.stringify(d.sync)}`)
-    assert.equal(r.app['_mjsMonte'] ?? 0, 0, `µrefresh : ${JSON.stringify(r.app)}`)
+    assert.equal(r.app['_mjsLift'] ?? 0, 0, `µrefresh : ${JSON.stringify(r.app)}`)
   })
   // opérations sur les collections, pas des itérations d'un Set compris
   const compte = async (win: any, f: () => any) => { win.__ops.n = {}; win.__ops.it = 0; win.__ops.on = true; f(); await tic(); win.__ops.on = false; return (Object.values(win.__ops.n).reduce((x: any, y: any) => x + y, 0) as number) + win.__ops.it }

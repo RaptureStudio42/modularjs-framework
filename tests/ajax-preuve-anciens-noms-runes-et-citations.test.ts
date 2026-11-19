@@ -44,7 +44,7 @@ async function construire(fichiers: Record<string, string>, prod: boolean): Prom
 const comp    = (script: string) => `<script>\n  ${script}\n</script>\n<p>{$r}</p>\n`
 const IMPORTE = "<script>\n@import { f } 'aide.js'\nload = -> $r = f()\n</script>\n<p>{$r}</p>\n"
 // le runtime de µajax tel que le cœur de développement le porte quand le relevé n'a lu aucun appel de µ.ajax
-const sansVu  = (s: string) => s.replace(/^[ \t]*\/\/ <ajax-appel-vu>\n[\s\S]*?^[ \t]*\/\/ <\/ajax-appel-vu>\n/gm, '')
+const sansVu  = (s: string) => s.replace(/^[ \t]*\/\/ <ajax-call-seen>\n[\s\S]*?^[ \t]*\/\/ <\/ajax-call-seen>\n/gm, '')
 
 describe('µajax s\'appelle directement : prises comme valeur refusées, verbes permis', function () {
   this.timeout(120000)

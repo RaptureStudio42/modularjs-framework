@@ -277,7 +277,7 @@ export function setDeclaredAliases(source: () => string[]): void {
 /** un alias qui existe pour cet effet, à citer en exemple dans un message : le premier de la liste « alias connus » (`*filter.frosted_glass`), qu'il soit
  *  livré par ModularJS ou déclaré par l'appli ; un nom neutre quand l'effet n'en a aucun (`*ripple.my_alias`) */
 export function aliasExample(effect: string): string {
-  const livres = MJS_ALIASES.split('\n').filter(l => l.startsWith('*' + effect + '.')).map(l => l.slice(1, l.indexOf(' ')))
-  const names  = [...new Set([...livres, ...declared().filter(n => n.startsWith(effect + '.'))])].sort()
+  const shipped = MJS_ALIASES.split('\n').filter(l => l.startsWith('*' + effect + '.')).map(l => l.slice(1, l.indexOf(' ')))
+  const names   = [...new Set([...shipped, ...declared().filter(n => n.startsWith(effect + '.'))])].sort()
   return '*' + (names[0] ?? effect + '.my_alias')
 }

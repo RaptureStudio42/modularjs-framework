@@ -30,7 +30,7 @@ describe('mjs_debug — clignoter au rendu', function() {
 
 describe('mjs_inspect — valeur qui se référence elle-même', function() {
   it('µinspect($x.arbre) : l affichage ne lève pas et voit le changement suivant', () => {
-    const µ: any = { activeComponent: null, warn: () => {}, _mjs_msg: (_k: any, _v: any, d: string) => d, _mjs_snap: (v: any) => v }
+    const µ: any = { activeComponent: null, warn: () => {}, _mjs_msg: (_k: any, _v: any, d: string) => d, _mjs_snap: (v: any) => v, _mjs_toRaw: (v: any) => v }
     new Function('µ', lire('mjs_inspect.ts'))(µ)
     const el: any = { _state: {} }
     µ.activeComponent = el
@@ -43,10 +43,10 @@ describe('mjs_inspect — valeur qui se référence elle-même', function() {
     console.log = () => {}; console.group = (t: any) => { groupes.push(String(t)) }; console.groupEnd = () => {}; console.warn = () => {}
     let err: any = null
     try {
-      µ._mjs_inspectAffiche(el, 'x', undefined)
+      µ._mjs_inspectShow(el, 'x', undefined)
       noeud.enfants[0].nom = 'autre fils'
-      µ._mjs_inspectAffiche(el, 'x', undefined)
-      µ._mjs_inspectAffiche(el, 'x', undefined)
+      µ._mjs_inspectShow(el, 'x', undefined)
+      µ._mjs_inspectShow(el, 'x', undefined)
     }
     catch (e) { err = e }
     finally { console.log = log; console.group = group; console.groupEnd = end; console.warn = warn }

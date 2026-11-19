@@ -130,7 +130,7 @@ describe('parser — attributs écrits sur une référence à un module cœur', 
 
     it('un autre module cœur rapporte aussi les siens (la référence porte son nom)', () => {
       const refs = refsOf('<@@field other></@@field>')
-      assert.deepEqual(refs, [{ name: 'field', kind: 'raccourci-coeur', attrs: { names: ['other'], spread: false } }])
+      assert.deepEqual(refs, [{ name: 'field', kind: 'shortcut-core', attrs: { names: ['other'], spread: false } }])
     })
 
     it('dans un {if}, un {for} : rapportés comme ailleurs', () => {
@@ -146,20 +146,20 @@ describe('parser — attributs écrits sur une référence à un module cœur', 
     it('un composant du PROJET (`<@carte other>`, `<mjs-carte other>`) ne rapporte rien', () => {
       const refs = refsOf('<@carte other></@carte><mjs-carte other></mjs-carte><@select other></@select>')
       assert.deepEqual(refs, [
-        { name: 'carte', kind: 'raccourci-dev' },
-        { name: 'carte', kind: 'litteral-dev' },
-        { name: 'select', kind: 'raccourci-dev' },
+        { name: 'carte', kind: 'shortcut-dev' },
+        { name: 'carte', kind: 'literal-dev' },
+        { name: 'select', kind: 'shortcut-dev' },
       ])
       for (const ref of refs) assert.equal('attrs' in ref, false)
     })
 
     it('l\'ancienne notation retirée (`<@mjs-select other>`) ne rapporte rien', () => {
       const refs = refsOf('<@mjs-select other></@mjs-select>')
-      assert.deepEqual(refs, [{ name: 'select', kind: 'raccourci-mjs-retire' }])
+      assert.deepEqual(refs, [{ name: 'select', kind: 'shortcut-mjs-removed' }])
     })
 
     it('une balise ordinaire (`<div other>`) n\'est pas une référence', () => {
-      assert.deepEqual(refsOf('<div other></div><my-widget other></my-widget>'), [{ name: 'my-widget', kind: 'balise-nue' }], 'un élément personnalisé nu est relevé sans ses attributs')
+      assert.deepEqual(refsOf('<div other></div><my-widget other></my-widget>'), [{ name: 'my-widget', kind: 'bare-tag' }], 'un élément personnalisé nu est relevé sans ses attributs')
     })
 
     it('`other` dans un texte, un commentaire, une valeur : aucune référence, ou aucun nom `other`', () => {
@@ -191,7 +191,7 @@ describe('parser — attributs écrits sur une référence à un module cœur', 
 
     it('sans modèle choisi : la référence reste celle du module', () => {
       const refs = refsOf('<@@select other></@@select>', MODELES)
-      assert.deepEqual(refs, [{ name: 'select', kind: 'raccourci-coeur', attrs: { names: ['other'], spread: false } }])
+      assert.deepEqual(refs, [{ name: 'select', kind: 'shortcut-core', attrs: { names: ['other'], spread: false } }])
     })
   })
 

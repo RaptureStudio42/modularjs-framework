@@ -66,7 +66,7 @@ const lire = (page: any, balise: string) => page.evaluate(`(() => {
   const r = document.querySelector('${balise}')._shadow
   const lignes = Array.from(r.querySelectorAll('.m'))
   const marquee = lignes.find((l) => l.__marque)
-  return { pseudos: lignes.map((l) => l.textContent.trim()).join(','), attente: !!r.querySelector('.att'), enCours: r.querySelector('.busy') ? !r.querySelector('.busy').hidden : null, marquee: marquee ? marquee.querySelector('.note').value : null }
+  return { pseudos: lignes.map((l) => l.textContent.trim()).join(','), attente: !!r.querySelector('.att'), pending: r.querySelector('.busy') ? !r.querySelector('.busy').hidden : null, marquee: marquee ? marquee.querySelector('.note').value : null }
 })()`)
 const page$ = (page: any, js: string) => page.evaluate(`(() => { ${js}; return null })()`)
 const attendre = (page: any, js: string) => page.waitForFunction(js, null, { timeout: 10000 })
@@ -102,15 +102,15 @@ for (const moteur of moteurs) describe(`{await … keep} dans le navigateur (${m
       await page$(p, `window.__appels[0].ok([{ id: 1, pseudo: 'Ann' }, { id: 2, pseudo: 'Bob' }])`)
       await attendre(p, `document.querySelector('${B}')._shadow.querySelectorAll('.m').length === 2`)
       await page$(p, `const l = document.querySelector('${B}')._shadow.querySelectorAll('.m')[1]; l.__marque = 1; l.querySelector('.note').value = 'à rappeler'`)
-      assert.deepEqual(await lire(p, B), { pseudos: 'Ann,Bob', attente: false, enCours: false, marquee: 'à rappeler' })
+      assert.deepEqual(await lire(p, B), { pseudos: 'Ann,Bob', attente: false, pending: false, marquee: 'à rappeler' })
       await taper(p, B, 'b')
-      assert.deepEqual(await lire(p, B), { pseudos: 'Ann,Bob', attente: false, enCours: true, marquee: 'à rappeler' }, 'pendant la relecture, la liste reste et µpending est vrai')
+      assert.deepEqual(await lire(p, B), { pseudos: 'Ann,Bob', attente: false, pending: true, marquee: 'à rappeler' }, 'pendant la relecture, la liste reste et µpending est vrai')
       await taper(p, B, 'bo')
       assert.equal(await p.evaluate('window.__appels.length'), 3)
       assert.equal(await p.evaluate('window.__appels[1].signal.aborted'), true, 'la lecture dépassée est annulée')
       await page$(p, `window.__appels[2].ok([{ id: 2, pseudo: 'Bob' }, { id: 3, pseudo: 'Cyd' }])`)
       await attendre(p, `document.querySelector('${B}')._shadow.querySelector('.m').textContent.trim() === 'Bob'`)
-      assert.deepEqual(await lire(p, B), { pseudos: 'Bob,Cyd', attente: false, enCours: false, marquee: 'à rappeler' }, 'mise à jour sur place : la ligne de Bob et son champ restent')
+      assert.deepEqual(await lire(p, B), { pseudos: 'Bob,Cyd', attente: false, pending: false, marquee: 'à rappeler' }, 'mise à jour sur place : la ligne de Bob et son champ restent')
       await page$(p, `window.__appels[1].ok([{ id: 9, pseudo: 'Vieux' }])`)
       await p.waitForTimeout(150)
       assert.equal((await lire(p, B)).pseudos, 'Bob,Cyd', 'la réponse dépassée, arrivée en dernier, n\'écrase rien')
@@ -145,7 +145,7 @@ for (const moteur of moteurs) describe(`{await … keep} dans le navigateur (${m
     const c      = await cible('dev-parents-avant')
     const fichier = readdirSync(join(c.racine, 'out')).find((f) => /^mjs_core-.*\.js$/.test(f))!
     const coeur   = stripEsm(readFileSync(join(c.racine, 'out', fichier), 'utf-8'))
-    const sans    = coeur.replace(/^[ \t]*\/\/ <(attente-gardee|attente-en-cours|attente-signal)>\n[\s\S]*?^[ \t]*\/\/ <\/\1>\n/gm, '')
+    const sans    = coeur.replace(/^[ \t]*\/\/ <(wait-kept|wait-pending|wait-signal)>\n[\s\S]*?^[ \t]*\/\/ <\/\1>\n/gm, '')
     assert.ok(sans !== coeur && !/_mjs_awaitHas/.test(sans), 'les trois blocs retirés du cœur de la page')
     const B = 'mjs-agb-garde'
     const o = await charger(browser, tenue({ ...c, document: (b, v) => c.document(b, v).replace(coeur, () => sans) }), B)

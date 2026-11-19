@@ -7,8 +7,8 @@
 
 import assert from 'node:assert/strict'
 import { transpile } from '../src/transpiler/index.js'
-import { compteursCode, viderCacheCode } from '../src/reader/index.js'
-import { commentairesDuDialecte, compteursLectureDuScript } from '../src/reader/script.js'
+import { codeCounters, clearCodeCache } from '../src/reader/index.js'
+import { dialectComments, scriptReadCounters } from '../src/reader/script.js'
 
 async function sortie(src: string): Promise<string> {
   try {
@@ -31,10 +31,10 @@ async function contient(src: string, attendues: string[]): Promise<void> {
 
 // les compilations de Civet faites par le lecteur pour une compilation du composant, son cache vidé avant
 async function compilationsDuLecteur(src: string): Promise<number> {
-  viderCacheCode()
-  const lu = compteursCode.compilations
+  clearCodeCache()
+  const lu = codeCounters.compilations
   await sortie(src)
-  return compteursCode.compilations - lu
+  return codeCounters.compilations - lu
 }
 
 // à froid, le lecteur compile une fois pour tout composant de ces cas (autant que sans la lecture du script par l'arbre) :
@@ -43,9 +43,9 @@ const LECTURE_DU_COMPOSANT = 1
 
 describe('lecture du script par l\'arbre — une seule lecture par Civet', () => {
   it('compile un script sans commentaire `#` sans lecture de plus par le lecteur', async () => {
-    const retouche = compteursLectureDuScript.retouches
+    const retouche = scriptReadCounters.patches
     assert.equal(await compilationsDuLecteur(composant('$n = 0\nid = &id\nplus = -> $n += 1')), LECTURE_DU_COMPOSANT, 'compilations de Civet par le lecteur')
-    assert.equal(compteursLectureDuScript.retouches - retouche, 1, 'raccourcis posés dans l\'arbre de la compilation')
+    assert.equal(scriptReadCounters.patches - retouche, 1, 'raccourcis posés dans l\'arbre de la compilation')
   })
 
   it('rend le code des raccourcis écrits par le lexeur', async () => {
@@ -70,9 +70,9 @@ describe('lecture du script par l\'arbre — une seule lecture par Civet', () =>
     // le code que rendait aussi l'ancienne lecture
     const cas: [string, string][] = [['$n = 1\no = {$n}', 'let o = {n: $.n}'], ['$n = 1\nf = ({$q}) -> $q', 'let f = ({q: $.q})(function() { return $.q })']]
     for (const [script, ligne] of cas) {
-      const avant = compteursLectureDuScript.reprises
+      const avant = scriptReadCounters.retries
       await contient(composant(script), [ligne])
-      assert.ok(compteursLectureDuScript.reprises - avant <= 1, script)
+      assert.ok(scriptReadCounters.retries - avant <= 1, script)
     }
   })
 
@@ -88,9 +88,9 @@ describe('lecture du script par l\'arbre — une seule lecture par Civet', () =>
       ['$n = 1\no = {&id: 1}', "'une-lecture' : une-lecture.mjs:3:9 Failed to parse"]
     ]
     for (const [script, ligne] of cas) {
-      const avant = compteursLectureDuScript.reprises
+      const avant = scriptReadCounters.retries
       await contient(composant(script), [ligne])
-      assert.ok(compteursLectureDuScript.reprises - avant <= 1, script)
+      assert.ok(scriptReadCounters.retries - avant <= 1, script)
     }
   })
 
@@ -101,19 +101,19 @@ describe('lecture du script par l\'arbre — une seule lecture par Civet', () =>
       ['<script module>\n$T =: 2\n</script>\n<script>\n$n = 1\n</script>\n<p>{$n}</p>\n', ['let $T = undefined; $T = µ.snap(2)']]
     ]
     for (const [src, lignes] of cas) {
-      const avant = compteursLectureDuScript.reprises
+      const avant = scriptReadCounters.retries
       assert.equal(await compilationsDuLecteur(src), LECTURE_DU_COMPOSANT, src)
-      assert.equal(compteursLectureDuScript.reprises - avant, 0, src)
+      assert.equal(scriptReadCounters.retries - avant, 0, src)
       await contient(src, lignes)
     }
   })
 
-  it('laisse en texte `$x =: valeur` et `&x` cités dans une chaîne sur plusieurs lignes, par le lecteur', async () => {
+  it('laisse en texte `$x =: valeur` et `&x` cités dans une chaîne sur plusieurs lignes, lue correctement du premier coup (sans reprise)', async () => {
     for (const script of ['$n = 1\ns = "ligne un\n$x =: 2 et &id\nfin"', "$n = 1\ns = 'ligne un\n$x =: 2 et &id\nfin'"]) {
-      const avant = compteursLectureDuScript.reprises
+      const avant = scriptReadCounters.retries
       const out   = await sortie(composant(script))
       assert.match(out, /let s = (["'])ligne un\\n\$x =: 2 et &id\\nfin\1/, script)
-      assert.equal(compteursLectureDuScript.reprises - avant, 1, script)
+      assert.equal(scriptReadCounters.retries - avant, 0, script)
     }
   })
 
@@ -144,12 +144,12 @@ describe('lecture du script par l\'arbre — une seule lecture par Civet', () =>
 
   it('relit les commentaires par l\'arbre quand la compilation lirait un `#` comme du code (commentaire dans `${…}`)', async () => {
     const src   = composant('$n = 1\nt = `a${1 # note\n}b`')
-    const avant = compteursLectureDuScript.reprises
+    const avant = scriptReadCounters.retries
     const out   = await sortie(src)
     assert.match(out, /`a\$\{1 \/\/ note\n\}b`/)
     assert.doesNotMatch(out, /this\.length/)
-    assert.equal(compteursLectureDuScript.reprises - avant, 1)
-    assert.match(compteursLectureDuScript.derniereReprise ?? '', /#/)
+    assert.equal(scriptReadCounters.retries - avant, 1)
+    assert.match(scriptReadCounters.lastRetry ?? '', /#/)
   })
 
   it('rend le code du lexeur pour une heregex interpolée, une déclaration de type, un $T dans une annotation', async () => {
@@ -166,9 +166,9 @@ describe('lecture du script par l\'arbre — une seule lecture par Civet', () =>
   })
 
   it('lit par l\'arbre un module qui exporte un nom déclaré plus bas', () => {
-    const relus = compteursLectureDuScript.relus
-    const lu    = commentairesDuDialecte('export { plus }\n# ajoute un\nplus = (x) -> x + 1')
+    const relus = scriptReadCounters.reread
+    const lu    = dialectComments('export { plus }\n# ajoute un\nplus = (x) -> x + 1')
     assert.equal(lu, 'export { plus }\n// ajoute un\nplus = (x) -> x + 1')
-    assert.equal(compteursLectureDuScript.relus, relus)
+    assert.equal(scriptReadCounters.reread, relus)
   })
 })

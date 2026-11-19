@@ -113,11 +113,11 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`<@@numbe
     page.on('pageerror', (e: any) => erreurs.push(String(e.message).slice(0, 200)))
     await page.setContent(`<!doctype html><html lang="${lang}"><head><meta charset="utf-8"></head><body><mjs-sep-page></mjs-sep-page><script>${script}</script></body></html>`, { waitUntil: 'load' })
     await page.waitForFunction(() => !!(document.querySelector('mjs-sep-page') as any)?._shadow?.querySelector('.v4')?._shadow?.querySelector('input'))
-    await page.evaluate(`window.__hote = () => document.querySelector('mjs-sep-page')._shadow; window.__mod = (c) => __hote().querySelector('.' + c); window.__champ = (c) => __mod(c)._shadow.querySelector('input'); window.__lu = (c) => __hote().querySelector('.' + c).textContent`)
+    await page.evaluate(`window.__hote = () => document.querySelector('mjs-sep-page')._shadow; window.__mod = (c) => __hote().querySelector('.' + c); window.__champ = (c) => __mod(c)._shadow.querySelector('input'); window.__read = (c) => __hote().querySelector('.' + c).textContent`)
   }
 
   const montre = (c: string): Promise<string> => page.evaluate(`__champ('${c}').value`)
-  const lu     = (c: string): Promise<string> => page.evaluate(`__lu('${c}')`)
+  const lu     = (c: string): Promise<string> => page.evaluate(`__read('${c}')`)
 
   // le champ vidé et sélectionné, la frappe au clavier réel, puis Tab vers le champ suivant
   const frapper = async (c: string, texte: string, sortir = true) => {

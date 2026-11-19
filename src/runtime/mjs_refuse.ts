@@ -6,7 +6,7 @@
 // (`validity.badInput` : `value` vaut '', la variable garde son ancienne valeur, le champ affiche pourtant
 // la saisie) : le gestionnaire de saisie le retient ici, par nom de variable. Une écriture du code qui
 // ne change rien (`$n = 3` quand `$n` vaut déjà 3) ne déclenche aucun effet ; `_set` rappelle alors
-// `_mjs_refuseRetablir`, qui remplace la saisie refusée par la valeur de la variable — sauf si la
+// `_mjs_refuseRestore`, qui remplace la saisie refusée par la valeur de la variable — sauf si la
 // personne tape dans ce champ (il a le focus, lu sur sa racine : shadow DOM), sa frappe reste.
 µ._mjs_refuse = function(c, k, el) {
   var m = c._mjs_refuses || (c._mjs_refuses = new Map());
@@ -15,7 +15,7 @@
   if (l.indexOf(el) < 0) l.push(el);
 };
 
-µ._mjs_refuseRetablir = function(c, k, v) {
+µ._mjs_refuseRestore = function(c, k, v) {
   var l = c._mjs_refuses.get(k);
   if (!l) return;
   for (var i = l.length - 1; i >= 0; i--) {

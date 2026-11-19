@@ -81,11 +81,11 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`<@@numbe
     page.on('pageerror', (e: any) => erreurs.push(String(e.message).slice(0, 200)))
     await page.setContent(`<!doctype html><html lang="${lang}"><head><meta charset="utf-8"></head><body><mjs-dec-page></mjs-dec-page><script>${script}</script></body></html>`, { waitUntil: 'load' })
     await page.waitForFunction(() => !!(document.querySelector('mjs-dec-page') as any)?._shadow?.querySelector('.prix')?._shadow?.querySelector('input'))
-    await page.evaluate(`window.__champ = () => document.querySelector('mjs-dec-page')._shadow.querySelector('.prix')._shadow.querySelector('input'); window.__lu = () => document.querySelector('mjs-dec-page')._shadow.querySelector('.vp').textContent; window.__valide = () => document.querySelector('mjs-dec-page')._shadow.querySelector('.f').checkValidity()`)
+    await page.evaluate(`window.__champ = () => document.querySelector('mjs-dec-page')._shadow.querySelector('.prix')._shadow.querySelector('input'); window.__read = () => document.querySelector('mjs-dec-page')._shadow.querySelector('.vp').textContent; window.__valide = () => document.querySelector('mjs-dec-page')._shadow.querySelector('.f').checkValidity()`)
   }
 
   const montre = (): Promise<string> => page.evaluate(`__champ().value`)
-  const lu     = (): Promise<string> => page.evaluate(`__lu()`)
+  const lu     = (): Promise<string> => page.evaluate(`__read()`)
   const valide = (): Promise<boolean> => page.evaluate(`__valide()`)
 
   // frappe au clavier réel dans le champ vidé, puis Tab pour en sortir vers le bouton qui suit (hors de la page, Firefox ne sort pas du champ)

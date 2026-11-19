@@ -97,12 +97,12 @@ describe('mjs_ajax — un fichier ou des octets partent tels quels', function ()
 
 describe('µ.ajax.binary — l\'objet d\'options de l\'appelant reste intact', function () {
   it('options réutilisées : le 2e appel avec data part en POST, et l\'objet n\'a pas bougé', async function () {
-    const registre = { parNom: new Map([['profil', {}]]) }
+    const registre = { byName: new Map([['profil', {}]]) }
     const { µ, envois } = monter({
       mjschemaEncode: () => new Uint8Array([1]),
       mjschemaDecode: () => ({ nom: 'profil', objet: {} }),
-      mjschemaHashRegistre: () => 'abcdefgh',
-      mjschemaChargerDefinitions: () => registre
+      mjschemaHashRegistry: () => 'abcdefgh',
+      mjschemaLoadDefinitions: () => registre
     })
     const opts: any = { schema: 'profil', codec: registre }
     await µ.ajax.binary('/api/profil', opts)

@@ -5,12 +5,13 @@ import { SIGN, SIGN_RE, STYLE_WORDS } from '../parser/mjs-words.js'
 import type { SupportedLang } from '../languages/index.js'
 import { dedent } from '../generator/state.js'
 import { maskInertSameLength, maskHtmlComments, createMaskTable, readHtmlComment } from '../mask.js'
-import { COMMENTAIRE_MJS_GARDE, scanDoubleQuoteAt, scanInertAt, longStringWatch, lostPlaces, type LostInString, type LostPlace } from '../lexer/index.js'
+import { KEPT_MJS_COMMENT, scanDoubleQuoteAt, scanInertAt, scriptStringEnd, opensHashBlock } from '../lexer/index.js'
 import { LINE_CARRIER_OPEN } from '../parser/index.js'
 import { t } from '../messages/index.js'
 import { parseVtValue, suggestKey } from '../bundler/config.js'
 import { findMacroTagEnd, asciiLower } from './macro-tag.js'
 import { tagReader } from './tag-reader.js'
+import { FaultFix } from '../fault-fix.js'
 
 export interface ScriptSection {
   raw: string
@@ -104,9 +105,6 @@ export interface SectionsResult {
    * (jamais rempli, toujours `[]`) car d'autres maillons de la chaîne le lisent
    * encore (`TranspileData.sectionWarnings`, `IncludeAccumulator.warnings`). */
   warnings: string[]
-  /** chaque chaîne `"…"` ou `'…'` d'un script écrite sur plusieurs lignes où le retrait des commentaires a pris un commentaire
-   * (longStringWatch, lexer) : sa place dans le texte lu, pour l'avertissement `lint.multilineString` */
-  lostInStrings: LostPlace[]
 }
 
 const DEFAULT_SCRIPT_LANG: SupportedLang = 'civet'
@@ -123,16 +121,16 @@ export function extractLang(attrs: string): string | null {
   return m ? m[1] : null
 }
 
-// extractAttr — même principe que extractLang, pour le `name=` d'un <theme>
-function extractAttr(attrs: string, nom: string): string {
-  const m = attrs.match(new RegExp(`${nom}=['"]([^'"]*)['"]`))
+// extractAttr — même principe que extractLang, espaces autour du `=` tolérés, pour le `name=` d'un <theme> ou d'un <style>
+function extractAttr(attrs: string, name: string): string {
+  const m = attrs.match(new RegExp(`${name}[ \\t]*=[ \\t]*['"]([^'"]*)['"]`))
   return m ? m[1] : ''
 }
 
 // extractAttrValue — variante d'extractAttr pour un nom d'attribut portant un `@`
 // (littéral en regex, aucun échappement nécessaire) ; null si absent.
-function extractAttrValue(attrs: string, nom: string): string | null {
-  const m = attrs.match(new RegExp(`${nom}=(['"])([^'"]*)\\1`))
+function extractAttrValue(attrs: string, name: string): string | null {
+  const m = attrs.match(new RegExp(`${name}[ \\t]*=[ \\t]*(['"])([^'"]*)\\1`))
   return m ? m[2] : null
 }
 
@@ -140,14 +138,17 @@ function extractAttrValue(attrs: string, nom: string): string | null {
 const SECTION_ATTR_RE = /([@:]?[a-zA-Z][a-zA-Z0-9:_.-]*)(?:[ \t]*=[ \t]*(?:"[^"]*"|'[^']*'|\{[^}]*\}|[^\s>]+))?/g
 
 // attribut inconnu sur <style>/<script>/<theme>/<routes> = ERREUR : ces balises n'atteignent jamais le DOM, rien d'autre que la liste attendue n'y a de sens — suggestion à ≤2 lettres quand il y en a une
-function checkSectionAttrs(tag: string, attrs: string, allowed: string[]): void {
+// `texte` et `debut` (le fichier lu et la place des attributs, même longueur que la source) : la ligne de l'attribut, pour la
+// correction que porte le refus quand il a une suggestion (`mjs check` la pose le temps de la relecture, cf. fault-fix.ts)
+function checkSectionAttrs(tag: string, attrs: string, allowed: string[], text?: string, start?: number): void {
   for (const m of attrs.matchAll(SECTION_ATTR_RE)) {
     const base = m[1].split('.')[0]
     if (allowed.includes(base)) continue
-    const attendus   = allowed.join(', ')
+    const expected   = allowed.join(', ')
     const suggestion = suggestKey(base, allowed)
-    if (suggestion) throw new Error(t('transpiler.section-attribut-inconnu-suggestion', { tag, attribut: m[1], suggestion, attendus }))
-    throw new Error(t('transpiler.section-attribut-inconnu', { tag, attribut: m[1], attendus }))
+    const line       = text !== undefined && start !== undefined ? text.slice(0, start + (m.index ?? 0)).split('\n').length : undefined
+    if (suggestion) throw FaultFix.attach(new Error(t('transpiler.section-attribute-unknown-suggestion', { tag, attribute: m[1], suggestion, expected: expected })), m[1], suggestion + m[1].slice(base.length), line)
+    throw new Error(t('transpiler.section-attribute-unknown', { tag, attribute: m[1], expected: expected }))
   }
 }
 
@@ -166,9 +167,9 @@ function checkSectionAttrs(tag: string, attrs: string, allowed: string[]): void 
 function extractStyleViewTransition(attrs: string): { rest: string | undefined, aliasVt: boolean, label: string, malformed: boolean } | null {
   const m = attrs.match(new RegExp(SIGN_RE + String.raw`(viewTransition|vt)(\.[a-zA-Z][a-zA-Z0-9:_-]*(?:[ \t]*=[ \t]*\{[^}]*\})?|=(?:"[^"]*"|'[^']*'|\{[^}]*\}|[^\s>]*))?(?=[ \t]|$)`))
   if (m) return { rest: m[2], aliasVt: m[1] === 'vt', label: `${SIGN}${m[1]}`, malformed: false }
-  const brut = attrs.match(new RegExp(SIGN_RE + String.raw`(viewTransition|vt)\b([^\s>]*)`))
-  if (!brut) return null
-  return { rest: brut[2], aliasVt: brut[1] === 'vt', label: `${SIGN}${brut[1]}`, malformed: true }
+  const raw = attrs.match(new RegExp(SIGN_RE + String.raw`(viewTransition|vt)\b([^\s>]*)`))
+  if (!raw) return null
+  return { rest: raw[2], aliasVt: raw[1] === 'vt', label: `${SIGN}${raw[1]}`, malformed: true }
 }
 
 // findRelocatedStyleAttrToken — un des attributs `:css`/`:display`/`:viewTransition`/`@vt`
@@ -224,14 +225,14 @@ export function parseRoutesLines(raw: string, target: string): [string, string][
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim()
     if (trimmed === '' || trimmed.startsWith('#')) continue
-    const ligne = i + 1
+    const line = i + 1
     const m = trimmed.match(/^(\S+)[ \t]+(\S+)$/)
-    if (!m) throw new Error(t('transpiler.routes-ligne-invalide', { target, ligne, texte: trimmed }))
+    if (!m) throw new Error(t('transpiler.routes-line-invalid', { target, line: line, text: trimmed }))
     const [, path, component] = m
-    if (path[0] !== '/') throw new Error(t('transpiler.routes-chemin-sans-slash', { target, ligne, chemin: path }))
-    if (!validateRoutePath(path)) throw new Error(t('transpiler.routes-chemin-mal-forme', { target, ligne, chemin: path }))
-    if (!ROUTE_COMPONENT_RE.test(component)) throw new Error(t('transpiler.routes-composant-invalide', { target, ligne, composant: component }))
-    if (seenPaths.has(path)) throw new Error(t('transpiler.routes-chemin-double', { target, chemin: path }))
+    if (path[0] !== '/') throw new Error(t('transpiler.routes-path-no-slash', { target, line: line, path }))
+    if (!validateRoutePath(path)) throw new Error(t('transpiler.routes-path-malformed', { target, line: line, path }))
+    if (!ROUTE_COMPONENT_RE.test(component)) throw new Error(t('transpiler.routes-component-invalid', { target, line: line, component }))
+    if (seenPaths.has(path)) throw new Error(t('transpiler.routes-path-duplicate', { target, path }))
     seenPaths.add(path)
     entries.push([path, component])
   }
@@ -275,79 +276,79 @@ function countNewlines(src: string): number {
 // lecteur de ces littéraux : le premier qui commence à `de` ou après, [début, fin), sans relire tout le texte à chaque
 // appel : la fin déjà cherchée d'un `/*` ou d'un `url(` est gardée (un `/*` ou un `url(` jamais refermés relisaient le
 // texte jusqu'au bout à chacun de leurs appels : temps quadratique)
-const FIN_DE_LIGNE = new Set(['\n', '\r', ' ', ' '])
+const LINE_END = new Set(['\n', '\r', ' ', ' '])
 
-function lecteurLitteraux(scan: string): (de: number) => [number, number] | null {
+function literalReader(scan: string): (from: number) => [number, number] | null {
   const n = scan.length
   // premier `*/` à partir d'une position de [deCom, finCom] : finCom (-1 : aucun après deCom)
-  let deCom  = -1
-  let finCom = -1
-  const finCommentaire = (x: number): number => {
-    if (deCom === -1 || x < deCom || (finCom !== -1 && x > finCom)) {
-      deCom  = x
-      finCom = scan.indexOf('*/', x)
+  let comStart     = -1
+  let comEnd       = -1
+  const commentEnd = (x: number): number => {
+    if (comStart === -1 || x < comStart || (comEnd !== -1 && x > comEnd)) {
+      comStart = x
+      comEnd   = scan.indexOf('*/', x)
     }
-    return finCom
+    return comEnd
   }
-  // `)` qui ferme un `url(` lu à partir d'une position de [deUrl, arretUrl] : finUrl (-1 : aucune) ; un `\` y garde le
+  // `)` qui ferme un `url(` lu à partir d'une position de [deUrl, urlStop] : finUrl (-1 : aucune) ; un `\` y garde le
   // caractère qui suit, sauf une fin de ligne. Une position lue juste après `url(` ne tombe jamais au milieu d'un `\x`
-  let deUrl    = -1
-  let arretUrl = -1
-  let finUrl   = -1
-  const fermeUrl = (x: number): number => {
-    if (deUrl === -1 || x < deUrl || x > arretUrl) {
+  let urlStart    = -1
+  let urlStop     = -1
+  let urlEnd      = -1
+  const closesUrl = (x: number): number => {
+    if (urlStart === -1 || x < urlStart || x > urlStop) {
       let i = x
-      finUrl = -1
+      urlEnd = -1
       while (i < n) {
         const c = scan[i]
-        if (c === ')') { finUrl = i; break }
+        if (c === ')') { urlEnd = i; break }
         if (c === '\\') {
-          if (i + 1 >= n || FIN_DE_LIGNE.has(scan[i + 1])) break
+          if (i + 1 >= n || LINE_END.has(scan[i + 1])) break
           i += 2
           continue
         }
         i++
       }
-      deUrl    = x
-      arretUrl = Math.min(i, n)
+      urlStart = x
+      urlStop  = Math.min(i, n)
     }
-    return finUrl
+    return urlEnd
   }
   // fin (après le guillemet) d'une chaîne d'une ligne ouverte en `p`, -1 sans guillemet fermant
-  const finChaine = (p: number): number => {
+  const stringEnd = (p: number): number => {
     const q = scan[p]
     for (let i = p + 1; i < n; i++) {
       const c = scan[i]
       if (c === q) return i + 1
       if (c === '\n') return -1
       if (c === '\\') {
-        if (i + 1 >= n || FIN_DE_LIGNE.has(scan[i + 1])) return -1
+        if (i + 1 >= n || LINE_END.has(scan[i + 1])) return -1
         i++
       }
     }
     return -1
   }
-  return (de: number): [number, number] | null => {
-    for (let p = de; p < n; p++) {
+  return (from: number): [number, number] | null => {
+    for (let p = from; p < n; p++) {
       const c = scan[p]
       if (c === '\'' || c === '"') {
-        const fin = finChaine(p)
-        if (fin !== -1) return [p, fin]
+        const end = stringEnd(p)
+        if (end !== -1) return [p, end]
       }
       else if (c === '/') {
         const c1 = scan[p + 1]
         if (c1 === '*') {
-          const fin = finCommentaire(p + 2)
-          if (fin !== -1) return [p, fin + 2]
+          const end = commentEnd(p + 2)
+          if (end !== -1) return [p, end + 2]
         }
         else if (c1 === '/') {
-          const fin = scan.indexOf('\n', p)
-          return [p, fin === -1 ? n : fin]
+          const end = scan.indexOf('\n', p)
+          return [p, end === -1 ? n : end]
         }
       }
       else if ((c === 'u' || c === 'U') && scan[p + 3] === '(' && scan.slice(p + 1, p + 3).toLowerCase() === 'rl') {
-        const fin = fermeUrl(p + 4)
-        if (fin !== -1) return [p, fin + 1]
+        const end = closesUrl(p + 4)
+        if (end !== -1) return [p, end + 1]
       }
     }
     return null
@@ -366,156 +367,156 @@ function lecteurLitteraux(scan: string): (de: number) => [number, number] | null
 function maskStylesCss(scan: string, scriptMatches: RegExpMatchArray[], caseInsensitive: boolean): string {
   const open = new RegExp(String.raw`^[ \t]*<(style|(?:theme|routes|vars|types|effects)(?=[\s>]))`, caseInsensitive ? 'gmi' : 'gm')
   // positions d'où la lecture des littéraux repart, la première au début du texte
-  const relances = [0]
-  const litteral = lecteurLitteraux(scan)
+  const restarts = [0]
+  const literal  = literalReader(scan)
   // position d'où la lecture en cours cherche son prochain littéral
-  let suite = 0
+  let rest = 0
   // littéraux de la lecture en cours, dans l'ordre : début, fin, début, fin…
-  let lus: number[] = []
-  let fini = false
+  let read: number[] = []
+  let finished = false
   // [a, b) touche-t-il un littéral de la lecture en cours (a après sa relance)
-  const masque = (a: number, b: number): boolean => {
-    while (!fini && (lus.length === 0 || lus[lus.length - 1] <= a)) {
-      const l = litteral(suite)
-      if (l === null) fini = true
+  const mask = (a: number, b: number): boolean => {
+    while (!finished && (read.length === 0 || read[read.length - 1] <= a)) {
+      const l = literal(rest)
+      if (l === null) finished = true
       else {
-        lus.push(l[0], l[1])
-        suite = l[1]
+        read.push(l[0], l[1])
+        rest = l[1]
       }
     }
-    let bas  = 0
-    let haut = lus.length / 2
-    while (bas < haut) {
-      const milieu = (bas + haut) >> 1
-      if (lus[milieu * 2 + 1] <= a) bas = milieu + 1
-      else haut = milieu
+    let low = 0
+    let top = read.length / 2
+    while (low < top) {
+      const middle = (low + top) >> 1
+      if (read[middle * 2 + 1] <= a) low = middle + 1
+      else top = middle
     }
-    return bas < lus.length / 2 && lus[bas * 2] < b
+    return low < read.length / 2 && read[low * 2] < b
   }
   let pos = 0
   for (;;) {
     open.lastIndex = pos
     const m = open.exec(scan)
     if (!m) break
-    const balise = '<' + m[1]
-    const at     = m.index + m[0].length - balise.length
+    const tag    = '<' + m[1]
+    const at     = m.index + m[0].length - tag.length
     const script = scriptMatches.find(s => s.indices![0][0] <= at && at < s.indices![0][1])
     if (script) {
       pos = script.indices![0][1]
       continue
     }
-    if (masque(at, at + balise.length)) {
-      relances.push(at)
-      suite = at
-      lus   = []
-      fini = false
+    if (mask(at, at + tag.length)) {
+      restarts.push(at)
+      rest     = at
+      read     = []
+      finished = false
     }
     const close = new RegExp('</' + m[1] + '>', caseInsensitive ? 'gi' : 'g')
     close.lastIndex = at
     let c = close.exec(scan)
-    while (c !== null && masque(c.index, c.index + c[0].length)) {
+    while (c !== null && mask(c.index, c.index + c[0].length)) {
       close.lastIndex = c.index + 1
       c = close.exec(scan)
     }
     if (!c) {
       if (m[1].toLowerCase() === 'style') break
-      pos = at + balise.length
+      pos = at + tag.length
       continue
     }
     pos = c.index + c[0].length
   }
-  const morceaux: string[] = []
-  for (let k = 0; k < relances.length; k++) {
-    const debut = relances[k]
-    const fin   = k + 1 < relances.length ? relances[k + 1] : scan.length
-    let curseur = debut
-    for (let l = litteral(debut); l !== null && l[0] < fin; l = litteral(l[1])) {
-      const bout = Math.min(fin, l[1])
-      morceaux.push(scan.slice(curseur, l[0]), scan.slice(l[0], bout).replace(/[^\n]/g, ' '))
-      curseur = bout
+  const pieces: string[] = []
+  for (let k = 0; k < restarts.length; k++) {
+    const start = restarts[k]
+    const stop   = k + 1 < restarts.length ? restarts[k + 1] : scan.length
+    let cursor  = start
+    for (let l = literal(start); l !== null && l[0] < stop; l = literal(l[1])) {
+      const end = Math.min(stop, l[1])
+      pieces.push(scan.slice(cursor, l[0]), scan.slice(l[0], end).replace(/[^\n]/g, ' '))
+      cursor = end
     }
-    morceaux.push(scan.slice(curseur, fin))
+    pieces.push(scan.slice(cursor, stop))
   }
-  return morceaux.join('')
+  return pieces.join('')
 }
 
-// masqueValeursAttributs — valeurs d'attribut des balises ouvrantes du HTML blanchies (même longueur) : entre guillemets sur une
+// attrValueMask — valeurs d'attribut des balises ouvrantes du HTML blanchies (même longueur) : entre guillemets sur une
 // ligne, nues (jusqu'au blanc ou au `>`, comme les lit le navigateur : `title=a</script>b` vaut `a</script`), et le contenu
 // des accolades `{…}`, chaînes comprises.
 // Lecture stricte d'une balise : son nom, puis des attributs séparés par des blancs — `nom` (réglages `(…)` d'un effet compris),
 // `nom=valeur` ou `{…}`, la valeur entre guillemets, entre accolades ou nue — jusqu'à `>` ou `/>`. Une balise qui ne s'y plie pas
 // n'est pas lue : un reste de script échappé de l'extraction (`if a <b then c` puis `</script>` à la ligne) n'est pas une balise
-const NOM_ATTRIBUT_RE = /[^\s"'<>/=(){}`]+/y
-const REGLAGES_RE     = /\((?:[^()<>\n]|\([^()<>\n]*\))*\)/y
-const EGAL_RE         = /\s*=\s*/y
-const VALEUR_NUE_RE   = /[^\s>]+/y
+const ATTR_NAME_RE  = /[^\s"'<>/=(){}`]+/y
+const SETTINGS_RE   = /\((?:[^()<>\n]|\([^()<>\n]*\))*\)/y
+const EQUALS_RE     = /\s*=\s*/y
+const BARE_VALUE_RE = /[^\s>]+/y
 
-export function masqueValeursAttributs(html: string): string {
-  const lecteur = tagReader(html)
-  const valeurs: [number, number][] = []
-  const balise  = /<[A-Za-z@][\w:.@-]*/g
-  const lit = (re: RegExp, i: number): number => {
+export function attrValueMask(html: string): string {
+  const reader                     = tagReader(html)
+  const values: [number, number][] = []
+  const tag                        = /<[A-Za-z@][\w:.@-]*/g
+  const readAt                        = (re: RegExp, i: number): number => {
     re.lastIndex = i
     return re.test(html) ? re.lastIndex : -1
   }
-  for (let m = balise.exec(html); m !== null; m = balise.exec(html)) {
-    const trouvees: [number, number][] = []
+  for (let m = tag.exec(html); m !== null; m = tag.exec(html)) {
+    const found: [number, number][] = []
     let i = m.index + m[0].length
-    let fin = -1
+    let end = -1
     for (;;) {
-      const blanc = i
+      const blank = i
       while (i < html.length && /\s/.test(html[i])) i++
-      if (html[i] === '>') { fin = i; break }
-      if (html.startsWith('/>', i)) { fin = i + 1; break }
-      if (i === blanc) break
+      if (html[i] === '>') { end = i; break }
+      if (html.startsWith('/>', i)) { end = i + 1; break }
+      if (i === blank) break
       if (html[i] === '{') {
-        const ferme = lecteur.braceEnd(i + 1)
-        if (ferme === -1) break
-        trouvees.push([i + 1, ferme])
-        i = ferme + 1
+        const closes = reader.braceEnd(i + 1)
+        if (closes === -1) break
+        found.push([i + 1, closes])
+        i = closes + 1
         continue
       }
-      i = lit(NOM_ATTRIBUT_RE, i)
+      i = readAt(ATTR_NAME_RE, i)
       if (i === -1) break
       if (html[i] === '(') {
-        i = lit(REGLAGES_RE, i)
+        i = readAt(SETTINGS_RE, i)
         if (i === -1) break
       }
-      const egal = lit(EGAL_RE, i)
-      if (egal === -1) continue
-      i = egal
+      const equals = readAt(EQUALS_RE, i)
+      if (equals === -1) continue
+      i = equals
       const q = html[i]
       if (q === '"' || q === '\'') {
-        const ferme = html.indexOf(q, i + 1)
-        if (ferme === -1) break
-        if (!html.slice(i + 1, ferme).includes('\n')) trouvees.push([i + 1, ferme])
-        i = ferme + 1
+        const closes = html.indexOf(q, i + 1)
+        if (closes === -1) break
+        if (!html.slice(i + 1, closes).includes('\n')) found.push([i + 1, closes])
+        i = closes + 1
       }
       else if (q === '{') {
-        const ferme = lecteur.braceEnd(i + 1)
-        if (ferme === -1) break
-        trouvees.push([i + 1, ferme])
-        i = ferme + 1
+        const closes = reader.braceEnd(i + 1)
+        if (closes === -1) break
+        found.push([i + 1, closes])
+        i = closes + 1
       }
       else {
-        const debut = i
-        i = lit(VALEUR_NUE_RE, i)
+        const start = i
+        i = readAt(BARE_VALUE_RE, i)
         if (i === -1) break
-        trouvees.push([debut, i])
+        found.push([start, i])
       }
     }
-    if (fin === -1) continue
-    valeurs.push(...trouvees)
-    balise.lastIndex = fin + 1
+    if (end === -1) continue
+    values.push(...found)
+    tag.lastIndex = end + 1
   }
-  const morceaux: string[] = []
-  let curseur = 0
-  for (const [debut, fin] of valeurs) {
-    morceaux.push(html.slice(curseur, debut), ' '.repeat(fin - debut))
-    curseur = fin
+  const pieces: string[] = []
+  let cursor = 0
+  for (const [start, end] of values) {
+    pieces.push(html.slice(cursor, start), ' '.repeat(end - start))
+    cursor = end
   }
-  morceaux.push(html.slice(curseur))
-  return morceaux.join('')
+  pieces.push(html.slice(cursor))
+  return pieces.join('')
 }
 
 // blankRange — neutralise [start,end) en espaces même-longueur (préserve les `\n`)
@@ -608,7 +609,7 @@ export function findStyleMatches(scan: string, scriptMatches: RegExpMatchArray[]
 // identique à l'ancienne regex qui ne matchait pas dans ces deux cas (la
 // balise jamais refermée sera signalée par `macro-balise-non-fermee`, plus
 // tard, quand macros.ts la retraite sous sa forme écouteur/contenu).
-// lecture de gauche à droite, sur le texte sans commentaires (retirerCommentaires, plus bas) : la première ouverture
+// lecture de gauche à droite, sur le texte sans commentaires (removeComments, plus bas) : la première ouverture
 // rencontrée décide ; un <script> en tête de ligne est sauté jusqu'à sa fin de findScriptMatches (premier `</script>` hors
 // des littéraux), un <style> ou un bloc <theme>, <routes>, <vars>, <types>, <effects> en tête de ligne jusqu'à sa
 // fermeture : un `<@head>` / `<@failed>` cité dans une chaîne du script, du module ou dans le texte d'un style reste du
@@ -618,56 +619,56 @@ export function findStyleMatches(scan: string, scriptMatches: RegExpMatchArray[]
 function maskHeadFailedBlocks(src: string, stash: (block: string, at: number) => string): string {
   const lower = asciiLower(src)
   if (!lower.includes('<@head') && !lower.includes('<@failed')) return src
-  const ouverture = /^[ \t]*<(script|style|(?:theme|routes|vars|types|effects)(?=[\s>]))/gm
-  const derniere  = { head: lower.lastIndexOf('</@head>'), failed: lower.lastIndexOf('</@failed>') }
-  let civet: string | null = null
-  let bloc: RegExpExecArray | null = null
-  let blocsLus = false
-  let tete     = -2
-  let echec    = -2
-  let out      = ''
-  let copie    = 0
-  let pos      = 0
+  const opener                      = /^[ \t]*<(script|style|(?:theme|routes|vars|types|effects)(?=[\s>]))/gm
+  const last                        = { head: lower.lastIndexOf('</@head>'), failed: lower.lastIndexOf('</@failed>') }
+  let civet: string | null          = null
+  let block: RegExpExecArray | null = null
+  let readBlocks                    = false
+  let head                          = -2
+  let failure                       = -2
+  let out                           = ''
+  let copy                          = 0
+  let pos                           = 0
   for (;;) {
-    if (tete !== -1 && tete < pos) tete = lower.indexOf('<@head', pos)
-    if (echec !== -1 && echec < pos) echec = lower.indexOf('<@failed', pos)
-    const idx = tete === -1 ? echec : (echec === -1 ? tete : Math.min(tete, echec))
+    if (head !== -1 && head < pos) head = lower.indexOf('<@head', pos)
+    if (failure !== -1 && failure < pos) failure = lower.indexOf('<@failed', pos)
+    const idx = head === -1 ? failure : (failure === -1 ? head : Math.min(head, failure))
     if (idx === -1) break
-    if (!blocsLus && (bloc === null || bloc.index < pos)) {
-      ouverture.lastIndex = pos
-      bloc     = ouverture.exec(src)
-      blocsLus = bloc === null
+    if (!readBlocks && (block === null || block.index < pos)) {
+      opener.lastIndex = pos
+      block            = opener.exec(src)
+      readBlocks       = block === null
     }
-    if (bloc !== null && bloc.index < idx) {
-      const nom = bloc[1]
-      const at  = bloc.index + bloc[0].length - nom.length - 1
-      let fin   = -1
-      if (nom === 'script') {
+    if (block !== null && block.index < idx) {
+      const name = block[1]
+      const at   = block.index + block[0].length - name.length - 1
+      let end    = -1
+      if (name === 'script') {
         civet ??= maskScriptsCivet(src, false)
-        fin = civet.indexOf('</script>', at)
+        end = civet.indexOf('</script>', at)
       }
-      else fin = src.indexOf(`</${nom}>`, at)
-      pos = fin === -1 ? at + nom.length + 1 : fin + nom.length + 3
+      else end = src.indexOf(`</${name}>`, at)
+      pos = end === -1 ? at + name.length + 1 : end + name.length + 3
       continue
     }
-    const name     = idx === tete ? 'head' : 'failed'
+    const name     = idx === head ? 'head' : 'failed'
     const nameEnd  = idx + `<@${name}`.length
     const boundary = src[nameEnd]
     const tagEnd   = boundary !== undefined && /[\w-]/.test(boundary) ? -1 : findMacroTagEnd(src, nameEnd)
-    const closeIdx = tagEnd === -1 || tagEnd + 1 > derniere[name] ? -1 : lower.indexOf(`</@${name}>`, tagEnd + 1)
+    const closeIdx = tagEnd === -1 || tagEnd + 1 > last[name] ? -1 : lower.indexOf(`</@${name}>`, tagEnd + 1)
     if (closeIdx === -1) {
       pos = idx + 1
       continue
     }
     const wholeEnd = closeIdx + `</@${name}>`.length
-    out  += src.slice(copie, idx) + stash(src.slice(idx, wholeEnd), idx)
-    copie = pos = wholeEnd
+    out           += src.slice(copy, idx) + stash(src.slice(idx, wholeEnd), idx)
+    copy           = pos = wholeEnd
   }
-  return copie === 0 ? src : out + src.slice(copie)
+  return copy === 0 ? src : out + src.slice(copy)
 }
 
 // ----------------------------------------------------------------------------
-// retirerCommentaires — PREMIER geste de la lecture d'un composant (extractSections, plus bas) : tous les commentaires de
+// removeComments — PREMIER geste de la lecture d'un composant (extractSections, plus bas) : tous les commentaires de
 // l'auteur retirés, avant les sections, les masques, les macros et le gabarit, qui lisent un texte plus court où aucun
 // commentaire n'ouvre plus une section, une macro ou une chaîne. Lecture de gauche à droite, comme le navigateur :
 // - gabarit : commentaire HTML (bornes du navigateur, readHtmlComment), jamais dans une balise (valeur d'attribut), une
@@ -675,116 +676,110 @@ function maskHeadFailedBlocks(src: string, stash: (block: string, at: number) =>
 // - <script> du composant (en tête de ligne, hors <@head> / <@failed>), par le lexeur (scanInertAt, scanDoubleQuoteAt) :
 //   Civet `#…`, `###…###`, `//…`, `/*…*/` (`#nom` est un symbole, `///…///` une regex) ; Coffee `#…`, `###…###` (`//` y
 //   est la division entière, `///…///` une regex) ; JS et TS `//…`, `/*…*/` (`#x` est un champ privé) ;
-// - <style> du composant : `/*…*/`, et `//…` en SASS / SCSS (lecteurLitteraux : chaînes et `url(…)` gardées).
+// - <style> du composant : `/*…*/`, et `//…` en SASS / SCSS (literalReader : chaînes et `url(…)` gardées).
 // Un commentaire part avec son texte, ses sauts de ligne restent (lignes des erreurs et des tables de correspondance) ;
 // dans le gabarit, ils restent dans un porteur de lignes (LINE_CARRIER_OPEN) que la sortie ignore (un saut nu y serait une
 // espace) ; un `/*…*/` qui soudait deux mots laisse une espace. Seule exception, le commentaire MJS `//!` jusqu'à la fin
 // de la ligne : rien n'y est lu, il sort dans le code produit (tel quel dans un script Civet, JS ou TS, en `###! … ###` en
-// Coffee, en `/*! … */` dans un style), sauf si COMMENTAIRE_MJS_GARDE est faux ; dans le gabarit, `//!` est du texte.
+// Coffee, en `/*! … */` dans un style), sauf si KEPT_MJS_COMMENT est faux ; dans le gabarit, `//!` est du texte.
 // Laissés tels quels : un `<!--` jamais refermé ; les scripts et styles d'un <@head> / <@failed> ; les blocs <types>,
 // <vars>, <effects>, <theme>, <routes> ; un commentaire dans une interpolation `#{…}` / `${…}` ; colonnes : celles qui
 // suivent un commentaire posé en milieu de ligne reculent de sa longueur.
-// À longueur égale (`sameLength`, pour les bornes des sections lues par le lecteur du fichier, bornesDesSections plus bas) : même
+// À longueur égale (`sameLength`, pour les bornes des sections lues par le lecteur du fichier, sectionBounds plus bas) : même
 // lecture, chaque commentaire blanchi au lieu d'être retiré, sauts de ligne gardés ; un commentaire HTML de plusieurs lignes garde
 // ses délimiteurs, comme le porteur de lignes qui le remplace ; un `//!` d'un script Coffee ou d'un style est blanchi lui aussi
-// `lost` (extractSections) : les chaînes d'un script écrites sur plusieurs lignes où un commentaire est pris — relevées, la lecture
-// reste la même (scriptSansCommentaires)
 // ----------------------------------------------------------------------------
-type LangueCommentaires = 'civet' | 'coffee' | 'js'
+type CommentLanguage = 'civet' | 'coffee' | 'js'
 
-const MOT_RE      = /[\w$µ]/
-const BRUT_RE     = /^(?:script|style|textarea|title)$/
-const BLOC_MJS_RE = /^(?:types|vars|effects|theme|routes)$/
-const OUVRANTE_RE = /<(\/?)(@?[a-zA-Z][\w-]*)/y
+const WORD_RE      = /[\w$µ]/
+const RAW_RE       = /^(?:script|style|textarea|title)$/
+const BLOCK_MJS_RE = /^(?:types|vars|effects|theme|routes)$/
+const OPENING_RE   = /<(\/?)(@?[a-zA-Z][\w-]*)/y
 
 // langue des commentaires d'un script : Coffee, JS (TS compris) ou Civet (défaut)
-function langueDeScript(lang: string): LangueCommentaires {
+function scriptLangOf(lang: string): CommentLanguage {
   if (/coffee/.test(lang)) return 'coffee'
   return /^(?:js|ts|javascript|typescript|jsx|tsx)$/.test(lang) ? 'js' : 'civet'
 }
 
 // ce qui remplace le commentaire [a, b) de `src` : ses seuls sauts de ligne, une espace s'il soudait deux mots ; à longueur égale
 // (`sameLength`), le commentaire blanchi
-function blancDe(src: string, a: number, b: number, sameLength = false): string {
+function blankOf(src: string, a: number, b: number, sameLength = false): string {
   if (sameLength) return src.slice(a, b).replace(/[^\n]/g, ' ')
-  const sauts = src.slice(a, b).replace(/[^\n]/g, '')
-  return sauts === '' && MOT_RE.test(src[a - 1] ?? '') && MOT_RE.test(src[b] ?? '') ? ' ' : sauts
+  const jumps = src.slice(a, b).replace(/[^\n]/g, '')
+  return jumps === '' && WORD_RE.test(src[a - 1] ?? '') && WORD_RE.test(src[b] ?? '') ? ' ' : jumps
 }
 
 // fin de la ligne de `i` : position de son saut, ou fin du texte
-function finDeLigne(src: string, i: number): number {
+function lineEnd(src: string, i: number): number {
   const e = src.indexOf('\n', i)
   return e === -1 ? src.length : e
 }
 
 // script du composant ouvert jusqu'à `de` : [texte sans ses commentaires, `</script>` compris ; position qui le suit],
 // null s'il n'est jamais refermé ; fin au premier `</script>` hors des littéraux, comme findScriptMatches ; à longueur égale
-// (`sameLength`), chaque commentaire blanchi ; `lost` : les chaînes de Civet ou de CoffeeScript écrites sur plusieurs lignes où un
-// commentaire est pris, relevées par un témoin qui suit la lecture sans la changer (longStringWatch, lexer) — `slash` : la dernière
-// barre `/` lue comme du code
-function scriptSansCommentaires(src: string, de: number, langue: LangueCommentaires, sameLength: boolean, lost?: LostInString[]): [string, number] | null {
-  const watch = lost !== undefined && langue !== 'js' ? longStringWatch(src) : null
-  let slash   = -1
-  let out     = ''
-  let cur     = de
-  let i       = de
+// (`sameLength`), chaque commentaire blanchi ; une chaîne de Civet ou de CoffeeScript écrite sur plusieurs lignes est lue jusqu'à son
+// guillemet fermant (scriptStringEnd, le lecteur du script)
+function scriptWithoutComments(src: string, from: number, lang: CommentLanguage, sameLength: boolean): [string, number] | null {
+  let out = ''
+  let cur = from
+  let i   = from
   while (i < src.length) {
     const c = src[i]
-    let fin = -1
-    let par = ''
+    let end = -1
+    let by  = ''
     if (c === '<' && src.startsWith('</script>', i)) {
-      if (watch !== null) lost!.push(...watch.lost)
       return [out + src.slice(cur, i + 9), i + 9]
     }
-    if (c === '#' && langue !== 'js') {
-      if (src.startsWith('###', i)) {
+    if (c === '#' && lang !== 'js') {
+      if (opensHashBlock(src, i)) {
         const e = src.indexOf('###', i + 3)
-        fin = e === -1 ? finDeLigne(src, i) : e + 3
+        end = e === -1 ? lineEnd(src, i) : e + 3
       }
-      else if (langue === 'coffee' || !/[a-zA-Z_]/.test(src[i + 1] ?? '')) fin = finDeLigne(src, i)
+      else if (lang === 'coffee' || !/[a-zA-Z_]/.test(src[i + 1] ?? '')) end = lineEnd(src, i)
     }
     else if (c === '/' && src[i + 1] === '/') {
       if (src[i + 2] === '!') {
-        fin = finDeLigne(src, i)
-        if (COMMENTAIRE_MJS_GARDE) {
-          if (langue !== 'coffee') {
-            watch?.skipped(i, fin)
-            i = fin
+        end = lineEnd(src, i)
+        if (KEPT_MJS_COMMENT) {
+          if (lang !== 'coffee') {
+            i = end
             continue
           }
-          par = `###!${src.slice(i + 3, fin).replace(/###/g, '# # #')} ###`
+          by = `###!${src.slice(i + 3, end).replace(/###/g, '# # #')} ###`
         }
       }
-      else if (langue === 'coffee' || (langue === 'civet' && src.startsWith('///', i))) {
+      else if (lang === 'coffee' || (lang === 'civet' && src.startsWith('///', i))) {
         const e = src.startsWith('///', i) ? src.indexOf('///', i + 3) : -1
-        if (e === -1) slash = i
-        else watch?.skipped(i, e + 3)
         i = e === -1 ? i + 2 : e + 3
         continue
       }
-      else fin = finDeLigne(src, i)
+      else end = lineEnd(src, i)
     }
-    else if (c === '/' && src[i + 1] === '*' && langue !== 'coffee') {
+    else if (c === '/' && src[i + 1] === '*' && lang !== 'coffee') {
       const e = src.indexOf('*/', i + 2)
-      if (e !== -1) fin = e + 2
+      if (e !== -1) end = e + 2
     }
     else if (c === '"' || c === '\'' || c === '`' || c === '/') {
-      const e = c === '"' && langue !== 'js' && !src.startsWith('"""', i) ? scanDoubleQuoteAt(src, i) : scanInertAt(src, i, langue === 'civet' || langue === 'coffee')
+      const e = c === '"' && lang !== 'js' && !src.startsWith('"""', i) ? scanDoubleQuoteAt(src, i) : scanInertAt(src, i, lang === 'civet' || lang === 'coffee')
       if (e > i) {
-        watch?.skipped(i, e)
         i = e
         continue
       }
-      if (c === '"' || c === '\'') watch?.lone(i, slash)
+      // chaîne `"…"` ou `'…'` écrite sur plusieurs lignes en Civet et en CoffeeScript : lue jusqu'à son guillemet fermant, comme le lit
+      // le langage (scriptStringEnd, le lecteur du script), quand elle se referme avant le `</script>` qui suit
+      const f = (c === '"' || c === '\'') && lang !== 'js' ? scriptStringEnd(src, i, true, lang === 'coffee') : i
+      if (f > i && !src.slice(i, f).includes('</script>')) {
+        i = f
+        continue
+      }
     }
-    if (fin === -1) {
-      if (c === '/') slash = i
+    if (end === -1) {
       i++
       continue
     }
-    watch?.cut(i, fin)
-    out += src.slice(cur, i) + (sameLength ? blancDe(src, i, fin, true) : par || blancDe(src, i, fin))
-    cur  = i = fin
+    out += src.slice(cur, i) + (sameLength ? blankOf(src, i, end, true) : by || blankOf(src, i, end))
+    cur  = i = end
   }
   return null
 }
@@ -792,127 +787,148 @@ function scriptSansCommentaires(src: string, de: number, langue: LangueCommentai
 // style du composant ouvert jusqu'à `de` : [texte sans ses commentaires, `</style>` compris ; position qui le suit], null
 // s'il n'est jamais refermé ; fin au premier `</style>` hors des littéraux CSS, comme maskStylesCss ; à longueur égale
 // (`sameLength`), chaque commentaire blanchi
-function styleSansCommentaires(src: string, de: number, sass: boolean, sameLength: boolean): [string, number] | null {
-  const litteral = lecteurLitteraux(src)
-  let fin = src.indexOf('</style>', de)
-  let l   = litteral(de)
-  let out = ''
-  let cur = de
-  while (fin !== -1 && l !== null && l[0] < fin) {
+function styleWithoutComments(src: string, from: number, sass: boolean, sameLength: boolean): [string, number] | null {
+  const literal = literalReader(src)
+  let end       = src.indexOf('</style>', from)
+  let l         = literal(from)
+  let out       = ''
+  let cur       = from
+  while (end !== -1 && l !== null && l[0] < end) {
     const [a, b] = l
-    if (b > fin) {
-      fin = src.indexOf('</style>', fin + 1)
+    if (b > end) {
+      end = src.indexOf('</style>', end + 1)
       continue
     }
     const mjs = src.startsWith('//!', a)
     if (src.startsWith('/*', a) || (src.startsWith('//', a) && (sass || mjs))) {
-      out += src.slice(cur, a) + (sameLength ? blancDe(src, a, b, true) : mjs && COMMENTAIRE_MJS_GARDE ? `/*!${src.slice(a + 3, b).replace(/\*\//g, '* /')} */` : blancDe(src, a, b))
+      out += src.slice(cur, a) + (sameLength ? blankOf(src, a, b, true) : mjs && KEPT_MJS_COMMENT ? `/*!${src.slice(a + 3, b).replace(/\*\//g, '* /')} */` : blankOf(src, a, b))
       cur  = b
     }
-    l = litteral(b)
+    l = literal(b)
   }
-  return fin === -1 ? null : [out + src.slice(cur, fin + 8), fin + 8]
+  return end === -1 ? null : [out + src.slice(cur, end + 8), end + 8]
 }
 
 // fins des accolades du gabarit lues depuis celle ouverte en `i`, chaînes sautées par le lexeur : pour chaque `{` vue hors des
 // chaînes, la position qui suit sa `}`, -1 sans fin. Une seule lecture pour une accolade jamais refermée et toutes celles qu'elle
-// contient : chacune relisait le reste du texte (coût quadratique sur un gabarit en cours de frappe)
-function finsAccolades(src: string, i: number, fins: Map<number, number>): void {
-  const pile: number[] = []
+// contient : chacune relisait le reste du texte (coût quadratique sur un gabarit en cours de frappe) ; macros.ts lit de même les
+// commentaires qui citent une balise du langage
+export function braceEnds(src: string, i: number, ends: Map<number, number>): void {
+  const stack: number[] = []
   for (let j = i; j < src.length; j++) {
     const c = src[j]
     if (c === '"' || c === '\'' || c === '`') {
       const e = scanInertAt(src, j)
       if (e > j) j = e - 1
     }
-    else if (c === '{') pile.push(j)
-    else if (c === '}' && pile.length > 0) {
-      fins.set(pile.pop()!, j + 1)
-      if (pile.length === 0) return
+    else if (c === '{') stack.push(j)
+    else if (c === '}' && stack.length > 0) {
+      ends.set(stack.pop()!, j + 1)
+      if (stack.length === 0) return
     }
   }
-  for (const p of pile) fins.set(p, -1)
+  for (const p of stack) ends.set(p, -1)
 }
 
-export function retirerCommentaires(src: string, langueScript: string, langueStyle: string, sameLength = false, lost?: LostInString[]): string {
+export function removeComments(src: string, scriptLang: string, styleLang: string, sameLength = false): string {
   if (!src.includes('<!--') && !src.includes('#') && !src.includes('//') && !src.includes('/*')) return src
   const lower = asciiLower(src)
-  const signe = /[<{]/g
-  const fins  = new Map<number, number>()
-  let tete    = ''
+  const sign  = /[<{]/g
+  const ends  = new Map<number, number>()
+  let head    = ''
   let out     = ''
   let cur     = 0
   let i       = 0
   while (i < src.length) {
-    signe.lastIndex = i
-    const s = signe.exec(src)
+    sign.lastIndex = i
+    const s = sign.exec(src)
     if (s === null) break
     i = s.index
     if (src[i] === '{') {
-      if (!fins.has(i)) finsAccolades(src, i, fins)
-      const e = fins.get(i)!
+      if (!ends.has(i)) braceEnds(src, i, ends)
+      const e = ends.get(i)!
       i = e === -1 ? i + 1 : e
       continue
     }
     if (src.startsWith('<!--', i)) {
-      const lu = readHtmlComment(src, i)
-      if (lu === null) {
+      const read = readHtmlComment(src, i)
+      if (read === null) {
         i += 4
         continue
       }
-      const sauts = src.slice(i, lu.end).replace(/[^\n]/g, '')
-      if (sameLength) out += src.slice(cur, i) + (sauts === '' ? blancDe(src, i, lu.end, true) : `<!--${blancDe(src, i + 4, lu.end - 3, true)}-->`)
-      else out += src.slice(cur, i) + (sauts === '' ? '' : `${LINE_CARRIER_OPEN}${sauts}-->`)
-      cur  = i = lu.end
+      const jumps = src.slice(i, read.end).replace(/[^\n]/g, '')
+      if (sameLength) out += src.slice(cur, i) + (jumps === '' ? blankOf(src, i, read.end, true) : `<!--${blankOf(src, i + 4, read.end - 3, true)}-->`)
+      else out += src.slice(cur, i) + (jumps === '' ? '' : `${LINE_CARRIER_OPEN}${jumps}-->`)
+      cur  = i = read.end
       continue
     }
-    OUVRANTE_RE.lastIndex = i
-    const b = OUVRANTE_RE.exec(src)
+    OPENING_RE.lastIndex = i
+    const b = OPENING_RE.exec(src)
     if (b === null) {
       i++
       continue
     }
-    const nom = b[2].toLowerCase()
+    const name = b[2].toLowerCase()
     if (b[1] === '/') {
-      if (nom === '@' + tete) tete = ''
+      if (name === '@' + head) head = ''
       i += b[0].length
       continue
     }
-    const finBalise = findMacroTagEnd(src, i + b[0].length)
-    if (finBalise === -1) {
+    const tagEnd = findMacroTagEnd(src, i + b[0].length)
+    if (tagEnd === -1) {
       i += b[0].length
       continue
     }
-    if (nom === '@head' || nom === '@failed') {
-      tete ||= nom.slice(1)
-      i = finBalise + 1
+    if (name === '@head' || name === '@failed') {
+      head ||= name.slice(1)
+      i = tagEnd + 1
       continue
     }
-    const enTete = /^[ \t]*$/.test(src.slice(src.lastIndexOf('\n', i - 1) + 1, i))
-    if (enTete && tete === '' && (nom === 'script' || nom === 'style')) {
-      const lang = extractLang(src.slice(i + b[0].length, finBalise))
-      const lu   = nom === 'script' ? scriptSansCommentaires(src, finBalise + 1, langueDeScript(lang ?? langueScript), sameLength, lost) : styleSansCommentaires(src, finBalise + 1, /^s[ac]ss$/.test(lang ?? langueStyle), sameLength)
-      if (lu !== null) {
-        out += src.slice(cur, finBalise + 1) + lu[0]
-        cur  = i = lu[1]
+    const header = /^[ \t]*$/.test(src.slice(src.lastIndexOf('\n', i - 1) + 1, i))
+    if (header && head === '' && (name === 'script' || name === 'style')) {
+      const lang = extractLang(src.slice(i + b[0].length, tagEnd))
+      const read = name === 'script' ? scriptWithoutComments(src, tagEnd + 1, scriptLangOf(lang ?? scriptLang), sameLength) : styleWithoutComments(src, tagEnd + 1, /^s[ac]ss$/.test(lang ?? styleLang), sameLength)
+      if (read !== null) {
+        out += src.slice(cur, tagEnd + 1) + read[0]
+        cur  = i = read[1]
         continue
       }
     }
-    if (BRUT_RE.test(nom) || (enTete && BLOC_MJS_RE.test(nom))) {
-      const e = lower.indexOf(`</${nom}`, finBalise + 1)
-      i = e === -1 ? finBalise + 1 : e
+    if (RAW_RE.test(name) || (header && BLOCK_MJS_RE.test(name))) {
+      const e = lower.indexOf(`</${name}`, tagEnd + 1)
+      i = e === -1 ? tagEnd + 1 : e
       continue
     }
-    i = finBalise + 1
+    i = tagEnd + 1
   }
   return cur === 0 ? src : out + src.slice(cur)
 }
 
-// les sections d'un texte (extractSections : commentaires retirés, blocs <@head> / <@failed> masqués ; bornesDesSections : la même
+// un <@head> ou un <@failed> se lit comme le reste du gabarit : une fermante de bloc (`</vars>`, `</types>`, `</theme>`, `</routes>`,
+// `</effects>`) qui n'y referme aucun bloc ouvert en tête de ligne y est orpheline, avec le refus du gabarit. Lue hors commentaires, hors
+// valeurs d'attribut et hors du texte de ses <script> et <style>, qui courent jusqu'à leur fermante où qu'ils soient posés (un JSON-LD
+// qui cite `</types>` y reste permis) ; une ligne y finit sur un saut de ligne ou un retour chariot, comme pour le lecteur du fichier qui
+// y relève les images, jamais sur U+2028 ou U+2029. Le bloc masqué échappait à cette recherche : une <@@img> citée dans le texte du
+// faux bloc y était refusée comme une image de l'en-tête
+const RAW_TEXT_RE      = /<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi
+const HEADER_BLOCK_RE  = /(?<=^|[\n\r])[ \t]*<(theme|routes|vars|types|effects)\b[^>]*>[\s\S]*?<\/\1>/g
+const CLOSING_BLOCK_RE = /<\/(?:theme|routes|vars|types|effects)>/i
+
+function orphanClosingBlock(blocks: readonly string[]): RegExpMatchArray | null {
+  for (const block of blocks) {
+    if (!CLOSING_BLOCK_RE.test(block)) continue
+    const view = attrValueMask(maskHtmlComments(block).replace(RAW_TEXT_RE, m => m.replace(/[^\n\r]/g, ' '))).replace(HEADER_BLOCK_RE, '')
+    const orphan = view.match(CLOSING_BLOCK_RE)
+    if (orphan) return orphan
+  }
+  return null
+}
+
+// les sections d'un texte (extractSections : commentaires retirés, blocs <@head> / <@failed> masqués ; sectionBounds : la même
 // vue à longueur égale) : <script module> et <script> sur la vue Civet, <style> sur la vue CSS, puis <theme>, <routes>, <vars>,
 // <types> et <effects>, chaque recherche sur la vue de la précédente, ses plages déjà trouvées neutralisées. La seule recherche des
 // sections : le compilateur et le lecteur du fichier (src/reader) referment une section au même endroit
-interface SectionsTrouvees {
+interface FoundSections {
   moduleScripts: RegExpMatchArray[]
   scripts:       RegExpMatchArray[]
   styles:        RegExpMatchArray[]
@@ -923,53 +939,53 @@ interface SectionsTrouvees {
   effects:       RegExpMatchArray[]
 }
 
-function trouverSections(scan: string): SectionsTrouvees {
+function findSections(scan: string): FoundSections {
   const { moduleScripts, scripts } = findScriptMatches(scan)
   const { matches: styles, maskedView } = findStyleMatches(scan, [...moduleScripts, ...scripts])
-  const sans = (vue: string, trouvees: RegExpMatchArray[]): string => {
-    for (const m of trouvees) vue = blankRange(vue, m.indices![0][0], m.indices![0][1])
-    return vue
+  const no = (view: string, found: RegExpMatchArray[]): string => {
+    for (const m of found) view = blankRange(view, m.indices![0][0], m.indices![0][1])
+    return view
   }
-  const vueThemes  = sans(maskedView, styles)
-  const themes     = [...vueThemes.matchAll(/^[ \t]*<theme\b([^>]*)>([\s\S]*?)<\/theme>/gmd)]
-  const vueRoutes  = sans(vueThemes, themes)
-  const routes     = [...vueRoutes.matchAll(/^[ \t]*<routes\b([^>]*)>([\s\S]*?)<\/routes>/gmd)]
-  const vueVars    = sans(vueRoutes, routes)
-  const vars       = [...vueVars.matchAll(/^[ \t]*<vars\b([^>]*)>([\s\S]*?)<\/vars>/gmd)]
-  const vueTypes   = sans(vueVars, vars)
-  const types      = [...vueTypes.matchAll(/^[ \t]*<types\b([^>]*)>([\s\S]*?)<\/types>/gmd)]
-  const effects    = [...sans(vueTypes, types).matchAll(/^[ \t]*<effects\b([^>]*)>([\s\S]*?)<\/effects>/gmd)]
+  const themesView = no(maskedView, styles)
+  const themes     = [...themesView.matchAll(/^[ \t]*<theme\b([^>]*)>([\s\S]*?)<\/theme>/gmd)]
+  const routesView = no(themesView, themes)
+  const routes     = [...routesView.matchAll(/^[ \t]*<routes\b([^>]*)>([\s\S]*?)<\/routes>/gmd)]
+  const varsView   = no(routesView, routes)
+  const vars       = [...varsView.matchAll(/^[ \t]*<vars\b([^>]*)>([\s\S]*?)<\/vars>/gmd)]
+  const typesView  = no(varsView, vars)
+  const types      = [...typesView.matchAll(/^[ \t]*<types\b([^>]*)>([\s\S]*?)<\/types>/gmd)]
+  const effects    = [...no(typesView, types).matchAll(/^[ \t]*<effects\b([^>]*)>([\s\S]*?)<\/effects>/gmd)]
   return { moduleScripts, scripts, styles, themes, routes, vars, types, effects }
 }
 
-// une section que le compilateur lit dans un fichier : `debut` sur son `<`, `corps` [début, fin) de son contenu, `fin` après sa
+// une section que le compilateur lit dans un fichier : `start` sur son `<`, `body` [début, fin) de son contenu, `end` après sa
 // fermante
-export interface BorneDeSection {
-  debut: number
-  corps: { debut: number, fin: number }
-  fin:   number
+export interface SectionBound {
+  start: number
+  body: { start: number, end: number }
+  end:   number
 }
 
-// les sections d'un composant ou d'un partiel aux positions du texte donné, telles que extractSections les lit (trouverSections), et
+// les sections d'un composant ou d'un partiel aux positions du texte donné, telles que extractSections les lit (findSections), et
 // les blocs <@head> / <@failed> qu'il masque avant, [début, fin) : le lecteur du fichier (src/reader) referme une section au même
-// endroit que le compilateur. Le texte est lu à longueur égale : chaque commentaire blanchi où retirerCommentaires le retire (ceux
+// endroit que le compilateur. Le texte est lu à longueur égale : chaque commentaire blanchi où removeComments le retire (ceux
 // d'un script selon sa langue, `scriptLang` pour un <script> sans `lang`, celle que reçoit extractSections), chaque bloc <@head> /
 // <@failed> blanchi où maskHeadFailedBlocks le masque, son dernier caractère gardé (comme le jeton qui le remplace, rien ne commence
 // une ligne juste après lui)
-export function bornesDesSections(content: string, scriptLang: string = DEFAULT_SCRIPT_LANG): { sections: BorneDeSection[], blocs: Array<[number, number]> } {
-  const blocs: Array<[number, number]> = []
-  const texte = retirerCommentaires(content.charCodeAt(0) === 0xfeff ? ' ' + content.slice(1) : content, scriptLang, DEFAULT_STYLE_LANG, true)
-  const vue   = maskHeadFailedBlocks(texte, (block, at) => {
-    blocs.push([at, at + block.length])
+export function sectionBounds(content: string, scriptLang: string = DEFAULT_SCRIPT_LANG): { sections: SectionBound[], blocks: Array<[number, number]> } {
+  const blocks: Array<[number, number]> = []
+  const text = removeComments(content.charCodeAt(0) === 0xfeff ? ' ' + content.slice(1) : content, scriptLang, DEFAULT_STYLE_LANG, true)
+  const view = maskHeadFailedBlocks(text, (block, at) => {
+    blocks.push([at, at + block.length])
     return block.slice(0, -1).replace(/[^\n]/g, ' ') + block.slice(-1)
   })
-  const t = trouverSections(vue)
-  const sections = [...t.moduleScripts.map(m => [m, 3] as const), ...[t.scripts, t.styles, t.themes, t.routes, t.vars, t.types, t.effects].flatMap(l => l.map(m => [m, 2] as const))].map(([m, corps]) => ({
-    debut: m.indices![0][0] + /^[ \t]*/.exec(m[0])![0].length,
-    corps: { debut: m.indices![corps][0], fin: m.indices![corps][1] },
-    fin:   m.indices![0][1],
+  const t = findSections(view)
+  const sections = [...t.moduleScripts.map(m => [m, 3] as const), ...[t.scripts, t.styles, t.themes, t.routes, t.vars, t.types, t.effects].flatMap(l => l.map(m => [m, 2] as const))].map(([m, body]) => ({
+    start: m.indices![0][0] + /^[ \t]*/.exec(m[0])![0].length,
+    body: { start: m.indices![body][0], end: m.indices![body][1] },
+    end:   m.indices![0][1],
   }))
-  return { sections: sections.sort((a, b) => a.debut - b.debut), blocs }
+  return { sections: sections.sort((a, b) => a.start - b.start), blocks }
 }
 
 // ----------------------------------------------------------------------------
@@ -1007,18 +1023,18 @@ export function extractSections(content: string, opts: {
   // `[^>]*` s'arrêtait au premier `>` textuel, y compris niché dans une
   // accolade d'attribut.
   // jetons à sceau, remise au point fixe (createMaskTable) : un NUL écrit par l'auteur reste tel quel
-  // premier geste : tous les commentaires de l'auteur retirés (retirerCommentaires, plus haut), lignes gardées
-  const lost    = [] as LostInString[]
-  const written = content
-  content = retirerCommentaires(content, defaultScriptLang, defaultStyleLang, false, lost)
+  // premier geste : tous les commentaires de l'auteur retirés (removeComments, plus haut), lignes gardées
+  content = removeComments(content, defaultScriptLang, defaultStyleLang, false)
   const macroMasks = createMaskTable(content, 'MJSHF')
   // chaque bloc masqué : la place de son jeton dans `scan` et les sauts de ligne qu'il remplace (un jeton tient sur une ligne) ;
   // lineInFile : la ligne du fichier d'une position de `scan`, ces sauts comptés (après un <@head> ou un <@failed> de plusieurs
   // lignes, une section et ses fautes étaient citées trop haut)
-  const folds = [] as Array<[number, number]>
-  let shift   = 0
-  const scan  = maskHeadFailedBlocks(content, (block, at) => {
+  const folds  = [] as Array<[number, number]>
+  const macros = [] as string[]
+  let shift    = 0
+  const scan   = maskHeadFailedBlocks(content, (block, at) => {
     const token = macroMasks.stash(block)
+    macros.push(block)
     folds.push([at - shift, countNewlines(block)])
     shift += block.length - token.length
     return token
@@ -1039,7 +1055,7 @@ export function extractSections(content: string, opts: {
   // ne doit pas être classé « module ». Group 1 non-gourmand pour ne pas avaler
   // un `module` situé plus loin. Recherche sur la vue Civet masquée (offsets alignés
   // sur `scan`), relecture du texte réel via `m.indices` (drapeau `d`).
-  const { moduleScripts: allModuleScripts, scripts: allScripts, styles: allStyles, themes: allThemes, routes: allRoutesBlocks, vars: allVars, types: allTypes, effects: allEffects } = trouverSections(scan)
+  const { moduleScripts: allModuleScripts, scripts: allScripts, styles: allStyles, themes: allThemes, routes: allRoutesBlocks, vars: allVars, types: allTypes, effects: allEffects } = findSections(scan)
   const moduleMatch = allModuleScripts[0]
   const moduleSection: ScriptSection = { raw: '', lang: defaultScriptLang, startLine: 1 }
   if (moduleMatch) {
@@ -1052,7 +1068,7 @@ export function extractSections(content: string, opts: {
     moduleSection.startLine = lineInFile(idx[3][0])
   }
   if (allModuleScripts.length > 1) {
-    throw new Error(t('transpiler.script-module-double', { n: allModuleScripts.length, nAutres: allModuleScripts.length - 1 }))
+    throw new Error(t('transpiler.script-module-duplicate', { n: allModuleScripts.length, nOthers: allModuleScripts.length - 1 }))
   }
 
   // 2. <script> (sans `module`) — déjà calculé par findScriptMatches ci-dessus (allScripts)
@@ -1068,7 +1084,7 @@ export function extractSections(content: string, opts: {
     script.startLine = lineInFile(idx[2][0])
   }
   if (allScripts.length > 1) {
-    throw new Error(t('transpiler.script-double', { n: allScripts.length, nAutres: allScripts.length - 1 }))
+    throw new Error(t('transpiler.script-duplicate', { n: allScripts.length, nOthers: allScripts.length - 1 }))
   }
 
   // vue masquée pour <style> : chaînes/commentaires CSS/SASS (masqueur LOCAL, pas INERT_RE) +
@@ -1086,17 +1102,17 @@ export function extractSections(content: string, opts: {
   // seulement quand elle sert. Un seul bloc sans nom, un seul par nom.
   const style: StyleSection = { raw: '', lang: defaultStyleLang, sharedCssNames: [], moduleDisplay: 'block', moduleViewTransition: null, moduleViewTransitionPriority: 1 }
   const layouts: LayoutSection[] = []
-  let styleVus = 0
+  let seenStyles = 0
   for (const m of allStyles) {
     const idx = m.indices!
     const attrs = scan.slice(...idx[1])
-    checkSectionAttrs('style', attrs, ['lang', 'name', ...STYLE_WORDS.map((w) => SIGN + w)])
-    const nom = extractAttr(attrs, 'name')
+    checkSectionAttrs('style', attrs, ['lang', 'name', ...STYLE_WORDS.map((w) => SIGN + w)], scan, idx[1][0])
+    const name = extractAttr(attrs, 'name')
     const lang = (extractLang(attrs) as 'css' | 'sass' | 'scss') ?? defaultStyleLang
     const raw = dedent(scan.slice(...idx[2]))
-    if (nom === '') {
-      styleVus++
-      if (styleVus > 1) throw new Error(t('transpiler.style-double', { n: styleVus, nAutres: styleVus - 1 }))
+    if (name === '') {
+      seenStyles++
+      if (seenStyles > 1) throw new Error(t('transpiler.style-duplicate', { n: seenStyles, nOthers: seenStyles - 1 }))
       style.lang = lang
       style.raw  = raw
 
@@ -1115,26 +1131,26 @@ export function extractSections(content: string, opts: {
         // niveaux de navigation interchangeables — une écriture refusée ici l'est aussi là-bas,
         // avec le MÊME message. Le durcissement a fermé les trois écarts.
         const rest: string | undefined = vt.rest
-        if (vt.aliasVt) throw new Error(t('transpiler.vt-alias-sur-style-interdit'))
-        if (vt.malformed) throw new Error(t('transpiler.viewtransition-forme-invalide-sur-style', { label: vt.label, rest }))
+        if (vt.aliasVt) throw new Error(t('transpiler.vt-alias-on-style-forbidden'))
+        if (vt.malformed) throw new Error(t('transpiler.viewtransition-shape-invalid-on-style', { label: vt.label, rest }))
         if (rest === undefined) {
           style.moduleViewTransition = 'on'
         } else if (rest[0] === '.') {
           const dm = rest.match(/^\.([a-zA-Z][a-zA-Z0-9-]*(?::(?:left|right|up|down))?)(?:[ \t]*=[ \t]*\{([^}]*)\})?$/)
-          if (!dm) throw new Error(t('transpiler.viewtransition-forme-invalide-sur-style', { label: vt.label, rest }))
+          if (!dm) throw new Error(t('transpiler.viewtransition-shape-invalid-on-style', { label: vt.label, rest }))
           const nameAndDir: string = dm[1]
           const optsRaw: string | undefined = dm[2]
           const base = nameAndDir.split(':')[0]
-          if (base === 'off') throw new Error(t('transpiler.vt-off-nexiste-pas', { label: vt.label }))
-          if (base === 'on') throw new Error(t('transpiler.vt-on-implicite', { label: vt.label }))
+          if (base === 'off') throw new Error(t('transpiler.vt-off-does-not-exist', { label: vt.label }))
+          if (base === 'on') throw new Error(t('transpiler.vt-on-implicit', { label: vt.label }))
           // Le suffixe `:direction` n'existe plus, la SEULE façon d'orienter est la
           // clé d'option ; le nom le CAPTURE tout de même pour pouvoir le refuser (cf. l'extracteur).
-          if (nameAndDir.includes(':')) throw new Error(t('transpiler.vt-direction-plus-dans-nom', { label: vt.label, example: `${vt.label}.cube={ dir: left }` }))
+          if (nameAndDir.includes(':')) throw new Error(t('transpiler.vt-direction-no-longer-in-name', { label: vt.label, example: `${vt.label}.cube={ dir: left }` }))
           const verbatim = optsRaw !== undefined ? `${nameAndDir}={${optsRaw}}` : nameAndDir
           const parsed = parseVtValue(verbatim)
           // cast explicite : strictNullChecks:false désactive le narrowing natif des unions
           // discriminées (même piège que directives.ts/bundler/config.ts, cf. leurs commentaires).
-          if (!parsed.ok) throw new Error(t('transpiler.vt-nom-erreur-parsing', { label: vt.label, nameAndDir: verbatim, erreur: (parsed as { ok: false, error: string }).error }))
+          if (!parsed.ok) throw new Error(t('transpiler.vt-name-error-parsing', { label: vt.label, nameAndDir: verbatim, error: (parsed as { ok: false, error: string }).error }))
           // AUCUN CONTRÔLE DE LA BASE ICI (revenant sur le durcissement
           // du matin) : `µ._vtPresets` reste garnissable par l'appli, et un nom qu'on ne connaît pas
           // au build peut très bien exister au runtime. Le nom mal tapé retombe sur le `µ.warn` de
@@ -1144,21 +1160,21 @@ export function extractSections(content: string, opts: {
           style.moduleViewTransition = verbatim
           if (okParsed.value.priority != null) style.moduleViewTransitionPriority = okParsed.value.priority
         } else if (rest[1] === '"' || rest[1] === "'") {
-          throw new Error(t('transpiler.viewtransition-guillemets-sur-style', { label: vt.label }))
+          throw new Error(t('transpiler.viewtransition-quotes-on-style', { label: vt.label }))
         } else if (rest[1] === '{') {
-          throw new Error(t('transpiler.viewtransition-etiquette-calculee-interdite', { expr: rest.slice(2, -1) }))
+          throw new Error(t('transpiler.viewtransition-label-computed-forbidden', { expr: rest.slice(2, -1) }))
         } else {
-          throw new Error(t('transpiler.viewtransition-forme-invalide-sur-style', { label: vt.label, rest }))
+          throw new Error(t('transpiler.viewtransition-shape-invalid-on-style', { label: vt.label, rest }))
         }
       }
     } else {
       const forbidden = findRelocatedStyleAttrToken(attrs)
-      if (forbidden) throw new Error(t('transpiler.style-attr-sur-layout', { attribut: forbidden, nom }))
-      if (!THEME_NAME_RE.test(nom))                 throw new Error(t('transpiler.layout-name-invalide', { nom }))
+      if (forbidden) throw new Error(t('transpiler.style-attr-on-layout', { attribute: forbidden, name: name }))
+      if (!THEME_NAME_RE.test(name))                 throw new Error(t('transpiler.layout-name-invalid', { name: name }))
       // « default » : le composant lui-même, sans modèle ({? default}, layout="default")
-      if (nom === 'default')                        throw new Error(t('transpiler.layout-default'))
-      if (layouts.some(ly => ly.name === nom))      throw new Error(t('transpiler.layout-double', { nom }))
-      layouts.push({ raw, lang, name: nom })
+      if (name === 'default')                        throw new Error(t('transpiler.layout-default'))
+      if (layouts.some(ly => ly.name === name))      throw new Error(t('transpiler.layout-duplicate', { name: name }))
+      layouts.push({ raw, lang, name: name })
     }
   }
 
@@ -1172,8 +1188,8 @@ export function extractSections(content: string, opts: {
     const attrs = scan.slice(...idx[1])
     checkSectionAttrs('theme', attrs, ['name', 'lang'])
     const name = extractAttr(attrs, 'name')
-    if (name !== '' && !THEME_NAME_RE.test(name)) throw new Error(t('transpiler.theme-name-invalide', { nom: name }))
-    if (themes.some(th => th.name === name)) throw new Error(t('transpiler.theme-double', { nom: name }))
+    if (name !== '' && !THEME_NAME_RE.test(name)) throw new Error(t('transpiler.theme-name-invalid', { name }))
+    if (themes.some(th => th.name === name)) throw new Error(t('transpiler.theme-duplicate', { name }))
     themes.push({
       raw:     dedent(scan.slice(...idx[2])),
       lang:    (extractLang(attrs) as 'css' | 'sass' | 'scss') ?? defaultStyleLang,
@@ -1191,8 +1207,8 @@ export function extractSections(content: string, opts: {
     const attrs  = scan.slice(...idx[1])
     checkSectionAttrs('routes', attrs, ['target'])
     const target = extractAttr(attrs, 'target')
-    if (target === '') throw new Error(t('transpiler.routes-target-manquant'))
-    if (routes.some(r => r.target === target)) throw new Error(t('transpiler.routes-target-double', { target }))
+    if (target === '') throw new Error(t('transpiler.routes-target-missing'))
+    if (routes.some(r => r.target === target)) throw new Error(t('transpiler.routes-target-duplicate', { target }))
     const raw = dedent(scan.slice(...idx[2]))
     routes.push({ raw, target, entries: parseRoutesLines(raw, target), line: lineInFile(idx[0][0]) })
   }
@@ -1202,19 +1218,19 @@ export function extractSections(content: string, opts: {
   // un seul <vars>, toujours AVANT le <script> : la règle d'une variable se lit avant le code qui
   // l'écrit.
   // <effects> (fichier *.effects.mjs) : les effets de l'appli, lus par effects/project.ts
-  if (allVars.length > 1) throw new Error(t('transpiler.vars-double', { n: allVars.length }))
+  if (allVars.length > 1) throw new Error(t('transpiler.vars-duplicate', { n: allVars.length }))
   const typesSection = (m: RegExpMatchArray, tag: string): TypesSection => {
     const idx = m.indices!
-    if (scan.slice(...idx[1]).trim() !== '') throw new Error(t('transpiler.section-sans-attribut', { tag, attributs: scan.slice(...idx[1]).trim() }))
+    if (scan.slice(...idx[1]).trim() !== '') throw new Error(t('transpiler.section-no-attribute', { tag, attributes: scan.slice(...idx[1]).trim() }))
     return { raw: dedent(scan.slice(...idx[2])), startLine: lineInFile(idx[2][0]) }
   }
-  const vars  = allVars.length > 0 ? typesSection(allVars[0], 'vars') : null
-  const types = allTypes.map(m => typesSection(m, 'types'))
+  const vars    = allVars.length > 0 ? typesSection(allVars[0], 'vars') : null
+  const types   = allTypes.map(m => typesSection(m, 'types'))
   const effects = allEffects.map(m => typesSection(m, 'effects'))
   if (allVars.length > 0) {
-    const debutVars   = allVars[0].indices![0][0]
-    const premierCode = [...allModuleScripts, ...allScripts].map(m => m.indices![0][0]).filter(o => o < debutVars)
-    if (premierCode.length > 0) throw new Error(t('transpiler.vars-apres-script', { ligne: lineInFile(debutVars) }))
+    const startVars = allVars[0].indices![0][0]
+    const firstCode = [...allModuleScripts, ...allScripts].map(m => m.indices![0][0]).filter(o => o < startVars)
+    if (firstCode.length > 0) throw new Error(t('transpiler.vars-after-script', { line: lineInFile(startVars) }))
   }
 
   // 4. HTML : tout sauf les <script>/<style>/<theme>/<routes> déjà repérés (au plus
@@ -1226,7 +1242,7 @@ export function extractSections(content: string, opts: {
   // posés sur CE `html`) citent alors un numéro FAUX pour toute erreur après un <script>/
   // <style>/<theme>/<routes> (`{await}` en ligne 6 du .mjs cité « ligne 2 »). Remplacé par un
   // commentaire HTML inerte de MÊME hauteur (mêmes `\n` que le bloc retiré) : la lecture du gabarit
-  // (lireParLArbre, parser/index.ts) ne produit NI texte NI nœud pour un commentaire — zéro trace dans l'AST,
+  // (readViaTree, parser/index.ts) ne produit NI texte NI nœud pour un commentaire — zéro trace dans l'AST,
   // dans `surgicalHtml` ou dans la sortie compilée, seuls les OFFSETS DE LIGNE du reste du
   // gabarit restent justes.
   // SEUIL `> 0` retour à la ligne, volontaire : un bloc qui tient sur UNE SEULE ligne (aucun
@@ -1295,12 +1311,12 @@ export function extractSections(content: string, opts: {
   // trouvé ICI, dans le HTML résiduel, ne peut donc jamais venir d'un bloc rendu inerte : il
   // signale toujours la vraie fuite d'extraction que ce garde-fou existe pour attraper.
   // Un `</script>` écrit dans la VALEUR d'un attribut (`title="a </script> b"`, HTML valide) n'est pas une fuite : les valeurs
-  // entre guillemets des balises bien formées ne sont pas lues (masqueValeursAttributs), seulement quand une balise est en vue
-  const htmlHorsCommentaires = maskHtmlComments(html)
-  const ORPHELIN_RE = /<\/(?:script|style|theme|routes|vars|types|effects)>/i
-  const orphanTag = ORPHELIN_RE.test(htmlHorsCommentaires) ? masqueValeursAttributs(htmlHorsCommentaires).match(ORPHELIN_RE) : null
+  // entre guillemets des balises bien formées ne sont pas lues (attrValueMask), seulement quand une balise est en vue
+  const htmlWithoutComments = maskHtmlComments(html)
+  const ORPHAN_RE = /<\/(?:script|style|theme|routes|vars|types|effects)>/i
+  const orphanTag = (ORPHAN_RE.test(htmlWithoutComments) ? attrValueMask(htmlWithoutComments).match(ORPHAN_RE) : null) ?? orphanClosingBlock(macros)
   if (orphanTag) {
-    throw new Error(t('transpiler.balise-orpheline-html', { balise: orphanTag[0] }))
+    throw new Error(t('transpiler.tag-orphan-html', { tag: orphanTag[0] }))
   }
 
   const htmlRestored = macroMasks.restore(html)
@@ -1309,5 +1325,5 @@ export function extractSections(content: string, opts: {
   const htmlStartLine = lineOfOffset(htmlRestored, htmlRestored.length - htmlRestored.trimStart().length)
   html = htmlRestored.trim()
 
-  return { module: moduleSection, script, style, layouts, themes, routes, vars, types, effects, html, htmlStartLine, warnings, lostInStrings: lostPlaces(written, lost) }
+  return { module: moduleSection, script, style, layouts, themes, routes, vars, types, effects, html, htmlStartLine, warnings }
 }

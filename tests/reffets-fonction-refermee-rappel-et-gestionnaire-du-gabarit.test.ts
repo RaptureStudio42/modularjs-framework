@@ -4,7 +4,7 @@
 // rappel du premier niveau (forEach) dit ce qui est vrai pour lui. Un reffet écrit dans un gestionnaire du gabarit, qui ne tournerait
 // jamais, est refusé avec la forme qui marche ; celui écrit directement dans une racine y reste permis
 import assert from 'node:assert/strict'
-import { lintEffectGestionnaire, lintEffectTopLevel } from '../src/transpiler/lint.js'
+import { lintEffectHandler, lintEffectTopLevel } from '../src/transpiler/lint.js'
 import { transpile } from '../src/transpiler/index.js'
 
 const refus = (src: string, lang = 'js'): string => {
@@ -89,7 +89,7 @@ describe('µeffect dans un gestionnaire du gabarit', function () {
     await transpile(src, { moduleName: 'rg-ok' })
   })
   it('gestionnaire écrit en CoffeeScript, lu en Civet : refusé hors d\'une racine, accepté dans la racine', () => {
-    for (const code of ['µeffect(-> µ.log($n))', '-> µeffect(-> 1)', 'go(); µ.effect(-> 1)']) assert.throws(() => lintEffectGestionnaire(code, '@click', 7), /dans le gestionnaire @click \(ligne 7\)/)
-    for (const code of ['void (window.__a = µeffect.root(-> µeffect(-> 1)))', 'µeffect.root ->\n  f = (x) -> x\n  µeffect(-> f(1))', 'µ.log("µeffect(-> 1)")']) assert.doesNotThrow(() => lintEffectGestionnaire(code, '@click', 7))
+    for (const code of ['µeffect(-> µ.log($n))', '-> µeffect(-> 1)', 'go(); µ.effect(-> 1)']) assert.throws(() => lintEffectHandler(code, '@click', 7), /dans le gestionnaire @click \(ligne 7\)/)
+    for (const code of ['void (window.__a = µeffect.root(-> µeffect(-> 1)))', 'µeffect.root ->\n  f = (x) -> x\n  µeffect(-> f(1))', 'µ.log("µeffect(-> 1)")']) assert.doesNotThrow(() => lintEffectHandler(code, '@click', 7))
   })
 })

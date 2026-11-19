@@ -452,11 +452,11 @@ describe('Bundler.coreToolShown — l\'outil peut-il être affiché par l\'appli
 
   it('aucune référence à l\'éditeur ni à la barre : unknown (le doute vaut oui)', () => {
     assert.equal(ask(withRefs([]), 'link'), 'unknown')
-    assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'select', kind: 'raccourci-coeur', attrs: texts('bold') }]), 'link'), 'unknown')
+    assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'select', kind: 'shortcut-core', attrs: texts('bold') }]), 'link'), 'unknown')
   })
 
   it('une liste écrite : yes pour les outils nommés, no pour les autres', () => {
-    const bundler = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: texts('bold link') }])
+    const bundler = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'shortcut-core', attrs: texts('bold link') }])
     assert.equal(ask(bundler, 'bold'), 'yes')
     assert.equal(ask(bundler, 'link'), 'yes')
     assert.equal(ask(bundler, 'check'), 'no')
@@ -464,60 +464,60 @@ describe('Bundler.coreToolShown — l\'outil peut-il être affiché par l\'appli
 
   it('un attribut absent, vide, calculé, ou un étalement : unknown pour tous les outils', () => {
     for (const attrs of [{ names: [], spread: false, texts: {} }, texts(''), texts('  '), texts(null), { names: [], spread: true, texts: {} }, { names: ['toolbar'], spread: false }]) {
-      const bundler = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'raccourci-coeur', attrs }, { file: 'b.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: texts('bold') }])
+      const bundler = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'shortcut-core', attrs }, { file: 'b.mjs', name: 'editor', kind: 'shortcut-core', attrs: texts('bold') }])
       assert.equal(ask(bundler, 'link'), 'unknown', JSON.stringify(attrs))
     }
   })
 
   it('une référence qui n\'a pas rapporté ses attributs : unknown', () => {
-    assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'editor', kind: 'litteral-coeur' }]), 'link'), 'unknown')
+    assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'editor', kind: 'literal-core' }]), 'link'), 'unknown')
   })
 
   it('la barre lit `tools`, l\'éditeur lit `toolbar`, chacun ignore l\'attribut de l\'autre', () => {
-    const barre = withRefs([{ file: 'a.mjs', name: 'toolbar', kind: 'raccourci-coeur', attrs: { names: ['tools'], spread: false, texts: { tools: 'undo' } } }])
+    const barre = withRefs([{ file: 'a.mjs', name: 'toolbar', kind: 'shortcut-core', attrs: { names: ['tools'], spread: false, texts: { tools: 'undo' } } }])
     assert.equal(ask(barre, 'undo'), 'yes')
     assert.equal(ask(barre, 'link'), 'no')
-    const mauvais = withRefs([{ file: 'a.mjs', name: 'toolbar', kind: 'raccourci-coeur', attrs: texts('undo') }])
+    const mauvais = withRefs([{ file: 'a.mjs', name: 'toolbar', kind: 'shortcut-core', attrs: texts('undo') }])
     assert.equal(ask(mauvais, 'link'), 'unknown')
   })
 
   it('`none` n\'est pas un outil : aucun outil, mais la réponse est sûre (no)', () => {
-    const bundler = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: texts('none') }])
+    const bundler = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'shortcut-core', attrs: texts('none') }])
     assert.equal(ask(bundler, 'link'), 'no')
     assert.equal(ask(bundler, 'bold'), 'no')
   })
 
   it('un groupe (icons, glyphs, heads) est vrai dès que l\'un de ses outils est nommé ; separator quand une liste écrit |', () => {
-    const bundler = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: texts('bold | link') }])
+    const bundler = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'shortcut-core', attrs: texts('bold | link') }])
     assert.equal(ask(bundler, 'icons'), 'yes')
     assert.equal(ask(bundler, 'glyphs'), 'yes')
     assert.equal(ask(bundler, 'separator'), 'yes')
     assert.equal(ask(bundler, 'heads'), 'no')
-    const lettres = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: texts('bold italic') }])
+    const lettres = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'shortcut-core', attrs: texts('bold italic') }])
     assert.equal(ask(lettres, 'icons'), 'no')
     assert.equal(ask(lettres, 'separator'), 'no')
     assert.equal(ask(withRefs([]), 'icons'), 'unknown')
   })
 
   it('le groupe script n\'a aucun outil : jamais yes, même quand une liste écrit « script » ; no dès que la construction tranche les outils, unknown dans le doute', () => {
-    const bundler = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: texts('bold script') }])
+    const bundler = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'shortcut-core', attrs: texts('bold script') }])
     assert.equal(ask(bundler, 'script'), 'no')
     assert.equal(ask(bundler, 'link'), 'no')
-    assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: texts('bold') }]), 'script'), 'no')
+    assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'editor', kind: 'shortcut-core', attrs: texts('bold') }]), 'script'), 'no')
     assert.equal(ask(withRefs([]), 'script'), 'unknown')
   })
 
   it('un nom qui est aussi une propriété de tout objet (constructor, toString) n\'est pas un groupe', () => {
-    const bundler = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: texts('bold') }])
+    const bundler = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'shortcut-core', attrs: texts('bold') }])
     assert.equal(ask(bundler, 'constructor'), 'no')
     assert.equal(ask(bundler, 'toString'), 'no')
   })
 
   it('les références au projet et aux autres modules ne comptent pas, la casse non plus', () => {
     const bundler = withRefs([
-      { file: 'a.mjs', name: 'editor', kind: 'raccourci-dev', attrs: texts('link') },
-      { file: 'a.mjs', name: 'field', kind: 'raccourci-coeur', attrs: texts('link') },
-      { file: 'a.mjs', name: 'Editor', kind: 'litteral-coeur', attrs: { names: ['TOOLBAR'], spread: false, texts: { toolbar: 'bold' } } },
+      { file: 'a.mjs', name: 'editor', kind: 'shortcut-dev', attrs: texts('link') },
+      { file: 'a.mjs', name: 'field', kind: 'shortcut-core', attrs: texts('link') },
+      { file: 'a.mjs', name: 'Editor', kind: 'literal-core', attrs: { names: ['TOOLBAR'], spread: false, texts: { toolbar: 'bold' } } },
     ])
     assert.equal(ask(bundler, 'link'), 'no')
     assert.equal(ask(bundler, 'bold'), 'yes')
@@ -527,7 +527,7 @@ describe('Bundler.coreToolShown — l\'outil peut-il être affiché par l\'appli
     const rep = (answer: string | null, toolbar: string | null) => ({ names: ['answer', 'toolbar'], spread: false, texts: { answer, toolbar } })
     for (const answer of ['', 'true', 'oui']) {
       for (const toolbar of [null, '', 'bold link']) {
-        const bundler = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: rep(answer, toolbar) }])
+        const bundler = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'shortcut-core', attrs: rep(answer, toolbar) }])
         assert.equal(ask(bundler, 'link'), 'no', `answer=${JSON.stringify(answer)} toolbar=${JSON.stringify(toolbar)}`)
         assert.equal(ask(bundler, 'bold'), 'no')
         assert.equal(ask(bundler, 'keys'), 'no')
@@ -537,45 +537,45 @@ describe('Bundler.coreToolShown — l\'outil peut-il être affiché par l\'appli
 
   it('answer calculé, « false », absent, ou un étalement : la barre de l\'éditeur compte comme avant', () => {
     const rep = (answer: string | null | undefined, toolbar: string | null, spread = false) => ({ names: ['toolbar'], spread, texts: answer === undefined ? { toolbar } : { answer, toolbar } })
-    assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: rep(null, null) }]), 'link'), 'unknown', 'answer calculé, pas de toolbar')
-    assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: rep('false', null) }]), 'link'), 'unknown', 'answer="false", pas de toolbar')
-    assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: rep(undefined, null) }]), 'link'), 'unknown', 'answer absent, pas de toolbar')
-    assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: rep('', 'bold', true) }]), 'bold'), 'unknown', 'answer nu mais un étalement : il peut le défaire')
-    const nomme = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: rep(null, 'bold') }])
+    assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'editor', kind: 'shortcut-core', attrs: rep(null, null) }]), 'link'), 'unknown', 'answer calculé, pas de toolbar')
+    assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'editor', kind: 'shortcut-core', attrs: rep('false', null) }]), 'link'), 'unknown', 'answer="false", pas de toolbar')
+    assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'editor', kind: 'shortcut-core', attrs: rep(undefined, null) }]), 'link'), 'unknown', 'answer absent, pas de toolbar')
+    assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'editor', kind: 'shortcut-core', attrs: rep('', 'bold', true) }]), 'bold'), 'unknown', 'answer nu mais un étalement : il peut le défaire')
+    const nomme = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'shortcut-core', attrs: rep(null, 'bold') }])
     assert.equal(ask(nomme, 'bold'), 'yes', 'answer calculé, toolbar écrit : la liste compte')
     assert.equal(ask(nomme, 'link'), 'no')
-    assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: rep('false', 'link') }]), 'link'), 'yes', 'answer="false" : un éditeur ordinaire')
+    assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'editor', kind: 'shortcut-core', attrs: rep('false', 'link') }]), 'link'), 'yes', 'answer="false" : un éditeur ordinaire')
   })
 
   it('un éditeur « répondre » et un autre éditeur : seules les listes du second comptent ; une barre séparée compte toujours', () => {
     const rep = { names: ['answer', 'toolbar'], spread: false, texts: { answer: '', toolbar: 'check' } }
-    const bundler = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: rep }, { file: 'b.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: texts('bold') }])
+    const bundler = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'shortcut-core', attrs: rep }, { file: 'b.mjs', name: 'editor', kind: 'shortcut-core', attrs: texts('bold') }])
     assert.equal(ask(bundler, 'bold'), 'yes')
     assert.equal(ask(bundler, 'check'), 'no')
-    const barre = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: rep }, { file: 'b.mjs', name: 'toolbar', kind: 'raccourci-coeur', attrs: { names: [], spread: false, texts: {} } }])
+    const barre = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'shortcut-core', attrs: rep }, { file: 'b.mjs', name: 'toolbar', kind: 'shortcut-core', attrs: { names: [], spread: false, texts: {} } }])
     assert.equal(ask(barre, 'link'), 'unknown', 'une barre séparée sans tools montre tous les outils')
   })
 
   it('un modèle de l\'éditeur « répondre » (editor--compact answer) n\'est pas sûr de ne pas afficher de barre : sa liste compte', () => {
-    const bundler = withRefs([{ file: 'a.mjs', name: 'editor--compact', kind: 'raccourci-coeur', attrs: { names: ['answer', 'toolbar'], spread: false, texts: { answer: '', toolbar: 'link' } } }])
+    const bundler = withRefs([{ file: 'a.mjs', name: 'editor--compact', kind: 'shortcut-core', attrs: { names: ['answer', 'toolbar'], spread: false, texts: { answer: '', toolbar: 'link' } } }])
     assert.equal(ask(bundler, 'link'), 'yes')
   })
 
   it('le groupe keys (link et check, les deux outils dont le raccourci dépend de la barre) est vrai dès que l\'un des deux est nommé', () => {
-    assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: texts('bold link') }]), 'keys'), 'yes')
-    assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: texts('check') }]), 'keys'), 'yes')
-    assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: texts('bold italic undo') }]), 'keys'), 'no')
+    assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'editor', kind: 'shortcut-core', attrs: texts('bold link') }]), 'keys'), 'yes')
+    assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'editor', kind: 'shortcut-core', attrs: texts('check') }]), 'keys'), 'yes')
+    assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'editor', kind: 'shortcut-core', attrs: texts('bold italic undo') }]), 'keys'), 'no')
     assert.equal(ask(withRefs([]), 'keys'), 'unknown')
   })
 
   it('un modèle de l\'éditeur (editor--compact) compte comme un éditeur', () => {
-    const bundler = withRefs([{ file: 'a.mjs', name: 'editor--compact', kind: 'raccourci-coeur', attrs: texts('link') }])
+    const bundler = withRefs([{ file: 'a.mjs', name: 'editor--compact', kind: 'shortcut-core', attrs: texts('link') }])
     assert.equal(ask(bundler, 'link'), 'yes')
   })
 
   it('la réponse est prise sur les références du projet au moment où elles sont toutes lues : une référence venue après (l\'éditeur écrit sa barre) ne compte pas', () => {
-    const bundler = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: texts('bold') }])
-    ;(bundler as any).pendingTagRefs.push({ file: 'editor.mjs', name: 'toolbar', kind: 'raccourci-coeur', attrs: { names: ['tools'], spread: false, texts: { tools: null } } })
+    const bundler = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'shortcut-core', attrs: texts('bold') }])
+    ;(bundler as any).pendingTagRefs.push({ file: 'editor.mjs', name: 'toolbar', kind: 'shortcut-core', attrs: { names: ['tools'], spread: false, texts: { tools: null } } })
     assert.equal(ask(bundler, 'link'), 'no')
   })
 })

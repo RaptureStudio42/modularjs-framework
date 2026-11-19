@@ -2,9 +2,10 @@
 // composants qui gardent le même objet, l'enfant qui le reçoit par une prop puis le range dans une autre variable, un composant
 // retiré puis remis, l'objet rendu par une fonction d'un module (même quand un objet de l'état est déjà tenu par deux composants),
 // une écriture plus bas que l'objet gardé, la liste gardée entière, l'enfant lié à deux sens (`v=!{$sel}`) et l'objet d'un état de
-// module (`µ$$panier`), la ligne d'un `{for}` gardée par son gestionnaire, l'élément d'une valeur dérivée. L'écriture faite par la
-// variable d'un composant ne prévient que lui : un objet de l'état d'un composant tenu par deux enfants se conduit comme sans le
-// carnet. Une passe par écriture et par composant, aucune pour l'écriture d'un objet que personne ne garde. Avec
+// module (`µ$$panier`), la ligne d'un `{for}` gardée par son gestionnaire, l'élément d'une valeur dérivée. Avec l'enveloppe,
+// l'écriture faite par la variable d'un composant prévient aussi les autres composants qui tiennent le même objet (le frère, le
+// parent qui le lit) ; sans elle, elle ne prévient que lui. Une passe par écriture et par composant, aucune pour l'écriture d'un
+// objet que personne ne garde. Avec
 // l'enveloppe (le défaut) et sans elle (`proxy: false`), en développement et en production, en navigateur réel (Chromium pour toutes
 // les scènes, Firefox et WebKit pour la scène des deux composants)
 import assert from 'node:assert/strict'
@@ -48,7 +49,8 @@ const SOURCES: Record<string, string> = {
   'sfr.mjs': "<script>\n  $$fr = [{ id: 1, adr: { ville: 'v' } }]\n  $sel = null\n</script>\n\n{for r in $$fr}<button class=\"s\" type=\"button\" @click={$sel = r}>s</button>{end}\n<p class=\"vu\">{$sel?.adr.ville}</p>\n<button class=\"p\" type=\"button\" @click={$$fr[0].adr.ville = 'Z'}>p</button>\n",
   'c-v.mjs':  "<script>\n  $sel = null\n</script>\n\n<p class=\"vu\">{$sel?.adr.ville}</p>\n<button class=\"s\" type=\"button\" @click={$sel = $items[0]}>s</button>\n",
   'sfv.mjs':  "<script>\n  $$fv = [{ id: 1, adr: { ville: 'v' } }]\n  $vis = $$fv.filter((x) -> x.id > 0)\n</script>\n\n<@c-v items={$vis}></@c-v>\n<button class=\"p\" type=\"button\" @click={$$fv[0].adr.ville = 'Z'}>p</button>\n",
-  // un objet de l'état d'un composant, tenu par deux enfants : l'écriture de l'un ne prévient que lui, avec le carnet comme sans lui
+  // un objet de l'état d'un composant, tenu par deux enfants : l'écriture de l'un prévient le parent et l'autre enfant avec
+  // l'enveloppe, lui seul sans elle
   'c-l.mjs':  "<p class=\"vu\">{$o?.nom}</p>\n<button class=\"e\" type=\"button\" @click={$o.nom = 'Y'}>e</button>\n",
   'sol.mjs':  "<script>\n  $o = { nom: 'a' }\n</script>\n\n<p class=\"vu\">{$o.nom}</p>\n<@c-l o={$o}></@c-l>\n<@c-l o={$o}></@c-l>\n<button class=\"p\" type=\"button\">p</button>\n",
   // l'objet d'un état de module (`µ$$panier`)
@@ -71,6 +73,12 @@ const SCENES: Record<string, [string[], string[]]> = {
   'mjs-sfv': [['0:.s', 'p'], ['-', 'v', 'Z']],
   'mjs-sol': [['0:.e', '1:.e'], ['a ; a ; a', 'a ; Y ; a', 'a ; Y ; a']],
   'mjs-st': [['s', 'p'], ['-', 'a', 'Z']]
+}
+
+// avec l'enveloppe (le défaut), les autres composants qui tiennent l'objet suivent l'écriture faite par la variable de l'un
+const AVEC_ENVELOPPE: Record<string, string[]> = {
+  'mjs-sv': ['- ; -', 'a ; -', 'a ; a', 'Y ; Y', 'Z ; Z'],
+  'mjs-sol': ['a ; a ; a', 'Y ; Y ; Y', 'Y ; Y ; Y']
 }
 
 // une construction : production en un seul fichier, ou développement (tout le JavaScript dans la page, le cœur d'abord)
@@ -134,7 +142,8 @@ for (const nav of ['chromium', 'firefox', 'webkit'] as const) describe(`magasin 
 
   const balises = nav === 'chromium' ? Object.keys(SCENES) : ['mjs-sd']
   for (const [nom, opts, dev] of VARIANTES) for (const b of balises) it(`${b} (${nom})`, async function () {
-    const [clics, attendu] = SCENES[b]
+    const [clics, sans] = SCENES[b]
+    const attendu       = opts.proxy === false ? sans : AVEC_ENVELOPPE[b] ?? sans
     const o = await charger(browser, await cible(nom, opts, dev), b)
     try {
       await o.page.waitForFunction(`!!document.querySelector('${b}')?._shadow?.querySelector('.p, .t')`, null, { timeout: 10000 })

@@ -62,9 +62,9 @@ describe("mjs_devpanel — onglet État : une variable préfixée d'un underscor
 
     window.µ.console(true)
     const racine = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
-    racine.querySelectorAll('.ligne')[0].dispatchEvent(new window.Event('click', { bubbles: true }))
+    racine.querySelectorAll('.line')[0].dispatchEvent(new window.Event('click', { bubbles: true }))
 
-    const etatTexte = racine.querySelector('.onglet-corps').textContent
+    const etatTexte = racine.querySelector('.tab-body').textContent
     assert.match(etatTexte, /_secret/, `\$_secret doit apparaître dans l'onglet État :\n${etatTexte}`)
     assert.match(etatTexte, /\$?visible/, etatTexte)
     window.µ.console(false)

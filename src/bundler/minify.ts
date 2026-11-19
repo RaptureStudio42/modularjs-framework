@@ -17,9 +17,9 @@
 
 import { transform } from 'esbuild'
 import * as acorn from 'acorn'
+import * as walk from 'acorn-walk'
 import { t } from '../messages/index.js'
-import { COMMENTAIRE_MJS_GARDE, maskInertSameLength } from '../lexer/index.js'
-import { unescapeMu } from '../transpiler/mu-escapes.js'
+import { KEPT_MJS_COMMENT, maskInertSameLength } from '../lexer/index.js'
 import type { LogLevelName } from './config.js'
 
 export interface MinifyResult {
@@ -141,6 +141,43 @@ function hintRe(methods: readonly RuntimeConsoleMethod[]): RegExp {
   return new RegExp(`µ\\.(?:${named.join('|')})|_mjs_logger|<trace-logger>`)
 }
 
+// `µ.debug = …` écrit en instruction, retiré de la production : `void 0;` à sa place, sur toute son étendue (`if (x)⏎ µ.debug = true⏎ suite()` :
+// la suite ne passe pas sous le `if` ; `µ.debug = cfg⏎ .lire('debug')` : l'appel part avec lui). Seule une instruction qui est exactement
+// cette affectation (opérateur `=`, à gauche `µ.debug`) : prise dans une expression (`x = c ? µ.debug = 7 : 0`), dans une suite
+// (`µ.debug = true, s = 1`), elle reste. Lu sur le fichier entier par acorn (en module, puis en script, `await` permis hors fonction),
+// `µ` écrit échappé compris ; un fichier sans `debug` n'est pas lu, un fichier qu'acorn ne lit pas reste tel quel (le minifieur dit la vraie erreur)
+function withoutDebugAssignments(source: string): string {
+  if (!source.includes('debug')) return source
+  let ast: acorn.Node | null = null
+  for (const sourceType of ['module', 'script'] as const) {
+    try {
+      ast = acorn.parse(source, { ecmaVersion: 'latest', sourceType, allowAwaitOutsideFunction: true })
+      break
+    }
+    catch {
+      continue
+    }
+  }
+  if (!ast) return source
+  const spans: Array<[number, number]> = []
+  walk.simple(ast, {
+    ExpressionStatement(n: any) {
+      const e = n.expression
+      if (e.type === 'AssignmentExpression' && e.operator === '=' && e.left.type === 'MemberExpression' && !e.left.computed && e.left.object.type === 'Identifier' && e.left.object.name === 'µ' && e.left.property.name === 'debug') spans.push([n.start, n.end])
+    },
+  })
+  if (spans.length === 0) return source
+  let out    = ''
+  let cursor = 0
+  for (const [start, end] of spans.sort((a, b) => a[0] - b[0])) {
+    // une instruction prise dans une autre déjà retirée (fonction du membre de droite) part avec elle
+    if (start < cursor) continue
+    out   += source.slice(cursor, start) + 'void 0;'
+    cursor = end
+  }
+  return out + source.slice(cursor)
+}
+
 // le texte avec chaînes, morceaux de gabarit, expressions régulières et commentaires blanchis (même longueur, retours
 // à la ligne gardés), d'après les jetons d'acorn ; un code qu'acorn ne lit pas (en module, puis en script) retombe sur
 // le masque du lexer
@@ -214,7 +251,8 @@ export function cutRuntimeTraces(source: string, methods: readonly RuntimeConsol
 //     partent aussi, et les textes qu'eux seuls lisent avec eux (WARNING_ONLY_MESSAGES) ; à ces trois niveaux, les messages du
 //     développement seul partent du code envoyé et des fichiers de messages (DEV_ONLY_MESSAGES)
 //   - 'log' : les traces restent, leur texte part avec le manifeste (traceMessages) : sans lui la première trace sortirait
-//     en clés, puis serait rejouée dans le désordre à l'arrivée du fichier de messages. Les fichiers restent complets
+//     en clés, puis serait rejouée dans le désordre à l'arrivée du fichier de messages. Les fichiers restent complets, sauf
+//     les textes que seul un bloc du développement lit (DEV_BLOCK_MESSAGES) : ils partent à tous les niveaux
 // tests/runtime-messages-des-traces.test.ts relit le runtime et garde ces listes
 // ============================================================================
 
@@ -234,16 +272,17 @@ export const WARNING_ONLY_MESSAGES: readonly string[] = [
   'ajaxBinVersionDiff', 'ajaxCrossOrigin', 'ajaxOldName', 'ajaxUnseen',
   'animCreateOverride',
   'autoloaderStale',
+  'awaitedEarly', 'awaitedEarlyField',
   'backlightNone',
   'behindEdge', 'behindImage',
   'blendCsp', 'blendFilter', 'blendImage', 'blendNoSrc',
   'chromaticFilter',
   'collNotNamed',
   'crossfadeFallbackFailed',
-  'dynAccept', 'dynInstance', 'dynNotListed', 'dynRefused',
+  'dynAccept', 'dynBadName', 'dynInstance', 'dynNotListed', 'dynRefused',
   'effectInit',
   'storeDestroyed', 'storeDestroyedRead',
-  'derAccesseur', 'derPrecise', 'elCycle', 'elHydrate', 'elHydrateMismatch', 'elLoop', 'elOrphanInherited', 'elOrphanLocal', 'elProto', 'elStructLoop', 'elTeardown',
+  'derivedAccessor', 'derivedPrecise', 'elCycle', 'elHydrate', 'elHydrateMismatch', 'elLoop', 'elOrphanInherited', 'elOrphanLocal', 'elProto', 'elStructLoop', 'elTeardown',
   'everyError', 'everyHash', 'everyId', 'everyIgnored', 'everyInit', 'everyOptType', 'everySyntax', 'everyTimes', 'everyUnknownOpt', 'everyUnseen', 'everyUnseenId', 'everyWhileAsync',
   'fluidColor', 'fluidNoContext', 'fluidTextComponent',
   'focusHost',
@@ -252,14 +291,14 @@ export const WARNING_ONLY_MESSAGES: readonly string[] = [
   'fxBrought', 'fxEveryRefused', 'fxRefused',
   'gradientImage',
   'hoverIgnored', 'hoverOf', 'hoverOfAlone',
-  'i18nMissing', 'i18nNoData', 'i18nSecours',
-  'initFn', 'initFnCtor', 'initPath', 'initReadOnly',
+  'i18nMissing', 'i18nNoData', 'i18nRescue',
+  'initAttrName', 'initFn', 'initFnCtor', 'initHtmlKey', 'initPath', 'initReadOnly',
   'interpNonFinite',
   'layoutFile',
   'lazyCss',
   'lifeHook', 'lifeOnDestroy', 'lifeRun',
   'liquidFilter',
-  'loadArgs', 'loadOption', 'loadPlace', 'loadPlaceEffect', 'loadPlaceFor', 'loadPlaceHelper', 'loadPlaceTemplate', 'loadRefresh',
+  'loadArgs', 'loadClearArgs', 'loadOption', 'loadPlace', 'loadPlaceEffect', 'loadPlaceFor', 'loadPlaceHelper', 'loadPlaceTemplate', 'loadRefresh',
   'lruEvictError',
   'mapKeyBothForms',
   'modalNotifyFlow', 'modalNotifyPos', 'modalSoundPath', 'modalSoundUnknown', 'modalUnknownIcon', 'modalUnknownInput',
@@ -269,8 +308,8 @@ export const WARNING_ONLY_MESSAGES: readonly string[] = [
   'pileOverflow',
   'pixelateFilter',
   'reflectNone',
-  'refreshCalcul',
-  'refreshRendu',
+  'refreshCompute',
+  'refreshRender',
   'routerHistoryRefused', 'routerSlashRefused',
   'runesCycle', 'runesInspectInit',
   'schemaUnknownIdReceived',
@@ -285,6 +324,7 @@ export const WARNING_ONLY_MESSAGES: readonly string[] = [
   'travelNone',
   'ttPolicy',
   'txBezierRange', 'txCssSharedThrew', 'txCssThrew', 'txEasingUnknown', 'txSetupThrew', 'txTickThrew',
+  'typesDerived',
   'ujsCallbackMissing', 'ujsConfirmNoModal', 'ujsConfirmRetry', 'ujsConfirmRetryFailed', 'ujsConfirmValue', 'ujsFlashNoModal', 'ujsFlashUnknown', 'ujsHardNavOutside', 'ujsHardNavProtocol', 'ujsMethodNative', 'ujsMethodNoUjs', 'ujsNoAjaxNav', 'ujsPermanentDupId', 'ujsPermanentNoId', 'ujsReplaceNoTarget', 'ujsScriptSwapped', 'ujsSubmitFailed', 'ujsSubmitNoBody', 'ujsSubmitNotHtml', 'ujsTargetMissing', 'ujsTargetMissingReceived', 'ujsUnknownCache', 'ujsUnknownMethod', 'ujsVerbUnknown',
   'vtBadDir', 'vtBadDur', 'vtBadPrio', 'vtDirName', 'vtDupKey', 'vtLevitation', 'vtLevitationIn', 'vtMalformed', 'vtOptMalformed', 'vtUnknownKey', 'vtUnknownPreset',
 ]
@@ -300,6 +340,7 @@ export const WARNING_ONLY_MESSAGES: readonly string[] = [
 export const DEV_ONLY_MESSAGES: readonly string[] = [
   'adoptSheetNoShadow',
   'ajaxOldName', 'ajaxUnseen',
+  'awaitedEarly', 'awaitedEarlyField', 'awaitedUnread',
   'blendFilter', 'chromaticFilter', 'liquidFilter', 'pixelateFilter',
   'collNotNamed',
   'dynAccept',
@@ -309,7 +350,7 @@ export const DEV_ONLY_MESSAGES: readonly string[] = [
   'fluidTextComponent',
   'fxBrought', 'fxEveryRefused', 'fxRefused',
   'hoverIgnored', 'hoverOfAlone',
-  'i18nMissing', 'i18nSecours',
+  'i18nMissing', 'i18nRescue',
   'loadPlace', 'loadPlaceEffect', 'loadPlaceFor', 'loadPlaceHelper', 'loadPlaceTemplate',
   'mapKeyBothForms',
   'modalNotifyFlow', 'modalNotifyPos', 'modalSoundUnknown', 'modalUnknownInput',
@@ -323,6 +364,12 @@ export const DEV_ONLY_MESSAGES: readonly string[] = [
   'vtDirName', 'vtDupKey', 'vtMalformed', 'vtOptMalformed', 'vtUnknownKey',
 ]
 
+/** clés du groupe `err` que seul un bloc du développement lit : `<wait-dev>` (mjs_await_derived.ts, hors d'un appel µ.warn(…) ou
+ *  µ.error(…)) et `<derived-check>` (contrôle des valeurs dérivées, mjs_types.ts et mjs_element.ts) ; aucune construction de
+ *  production n'emporte ces blocs, aucun de ces messages ne peut s'y écrire : leurs textes quittent ses fichiers de messages à TOUS
+ *  les niveaux de console, 'log' compris (tests/messages-du-seul-bloc-du-developpement-hors-production.test.ts) */
+export const DEV_BLOCK_MESSAGES: readonly string[] = ['awaitedRefused', 'derivedAccessor', 'derivedPrecise', 'typesDerived']
+
 /** clés qu'une trace lit : les précédentes, et le texte d'UJS que sa trace du mode 'silent' partage avec son avertissement */
 export const TRACE_READ_MESSAGES: readonly string[] = [...TRACE_ONLY_MESSAGES, 'ujsNoPage']
 
@@ -331,10 +378,19 @@ export function levelCutsTraces(level: LogLevelName): boolean {
   return buildPureList(level).includes('µ.log')
 }
 
-/** le groupe `err` d'une langue sans les textes que seules des traces lisent, ni ceux du développement seul ; au niveau de PROD
+/** le groupe `err` d'une langue sans les textes que seul un bloc du développement lit (DEV_BLOCK_MESSAGES) : les fichiers de
+ *  messages de production, à tous les niveaux */
+export function messagesWithoutDevBlocks(messages: Record<string, string>): Record<string, string> {
+  const rest = { ...messages }
+  for (const key of DEV_BLOCK_MESSAGES) delete rest[key]
+  return rest
+}
+
+/** le groupe `err` d'une langue sans les textes que seules des traces lisent, ni ceux du développement seul (DEV_ONLY_MESSAGES, et
+ *  DEV_BLOCK_MESSAGES : un bloc que la production n'emporte pas) ; au niveau de PROD
  *  `level` 'error' ou 'silent', sans ceux que seuls des avertissements lisent non plus */
 export function messagesWithoutTraces(messages: Record<string, string>, level: LogLevelName = 'warn'): Record<string, string> {
-  const rest = { ...messages }
+  const rest = messagesWithoutDevBlocks(messages)
   for (const key of TRACE_ONLY_MESSAGES) delete rest[key]
   for (const key of DEV_ONLY_MESSAGES) delete rest[key]
   if (level === 'error' || level === 'silent') for (const key of WARNING_ONLY_MESSAGES) delete rest[key]
@@ -425,10 +481,10 @@ export const RESERVED_NAME_MAX_LENGTH = 3
 const SHORT_NAME = `[A-Za-z_$][\\w$]{0,${RESERVED_NAME_MAX_LENGTH - 1}}`
 
 const INSTANCE_NAME_PATTERNS: RegExp[] = [
-  new RegExp(`(?<!\\.)\\.(?<nom>${SHORT_NAME})(?![\\w$])`, 'g'),          // x.nom, x?.nom — jamais le ... d'un étalement
-  new RegExp(`(?<![\\w$.])(?<nom>${SHORT_NAME})\\s*:`, 'g'),              // clé d'objet nom:
-  new RegExp(`(['"\`])(?<nom>${SHORT_NAME})\\1`, 'g'),                    // littéral 'nom', "nom" ou entre accents graves
-  new RegExp(`[{,]\\s*(?<nom>${SHORT_NAME})\\s*(?=[,}(=])`, 'g'),         // { nom }, { a, nom }, { nom() {…} }, { nom = défaut }
+  new RegExp(`(?<!\\.)\\.(?<name>${SHORT_NAME})(?![\\w$])`, 'g'),          // x.nom, x?.nom — jamais le ... d'un étalement
+  new RegExp(`(?<![\\w$.])(?<name>${SHORT_NAME})\\s*:`, 'g'),              // clé d'objet nom:
+  new RegExp(`(['"\`])(?<name>${SHORT_NAME})\\1`, 'g'),                    // littéral 'nom', "nom" ou entre accents graves
+  new RegExp(`[{,]\\s*(?<name>${SHORT_NAME})\\s*(?=[,}(=])`, 'g'),         // { nom }, { a, nom }, { nom() {…} }, { nom = défaut }
 ]
 
 /** Noms courts (au plus `RESERVED_NAME_MAX_LENGTH` caractères) qu'une instance peut porter par
@@ -436,7 +492,7 @@ const INSTANCE_NAME_PATTERNS: RegExp[] = [
 export function collectInstanceNames(code: string): string[] {
   const names = new Set<string>()
   for (const re of INSTANCE_NAME_PATTERNS) {
-    for (const m of code.matchAll(re)) names.add(m.groups!.nom)
+    for (const m of code.matchAll(re)) names.add(m.groups!.name)
   }
   return [...names].sort()
 }
@@ -609,6 +665,8 @@ const MJS_NAME_STRING = /^_mjs_(?:[a-zA-Z_$][\w$]*)?$/
  *  (`total / n`) : hors de cette liste, un `/` qui suit un identifiant, un nombre, `)`, `]`, `}` ou
  *  une chaîne close divise. */
 const REGEX_AFTER_WORD = new Set(['return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'case', 'do', 'else', 'yield', 'await', 'throw'])
+// un caractère de nom, lettres accentuées comprises (`unité / 2` divise, comme `unite / 2`)
+const NAME_CHAR = /[\p{ID_Continue}$]/u
 
 /** Fin d'une chaîne `'…'`/`"…"` ouverte en `start` : index APRÈS le guillemet fermant, `-1` si elle
  *  ne se ferme pas avant la fin de ligne (ce n'était pas une chaîne — un guillemet isolé ne doit
@@ -775,14 +833,29 @@ export function blankNonCode(source: string): string {
 
 /** Vrai si le `/` rencontré ouvre un littéral regex, faux s'il divise — décidé sur le dernier
  *  caractère de code. Au moindre doute on tranche pour la DIVISION : prendre une division pour une
- *  regex blanchirait du vrai code, et une garde qui blanchit du code ne garde plus rien. */
+ *  regex blanchirait du vrai code, et une garde qui blanchit du code ne garde plus rien. Après un `++`
+ *  ou un `--`, sa place tranche : posé après son opérande (`n++ / 2`, `t[i]-- / 2`, `(a.b)++ / 2`), la
+ *  barre divise ; posé avant (`++/a/.lastIndex` : après un opérateur, un mot-clé ou un retour à la
+ *  ligne), elle ouvre une regex. */
 function regexLiteralStarts(source: string, prev: string, prevAt: number): boolean {
   if(prev === '') return true
-  if(/[\w$]/.test(prev)) {
-    const word = source.slice(0, prevAt + 1).match(/[A-Za-z_$][\w$]*$/)
-    return word !== null && REGEX_AFTER_WORD.has(word[0])
+  if(NAME_CHAR.test(prev)) return keywordEndsAt(source, prevAt)
+  if((prev === '+' || prev === '-') && source[prevAt - 1] === prev) {
+    let k = prevAt - 2
+    while(k >= 0 && (source[k] === ' ' || source[k] === '\t')) k--
+    if(k < 0) return true
+    if(source[k] === ')' || source[k] === ']') return false
+    return NAME_CHAR.test(source[k]) ? keywordEndsAt(source, k) : true
   }
   return !')]}\'"`'.includes(prev)
+}
+
+/** Vrai si le mot qui finit en `at` est un mot-clé après lequel une expression commence (`return /a/`) ; le mot se lit sur place, en
+ *  remontant ses caractères, jamais sur tout le texte qui le précède. */
+function keywordEndsAt(source: string, at: number): boolean {
+  let start = at
+  while(start > 0 && NAME_CHAR.test(source[start - 1])) start--
+  return REGEX_AFTER_WORD.has(source.slice(start, at + 1))
 }
 
 /** Fin d'un gabarit `` `…` `` ouvert en `start` : index APRÈS le `` ` `` fermant (la fin du source si
@@ -895,12 +968,12 @@ export function assertNoStringIndexedMjsAccess(source: string, filename: string)
     {
       // `obj['_mjs_X']` ou `obj["_mjs_X"]` : accès indexé direct sur prop
       re: /\[\s*(['"])_mjs_[a-zA-Z_$][\w$]*\1\s*\]/,
-      label: t('bundler.minify.label-acces-indexe'),
+      label: t('bundler.minify.label-access-indexed'),
     },
     {
       // `obj[`_mjs_${...}`]` : interpolation dynamique de prop _mjs_*
       re: /\[\s*`_mjs_\$\{[^`]*`\s*\]/,
-      label: t('bundler.minify.label-acces-template'),
+      label: t('bundler.minify.label-access-template'),
     },
     {
       // `Object.defineProperty(*, '_mjs_X', ...)` : définit une prop par
@@ -938,7 +1011,7 @@ export function assertNoStringIndexedMjsAccess(source: string, filename: string)
       // mangleQuoted) → la prop posée n'est jamais celle que lit l'accès pointé ; la correspondance
       // commence sur la clé, la ligne citée est la sienne
       re: /(?<=[{,]\s*)(['"])_mjs_[a-zA-Z_$][\w$]*\1\s*:/,
-      label: t('bundler.minify.label-cle-guillemets'),
+      label: t('bundler.minify.label-key-quotes'),
     },
   ]
 
@@ -948,7 +1021,7 @@ export function assertNoStringIndexedMjsAccess(source: string, filename: string)
       const idx = m.index ?? stripped.indexOf(m[0])
       const line = idx >= 0 ? stripped.slice(0, idx).split('\n').length : 0
       const lineContent = source.split('\n')[line - 1] ?? ''
-      throw new Error(t('bundler.minify.mjs-prop-access-invalide', { fichier: filename, ligne: line, label, contenu: lineContent.trim() }))
+      throw new Error(t('bundler.minify.mjs-prop-access-invalid', { file: filename, line, label, content: lineContent.trim() }))
     }
   }
 }
@@ -1050,30 +1123,18 @@ export async function minifyJs(
   //     QUELLE (esbuild ne remplace pas un LHS) — plus aucun crash sur
   //     `µ.debug = x` inline ou composé, et les `if (µ.debug)` partent en DCE.
   //
-  // On garde donc UNIQUEMENT le retrait de la ligne isolée ci-dessous ; les
+  // On garde donc UNIQUEMENT le retrait de l'instruction `µ.debug = …` ci-dessous (`void 0;` à sa place) ; les
   // LECTURES (→ false → DCE) sont déléguées au `define`. `pure:` (plus bas)
   // remplace par ailleurs l'ancienne regex `µ.log(...) → void 0` (qui
   // cassait les appels imbriqués `µ.log(fn(g(y)))`) ; il ne vaut que pour un `µ`
   // libre, les traces du runtime passent par `cutRuntimeTraces` (cf. plus haut).
   //
-  // Le motif est cherché sur une vue MASQUÉE (chaînes/gabarits/commentaires blanchis, même
-  // longueur) et retiré du texte RÉEL aux MÊMES positions : sans ce masquage, une ligne de
-  // DOCUMENTATION montrant « µ.debug = true » à l'intérieur d'un template literal (guide de
-  // débogage exporté par un module) matchait pareil et disparaissait en silence du texte affiché.
+  // L'instruction est cherchée dans l'arbre du fichier (cf. withoutDebugAssignments) : une ligne de DOCUMENTATION montrant
+  // « µ.debug = true » dans un gabarit littéral (guide de débogage exporté par un module) n'en est pas une, elle reste affichée.
   //
   // En développement (`dev`), rien n'est cherché : la ligne reste, comme sans minification.
-  // la vue lit aussi `µ` échappé (`\u00B5`, écrit à la main ou par un outil) : remis en clair à longueur égale, cf. unescapeMu
-  const dev          = opts.dev === true
-  const debugLineRe  = /^[ \t;]*µ\.debug\s*=\s*[^;\n]+;?[ \t]*$/gm
-  const maskedSource = dev ? '' : unescapeMu(maskInertSameLength(source), true)
-  let cleaned = ''
-  let cursor  = 0
-  let dm: RegExpExecArray | null
-  while ((dm = debugLineRe.exec(maskedSource)) !== null) {
-    cleaned += source.slice(cursor, dm.index)
-    cursor   = dm.index + dm[0].length
-  }
-  cleaned += source.slice(cursor)
+  const dev     = opts.dev === true
+  const cleaned = dev ? source : withoutDebugAssignments(source)
 
   // traces du texte du runtime : retirées du code envoyé quand le niveau de PROD coupe `log` (même
   // critère que la liste `pure`, `µ.log` y figure à tout niveau sauf 'log'), avec les messages du développement seul ; ses avertissements aux niveaux
@@ -1147,7 +1208,7 @@ export async function minifyJs(
       mangleCache: useMangleCache ? opts.mangleCache : undefined,
       keepNames: false,
       // seul commentaire encore là : le `//!` MJS (les autres sont retirés à la lecture du composant), gardé selon le réglage
-      legalComments: COMMENTAIRE_MJS_GARDE ? 'inline' : 'none',
+      legalComments: KEPT_MJS_COMMENT ? 'inline' : 'none',
     })
 
     // Merge les nouvelles entrées du cache (esbuild en ajoute) dans l'objet

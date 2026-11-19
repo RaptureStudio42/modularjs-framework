@@ -116,7 +116,7 @@ let conflictWarned = false
 function warnConflict(): void {
   if (conflictWarned) return
   conflictWarned = true
-  try { console.warn(t('ws.trust-proxy.en-tetes-contradictoires')) }
+  try { console.warn(t('ws.trust-proxy.headers-conflicting')) }
   catch { /* journal cassé : jamais de quoi empêcher une connexion */ }
 }
 

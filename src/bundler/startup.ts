@@ -93,12 +93,12 @@ function isComponent(bundler: Bundler, name: string): boolean {
 /** Les clés d'un même FICHIER sont un seul composant (alias de dossier, cf. shortModuleName) : `names` complété de
  *  toutes les clés du manifeste qui désignent les mêmes fichiers, triées. */
 function withSiblingKeys(bundler: Bundler, names: string[]): string[] {
-  const fichiers = new Set(names.map(n => bundler.manifest[n]).filter(Boolean).map(f => basename(f)))
-  const tous     = new Set(names)
+  const files = new Set(names.map(n => bundler.manifest[n]).filter(Boolean).map(f => basename(f)))
+  const all   = new Set(names)
   for (const key of Object.keys(bundler.manifest)) {
-    if (bundler.manifest[key] && isComponent(bundler, key) && fichiers.has(basename(bundler.manifest[key]))) tous.add(key)
+    if (bundler.manifest[key] && isComponent(bundler, key) && files.has(basename(bundler.manifest[key]))) all.add(key)
   }
-  return [...tous].sort(byCodePoint)
+  return [...all].sort(byCodePoint)
 }
 
 /** Ensemble de démarrage : les balises du HTML résolues en clés de manifeste, fermées par la
@@ -108,10 +108,10 @@ function withSiblingKeys(bundler: Bundler, names: string[]): string[] {
  *  (alias empoisonné, cible en échec) n'est jamais suivie — même prudence que µWalkDeps côté navigateur. */
 function startupSet(bundler: Bundler, tags: string[], keys: Map<string, string>): string[] {
   const deps = startDepsTable(bundler.manifestDeps, bundler.manifestBranchDeps, bundler.blocksPreload) ?? bundler.manifestDeps
-  const vus  = new Set<string>()
+  const seen = new Set<string>()
   const walk = (name: string): void => {
-    if (vus.has(name)) return
-    vus.add(name)
+    if (seen.has(name)) return
+    seen.add(name)
     for (const dep of deps[name] ?? []) {
       if (bundler.unitPath(dep)) walk(dep)
     }
@@ -120,7 +120,7 @@ function startupSet(bundler: Bundler, tags: string[], keys: Map<string, string>)
     const real = keys.get(tag.slice(4))
     if (real && bundler.manifest[real]) walk(real)
   }
-  return [...vus].sort(byCodePoint)
+  return [...seen].sort(byCodePoint)
 }
 
 /**
@@ -130,22 +130,22 @@ function startupSet(bundler: Bundler, tags: string[], keys: Map<string, string>)
  * `bundleUnitOrder()` du mode `js: 'bundle'`, restreinte ici à l'ensemble de la page.
  */
 function childrenFirst(bundler: Bundler, names: string[]): string[] {
-  const dans  = new Set(names)
-  const ordre: string[] = []
-  const fait  = new Set<string>()
-  const encours = new Set<string>()
-  const visit = (name: string): void => {
-    if (fait.has(name) || encours.has(name)) return   // déjà placé, ou cycle : jamais revisité
-    encours.add(name)
+  const included        = new Set(names)
+  const order: string[] = []
+  const done            = new Set<string>()
+  const pending         = new Set<string>()
+  const visit           = (name: string): void => {
+    if (done.has(name) || pending.has(name)) return   // déjà placé, ou cycle : jamais revisité
+    pending.add(name)
     for (const dep of [...(bundler.manifestDeps[name] ?? [])].sort(byCodePoint)) {
-      if (dans.has(dep)) visit(dep)
+      if (included.has(dep)) visit(dep)
     }
-    encours.delete(name)
-    fait.add(name)
-    ordre.push(name)
+    pending.delete(name)
+    done.add(name)
+    order.push(name)
   }
   for (const name of [...names].sort(byCodePoint)) visit(name)
-  return ordre
+  return order
 }
 
 /**
@@ -157,9 +157,9 @@ function childrenFirst(bundler: Bundler, names: string[]): string[] {
  * dossier de travail temporaire) — jamais dans le même dossier de sortie.
  */
 export function latestBundler(first: Bundler, report: PrerenderReport): Bundler {
-  const dernier = report.bundler
-  if (!dernier || dernier === first || first.jsMode === 'bundle') return first
-  return resolve(dernier.outputDir) === resolve(first.outputDir) ? dernier : first
+  const last = report.bundler
+  if (!last || last === first || first.jsMode === 'bundle') return first
+  return resolve(last.outputDir) === resolve(first.outputDir) ? last : first
 }
 
 /** Garde-fou : chaque fichier que l'assemblage va lire ou annoncer existe dans le dossier de sortie. Sinon le dossier
@@ -167,12 +167,12 @@ export function latestBundler(first: Bundler, report: PrerenderReport): Bundler 
  *  fichier disparu avec une sortie 0. */
 function assertOutputsPresent(bundler: Bundler, files: Iterable<string>): void {
   for (const f of files) {
-    if (!existsSync(join(bundler.outputDir, f))) throw new Error(t('bundler.startup.recompile-empreintes', { fichier: f }))
+    if (!existsSync(join(bundler.outputDir, f))) throw new Error(t('bundler.startup.recompile-hashes', { file: f }))
   }
 }
 
 /** `<link rel="modulepreload">` d'un href. */
-function lien(href: string): string {
+function link(href: string): string {
   return `<link rel="modulepreload" href="${href}">`
 }
 
@@ -192,7 +192,7 @@ function lien(href: string): string {
  */
 async function bundlePage(bundler: Bundler, files: string[]): Promise<{ code: string; map?: string }> {
   const inline = new Set(files)
-  const entree = files.map(f => `import './${f}';`).join('\n')
+  const entry  = files.map(f => `import './${f}';`).join('\n')
   const plugin = {
     name: 'mjs-page-externals',
     setup: (b: any) => {
@@ -205,7 +205,7 @@ async function bundlePage(bundler: Bundler, files: string[]): Promise<{ code: st
     },
   }
   const result = await esbuildBuild({
-    stdin: { contents: entree, resolveDir: bundler.outputDir, sourcefile: 'mjs_page.js', loader: 'js' },
+    stdin: { contents: entry, resolveDir: bundler.outputDir, sourcefile: 'mjs_page.js', loader: 'js' },
     absWorkingDir: bundler.outputDir,
     // `outfile` : sans lui esbuild refuse une carte externe (« Cannot use an external source map without an
     // output path ») ; rien n'est écrit par lui (`write: false`), seuls les chemins des `sources` s'en servent
@@ -253,6 +253,13 @@ function resolveGroupComponent(bundler: Bundler, keys: Map<string, string>, name
   return real
 }
 
+// un nom de groupe qui ne trouve pas son composant parce que celui-ci a échoué ce tour : il existe, il n'a pas été construit
+function failedGroupComponent(bundler: Bundler, keys: Map<string, string>, name: string): boolean {
+  const lower  = name.trim().toLowerCase()
+  const failed = bundler['failedComponentNames']
+  return resolveGroupComponent(bundler, keys, name) === null && (failed.has(lower) || failed.has(lower.replace(/^mjs-/, '')))
+}
+
 /** Un composant atteint par plusieurs groupes : son nom, les groupes qui l'atteignent (triés) et, parmi eux, ceux dont il est
  *  une RACINE — `except` ne peut pas l'y laisser dehors. */
 interface GroupConflict {
@@ -295,28 +302,28 @@ function quoted(names: string[]): string {
 function groupConflictMessage(conflicts: GroupConflict[], forms: Map<string, GroupForm>): string {
   const sorted  = [...conflicts].sort((a, b) => byCodePoint(a.name, b.name))
   const free    = sorted.filter(c => c.roots.length === 0)
-  const lines   = [t('bundler.groupes.plusieurs-groupes', { nb: sorted.length, composants: sorted.map(c => c.name).join(', ') })]
+  const lines   = [t('bundler.groups.multiple-groups', { count: sorted.length, components: sorted.map(c => c.name).join(', ') })]
   const touched = new Set<string>()   // les groupes dont la configuration est à modifier sans en donner la liste complète
-  for (const c of sorted) lines.push(t('bundler.groupes.plusieurs-groupes-ligne', { composant: c.name, nb: c.groups.length, groupes: abridge(c.groups) }))
+  for (const c of sorted) lines.push(t('bundler.groups.multiple-groups-line', { component: c.name, count: c.groups.length, groups: abridge(c.groups) }))
   if (free.length > 0) {
     const named = [...new Set(free.flatMap(c => c.groups))].sort(byCodePoint)
     const plain = named.filter(g => !forms.get(g)!.except)
     const given = named.filter(g => forms.get(g)!.except)
     if (plain.length > 0) {
-      lines.push(t('bundler.groupes.plusieurs-groupes-conseil', { nb: free.length, nbGroupes: plain.length, groupes: plain.join(', '), except: quoted(free.map(c => c.name)) }))
+      lines.push(t('bundler.groups.multiple-groups-advice', { count: free.length, groupCount: plain.length, groups: plain.join(', '), except: quoted(free.map(c => c.name)) }))
       for (const g of plain) touched.add(g)
     }
     if (given.length > 0) {
-      lines.push(t('bundler.groupes.plusieurs-groupes-existant'))
-      for (const g of given) lines.push(t('bundler.groupes.plusieurs-groupes-existant-ligne', { groupe: g, except: quoted([...forms.get(g)!.except!, ...free.filter(c => c.groups.includes(g)).map(c => c.name)]) }))
+      lines.push(t('bundler.groups.multiple-groups-existing'))
+      for (const g of given) lines.push(t('bundler.groups.multiple-groups-existing-line', { group: g, except: quoted([...forms.get(g)!.except!, ...free.filter(c => c.groups.includes(g)).map(c => c.name)]) }))
     }
   }
   for (const c of sorted.filter(c => c.roots.length > 0)) {
     const others = c.groups.filter(g => !c.roots.includes(g))
-    lines.push(t('bundler.groupes.plusieurs-groupes-racine', { composant: c.name, racines: c.roots.join(', '), nbRacines: c.roots.length, autres: others.join(', '), nbAutres: others.length }))
+    lines.push(t('bundler.groups.multiple-groups-root', { component: c.name, roots: c.roots.join(', '), rootCount: c.roots.length, others: others.join(', '), nOthers: others.length }))
     for (const g of c.roots.length > 1 ? c.groups : others) touched.add(g)
   }
-  if ([...touched].some(g => forms.get(g)!.list)) lines.push(t('bundler.groupes.plusieurs-groupes-forme-liste'))
+  if ([...touched].some(g => forms.get(g)!.list)) lines.push(t('bundler.groups.multiple-groups-shape-list'))
   return lines.join('\n')
 }
 
@@ -337,18 +344,25 @@ function groupConflictMessage(conflicts: GroupConflict[], forms: Map<string, Gro
  * l'utilise charge tout le groupe — et un avertissement le nomme.
  */
 export async function assembleGroups(bundler: Bundler, bundles: Record<string, BundleGroupConfig>): Promise<{ groups: GroupReport[]; warnings: string[] }> {
-  const keys   = manifestKeysByLower(bundler)
-  const noms   = Object.keys(bundles).sort(byCodePoint)
+  const keys                                                                        = manifestKeysByLower(bundler)
+  const bundleNames                                                                 = Object.keys(bundles).sort(byCodePoint)
   const plans: { name: string; roots: string[]; names: string[]; keys: string[] }[] = []
-  const owner  = new Map<string, GroupConflict>()
-  const forms  = new Map<string, GroupForm>()
-  for (const name of noms) {
-    const conf    = bundles[name]
-    const racines = Array.isArray(conf) ? conf : conf.roots
+  const owner                                                                       = new Map<string, GroupConflict>()
+  const forms                                                                       = new Map<string, GroupForm>()
+  const failures                                                                    = [] as string[]
+  for (const name of bundleNames) {
+    const conf     = bundles[name]
+    const rootList = Array.isArray(conf) ? conf : conf.roots
     forms.set(name, { list: Array.isArray(conf), except: Array.isArray(conf) ? null : conf.except ?? null })
-    const roots   = [...new Set(racines.map(r => {
+    // racine ou exclu dont le composant a échoué ce tour : seule son erreur est dite, le groupe ne s'assemble pas et une ligne le dit
+    const failingRoot = [...rootList, ...(Array.isArray(conf) ? [] : conf.except ?? [])].find(r => failedGroupComponent(bundler, keys, r))
+    if (failingRoot !== undefined) {
+      failures.push(t('bundler.groups.component-failed', { group: name, component: failingRoot }))
+      continue
+    }
+    const roots   = [...new Set(rootList.map(r => {
       const real = resolveGroupComponent(bundler, keys, r)
-      if (!real) throw new Error(t('bundler.groupes.racine-inconnue', { groupe: name, racine: r }))
+      if (!real) throw new Error(t('bundler.groups.root-unknown', { group: name, root: r }))
       return real
     }))].sort(byCodePoint)
     // `except` : composants laissés dehors. La marche ne les traverse pas : eux, et ce que SEULS ils atteignent,
@@ -357,8 +371,8 @@ export async function assembleGroups(bundler: Bundler, bundles: Record<string, B
     const exceptFiles = new Set<string>()
     for (const e of Array.isArray(conf) ? [] : conf.except ?? []) {
       const real = resolveGroupComponent(bundler, keys, e)
-      if (!real) throw new Error(t('bundler.groupes.except-inconnu', { groupe: name, composant: e }))
-      if (roots.includes(real)) throw new Error(t('bundler.groupes.except-racine', { groupe: name, composant: e }))
+      if (!real) throw new Error(t('bundler.groups.except-unknown', { group: name, component: e }))
+      if (roots.includes(real)) throw new Error(t('bundler.groups.except-root', { group: name, component: e }))
       except.add(real)
       exceptFiles.add(basename(bundler.manifest[real]))
     }
@@ -384,9 +398,9 @@ export async function assembleGroups(bundler: Bundler, bundles: Record<string, B
       owner.set(file, entry)
     }
     // les clés sœurs (alias de dossier) du même fichier : le manifeste les repointe toutes sur le groupe
-    const fichiersDuGroupe = new Set(names.map(n => basename(bundler.manifest[n])))
-    const keysDuGroupe     = Object.keys(bundler.manifest).filter(k => bundler.manifest[k] && isComponent(bundler, k) && fichiersDuGroupe.has(basename(bundler.manifest[k]))).sort(byCodePoint)
-    plans.push({ name, roots, names, keys: keysDuGroupe })
+    const groupFiles = new Set(names.map(n => basename(bundler.manifest[n])))
+    const groupKeys  = Object.keys(bundler.manifest).filter(k => bundler.manifest[k] && isComponent(bundler, k) && groupFiles.has(basename(bundler.manifest[k]))).sort(byCodePoint)
+    plans.push({ name, roots, names, keys: groupKeys })
   }
 
   // un composant atteint par plusieurs groupes arrête le build, avec TOUS les conflits d'un coup plutôt que le premier seul
@@ -398,8 +412,8 @@ export async function assembleGroups(bundler: Bundler, bundles: Record<string, B
     const inside = new Set(plan.names)
     for (const n of plan.names) {
       if (plan.roots.includes(n)) continue
-      const appelants = Object.keys(bundler.manifestDeps).filter(c => !inside.has(c) && isComponent(bundler, c) && bundler.manifestDeps[c].includes(n)).sort(byCodePoint)
-      if (appelants.length > 0) warnings.push(t('bundler.groupes.utilise-hors-groupe', { composant: n, groupe: plan.name, appelants: appelants.join(', ') }))
+      const callers = Object.keys(bundler.manifestDeps).filter(c => !inside.has(c) && isComponent(bundler, c) && bundler.manifestDeps[c].includes(n)).sort(byCodePoint)
+      if (callers.length > 0) warnings.push(t('bundler.groups.used-outside-group', { component: n, group: plan.name, callers: callers.join(', ') }))
     }
   }
 
@@ -412,12 +426,12 @@ export async function assembleGroups(bundler: Bundler, bundles: Record<string, B
     try {
       ({ code, map } = await bundlePage(bundler, files))
     } catch (e: any) {
-      throw new Error(t('bundler.groupes.echec', { groupe: plan.name, raison: e?.message ?? String(e) }))
+      throw new Error(t('bundler.groups.failed', { group: plan.name, reason: e?.message ?? String(e) }))
     }
     const file = bundler.writeHashed(`mjs_group-${plan.name}`, '.js', code, map)
     groups.push({ name: plan.name, file, roots: plan.roots, names: plan.names, keys: plan.keys })
   }
-  return { groups, warnings }
+  return { groups, warnings: [...failures, ...warnings] }
 }
 
 // LIGNES-REPÈRES de l'en-tête de démarrage : elles bornent, juste sous la ligne-bandeau, la zone
@@ -435,14 +449,14 @@ export const STARTUP_HEADER_CLOSE = '<!-- /mjs:demarrage -->'
  * page de doc pourrait en citer un) ; en-tête absent, ou ouvert sans être fermé : contenu rendu tel
  * quel, jamais de découpe au hasard.
  */
-export function stripStartupHeader(contenu: string): string {
-  const coupe = contenu.indexOf('\n')
-  if (coupe < 0) return contenu
-  const debut = coupe + 1
-  if (!contenu.startsWith(`${STARTUP_HEADER_OPEN}\n`, debut)) return contenu
-  const fin = contenu.indexOf(`${STARTUP_HEADER_CLOSE}\n`, debut)
-  if (fin < 0) return contenu
-  return contenu.slice(0, debut) + contenu.slice(fin + STARTUP_HEADER_CLOSE.length + 1)
+export function stripStartupHeader(content: string): string {
+  const cut = content.indexOf('\n')
+  if (cut < 0) return content
+  const start = cut + 1
+  if (!content.startsWith(`${STARTUP_HEADER_OPEN}\n`, start)) return content
+  const end = content.indexOf(`${STARTUP_HEADER_CLOSE}\n`, start)
+  if (end < 0) return content
+  return content.slice(0, start) + content.slice(end + STARTUP_HEADER_CLOSE.length + 1)
 }
 
 /**
@@ -451,16 +465,16 @@ export function stripStartupHeader(contenu: string): string {
  * rien d'autre à la place. Écriture SAUTÉE si le contenu est identique (jamais de `touch` inutile,
  * comme writeManifest()).
  */
-function rewriteFragment(file: string, entete: string[]): boolean {
-  const actuel  = readFileSync(file, 'utf-8')
-  const nu      = stripStartupHeader(actuel)
-  const coupe   = nu.indexOf('\n')
-  const bandeau = coupe < 0 ? nu : nu.slice(0, coupe + 1)
-  const corps   = coupe < 0 ? '' : nu.slice(coupe + 1)
-  const lignes  = entete.length > 0 ? [STARTUP_HEADER_OPEN, ...entete, STARTUP_HEADER_CLOSE] : []
-  const nouveau = bandeau + lignes.map(l => `${l}\n`).join('') + corps
-  if (nouveau === actuel) return false
-  writeFileSync(file, nouveau, 'utf-8')
+function rewriteFragment(file: string, header: string[]): boolean {
+  const current = readFileSync(file, 'utf-8')
+  const bare    = stripStartupHeader(current)
+  const cut   = bare.indexOf('\n')
+  const banner  = cut < 0 ? bare : bare.slice(0, cut + 1)
+  const body    = cut < 0 ? '' : bare.slice(cut + 1)
+  const lines   = header.length > 0 ? [STARTUP_HEADER_OPEN, ...header, STARTUP_HEADER_CLOSE] : []
+  const fresh   = banner + lines.map(l => `${l}\n`).join('') + body
+  if (fresh === current) return false
+  writeFileSync(file, fresh, 'utf-8')
   return true
 }
 
@@ -475,16 +489,16 @@ export async function emitStartup(
   report: PrerenderReport,
   opts: StartupOpts,
 ): Promise<StartupReport> {
-  const log    = opts.log ?? (() => {})
-  const sortie: StartupReport = { pages: [], written: 0, pageFiles: [] }
-  if (!render || report.generated.length === 0) return sortie
+  const log                   = opts.log ?? (() => {})
+  const output: StartupReport = { pages: [], written: 0, pageFiles: [] }
+  if (!render || report.generated.length === 0) return output
 
-  const toutes = report.generated.map(page => ({ page, mode: pickStartup(render, page.url) }))
+  const all = report.generated.map(page => ({ page, mode: pickStartup(render, page.url) }))
   // `'none'` : le fragment ne reçoit rien — et PERD l'en-tête qu'un mode précédent lui avait posé
   // (le prérendu ne réécrit plus un corps inchangé, cf. server/prerender.ts : sans ce retrait, un
   // en-tête périmé survivrait à la bascule de mode).
-  for (const { page } of toutes.filter(d => d.mode === 'none')) {
-    if (rewriteFragment(page.file, [])) sortie.written++
+  for (const { page } of all.filter(d => d.mode === 'none')) {
+    if (rewriteFragment(page.file, [])) output.written++
   }
   // Projet à FICHIER UNIQUE (`js: 'bundle'`) : il n'y a rien à démarrer page par page — le fichier
   // que la coquille charge déjà porte le cœur ET tous les composants, et les clés de son manifeste
@@ -492,15 +506,15 @@ export async function emitStartup(
   // qu'aucun navigateur ne sait aller chercher. Le fragment ne reçoit donc aucun en-tête, et perd
   // celui qu'un build antérieur (dans un autre mode d'émission) lui aurait posé.
   if (bundler.jsMode === 'bundle') {
-    for (const { page } of toutes) { if (rewriteFragment(page.file, [])) sortie.written++ }
-    log(t('bundler.startup.fichier-unique'))
-    return sortie
+    for (const { page } of all) { if (rewriteFragment(page.file, [])) output.written++ }
+    log(t('bundler.startup.file-unique'))
+    return output
   }
-  const demandes = toutes.filter(d => d.mode !== 'none')
-  if (demandes.length === 0) return sortie
+  const requested = all.filter(d => d.mode !== 'none')
+  if (requested.length === 0) return output
 
   // `'bundle'` demandé hors production : dégradé en préchargement, jamais en silence.
-  if (!opts.prod && demandes.some(d => d.mode === 'bundle')) log(t('bundler.startup.bundle-hors-production'))
+  if (!opts.prod && requested.some(d => d.mode === 'bundle')) log(t('bundler.startup.bundle-outside-production'))
 
   const keys = manifestKeysByLower(bundler)
   const { prefix, compact } = bundler.pathsCompaction()
@@ -508,7 +522,7 @@ export async function emitStartup(
   // chemin entier sinon — la fiche `__mjs_page` doit poser EXACTEMENT la même (cf. Autoloader).
   const pathsForm = (href: string): string => compact ? href.slice(prefix.length) : href
 
-  const plans = demandes.map(({ page, mode }) => {
+  const plans = requested.map(({ page, mode }) => {
     const names = startupSet(bundler, page.tags, keys)
     return {
       page,
@@ -529,30 +543,30 @@ export async function emitStartup(
   // deux hachés du même nom de base, dont writeHashed() ne garderait que le dernier)
   const assembles = new Map<string, string>()
   if (opts.prod) {
-    const parSlug = new Map<string, Set<string>>()
+    const bySlug = new Map<string, Set<string>>()
     for (const plan of plans) {
       if (plan.mode !== 'bundle' || plan.components.length < MIN_UNITS_PER_PAGE) continue
-      const union = parSlug.get(plan.slug) ?? new Set<string>()
+      const union = bySlug.get(plan.slug) ?? new Set<string>()
       for (const name of plan.components) union.add(name)
-      parSlug.set(plan.slug, union)
+      bySlug.set(plan.slug, union)
     }
-    for (const slug of [...parSlug.keys()].sort(byCodePoint)) {
-      const noms  = [...parSlug.get(slug)!]
-      const files = [...new Set(childrenFirst(bundler, noms).map(n => basename(bundler.manifest[n])))]
+    for (const slug of [...bySlug.keys()].sort(byCodePoint)) {
+      const names = [...bySlug.get(slug)!]
+      const files = [...new Set(childrenFirst(bundler, names).map(n => basename(bundler.manifest[n])))]
       assertOutputsPresent(bundler, files)
       let code: string
       let map: string | undefined
       try {
         ({ code, map } = await bundlePage(bundler, files))
       } catch (e: any) {
-        throw new Error(t('bundler.startup.echec', { page: slug, raison: e?.message ?? String(e) }))
+        throw new Error(t('bundler.startup.failed', { page: slug, reason: e?.message ?? String(e) }))
       }
       const href = bundler.writeHashed(`mjs_page-${slug}`, '.js', code, map)
       assembles.set(slug, href)
-      sortie.pageFiles.push(href)
-      log(t('bundler.startup.fichier-de-page', { page: slug, fichier: basename(href), nb: files.length }))
+      output.pageFiles.push(href)
+      log(t('bundler.startup.page-file', { page: slug, file: basename(href), count: files.length }))
     }
-    sortie.pageFiles.sort(byCodePoint)
+    output.pageFiles.sort(byCodePoint)
   }
 
   for (const plan of plans) {
@@ -565,13 +579,13 @@ export async function emitStartup(
       ? [pageFile, ...plan.modules.map(n => bundler.unitPath(n)!)]
       : plan.names.map(n => bundler.unitPath(n)!))]
     assertOutputsPresent(bundler, hrefs.map(h => basename(h)))
-    const entete = hrefs.map(lien)
+    const header = hrefs.map(link)
     if (pageFile) {
-      const fiche = { file: pathsForm(pageFile), names: plan.components }
-      entete.push(`<script type="application/json" id="__mjs_page">${JSON.stringify(fiche)}</script>`)
+      const card = { file: pathsForm(pageFile), names: plan.components }
+      header.push(`<script type="application/json" id="__mjs_page">${JSON.stringify(card)}</script>`)
     }
-    if (rewriteFragment(plan.page.file, entete)) sortie.written++
-    sortie.pages.push({ url: plan.page.url, file: plan.page.file, mode: plan.mode, names: plan.names, hrefs, ...(pageFile ? { pageFile } : {}) })
+    if (rewriteFragment(plan.page.file, header)) output.written++
+    output.pages.push({ url: plan.page.url, file: plan.page.file, mode: plan.mode, names: plan.names, hrefs, ...(pageFile ? { pageFile } : {}) })
   }
 
   // anciens fichiers de page hachés : supprimés seulement maintenant, les fragments réécrits
@@ -580,6 +594,6 @@ export async function emitStartup(
   // la liste des sorties du build (`mjs-precache.json`, écrite en fin de compile()) est ANTÉRIEURE
   // aux fichiers de page : republiée ici pour les y faire entrer — un service worker qui la lit
   // mettrait sinon en cache tout le site SAUF le fichier que ses pages d'entrée démarrent.
-  if (sortie.pageFiles.length > 0) bundler.writePrecacheManifest()
-  return sortie
+  if (output.pageFiles.length > 0) bundler.writePrecacheManifest()
+  return output
 }

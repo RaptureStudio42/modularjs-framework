@@ -1,8 +1,8 @@
 // Plusieurs sections par module (`@i18n 'accueil' 'onglets-admin'`) et le cœur du runtime — pourquoi ce test existe.
 //
 // Le code qui demande ensemble les sections d'un module et cherche une clé dans chacune est un bloc balisé de mjs_i18n.ts
-// (`<i18n-paquets>`), auquel s'ajoutent deux lignes balisées de même, dans `__i18nAskSection` (`<i18n-paquets-lecture>`, la lecture
-// d'une section en plus) et dans le rejeu du démarrage de `__i18nBoot` (`<i18n-paquets-demarrage>`, une section en plus encore en
+// (`<i18n-packs>`), auquel s'ajoutent deux lignes balisées de même, dans `__i18nAskSection` (`<i18n-packs-read>`, la lecture
+// d'une section en plus) et dans le rejeu du démarrage de `__i18nBoot` (`<i18n-packs-startup>`, une section en plus encore en
 // route) : ils n'entrent au cœur que si un module du build écrit plusieurs sections. Une appli qui n'en écrit
 // aucune doit recevoir le cœur qu'elle recevait avant ces blocs, À L'OCTET PRÈS — en développement comme en production. En
 // production la minification retire les commentaires repères : c'est la taille et la comparaison avec un runtime qui n'a jamais
@@ -54,7 +54,7 @@ async function construire(nom: string, conf: Record<string, unknown>, page: stri
 function blocs(): { lignes: string[], plages: Array<[number, number]> } {
   const lignes = readFileSync(SOURCE, 'utf-8').split('\n')
   const plages: Array<[number, number]> = []
-  for (const [nom, ligneVide] of [['i18n-paquets', true], ['i18n-paquets-lecture', false], ['i18n-paquets-demarrage', false]] as Array<[string, boolean]>) {
+  for (const [nom, ligneVide] of [['i18n-packs', true], ['i18n-packs-read', false], ['i18n-packs-startup', false]] as Array<[string, boolean]>) {
     const debut = lignes.findIndex((l) => l.trim() === `// <${nom}>`)
     const fin   = lignes.findIndex((l) => l.trim() === `// </${nom}>`)
     assert.ok(debut > 0 && fin > debut, `le bloc ${nom} est balisé dans le source du runtime`)
@@ -71,7 +71,7 @@ function runtimeSansBlocs(): string {
   const { lignes, plages } = blocs()
   for (const [debut, fin] of [...plages].sort((a, b) => b[0] - a[0])) lignes.splice(debut, fin - debut)
   writeFileSync(join(dir, 'mjs_i18n.ts'), lignes.join('\n'))
-  assert.equal(readFileSync(join(dir, 'mjs_i18n.ts'), 'utf-8').includes('i18n-paquets'), false)
+  assert.equal(readFileSync(join(dir, 'mjs_i18n.ts'), 'utf-8').includes('i18n-packs'), false)
   return dir
 }
 
@@ -96,7 +96,7 @@ describe('plusieurs sections par module — le cœur du runtime, build RÉEL', f
     const sans = await construire('prod-sans', { forceMinify: true }, PAGE("@i18n 'panier'"))
     const avec = await construire('prod-avec', { forceMinify: true }, PAGE("@i18n 'panier' 'ailleurs'"))
     assert.ok(sans.coeur.length > 0 && avec.coeur.length > 0, 'les deux cœurs existent')
-    assert.equal(sans.coeur.includes('i18n-paquets'), false)
+    assert.equal(sans.coeur.includes('i18n-packs'), false)
     assert.ok(avec.coeur.length - sans.coeur.length >= 400, `le bloc minifié pèse ${avec.coeur.length - sans.coeur.length} octets de plus`)
   })
 

@@ -43,8 +43,8 @@ describe('mjs_devinspect — un objet ordinaire déplié ne lit que les valeurs 
     const hote = window.document.createElement('div')
     window.document.body.appendChild(hote)
     window.µ._mjs_diRender(hote, valeur, { ns: 'objet-' + Math.random() })
-    const reste = hote.querySelector('.di-reste')
-    return { lignes: hote.querySelectorAll('.di-ligne').length, reste: reste ? reste.textContent : '' }
+    const reste = hote.querySelector('.di-rest')
+    return { lignes: hote.querySelectorAll('.di-line').length, reste: reste ? reste.textContent : '' }
   }
 
   it('un objet de 50 000 clés : 200 valeurs lues, « et 49800 de plus »', () => {

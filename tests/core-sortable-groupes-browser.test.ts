@@ -13,6 +13,7 @@ import { libellesDuManifeste } from './helpers/libelles-manifeste.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
 import { attendreEtat } from './helpers/attente-page.js'
+import { playTogether } from './helpers/engines-together.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox'): Promise<boolean> {
   try {
@@ -346,7 +347,7 @@ type Marque = { top: number, left: number, height: number, etat: string | null, 
 
 for (const prod of [false, true]) {
   for (const nom of ['chromium', 'firefox'] as const) {
-    describe(`<@@sortable group> : les groupes (${nom} réel, ${prod ? 'production' : 'développement'})`, function () {
+    playTogether(describe(`<@@sortable group> : les groupes (${nom} réel, ${prod ? 'production' : 'développement'})`, function () {
       this.timeout(240000)
       let present = false
       let script  = ''
@@ -1006,6 +1007,6 @@ for (const prod of [false, true]) {
           }, { sonde: true })
         })
       })
-    })
+    }))
   }
 }

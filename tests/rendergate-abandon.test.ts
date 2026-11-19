@@ -16,7 +16,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { StaticServer } from '../src/server/index.js'
 import { createRenderHandler } from '../src/server/render-request.js'
-import { terminateSharedWorkerPool, MARQUE_SORTIE } from '../src/bundler/index.js'
+import { terminateSharedWorkerPool, OUTPUT_MARK } from '../src/bundler/index.js'
 
 after(async () => { await terminateSharedWorkerPool() })
 
@@ -102,7 +102,7 @@ describe('RenderGate — abandon en file et clamp concurrency', () => {
     const outDir = join(root, 'out')
     mkdirSync(outDir, { recursive: true })
     // manifeste d'une construction précédente, avec la marque des sorties : le rendu le remplace en recompilant (un fichier que ModularJS n'a pas produit ne l'est jamais)
-    writeFileSync(join(outDir, 'manifest.js'), `${MARQUE_SORTIE}\nµ.paths = {};\nµ.version = "abcd1234";\n`)
+    writeFileSync(join(outDir, 'manifest.js'), `${OUTPUT_MARK}\nµ.paths = {};\nµ.version = "abcd1234";\n`)
     const config: any = {
       sourceDir: 'src', outputDir: 'out', manifestPath: 'out/manifest.js',
       render: { routes: { '/lent/:id': { component: 'mjs-lent', mode: 'ssr' } }, renderQueue: { concurrency: 1, maxQueue: 1 } },

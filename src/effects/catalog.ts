@@ -81,15 +81,15 @@ export interface ProjectEffect {
 // les effets de l'appli de la compilation en cours : ceux de son flux quand elle en a un (withProjectEffects, que transpile()
 // appelle : deux compilations lancées en même temps gardent chacune les siens), sinon ceux posés par setProjectEffects
 const PROJECT_FLUX = new AsyncLocalStorage<Record<string, ProjectEffect>>()
-let PROJECT_POSE: Record<string, ProjectEffect> = {}
-const projet = (): Record<string, ProjectEffect> => PROJECT_FLUX.getStore() ?? PROJECT_POSE
+let PROJECT_SET: Record<string, ProjectEffect> = {}
+const project = (): Record<string, ProjectEffect> => PROJECT_FLUX.getStore() ?? PROJECT_SET
 
 // leurs alias : les messages en citent un en exemple
-setDeclaredAliases(() => Object.keys(projet()))
+setDeclaredAliases(() => Object.keys(project()))
 
 /** les effets de l'appli, lus par les compilations qui suivent */
 export function setProjectEffects(effects: Record<string, ProjectEffect> | undefined): void {
-  PROJECT_POSE = effects ?? {}
+  PROJECT_SET = effects ?? {}
 }
 
 /** `run` avec `effects` pour effets de l'appli, ceux d'avant rétablis ensuite — la résolution d'un
@@ -102,7 +102,7 @@ export function withProjectEffects<T>(effects: Record<string, ProjectEffect>, ru
 
 /** un effet de l'appli, par son nom */
 export function projectEffect(name: string): ProjectEffect | undefined {
-  const p = projet()
+  const p = project()
   return Object.prototype.hasOwnProperty.call(p, name) ? p[name] : undefined
 }
 
@@ -115,7 +115,7 @@ export function asWritten<T>(written: string, base: string, run: () => T): T {
     return run()
   }
   catch (err) {
-    if (err instanceof Error) err.message = err.message.replace(new RegExp(`^(\\[ModularJS\\] \\*)${base}(?![\\w.-])`), (_, debut) => debut + written)
+    if (err instanceof Error) err.message = err.message.replace(new RegExp(`^(\\[ModularJS\\] \\*)${base}(?![\\w.-])`), (_, start) => start + written)
     throw err
   }
 }
@@ -125,9 +125,9 @@ export function asWritten<T>(written: string, base: string, run: () => T): T {
 function customSpec(p: ProjectEffect): EffectSpec {
   const settings: Record<string, EffectSetting> = Object.create(null)
   for (const [k, v] of p.params ?? []) settings[k] = { rule: 'css', dflt: v }
-  const anime = (p.keyframes ?? []).length > 0
-  settings.on       = set(anime ? "'always' | 'hover' | 'view' | 'click' | 'load' | 'success' | 'error'" : "'always' | 'hover' | 'view' | 'click' | 'load'", 'always')
-  settings.duration = time(anime ? '1s' : '400ms')
+  const animated = (p.keyframes ?? []).length > 0
+  settings.on       = set(animated ? "'always' | 'hover' | 'view' | 'click' | 'load' | 'success' | 'error'" : "'always' | 'hover' | 'view' | 'click' | 'load'", 'always')
+  settings.duration = time(animated ? '1s' : '400ms')
   settings.delay    = time('0s')
   settings.easing   = easing('ease')
   settings.visible  = visible()
@@ -351,7 +351,7 @@ export const EFFECTS: Record<string, EffectSpec> = {
   draw:       tr('duration', { speed: set('int 1..100000') }, '800ms', 'cubic-in-out'),
   iris:      tr('origin', { origin: origin('center', true), shape: set("'circle' | 'box' | 'diamond' | 'cross' | 'ellipse'", 'circle'), start: set('float 0..1', 0), angle: set('int -180..180', 0) }, '380ms', 'ease-out'),
   wheel:      tr('spokes', { spokes: set('int 1..12', 1), origin: origin('center'), reverse: set('bool', false) }, '700ms', 'linear'),
-  volet:      tr('direction', { direction: dir4('down') }, '380ms', 'ease-out'),
+  cover:      tr('direction', { direction: dir4('down') }, '380ms', 'ease-out'),
   reveal:     tr('direction', { direction: dir4('up') }, '380ms', 'ease-in'),
   flip:       tr('direction', { direction: dir4('left') }, '550ms', 'ease-in-out'),
   cube:       tr('direction', { direction: dir4('left') }, '600ms', 'cubic-bezier(.45, .05, .55, .95)'),
@@ -434,32 +434,32 @@ const parsed = new Map<string, RuleAst>()
 function ruleOf(rule: string): RuleAst {
   let r = parsed.get(rule)
   if (!r) {
-    r = parseRule(rule, { bloc: 'effet', ligne: 0 })
+    r = parseRule(rule, { block: 'effet', line: 0 })
     parsed.set(rule, r)
   }
   return r
 }
 
 function ruleDisplay(rule: string): string {
-  if (rule === 'time') return t('effets.regle-duree')
-  if (rule === 'color') return t('effets.regle-couleur')
-  if (rule === 'colors') return t('effets.regle-couleurs')
-  if (rule === 'words') return t('effets.regle-mots')
-  if (rule === 'direction') return t('effets.regle-direction')
-  if (rule === 'origin') return t('effets.regle-origine')
-  if (rule === 'origin-pointer') return t('effets.regle-origine-pointeur')
-  if (rule === 'curve') return t('effets.regle-courbe')
-  if (rule === 'length') return t('effets.regle-longueur')
-  if (rule === 'range') return t('effets.regle-plage')
-  if (rule === 'zone') return t('effets.regle-zone')
-  if (rule === 'visible') return t('effets.regle-visible')
+  if (rule === 'time') return t('effects.rule-duration')
+  if (rule === 'color') return t('effects.rule-color')
+  if (rule === 'colors') return t('effects.rule-colors')
+  if (rule === 'words') return t('effects.rule-words')
+  if (rule === 'direction') return t('effects.rule-direction')
+  if (rule === 'origin') return t('effects.rule-origin')
+  if (rule === 'origin-pointer') return t('effects.rule-origin-pointer')
+  if (rule === 'curve') return t('effects.rule-curve')
+  if (rule === 'length') return t('effects.rule-length')
+  if (rule === 'range') return t('effects.rule-range')
+  if (rule === 'zone') return t('effects.rule-zone')
+  if (rule === 'visible') return t('effects.rule-visible')
   if (rule === 'card-zone') return CARD_ZONES
-  if (rule === 'key') return t('effets.regle-cle')
-  if (rule === 'css') return t('effets.regle-css')
-  if (rule === 'image') return t('effets.regle-image')
-  if (rule === 'images') return t('effets.regle-images')
-  if (rule === 'effect') return t('effets.regle-effet')
-  if (rule === 'socket') return t('effets.regle-connexion')
+  if (rule === 'key') return t('effects.rule-key')
+  if (rule === 'css') return t('effects.rule-css')
+  if (rule === 'image') return t('effects.rule-image')
+  if (rule === 'images') return t('effects.rule-images')
+  if (rule === 'effect') return t('effects.rule-effect')
+  if (rule === 'socket') return t('effects.rule-connection')
   return ruleText(ruleOf(rule))
 }
 
@@ -546,9 +546,9 @@ export function closedCss(v: string): boolean {
     }
     // un commentaire CSS : son texte ne compte pas (`/* l'épaisseur */`) ; jamais refermé, il avalerait la suite
     if (ch === '/' && v[i + 1] === '*') {
-      const fin = v.indexOf('*/', i + 2)
-      if (fin < 0) return false
-      i = fin + 1
+      const end = v.indexOf('*/', i + 2)
+      if (end < 0) return false
+      i = end + 1
       continue
     }
     if (ch === '"' || ch === "'") quote = ch
@@ -655,13 +655,13 @@ export function fxRanges(names: string[]): Record<string, Record<string, unknown
   for (const n of names) {
     const fx = EFFECTS[n]
     if (!fx || !playsOnce(fx)) continue
-    const plages: Record<string, unknown[]> = out[n] = {}
+    const ranges: Record<string, unknown[]> = out[n] = {}
     for (const [k, st] of Object.entries(fx.settings)) {
       // `visible` règle `on: view` : un effet nommé par une variable se joue à sa pose (`on: load`), elle n'y a pas de plage
       if (st.rule === 'visible') continue
       const sp = specOf(st.rule, st.css)
-      const bornes = sp[0] === 'i' || sp[0] === 'f' ? sp[1] !== null || sp[2] !== null : (sp[0] === 's' || sp[0] === 'p') && sp.length > 3
-      if (bornes) plages[k] = sp
+      const bounds = sp[0] === 'i' || sp[0] === 'f' ? sp[1] !== null || sp[2] !== null : (sp[0] === 's' || sp[0] === 'p') && sp.length > 3
+      if (bounds) ranges[k] = sp
     }
   }
   return out
@@ -685,14 +685,14 @@ export function playsOnce(spec: EffectSpec): boolean {
 function effectValue(name: string, key: string, value: string): EffectValue {
   if (value === 'none') return 'none'
   const m = /^\*([A-Za-z][\w-]*)(?:\(([\s\S]*)\))?$/.exec(value)
-  if (!m) throw new Error(t('effets.fx-effet', { nom: name, reglage: key, valeur: value }))
+  if (!m) throw new Error(t('effects.fx-effect', { name, setting: key, value }))
   const sub  = m[1]
   const r    = parseEffect(sub, m[2] ?? '')
   const real = r.base ?? sub
-  if (Object.keys(r.dynamic).length > 0) throw new Error(t('effets.fx-variable', { nom: name, reglage: key, effet: sub }))
-  if ('visible' in r.fixed) throw new Error(t('effets.fx-visible', { nom: name, reglage: key, effet: sub }))
+  if (Object.keys(r.dynamic).length > 0) throw new Error(t('effects.fx-variable', { name, setting: key, effect: sub }))
+  if ('visible' in r.fixed) throw new Error(t('effects.fx-visible', { name, setting: key, effect: sub }))
   const spec = effectSpec(real)!
-  if (!playsOnce(spec) || real === name) throw new Error(t('effets.fx-une-fois', { nom: name, reglage: key, effet: sub }))
+  if (!playsOnce(spec) || real === name) throw new Error(t('effects.fx-once', { name, setting: key, effect: sub }))
   checkPlacement(real, r, 'span', false)
   return { fx: real, s: r.fixed }
 }
@@ -851,18 +851,18 @@ export function fixedImages(base: string, fixed: Record<string, EffectValue>): A
 
 function checkValue(name: string, key: string, rule: string, raw: string, free = false): EffectValue {
   const value = unquote(raw)
-  if (rule === 'image' && IMAGE_CALL.test(raw)) throw new Error(t('effets.image-non-resolue', { nom: name, reglage: key, valeur: raw }))
+  if (rule === 'image' && IMAGE_CALL.test(raw)) throw new Error(t('effects.image-not-resolved', { name, setting: key, value: raw }))
   if (rule === 'image' && raw.startsWith('{')) {
     const img = imageValue(raw)
-    if (img === undefined) throw new Error(t('effets.valeur', { nom: name, reglage: key, valeur: raw, regle: ruleDisplay(rule) }))
+    if (img === undefined) throw new Error(t('effects.value', { name, setting: key, value: raw, rule: ruleDisplay(rule) }))
     return img
   }
   // une liste d'images donnée par sa seule image (`images: 'photo.png'`, devenue l'objet de µimage) : une liste d'un élément
   if (rule === 'images' && raw.startsWith('{') && imageValue(raw) !== undefined) return [raw]
-  if (/^\{[\s\S]*\}$/.test(raw)) throw new Error(t('effets.valeur-calculee', { nom: name, reglage: key }))
+  if (/^\{[\s\S]*\}$/.test(raw)) throw new Error(t('effects.value-computed', { name, setting: key }))
   // un effet donné en réglage (`fx: *fade(duration: $d)`) : vérifié d'abord, une variable dans ses réglages a son message
   if (rule === 'effect' && raw.startsWith('*')) return effectValue(name, key, raw)
-  if (value === raw && /\$/.test(raw)) throw new Error(t('effets.variable-seule', { nom: name, reglage: key, valeur: raw }))
+  if (value === raw && /\$/.test(raw)) throw new Error(t('effects.variable-alone', { name, setting: key, value: raw }))
   let ok: EffectValue | undefined
   if (rule === 'time') ok = TIME_RE.test(value) ? value : undefined
   else if (rule === 'color') ok = value !== '' && COLOR_RE.test(value) ? value : undefined
@@ -893,22 +893,22 @@ function checkValue(name: string, key: string, rule: string, raw: string, free =
   else if (rule === 'key') ok = /^-?\d+(?:\.\d+)?$/.test(value) ? Number(value) : value !== '' ? value : undefined
   else if (rule === 'css') ok = value !== '' && !/[;{}]/.test(value) && closedCss(value) ? value : undefined
   else if (rule === 'image') {
-    if (!free && value.length > 2000) throw new Error(t('effets.image-longue', { nom: name, reglage: key, longueur: String(value.length) }))
+    if (!free && value.length > 2000) throw new Error(t('effects.image-long', { name, setting: key, length: String(value.length) }))
     ok = free || value !== '' ? value : undefined
   }
   else if (rule === 'effect') ok = effectValue(name, key, raw)
   else ok = checkLiteral(ruleOf(rule), value)
   // une valeur retirée avant la 3.0 (`*loader(arc)`, `*mesh(aurora)`) : celle qui la remplace
-  const retiree = ok === undefined && Object.hasOwn(RETIRED_VALUES, `${name}.${key}.${value}`) ? RETIRED_VALUES[`${name}.${key}.${value}`] : undefined
-  if (retiree) throw new Error(t('effets.valeur-retiree', { nom: name, reglage: key, valeur: value, nouveau: retiree[0], note: t(retiree[1]), regle: ruleDisplay(rule) }))
-  if (ok === undefined) throw new Error(t('effets.valeur', { nom: name, reglage: key, valeur: value, regle: (rule === 'card-zone' && oldZone(value)) || ruleDisplay(rule) }))
+  const retired = ok === undefined && Object.hasOwn(RETIRED_VALUES, `${name}.${key}.${value}`) ? RETIRED_VALUES[`${name}.${key}.${value}`] : undefined
+  if (retired) throw new Error(t('effects.value-removed', { name, setting: key, value, newName: retired[0], note: t(retired[1]), rule: ruleDisplay(rule) }))
+  if (ok === undefined) throw new Error(t('effects.value', { name, setting: key, value, rule: (rule === 'card-zone' && oldZone(value)) || ruleDisplay(rule) }))
   return ok
 }
 
 /** l'erreur d'un effet en direct sans connexion : l'écriture qu'elle propose suit le réglage principal de
  * l'effet — `*follow($$sock)`, `*heatmap(sock: $$sock)`. `written` : le nom écrit, `name` : l'effet posé */
 export function sockAbsent(written: string, name = written): string {
-  return t('effets.sock-absent', { nom: written, ecriture: effectSpec(name)?.main === 'sock' ? '$$sock' : 'sock: $$sock' })
+  return t('effects.sock-missing', { name: written, writing: effectSpec(name)?.main === 'sock' ? '$$sock' : 'sock: $$sock' })
 }
 
 /** un effet en direct (il a `sock`) sans connexion écrite — ni `sock`, ni une adresse (`server`) : il la
@@ -920,8 +920,8 @@ export function defaultSock(name: string, written: string, settings: ParsedEffec
   // un bouton *react passe par la connexion de la scène la plus proche (une balise `stage`, <@document>,
   // parfois dans un composant parent) : @sock s'il est posé, rien sinon — la scène qu'il pose lui-même,
   // faute d'en trouver une, le dit en console
-  const bouton = name === 'react' && settings.fixed.stage !== true && !('stage' in settings.dynamic)
-  if (!hasSock && bouton) return
+  const button = name === 'react' && settings.fixed.stage !== true && !('stage' in settings.dynamic)
+  if (!hasSock && button) return
   if (!hasSock) throw new Error(sockAbsent(written, name))
   settings.dynamic.sock = '@sock'
   settings.spec.sock    = ['v', '', ruleDisplay('socket')]
@@ -931,7 +931,7 @@ export function defaultSock(name: string, written: string, settings: ParsedEffec
 // alias (le message le nomme, et propose de le poser avec la clé)
 function checkNeed(name: string, out: ParsedEffect, written = name): void {
   const need = EFFECTS[name]?.need
-  if (need && !(need in out.fixed) && !(need in out.dynamic)) throw new Error(t('effets.manque', { nom: written, reglage: need }))
+  if (need && !(need in out.fixed) && !(need in out.dynamic)) throw new Error(t('effects.key-missing', { name: written, setting: need }))
 }
 
 // `visible` ne sert qu'à `on: view`, écrit ou par défaut ; `on` tenu par une variable peut valoir view, il passe. `written` : le nom écrit,
@@ -939,15 +939,15 @@ function checkNeed(name: string, out: ParsedEffect, written = name): void {
 function checkVisible(name: string, settings: ParsedEffect, written = name): void {
   if (!('visible' in settings.fixed) || 'on' in settings.dynamic) return
   const on = 'on' in settings.fixed ? settings.fixed.on : effectSpec(name)?.settings.on?.dflt
-  if (on !== 'view') throw new Error(t('effets.visible-sans-vue', { nom: written, on: on === undefined ? '' : String(on) }))
+  if (on !== 'view') throw new Error(t('effects.visible-no-view', { name: written, on: on === undefined ? '' : String(on) }))
 }
 
 /** le message d'un effet que ni la bibliothèque ni l'appli ne connaissent (`*fadee`, `*fadee.lent`), sinon rien : dit avant toute autre faute de la
  * même écriture (un point mal placé, un espace) ; `transition` : sur `@in`, `@out` et `@transition`, un nom éloigné de tout effet peut être celui
  * d'une transition que le script crée (`µanim.create`), il n'est refusé qu'en fin de construction */
 export function unknownEffectError(name: string, transition = false): string | null {
-  const effet = name.split('.')[0]
-  if (EFFECTS[effet] || projectEffect(effet) || projectEffect(name)) return null
+  const effect = name.split('.')[0]
+  if (EFFECTS[effect] || projectEffect(effect) || projectEffect(name)) return null
   if (transition && nearestEffect(name).distance > 1) return null
   try { parseEffect(name, '') } catch (e) { return (e as Error).message }
   return null
@@ -1028,10 +1028,10 @@ const RETIRED_ALIASES: Record<string, string> = {
 
 // les valeurs retirées d'un réglage avant la 3.0 (`effet.réglage.valeur`) : celle qui la remplace, et ce qu'en dit le message
 const RETIRED_VALUES: Record<string, [string, MsgKey]> = {
-  'loader.style.arc':      ['neon', 'effets.valeur-meme-dessin'],
-  'loader.style.swirl':    ['galaxy', 'effets.valeur-meme-dessin'],
-  'mesh.style.aurora':     ['boreal', 'effets.valeur-mesh-aurora'],
-  'attention.style.flash': ['blink', 'effets.valeur-attention-flash'],
+  'loader.style.arc':      ['neon', 'effects.value-same-look'],
+  'loader.style.swirl':    ['galaxy', 'effects.value-same-look'],
+  'mesh.style.aurora':     ['boreal', 'effects.value-mesh-aurora'],
+  'attention.style.flash': ['blink', 'effects.value-attention-flash'],
 }
 
 // les réglages `réglage: valeur` d'une écriture, dans l'ordre
@@ -1047,16 +1047,16 @@ function settingsOf(raw: string): Map<string, string> {
 // l'écriture qui remplace un alias livré retiré, les réglages écrits par-dessus ceux de l'ancien alias (`*pointer.disc(size: 32)` garde
 // `size: 32`, pas les 64 de l'alias) ; une valeur sans nom va au réglage principal de l'effet (`*travel.path(hero)` → `to: hero`)
 function retiredWriting(name: string, raw: string): string {
-  const ecrits = splitArgs(raw).filter(item => item !== '')
-  if (ecrits.length === 0) return RETIRED_ALIASES[name]
+  const written = splitArgs(raw).filter(item => item !== '')
+  if (written.length === 0) return RETIRED_ALIASES[name]
   const m    = /^\*([\w-]+)(?:\(([\s\S]*)\))?$/.exec(RETIRED_ALIASES[name])!
   const spec = EFFECTS[m[1]]
-  const tous = settingsOf(m[2] ?? '')
-  for (const item of ecrits) {
+  const all  = settingsOf(m[2] ?? '')
+  for (const item of written) {
     const kv = keyValue(item, spec.settings)
-    tous.set(kv ? kv[0] : spec.main, (kv ? kv[1] : item).trim())
+    all.set(kv ? kv[0] : spec.main, (kv ? kv[1] : item).trim())
   }
-  return '*' + m[1] + '(' + [...tous].map(([k, v]) => k + ': ' + v).join(', ') + ')'
+  return '*' + m[1] + '(' + [...all].map(([k, v]) => k + ': ' + v).join(', ') + ')'
 }
 
 // une valeur traduite hors de la plage du réglage qui la reçoit (`*lens(blur: 55)` → `*filter`, qui s'arrête à 50) : ramenée à la borne,
@@ -1072,54 +1072,54 @@ function clampTranslated(st: EffectSetting | undefined, key: string, value: stri
 }
 
 // l'écriture d'un effet fondu dans un autre (`*shimmer(speed: 1s)` → `*shine.shimmer(duration: 1s, every: 1s)`) : l'alias, les réglages écrits
-// traduits (ramenés dans la plage du réglage qui les reçoit : `ramenes`), ceux qui ne se traduisent pas ; `expand` : l'alias écrit avec tous
+// traduits (ramenés dans la plage du réglage qui les reçoit : `broughtBack`), ceux qui ne se traduisent pas ; `expand` : l'alias écrit avec tous
 // ses réglages (`*shine(where: text, …)`), là où un alias ne s'écrit pas (la cible d'un effet du fichier d'effets)
-function replacedWriting(name: string, raw: string, expand: boolean): { r: ReplacedEffect, alias: string, ecriture: string, sans: string[], ramenes: string[] } | null {
+function replacedWriting(name: string, raw: string, expand: boolean): { r: ReplacedEffect, alias: string, write: string, without: string[], broughtBack: string[] } | null {
   const point = name.indexOf('.')
   const old   = point < 0 ? name : name.slice(0, point)
   if (!Object.hasOwn(REPLACED_EFFECTS, old)) return null
   const r      = REPLACED_EFFECTS[old]
   const preset = point < 0 ? '' : name.slice(point + 1)
   // les réglages écrits, par-dessus ceux de l'ancien préréglage ; une valeur sans nom va à l'ancien réglage principal
-  const ecrits = new Map<string, string>()
+  const written = new Map<string, string>()
   for (const item of [...(r.presets && Object.hasOwn(r.presets, preset) ? splitArgs(r.presets[preset]) : []), ...splitArgs(raw)]) {
     if (item === '') continue
     const kv = keyValue(item, {})
-    ecrits.set(kv ? kv[0] : r.main, (kv ? kv[1] : item).trim())
+    written.set(kv ? kv[0] : r.main, (kv ? kv[1] : item).trim())
   }
   let alias = r.alias
-  const style = r.styles && ecrits.has(r.styles[0]) ? unquote(ecrits.get(r.styles[0])!) : ''
+  const style = r.styles && written.has(r.styles[0]) ? unquote(written.get(r.styles[0])!) : ''
   if (r.styles && Object.hasOwn(r.styles[1], style)) {
     alias = r.styles[1][style]
-    ecrits.delete(r.styles[0])
+    written.delete(r.styles[0])
   }
-  const reglages = EFFECTS[alias.split('.')[0]].settings
-  const traduits = new Map<string, string>()
-  const sans: string[] = []
-  const ramenes: string[] = []
-  for (const [k, v] of ecrits) {
-    const m     = r.map && Object.hasOwn(r.map, k) ? r.map[k] : undefined
-    const texte = typeof m === 'function' ? m(v) : m !== undefined ? m + ': ' + v : Object.hasOwn(reglages, k) ? k + ': ' + v : null
-    if (texte === null) sans.push(k + ': ' + v)
-    else for (const [nk, nv] of settingsOf(texte)) traduits.set(nk, clampTranslated(reglages[nk], nk, nv, ramenes))
+  const settings = EFFECTS[alias.split('.')[0]].settings
+  const translated = new Map<string, string>()
+  const without: string[] = []
+  const broughtBack: string[] = []
+  for (const [k, v] of written) {
+    const m    = r.map && Object.hasOwn(r.map, k) ? r.map[k] : undefined
+    const text = typeof m === 'function' ? m(v) : m !== undefined ? m + ': ' + v : Object.hasOwn(settings, k) ? k + ': ' + v : null
+    if (text === null) without.push(k + ': ' + v)
+    else for (const [nk, nv] of settingsOf(text)) translated.set(nk, clampTranslated(settings[nk], nk, nv, broughtBack))
   }
-  const liste = (m: Map<string, string>) => [...m].map(([k, v]) => k + ': ' + v).join(', ')
-  if (!expand) return { r, alias, sans, ramenes, ecriture: '*' + alias + (traduits.size ? '(' + liste(traduits) + ')' : '') }
+  const list = (m: Map<string, string>) => [...m].map(([k, v]) => k + ': ' + v).join(', ')
+  if (!expand) return { r, alias, without, broughtBack, write: '*' + alias + (translated.size ? '(' + list(translated) + ')' : '') }
   const def  = MJS_ALIASES.split('\n').find(l => l.startsWith('*' + alias + ' = '))!
   const base = /^\*([\w-]+)\(([\s\S]*)\)$/.exec(def.slice(def.indexOf(' = ') + 3))!
-  const tous = settingsOf(base[2])
-  for (const [k, v] of traduits) tous.set(k, v)
-  return { r, alias, sans, ramenes, ecriture: '*' + base[1] + '(' + liste(tous) + ')' }
+  const all  = settingsOf(base[2])
+  for (const [k, v] of translated) all.set(k, v)
+  return { r, alias, without, broughtBack, write: '*' + base[1] + '(' + list(all) + ')' }
 }
 
 // le message d'un effet fondu dans un autre (`*shimmer`, `*typing.typewriter`), sinon null : « le même rendu » sans réglage écrit seulement
 function replacedEffectError(name: string, raw: string, expand: boolean): string | null {
   const w = replacedWriting(name, raw, expand)
   if (!w) return null
-  const ecrit = splitArgs(raw).some(item => item !== '')
-  return t(ecrit ? 'effets.remplace-reglages' : 'effets.remplace', { nom: name, effet: w.ecriture, reglages: t('effets.remplace-correspondance', { liste: w.r.note }) })
-    + (w.sans.length > 0 ? t('effets.remplace-sans-equivalent', { alias: '*' + w.alias, liste: w.sans.join(', ') }) : '')
-    + (w.ramenes.length > 0 ? t('effets.remplace-ramene', { alias: '*' + w.alias, liste: w.ramenes.join(', ') }) : '')
+  const written = splitArgs(raw).some(item => item !== '')
+  return t(written ? 'effects.replaced-settings' : 'effects.replaced', { name, effect: w.write, settings: t('effects.replaced-mapping', { list: w.r.note }) })
+    + (w.without.length > 0 ? t('effects.replaced-no-equivalent', { alias: '*' + w.alias, list: w.without.join(', ') }) : '')
+    + (w.broughtBack.length > 0 ? t('effects.replaced-clamped', { alias: '*' + w.alias, list: w.broughtBack.join(', ') }) : '')
 }
 
 /** le message d'un effet retiré de la bibliothèque, fondu dans un autre, ou d'un alias livré retiré (partout où il est écrit, `<@document>`
@@ -1127,30 +1127,30 @@ function replacedEffectError(name: string, raw: string, expand: boolean): string
  * du fichier d'effets. Un effet ou un alias de l'appli qui porte ce nom l'emporte */
 export function removedEffectError(name: string, raw = '', expand = false): string | null {
   if (EFFECTS[name] || projectEffect(name)) return null
-  if (Object.hasOwn(RETIRED_ALIASES, name)) return t('effets.alias-retire', { nom: name, effet: name.split('.')[0], ecriture: retiredWriting(name, raw) })
-  const fondu = replacedEffectError(name, raw, expand)
-  if (fondu || !REMOVED_EFFECTS.has(name)) return fondu
+  if (Object.hasOwn(RETIRED_ALIASES, name)) return t('effects.alias-removed', { name, effect: name.split('.')[0], writing: retiredWriting(name, raw) })
+  const merged = replacedEffectError(name, raw, expand)
+  if (merged || !REMOVED_EFFECTS.has(name)) return merged
   try { parseEffect(name, '') } catch (e) { return (e as Error).message }
   return null
 }
 
 /** un alias de l'appli rattaché à un effet fondu dans un autre (`*shimmer.lent = *shimmer(speed: 4s)`), sinon null : l'effet qui l'a repris, et
  * la déclaration à écrire (`*shine.lent = *shine(…)`, réglages traduits quand la cible est l'ancien effet) */
-export function replacedAlias(effet: string, alias: string, cible: string, args: string): { nouveau: string, ecriture: string } | null {
-  if (EFFECTS[effet] || !Object.hasOwn(REPLACED_EFFECTS, effet)) return null
-  const w       = cible === effet ? replacedWriting(effet, args, true) : null
-  const nouveau = (w ? w.alias : REPLACED_EFFECTS[effet].alias).split('.')[0]
-  const droite  = w ? w.ecriture : cible === nouveau ? '*' + cible + (args ? '(' + args + ')' : '') : '*' + nouveau + '(…)'
-  return { nouveau, ecriture: `*${nouveau}.${alias} = ${droite}` }
+export function replacedAlias(effect: string, alias: string, target: string, args: string): { fresh: string, write: string } | null {
+  if (EFFECTS[effect] || !Object.hasOwn(REPLACED_EFFECTS, effect)) return null
+  const w     = target === effect ? replacedWriting(effect, args, true) : null
+  const fresh = (w ? w.alias : REPLACED_EFFECTS[effect].alias).split('.')[0]
+  const right = w ? w.write : target === fresh ? '*' + target + (args ? '(' + args + ')' : '') : '*' + fresh + '(…)'
+  return { fresh, write: `*${fresh}.${alias} = ${right}` }
 }
 
 /** une variable de thème d'un effet fondu dans un autre (`shimmer-color`, écrite sans `$$`) : l'effet, l'alias qui l'a repris, et la variable
  * qui la remplace (`shine-ink` ; '' s'il n'y en a pas) ; undefined pour tout autre nom */
-export function replacedThemeVar(name: string): { effet: string, alias: string, nouveau: string } | undefined {
-  const at    = name.indexOf('-')
-  const effet = name.slice(0, at)
-  if (at < 0 || !Object.hasOwn(REPLACED_EFFECTS, effet) || !Object.hasOwn(REPLACED_EFFECTS[effet].vars, name.slice(at + 1))) return undefined
-  return { effet, alias: '*' + REPLACED_EFFECTS[effet].alias, nouveau: REPLACED_EFFECTS[effet].vars[name.slice(at + 1)] }
+export function replacedThemeVar(name: string): { effect: string, alias: string, fresh: string } | undefined {
+  const at     = name.indexOf('-')
+  const effect = name.slice(0, at)
+  if (at < 0 || !Object.hasOwn(REPLACED_EFFECTS, effect) || !Object.hasOwn(REPLACED_EFFECTS[effect].vars, name.slice(at + 1))) return undefined
+  return { effect, alias: '*' + REPLACED_EFFECTS[effect].alias, fresh: REPLACED_EFFECTS[effect].vars[name.slice(at + 1)] }
 }
 
 /** les réglages écrits entre les parenthèses de `*nom(…)`, vérifiés et convertis ; `scope` : les
@@ -1176,30 +1176,30 @@ export function parseEffect(name: string, raw: string, scope: string[] = [], par
     // `*filter.inconnu` : l'effet existe, pas cet alias ; `*filter.Net` : ce nom-là ne peut être celui d'aucun alias
     const point = name.indexOf('.')
     if (point > 0 && EFFECTS[name.slice(0, point)]) {
-      const effet = name.slice(0, point)
+      const effect = name.slice(0, point)
       // un alias livré retiré avant la 3.0 : l'écriture qui le remplace
-      if (Object.hasOwn(RETIRED_ALIASES, name)) throw new Error(t('effets.alias-retire', { nom: name, effet, ecriture: retiredWriting(name, raw) }))
-      const liste = Object.keys(projet()).filter(n => n.startsWith(effet + '.')).sort().map(n => '*' + n).join(', ')
-      throw new Error(t(ALIAS_NAME.test(name.slice(point + 1)) ? 'effets.alias-inconnu' : 'effets.alias-nom', { nom: name, effet, liste: liste || '—', exemple: aliasExample(effet) }))
+      if (Object.hasOwn(RETIRED_ALIASES, name)) throw new Error(t('effects.alias-removed', { name, effect: effect, writing: retiredWriting(name, raw) }))
+      const list = Object.keys(project()).filter(n => n.startsWith(effect + '.')).sort().map(n => '*' + n).join(', ')
+      throw new Error(t(ALIAS_NAME.test(name.slice(point + 1)) ? 'effects.alias-unknown' : 'effects.alias-name', { name, effect: effect, list: list || '—', example: aliasExample(effect) }))
     }
     // la suggestion cherche aussi parmi les alias (`*fliter.frosted_glass` → `*filter.frosted_glass`) ; la liste ne donne que les effets, ceux
     // de la bibliothèque et ceux de l'appli : les alias se listent dans l'erreur d'alias inconnu, pour l'effet concerné seulement
-    const names = [...Object.keys(EFFECTS), ...Object.keys(projet())].sort()
+    const names = [...Object.keys(EFFECTS), ...Object.keys(project())].sort()
     let best = ''
     let dist = Infinity
     for (const n of names) {
       const d = levenshtein(name, n)
       if (d < dist) { dist = d; best = n }
     }
-    const hint  = dist <= 2 ? t('effets.suggestion', { nom: best }) : ''
-    const liste = names.filter(n => !n.includes('.')).map(n => '*' + n).join(', ')
+    const hint = dist <= 2 ? t('effects.suggestion', { name: best }) : ''
+    const list = names.filter(n => !n.includes('.')).map(n => '*' + n).join(', ')
     // un mot de MJS écrit avec l'étoile d'un effet (`*size`, `*lightDom`) : le message donne son écriture
-    const mot   = wordHint(name)
-    if (mot) throw new Error(t('effets.mot-de-mjs', { nom: name, juste: mot }))
-    if (REMOVED_EFFECTS.has(name)) throw new Error(t('effets.retire', { nom: name, liste }))
-    const fondu = replacedEffectError(name, raw, false)
-    if (fondu) throw new Error(fondu)
-    throw new Error(t('effets.inconnu', { nom: name, liste }) + hint)
+    const word   = wordHint(name)
+    if (word) throw new Error(t('effects.mjs-word', { name, correct: word }))
+    if (REMOVED_EFFECTS.has(name)) throw new Error(t('effects.removed', { name, list: list }))
+    const merged = replacedEffectError(name, raw, false)
+    if (merged) throw new Error(merged)
+    throw new Error(t('effects.unknown', { name, list: list }) + hint)
   }
   const out: ParsedEffect = { fixed: {}, dynamic: {}, spec: {} }
   let positional = false
@@ -1213,7 +1213,7 @@ export function parseEffect(name: string, raw: string, scope: string[] = [], par
       value = kv[1].trim()
     }
     else {
-      if (positional) throw new Error(t('effets.positionnel', { nom: name, principal: spec.main }))
+      if (positional) throw new Error(t('effects.positional', { name, main: spec.main }))
       positional = true
       key = positionalKey(spec, item)
       value = item
@@ -1221,19 +1221,19 @@ export function parseEffect(name: string, raw: string, scope: string[] = [], par
     const setting = spec.settings[key]
     if (!setting) {
       // propres à la table seulement : `constructor`, `toString`… viennent d'Object, pas d'un ancien nom
-      const nouveau = Object.hasOwn(RENAMED_SETTINGS, name) && Object.hasOwn(RENAMED_SETTINGS[name], key) ? RENAMED_SETTINGS[name][key] : undefined
-      throw new Error(t('effets.reglage-inconnu', { nom: name, reglage: key, liste: Object.keys(spec.settings).join(', ') }) + (nouveau ? t('effets.reglage-renomme', { reglage: key, nouveau }) : ''))
+      const fresh = Object.hasOwn(RENAMED_SETTINGS, name) && Object.hasOwn(RENAMED_SETTINGS[name], key) ? RENAMED_SETTINGS[name][key] : undefined
+      throw new Error(t('effects.setting-unknown', { name, setting: key, list: Object.keys(spec.settings).join(', ') }) + (fresh ? t('effects.setting-renamed', { setting: key, newName: fresh }) : ''))
     }
-    if (key in out.fixed || key in out.dynamic) throw new Error(t('effets.double', { nom: name, reglage: key }))
+    if (key in out.fixed || key in out.dynamic) throw new Error(t('effects.duplicate', { name, setting: key }))
     // la connexion : une variable, suivie (un store qui reçoit une nouvelle connexion relance l'effet)
     if (setting.rule === 'socket') {
-      if (!SOCK_RE.test(value)) throw new Error(t('effets.sock-variable', { nom: name, valeur: value }))
+      if (!SOCK_RE.test(value)) throw new Error(t('effects.sock-variable', { name, value }))
       out.dynamic[key] = value
       out.spec[key]    = ['v', value, ruleDisplay('socket')]
       continue
     }
     // la part de `on: view` s'écrit en clair : tenue par une variable, le message de la forme permise
-    if (setting.rule === 'visible' && (VAR_RE.test(value) || isScoped(value, scope))) throw new Error(t('effets.valeur', { nom: name, reglage: key, valeur: value, regle: ruleDisplay(setting.rule) }))
+    if (setting.rule === 'visible' && (VAR_RE.test(value) || isScoped(value, scope))) throw new Error(t('effects.value', { name, setting: key, value, rule: ruleDisplay(setting.rule) }))
     if (VAR_RE.test(value) || isScoped(value, scope)) {
       out.dynamic[key] = value
       out.spec[key]    = specOf(setting.rule, setting.css)
@@ -1271,20 +1271,20 @@ function tagDisplay(tag: string): string {
 export function checkPlacement(name: string, settings: ParsedEffect, tag: string, foreign: boolean, written = name): void {
   const spec  = effectSpec(name)!
   const lower = tag.toLowerCase()
-  if (spec.life) throw new Error(t('transitions.cycle-seul', { nom: written }))
-  if (NO_BOX.has(lower)) throw new Error(t('effets.balise', { nom: written, balise: lower }))
+  if (spec.life) throw new Error(t('transitions.cycle-only', { name: written }))
+  if (NO_BOX.has(lower)) throw new Error(t('effects.tag', { name: written, tag: lower }))
   // une transition anime la balise elle-même : un tracé SVG aussi (*draw ne va que là)
-  if (foreign && !spec.transition) throw new Error(t('effets.svg', { nom: written, balise: tag }))
+  if (foreign && !spec.transition) throw new Error(t('effects.svg', { name: written, tag }))
   // un réglage écrit à sa valeur « sans texte » (`unit: child`) : l'effet n'a pas à lire le texte de la balise
   const free = Object.keys(spec.settings).some(k => spec.settings[k].textless !== undefined && settings.fixed[k] === spec.settings[k].textless)
-  if (spec.text && !free && (NO_CONTENT.has(lower) || lower.includes('-'))) throw new Error(t('effets.texte', { nom: written, balise: tagDisplay(lower) }))
-  if (spec.field && !FIELDS.has(lower)) throw new Error(t('effets.champ', { nom: written, balise: tagDisplay(lower) }))
+  if (spec.text && !free && (NO_CONTENT.has(lower) || lower.includes('-'))) throw new Error(t('effects.text', { name: written, tag: tagDisplay(lower) }))
+  if (spec.field && !FIELDS.has(lower)) throw new Error(t('effects.field', { name: written, tag: tagDisplay(lower) }))
   checkVisible(name, settings, written)
   const on   = (k: string) => settings.fixed[k] === true || k in settings.dynamic
   const key  = Object.keys(spec.settings).find(k => spec.settings[k].inside && on(k))
-  const quoi = spec.inside ? `*${written}` : key ? `*${written}(${key}: true)` : ''
-  if (!quoi) return
-  if (NO_CONTENT.has(lower)) throw new Error(t('effets.contenu', { quoi, balise: lower }))
+  const what = spec.inside ? `*${written}` : key ? `*${written}(${key}: true)` : ''
+  if (!what) return
+  if (NO_CONTENT.has(lower)) throw new Error(t('effects.content', { what: what, tag: lower }))
 }
 
 // les réglages que l'auteur a écrits entre les parenthèses de la pose (un alias en porte d'autres, les siens) ; une valeur sans nom
@@ -1308,24 +1308,24 @@ export function checkLife(name: string, settings: ParsedEffect, directive: strin
   const alias = projectEffect(name)?.fixed
   for (const k of ['on', 'once', 'range', 'zone', 'visible']) {
     if (!(k in settings.fixed || k in settings.dynamic)) continue
-    if (alias && k in alias && !writtenKeys(raw, spec).has(k)) throw new Error(t('transitions.declencheur-alias', { nom: name, reglage: k, valeur: String(alias[k]), directive: written(directive) }))
-    throw new Error(t('transitions.declencheur', { nom: name, reglage: k, directive: written(directive) }))
+    if (alias && k in alias && !writtenKeys(raw, spec).has(k)) throw new Error(t('transitions.trigger-alias', { name, setting: k, value: String(alias[k]), directive: written(directive) }))
+    throw new Error(t('transitions.trigger', { name, setting: k, directive: written(directive) }))
   }
   if (spec.transition || spec.custom) return
   const on = spec.settings.on
-  if (!on || !/'load'/.test(on.rule)) throw new Error(t('transitions.continu', { nom: name, directive: written(directive) }))
+  if (!on || !/'load'/.test(on.rule)) throw new Error(t('transitions.continuous', { name, directive: written(directive) }))
 }
 
 /** le nom le plus proche d'un effet du catalogue, et sa distance — deux lettres interverties comptent
  * pour une faute (`fdae` → `fade`), comme une lettre en trop, en moins ou changée */
-export function nearestEffect(name: string): { nom: string, distance: number } {
-  let nom = ''
+export function nearestEffect(name: string): { name: string, distance: number } {
+  let bestName = ''
   let distance = Infinity
   for (const n of Object.keys(EFFECTS)) {
     const d = typoDistance(name, n)
-    if (d < distance) { distance = d; nom = n }
+    if (d < distance) { distance = d; bestName = n }
   }
-  return { nom, distance }
+  return { name: bestName, distance }
 }
 
 // la distance entre deux noms : une lettre en trop, en moins ou changée compte pour une, deux lettres interverties aussi
@@ -1335,8 +1335,8 @@ export function typoDistance(a: string, b: string): number {
   for (let j = 0; j <= b.length; j++) d[0][j] = j
   for (let i = 1; i <= a.length; i++) {
     for (let j = 1; j <= b.length; j++) {
-      const cout = a[i - 1] === b[j - 1] ? 0 : 1
-      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cout)
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost)
       if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1)
     }
   }

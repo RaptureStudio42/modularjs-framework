@@ -28,6 +28,7 @@ import { join, extname, normalize, basename } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { findConfig, resolveBundlerOpts } from '../src/bundler/config.js'
+import { playTogether } from './helpers/engines-together.js'
 
 // ce que le runtime écrit (préfixe de ses messages) ; les lignes propres au navigateur (« Loading failed for the module… ») n'en sont pas
 const DU_RUNTIME = /^\[Autoloader\]|^\[ModularJS\]|^i18n /
@@ -98,18 +99,18 @@ async function navigateurPresent(nom: string): Promise<boolean> {
   }
 }
 
-let serveur: Promise<Serveur> | null = null
+const serveurs: Serveur[] = []                                  //un serveur et son état par moteur : les moteurs jouent ensemble
 
 for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
-  describe(`départ de la page : jamais de rechargement sous le visiteur — ${nom} réel`, function () {
+  playTogether(describe(`départ de la page : jamais de rechargement sous le visiteur — ${nom} réel`, function () {
     this.timeout(120000)
     let browser: any = null
     let s: Serveur
 
     before(async function () {
       if (!await navigateurPresent(nom)) { console.log(`  ℹ️  ${nom} non installé : test sauté`); this.skip() }
-      serveur ??= construire()
-      s = await serveur
+      s = await construire()
+      serveurs.push(s)
       browser = await (await import('playwright'))[nom].launch()
     })
 
@@ -232,10 +233,10 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
         await page.close()
       }
     })
-  })
+  }))
 }
 
 after(async () => {
-  if (serveur) (await serveur).server.close()
+  for (const x of serveurs) x.server.close()
   await terminateSharedWorkerPool()
 })

@@ -13,7 +13,7 @@ import { localizeViewerSource } from '../src/server/viewer-page.js'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
-import { scanCompiledFeatures, DERIVED_VALUES, ATTR_UPDATE, ATTR_SELECT, PROPS_PENDING, ATTR_FILTER, ROOT_TEXT, SIG_FREE, ROW_CLONE } from '../src/bundler/features.js'
+import { scanCompiledFeatures, DERIVED_VALUES, ATTR_UPDATE, ATTR_SELECT, PROPS_PENDING, ATTR_FILTER, ROOT_TEXT, SIG_FREE, ROW_CLONE, LONE_HELPERS, loneHelperSignal } from '../src/bundler/features.js'
 import { transpile } from '../src/transpiler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 
@@ -25,7 +25,10 @@ const MARQUE_DEEP = 'µ._mjs_deepSet = function'
 
 // blocs du cœur découpés par repères (pas des fichiers du runtime) : jugés sur le texte du cœur, plus bas ; un build de développement
 // qui n'est pas un cœur nu les garde tous (bundler/index.ts), qu'un composant de l'application s'en serve ou non
-const BLOCS = [DERIVED_VALUES, ATTR_UPDATE, ATTR_SELECT, PROPS_PENDING, ATTR_FILTER, ROOT_TEXT, SIG_FREE, ROW_CLONE]
+const BLOCS = [DERIVED_VALUES, ATTR_UPDATE, ATTR_SELECT, PROPS_PENDING, ATTR_FILTER, ROOT_TEXT, SIG_FREE, ROW_CLONE, ...LONE_HELPERS.map(([bloc]) => loneHelperSignal(bloc))]
+
+// définition de la suppression profonde, que l'atelier appelle quand une variable modifiée est rétablie
+const MARQUE_SUPPRESSION = 'µ._mjs_deepDelete = function'
 
 // définitions des aides d'écriture d'attribut et de texte que l'atelier compilé appelle
 const MARQUE_ATTR  = 'µ._mjs_updAttrNode = function'
@@ -80,6 +83,12 @@ describe('l\'atelier de thème et le cœur de l\'application', function () {
       assert.deepEqual(manque, [], `l'atelier appelle ces fonctions que le cœur de développement n'embarque pas : ${manque.join(', ')}`)
     })
   }
+
+  it('développement : une application qui ne supprime rien en profondeur garde pourtant la suppression profonde, que l\'atelier appelle', async () => {
+    const { output } = await transpile(localizeViewerSource(readFileSync(ATELIER, 'utf8')), { moduleName: 'theme-viewer' })
+    assert.ok(scanCompiledFeatures(output).has(loneHelperSignal('deep-delete')), 'garde muette : l\'atelier supprime en profondeur')
+    for (const sources of [NU, ECRIT]) assert.ok((await construire({}, sources)).includes(MARQUE_SUPPRESSION), 'le cœur de développement porte la suppression profonde')
+  })
 
   it('développement : une application sans valeur dérivée garde pourtant leur machinerie, que l\'atelier emploie', async () => {
     assert.ok((await construire({}, NU)).includes('_mjs_setComputed('), 'le cœur de développement porte la machinerie des valeurs dérivées')

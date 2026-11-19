@@ -1,7 +1,7 @@
 // Tests bundler — compile un projet jouet sur disque (tmpdir).
 
 import assert from 'node:assert/strict'
-import { writeFileSync, existsSync, readFileSync, mkdirSync, readdirSync } from 'node:fs'
+import { writeFileSync, existsSync, readFileSync, mkdirSync, readdirSync, statSync } from 'node:fs'
 import * as fs from 'node:fs'
 import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
@@ -189,10 +189,11 @@ describe('Bundler.compile()', () => {
     const here = fileURLToPath(new URL('.', import.meta.url))
     // le corps de bundleSharedStyles vit dans styles.ts (la méthode de la classe lui passe l'instance, `bundler`)
     const src = fs.readFileSync(join(here, '..', 'src', 'bundler', 'styles.ts'), 'utf-8')
-    const m = src.match(/const files = readdirSync\(bundler\.stylesheetsDir\)[\s\S]{0,150}/)
-    assert.ok(m, 'lecture des fichiers de stylesheetsDir introuvable (structure du bundler a changé ?)')
-    assert.match(
-      m![0], /\.sort\(\)/,
+    // chaque lecture du dossier (feuilles groupées, séparées, liste des tailles du texte) trie ses fichiers
+    const lectures = [...src.matchAll(/readdirSync\(bundler\.stylesheetsDir\)[^\n]*/g)].map((m) => m[0])
+    assert.ok(lectures.length > 0, 'lecture des fichiers de stylesheetsDir introuvable (structure du bundler a changé ?)')
+    for (const lecture of lectures) assert.match(
+      lecture, /\.sort\(\)/,
       "AVANT le fix : aucun .sort() après le filter — l'ordre de readdirSync (non garanti par le filesystem) pilotait directement la cascade CSS et le hash de mjs_styles-<hash>.js",
     )
   })
@@ -367,16 +368,29 @@ describe('Bundler — écriture atomique (writeFileAtomic)', function () {
     assert.deepEqual(leftovers, [], "AVANT le fix : pas de fichier temporaire du tout (écriture directe) — après le fix, aucun ne doit non plus SURVIVRE (renameSync nettoie)")
   })
 
-  it("un fichier DÉJÀ présent au chemin cible n'est jamais réécrit (même hash = même contenu présumé, comportement inchangé)", async () => {
+  it("un fichier DÉJÀ présent au chemin cible : même contenu, il n'est pas réécrit ; un autre contenu sous l'empreinte du fichier déjà là, l'écriture échoue en le nommant ; un fichier changé après son écriture, il est réécrit", async () => {
     const { srcDir, outDir, manifest } = makeProject()
     mkdirSync(outDir, { recursive: true })
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: manifest })
 
-    const target = join(outDir, 'probe2-deadbeef.js')
+    // nom tiré du contenu du fichier, comme une sortie d'une construction d'avant
+    const nom    = `probe2-${(bundler as any).fingerprintOf(Buffer.from('original')).short}.js`
+    const target = join(outDir, nom)
     writeFileSync(target, 'original')
-    ;(bundler as any).writeFileAtomic(target, 'nouveau-contenu-different')
+    const avant = statSync(target).ino
+    ;(bundler as any).writeFileAtomic(target, 'original')
+    assert.equal(statSync(target).ino, avant, 'même contenu : le fichier déjà là reste le même (aucune réécriture)')
 
-    assert.equal(readFileSync(target, 'utf-8'), 'original', 'un fichier déjà là ne doit pas être écrasé (fast-path content-addressed inchangé)')
+    // deux contenus sous la même empreinte : la construction échoue, comme le promet le chapitre 32, sans écraser le fichier
+    assert.throws(() => (bundler as any).writeFileAtomic(target, 'nouveau-contenu-different'), (e: Error) => e.message.includes(nom))
+    assert.equal(readFileSync(target, 'utf-8'), 'original', 'le fichier déjà là n\'est pas écrasé')
+
+    // fichier changé après son écriture (fins de ligne d'un dépôt git, bandeau d'un outil de déploiement, retouche à la main) : son
+    // contenu ne porte pas l'empreinte de son nom, ce n'est pas une collision, il est réécrit
+    const change = join(outDir, 'probe3-deadbeef.js')
+    writeFileSync(change, 'original')
+    ;(bundler as any).writeFileAtomic(change, 'nouveau-contenu-different')
+    assert.equal(readFileSync(change, 'utf-8'), 'nouveau-contenu-different', 'le fichier changé après coup reprend le contenu de son nom')
   })
 
   it('writeHashed() route bien SES écritures via writeFileAtomic (pas de writeFileSync direct qui aurait survécu au refactor)', () => {

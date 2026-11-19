@@ -27,9 +27,9 @@ const LECTEUR = `<script>
 
   µsleep ->
     try
-      window.__lu = (window.__lu or []).concat([String(§theme) + '/' + String(§§reglage?.ton)])
+      window.__read = (window.__read or []).concat([String(§theme) + '/' + String(§§reglage?.ton)])
     catch e
-      window.__lu = (window.__lu or []).concat(['ERREUR ' + e.message])
+      window.__read = (window.__read or []).concat(['ERREUR ' + e.message])
 </script>
 
 <span class="t">{$vu}</span>
@@ -120,10 +120,10 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`contexte
 
     it('le lien et le bloc retirés, le lecteur sous le lien lit `undefined` comme celui sous le bloc, sans erreur', async function () {
       const lu = await page.evaluate(`(async () => {
-        window.__lu = []
+        window.__read = []
         document.querySelector('mjs-hote')._set('montre', false)
         await new Promise((r) => setTimeout(r, 400))
-        return window.__lu
+        return window.__read
       })()`)
       assert.deepEqual(lu, ['undefined/undefined', 'undefined/undefined'], 'deux lectures, aucune erreur')
     })

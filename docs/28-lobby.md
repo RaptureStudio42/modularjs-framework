@@ -201,7 +201,7 @@ Trois statuts : `free`, `busy`, `away`. Le texte court (`text`) est optionnel et
 `statusTextMaxLength` (défaut 60) : au-delà, il est refusé, jamais tronqué. Un changement de statut est diffusé à **tout le hall, soi-même
 compris** — chaque `sock.lobby()` ouvert reçoit le même delta `lobby:member`, qui met à jour
 `.members` par id (upsert). Débit : `statusRateMs` (défaut 5 s) par identité — au-delà,
-`lobby-rate`.
+`lobby-rate`. Ce débit suit l'identité, comme ceux des invitations et des annonces : sortir du hall et y rentrer ne les remet pas à neuf. Un visiteur sans compte change d'id à chaque connexion : ses débits repartent alors à neuf. Le serveur garde les débits de 10 000 départs au plus, tous halls confondus : au-delà, ceux du départ le plus ancien sont oubliés.
 
 ---
 
@@ -251,6 +251,7 @@ ignorées **silencieusement** : l'émetteur ne voit **aucune différence** de co
 d'erreur, pas de confirmation distincte) que sa cible l'ait bloqué ou non — impossible de sonder si
 on a été bloqué.
 
+- **Un blocage n'arrête que les invitations.** La personne bloquée peut encore rejoindre votre table (`lobby:join`) : vous recevez sa demande (`lobby:applicant`).
 - **On ne bloque qu'une personne présente dans le hall.** Une identité absente : `lobby-away`, comme pour
   une invitation (elle ne peut de toute façon vous inviter qu'une fois entrée). Un identifiant de plus de
   128 caractères : `lobby-block-invalid`.

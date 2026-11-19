@@ -11,7 +11,7 @@ const dir     = process.argv[2]
 const message = process.argv[3]
 
 const journal = createJournal({ dir })
-journal.record('server', { message, pile: 'Error: fixture journal-sigterm\n  at x', url: '/fixture' })
+journal.record('server', { message, stack: 'Error: fixture journal-sigterm\n  at x', url: '/fixture' })
 
 setInterval(() => {}, 1000)
 process.kill(process.pid, 'SIGTERM')

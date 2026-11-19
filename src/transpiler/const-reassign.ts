@@ -25,37 +25,37 @@ export interface ConstReassignment {
   line: number // 1-based, dans le texte JS analysé (celui passé à findConstReassignment)
   /** la liaison réaffectée est une copie qu'un gestionnaire recrée depuis le gabarit (variable ou
    *  index de `{for}`, `{const}`, valeur `{success}`/`{error}`) : l'écriture serait perdue */
-  gabarit?: boolean
+  template?: boolean
 }
 
 // ce que l'analyse a produit quand le texte ne s'analyse PAS — pour l'appelant qui garde une
 // ÉMISSION : « rien vu » (aucune violation) et « rien pu voir » ne se confondent pas.
-export interface ErreurAnalyse {
+export interface ParseError {
   message: string
-  ligne: number   // 1-based, dans le texte analysé (0 quand acorn n'a pas donné de position)
-  extrait: string // la ligne fautive, rognée
+  line: number   // 1-based, dans le texte analysé (0 quand acorn n'a pas donné de position)
+  excerpt: string // la ligne fautive, rognée
 }
 
 // une portée : liaisons visibles à CE niveau (nom → constante ? — `'gabarit'` pour la copie qu'un
-// gestionnaire recrée depuis le gabarit, cf. estInitSquelette), portée mère (chaîne de résolution)
+// gestionnaire recrée depuis le gabarit, cf. isSkeletonInit), portée mère (chaîne de résolution)
 // et portée-cible du hissage `var` (la fonction/racine englobante — jamais un bloc).
-type Liaison = boolean | 'gabarit'
+type Binding = boolean | 'template'
 
 interface Scope {
   parent: Scope | null
-  names: Map<string, Liaison>
+  names: Map<string, Binding>
   varTarget: Scope
 }
 
-// noms que le gabarit met en portée des gestionnaires analysés (cf. analyserConstReassign) — posé
+// noms que le gabarit met en portée des gestionnaires analysés (cf. analyzeConstReassign) — posé
 // le temps d'une analyse, synchrone
-let localesGabarit: ReadonlySet<string> = new Set()
+let activeTemplateLocals: ReadonlySet<string> = new Set()
 
 // valeur du squelette qui recrée un nom du gabarit en tête d'un gestionnaire (generator/attributes,
-// squelettePortee) : `_mjs_ra_N[…]` (variable de boucle), `_mjs_ri_N` (index), `_mjs_cst_N` (`{const}`),
+// scopeSkeleton) : `_mjs_ra_N[…]` (variable de boucle), `_mjs_ri_N` (index), `_mjs_cst_N` (`{const}`),
 // `_mjs_aw_N` (valeur `{await}`). Une liaison ainsi posée n'est qu'une copie : toute AUTRE écriture
 // serait perdue ; ces affectations-là, elles, sont le squelette même.
-function estInitSquelette(node: any): boolean {
+function isSkeletonInit(node: any): boolean {
   if (!node) return false
   if (node.type === 'Identifier') return /^_mjs_(ri|cst|aw)_\d+$/.test(node.name)
   return node.type === 'MemberExpression' && node.object.type === 'Identifier' && /^_mjs_ra_\d+$/.test(node.object.name)
@@ -71,14 +71,14 @@ function newBlockScope(parent: Scope): Scope {
   return { parent, names: new Map(), varTarget: parent.varTarget }
 }
 
-function declare(scope: Scope, name: string, liaison: Liaison): void {
-  scope.names.set(name, liaison)
+function declare(scope: Scope, name: string, binding: Binding): void {
+  scope.names.set(name, binding)
 }
 
 // résout `name` dans la chaîne de portées, de la plus interne à la racine — rend `true` si LIÉ et
 // CONSTANT, `'gabarit'` si c'est une copie recréée depuis le gabarit ; un nom inconnu (global,
 // importé, prédéclaré ailleurs) n'est jamais signalé.
-function resolveBinding(scope: Scope, name: string): Liaison {
+function resolveBinding(scope: Scope, name: string): Binding {
   for (let s: Scope | null = scope; s; s = s.parent) {
     const c = s.names.get(name)
     if (c !== undefined) return c
@@ -89,7 +89,7 @@ function resolveBinding(scope: Scope, name: string): Liaison {
 // signal de sortie anticipée du walker — jamais levé hors de findConstReassignment, jamais
 // exposé : la PREMIÈRE violation rencontrée pendant la descente (ordre source, cf. plus bas).
 class FoundViolation {
-  constructor(public name: string, public line: number, public gabarit: boolean) {}
+  constructor(public name: string, public line: number, public template: boolean) {}
 }
 
 // extrait les identifiants LIÉS d'un motif de déclaration/destructuration (id d'un
@@ -148,8 +148,8 @@ function extractAssignmentTargets(pattern: any, out: any[]): void {
 
 function checkTarget(node: any, scope: Scope, line: number): void {
   if (node.type !== 'Identifier') return
-  const liaison = resolveBinding(scope, node.name)
-  if (liaison) throw new FoundViolation(node.name, line, liaison === 'gabarit')
+  const binding = resolveBinding(scope, node.name)
+  if (binding) throw new FoundViolation(node.name, line, binding === 'template')
 }
 
 // walk restreint qui NE DESCEND JAMAIS dans une fonction imbriquée — sert au hissage `var`
@@ -187,9 +187,9 @@ function collectDirectDeclarations(statements: any[], into: Scope): void {
     if (stmt.type === 'VariableDeclaration' && stmt.kind !== 'var') {
       const isConst = stmt.kind === 'const'
       for (const d of stmt.declarations) {
-        // copie d'un nom du gabarit posée par le squelette d'un gestionnaire (cf. estInitSquelette)
-        if (d.id.type === 'Identifier' && localesGabarit.has(d.id.name) && estInitSquelette(d.init)) {
-          declare(into, d.id.name, 'gabarit')
+        // copie d'un nom du gabarit posée par le squelette d'un gestionnaire (cf. isSkeletonInit)
+        if (d.id.type === 'Identifier' && activeTemplateLocals.has(d.id.name) && isSkeletonInit(d.init)) {
+          declare(into, d.id.name, 'template')
           continue
         }
         const names: string[] = []
@@ -338,7 +338,7 @@ const VISITORS = {
     const scope = st.scope
     const line  = node.loc.start.line
     // le squelette lui-même (`index = _mjs_ri_1` d'une boucle imbriquée au même nom d'index) : permis
-    if (node.operator === '=' && estInitSquelette(node.right)) {
+    if (node.operator === '=' && isSkeletonInit(node.right)) {
       c(node.left, { scope }, 'Pattern')
       c(node.right, { scope }, 'Expression')
       return
@@ -365,10 +365,10 @@ const VISITORS = {
 
 // la ligne fautive d'un texte qui ne s'analyse pas, telle qu'acorn la situe (`loc.line` est
 // 1-based, comme le reste du fichier) ; `ligne: 0` quand il n'a pas pu la donner.
-function decrireErreurAnalyse(js: string, err: any): ErreurAnalyse {
-  const ligne = typeof err?.loc?.line === 'number' ? err.loc.line : 0
-  const brute = ligne > 0 ? (js.split('\n')[ligne - 1] ?? '') : ''
-  return { message: String(err?.message ?? err), ligne, extrait: brute.trim().slice(0, 160) }
+function describeParseError(js: string, err: any): ParseError {
+  const line = typeof err?.loc?.line === 'number' ? err.loc.line : 0
+  const raw  = line > 0 ? (js.split('\n')[line - 1] ?? '') : ''
+  return { message: String(err?.message ?? err), line, excerpt: raw.trim().slice(0, 160) }
 }
 
 // analyse le JS produit par Civet et rend la PREMIÈRE affectation à une liaison `const` (ordre
@@ -379,15 +379,15 @@ function decrireErreurAnalyse(js: string, err: any): ErreurAnalyse {
 // Analyse TOUJOURS (aucun raccourci qui sauterait le parse) : c'est ce qui rend `analysable`
 // digne de foi ; le raccourci de perf vit dans findConstReassignment ci-dessous, pour les textes
 // entiers où « aucune constante en jeu » se lit dans le texte.
-// `constantesExternes` : constantes d'un bloc ENGLOBANT compilé à part (le `<script module>` d'un
+// `externalConstants` : constantes d'un bloc ENGLOBANT compilé à part (le `<script module>` d'un
 // composant, vu par son `<script>`) — portée mère de la racine, masquée comme toute autre par une
 // déclaration locale homonyme.
-// `locauxDuGabarit` : noms que le gabarit met en portée des gestionnaires analysés — leur copie
-// posée par le squelette (cf. estInitSquelette) est traitée comme une constante : la réaffecter
+// `templateLocals` : noms que le gabarit met en portée des gestionnaires analysés — leur copie
+// posée par le squelette (cf. isSkeletonInit) est traitée comme une constante : la réaffecter
 // ailleurs n'écrirait qu'une copie locale, perdue (violation `gabarit: true`).
-export function analyserConstReassign(js: string, constantesExternes: Iterable<string> = [], locauxDuGabarit: Iterable<string> = [], preAst?: acorn.Node): { violation: ConstReassignment | null; analysable: boolean; erreur?: ErreurAnalyse } {
-  const externes = [...constantesExternes]
-  if (!js) return { violation: null, analysable: true }
+export function analyzeConstReassign(js: string, externalConstants: Iterable<string> = [], templateLocals: Iterable<string> = [], preAst?: acorn.Node): { violation: ConstReassignment | null; parsable: boolean; error?: ParseError } {
+  const external = [...externalConstants]
+  if (!js) return { violation: null, parsable: true }
   let ast: acorn.Node
   if (preAst) ast = preAst
   else {
@@ -395,39 +395,39 @@ export function analyserConstReassign(js: string, constantesExternes: Iterable<s
       ast = acorn.parse(js, { ecmaVersion: 'latest', sourceType: 'module', locations: true })
     }
     catch (e: any) {
-      return { violation: null, analysable: false, erreur: decrireErreurAnalyse(js, e) }
+      return { violation: null, parsable: false, error: describeParseError(js, e) }
     }
   }
   let englobante: Scope | null = null
-  if (externes.length > 0) {
+  if (external.length > 0) {
     englobante = newFunctionScope(null)
-    for (const n of externes) declare(englobante, n, true)
+    for (const n of external) declare(englobante, n, true)
   }
-  localesGabarit = new Set(locauxDuGabarit)
+  activeTemplateLocals = new Set(templateLocals)
   try {
     walk.recursive(ast, { scope: englobante }, VISITORS)
   }
   catch (e) {
-    if (e instanceof FoundViolation) return { violation: { name: e.name, line: e.line, ...(e.gabarit ? { gabarit: true } : {}) }, analysable: true }
+    if (e instanceof FoundViolation) return { violation: { name: e.name, line: e.line, ...(e.template ? { template: true } : {}) }, parsable: true }
     throw e
   }
   finally {
-    localesGabarit = new Set()
+    activeTemplateLocals = new Set()
   }
-  return { violation: null, analysable: true }
+  return { violation: null, parsable: true }
 }
 
 // même analyse, réduite à la violation — pour les appelants qui ne distinguent pas l'échec
 // d'analyse d'une absence de violation (le texte vient d'être compilé, donc validé ailleurs).
 // `preAst` : l'AST de `js` déjà analysé AVEC les positions de ligne (`locations`), pour ne pas relire le texte ; `null` :
 // analyse déjà tentée et échouée en amont (même réponse qu'un échec ici : rien d'analysable)
-export function findConstReassignment(js: string, constantesExternes: Iterable<string> = [], preAst?: acorn.Node | null): ConstReassignment | null {
-  const externes = [...constantesExternes]
+export function findConstReassignment(js: string, externalConstants: Iterable<string> = [], preAst?: acorn.Node | null): ConstReassignment | null {
+  const external = [...externalConstants]
   // raccourci de PERF, propre à ces appelants-là (textes entiers : bundle, module compilé) —
   // aucun `const` dans le texte ni autour, donc aucune constante à réaffecter, inutile de parser
   // (cf. le même garde-fou dans generator/transform-reactive.ts et effect-deps.ts).
   if (!js) return null
-  if (externes.length === 0 && !js.includes('const')) return null
+  if (external.length === 0 && !js.includes('const')) return null
   if (preAst === null) return null
-  return analyserConstReassign(js, externes, [], preAst).violation
+  return analyzeConstReassign(js, external, [], preAst).violation
 }

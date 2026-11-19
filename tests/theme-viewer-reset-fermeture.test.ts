@@ -52,7 +52,7 @@ describe('theme-viewer.mjs — remise à zéro des variables diffusées à la fe
       c = await app.mount('tst-thrf-un')
       await c.tick()
       await c.tick()
-      await c.type('.groupes input.pastille', '#ff0000')
+      await c.type('.groups input.swatch', '#ff0000')
       assert.equal(beacons.length, 0, 'rien avant la fermeture — seul le canal HMR (envoyer) est sollicité')
       app.window.dispatchEvent(new app.window.Event('pagehide'))
       assert.equal(beacons.length, 1, 'la fermeture doit déclencher UN beacon de remise à zéro')
@@ -96,7 +96,7 @@ describe('theme-viewer.mjs — remise à zéro des variables diffusées à la fe
     const app = await createHarness({ root: projetTemporaire('tst-thrf-trois') })
     const fetchOrigine = (globalThis as any).fetch
     const beacons: any[] = []
-    // etatDirect() : `/__mjs/theme/edit` en GET échoue → $live reste false (cf. .catch(-> $live = false))
+    // fetchLiveState() : `/__mjs/theme/edit` en GET échoue → $live reste false (cf. .catch(-> $live = false))
     const faussaire = async (url: string) => {
       if (url === '/__mjs/theme.json') return { json: async () => REGISTRE }
       if (url === '/__mjs/theme/edit') throw new Error('non disponible en mjs serve')
@@ -110,7 +110,7 @@ describe('theme-viewer.mjs — remise à zéro des variables diffusées à la fe
       c = await app.mount('tst-thrf-trois')
       await c.tick()
       await c.tick()
-      assert.equal(c.findAll('.pastille.vive').length, 0, 'lecture seule : aucun sélecteur de couleur en direct')
+      assert.equal(c.findAll('.swatch.live').length, 0, 'lecture seule : aucun sélecteur de couleur en direct')
       app.window.dispatchEvent(new app.window.Event('pagehide'))
       assert.equal(beacons.length, 0)
     } finally {

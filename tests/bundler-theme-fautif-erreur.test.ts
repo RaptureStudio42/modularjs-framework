@@ -39,7 +39,7 @@ describe('thème fautif et surveillance qui échoue au démarrage', function () 
     const { src, out, man } = projet('theme-fautif-watch')
     writeFileSync(join(src, 'Sombre.theme.mjs'), '<theme>\n  $$fond: #000\n</theme>\n')
     const recus: number[] = []
-    await new Bundler({ sourceDir: src, outputDir: out, manifestPath: man }).watch({ onRecompile: (_chemin, stats) => recus.push(stats?.errors.length ?? -1) })
+    await new Bundler({ sourceDir: src, outputDir: out, manifestPath: man }).watch({ onRecompile: (_path, stats) => recus.push(stats?.errors.length ?? -1) })
     assert.deepEqual(recus, [1])
   })
 

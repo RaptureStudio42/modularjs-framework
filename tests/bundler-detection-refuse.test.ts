@@ -1,4 +1,4 @@
-// mjs_refuse.ts (µ._mjs_refuse, µ._mjs_refuseRetablir : champ nombre lié dont la saisie est refusée),
+// mjs_refuse.ts (µ._mjs_refuse, µ._mjs_refuseRestore : champ nombre lié dont la saisie est refusée),
 // détaché de mjs_init.ts : seul le gestionnaire de saisie d'un champ `value=!{$x}` dont le type peut être
 // `number` l'appelle (generator/attributes/index.ts). Absent d'un build qui n'écrit aucun champ de ce genre,
 // présent et fonctionnel sinon ; faits inconnus (API directe) : gardé.
@@ -55,7 +55,7 @@ describe('mjs_refuse.ts — détaché du cœur, build RÉEL', function () {
     for (const js of [undefined, 'bundle']) {
       const { sortie } = await construire('nombre-' + js, { runtime: 'core', js }, NOMBRE)
       assert.ok(sortie.includes(MARK), 'js: ' + js)
-      assert.ok(sortie.includes('µ._mjs_refuseRetablir = function'), 'js: ' + js)
+      assert.ok(sortie.includes('µ._mjs_refuseRestore = function'), 'js: ' + js)
     }
   })
 

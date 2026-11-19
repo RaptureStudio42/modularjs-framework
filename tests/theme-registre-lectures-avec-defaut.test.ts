@@ -87,9 +87,9 @@ describe('registre des variables de thème — lectures avec défaut', function 
       'field-ok-color':    ['core-field:#2e9e5b'],
       'number-accent':     ['core-number:var(--mjs-accent, #3b82f6)'],
       'number-border':     ['core-number:var(--mjs-border, #888)'],
-      'number-radius':     ['core-number:999px'],
+      'number-radius':     ['core-number:999px', 'core-number:12px'],
       'number-step-bg':    ['core-number:transparent'],
-      'number-width':      ['core-number:160px', 'core-number:240px'],
+      'number-width':      ['core-number:160px', 'core-number:240px', 'core-number:120px'],
       'color-border':      ['core-color:var(--mjs-border, #888)'],
       'color-line':        ['core-color:1.26rem'],
       'color-radius':      ['core-color:4px'],
@@ -127,13 +127,25 @@ describe('registre des variables de thème — lectures avec défaut', function 
 
   it('le sélecteur lit ses variables sans en déclarer : elles arrivent au registre d\'une application qui sort du silence', async () => {
     // `other` écrit : la place horizontale du panneau de la réponse libre (`select-panel-left`) n'est lue que par la partie « Autre », que la
-    // construction ôte sinon, en développement comme en production
+    // construction ôte sinon, en développement comme en production ; la flèche (`select-arrow`, `-arrow-color`, `-arrow-size`) et le
+    // `z-index` du panneau sans couche du dessus (`select-panel-z`) se règlent comme les autres (chapitre 30)
     const { registre } = await construire({ hote: THEME + '<@@select name="s" other><@@option value="a">A</@@option></@@select>\n' })
     const noms = Object.keys(registre!).filter((n) => n.startsWith('select-')).sort()
     assert.deepEqual(noms, [
-      'select-bg', 'select-border', 'select-fg', 'select-hover', 'select-max', 'select-panel-bg', 'select-panel-left', 'select-panel-max',
-      'select-panel-shadow', 'select-placeholder', 'select-radius', 'select-search-h', 'select-selected'
+      'select-arrow', 'select-arrow-color', 'select-arrow-size', 'select-bg', 'select-border', 'select-fg', 'select-hover', 'select-max', 'select-panel-bg',
+      'select-panel-left', 'select-panel-max', 'select-panel-shadow', 'select-panel-z', 'select-placeholder', 'select-radius', 'select-search-h', 'select-selected'
     ])
+    const reglables: Record<string, string[]> = {
+      'select-arrow':       ['core-select:block'],
+      'select-arrow-color': ['core-select:currentColor'],
+      'select-arrow-size':  ['core-select:0.8em'],
+      'select-panel-z':     ['core-select:20']
+    }
+    const vus: Record<string, string[]> = {}
+    for (const nom of Object.keys(reglables)) vus[nom] = lignes(registre!, nom)
+    // le défaut tel que le CSS produit l'écrit : `.8em` du module sort en `0.8em`, comme le `.35` de la case sort en `0.35`
+    assert.deepEqual(vus, reglables, 'les défauts que le module lit (chapitre 30 : la couleur du texte, .8em, un z-index de 20)')
+    for (const nom of Object.keys(reglables)) assert.equal(registre![nom].declarations[0].set, undefined, `${nom} : se règle`)
     assert.equal(registre!['select-panel-max'].declarations[0].set, true, 'la hauteur du panneau est posée par le module à chaque ouverture : posée par le composant')
     assert.equal(registre!['select-panel-left'].declarations[0].set, true, 'la place horizontale du panneau de la réponse libre est calculée et posée par le module : posée par le composant')
     assert.equal(registre!['select-search-h'].declarations[0].set, true, 'la hauteur du champ de recherche, sous lequel colle l\'option choisie, est mesurée et posée par le module : posée par le composant')

@@ -23,7 +23,7 @@ function gameWith(tickHz: number, persisted: boolean, fn: (game: any) => unknown
 describe('MJS-Server — l\'empreinte d\'une partie n\'est calculée au tir d\'une minuterie que si elle sert', () => {
   it('sans persistance, mode événementiel : aucune empreinte', async () => {
     const { game, prints } = gameWith(0, false, () => {})
-    game._guardApplicativeTimer('veille')
+    game._guardAppTimer('veille')
     await tick()
     assert.equal(prints(), 0)
     game._destroy()
@@ -31,7 +31,7 @@ describe('MJS-Server — l\'empreinte d\'une partie n\'est calculée au tir d\'u
 
   it('mode action, avec persistance : aucune empreinte', async () => {
     const { game, prints } = gameWith(20, true, (g: any) => { g.state.n++ })
-    game._guardApplicativeTimer('veille')
+    game._guardAppTimer('veille')
     await tick()
     assert.equal(prints(), 0)
     game._destroy()
@@ -39,13 +39,13 @@ describe('MJS-Server — l\'empreinte d\'une partie n\'est calculée au tir d\'u
 
   it('avec persistance, mode événementiel : une empreinte par tir, une de plus à la fin de la Promise rendue', async () => {
     const sync = gameWith(0, true, () => {})
-    sync.game._guardApplicativeTimer('veille')
+    sync.game._guardAppTimer('veille')
     await tick()
     assert.equal(sync.prints(), 1, 'tir synchrone')
     sync.game._destroy()
 
     const async = gameWith(0, true, () => new Promise<void>(resolve => setTimeout(resolve, 10)))
-    async.game._guardApplicativeTimer('veille')
+    async.game._guardAppTimer('veille')
     await tick(40)
     assert.equal(async.prints(), 2, 'tir qui rend une Promise')
     async.game._destroy()

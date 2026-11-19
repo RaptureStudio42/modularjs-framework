@@ -5,12 +5,12 @@
 
 import assert from 'node:assert/strict'
 import { Window } from 'happy-dom'
-import { noterTexteFeuilles, texteFeuille } from '../src/server/renderToString.js'
+import { noteSheetTexts, sheetText } from '../src/server/renderToString.js'
 
 describe('rendu serveur — texte d\'une feuille modifiée après replaceSync', () => {
   const feuille = (css: string): any => {
     const w: any = new Window()
-    noterTexteFeuilles(w)
+    noteSheetTexts(w)
     const f = new w.CSSStyleSheet()
     f.replaceSync(css)
     return f
@@ -19,26 +19,26 @@ describe('rendu serveur — texte d\'une feuille modifiée après replaceSync', 
   it('insertRule en fin : la règle s\'ajoute au texte noté, à l\'octet', () => {
     const f = feuille(':where(:root){--mjs-surface:#fff}')
     f.insertRule('.b{color:blue}', f.cssRules.length)
-    assert.equal(texteFeuille(f), ':where(:root){--mjs-surface:#fff}\n.b{color:blue}')
+    assert.equal(sheetText(f), ':where(:root){--mjs-surface:#fff}\n.b{color:blue}')
   })
 
   it('insertRule en tête : la règle ressort', () => {
     const f = feuille('.a{color:red}')
     f.insertRule('.b{color:blue}', 0)
-    assert.match(texteFeuille(f), /\.b\s*\{/)
-    assert.match(texteFeuille(f), /\.a\s*\{/)
+    assert.match(sheetText(f), /\.b\s*\{/)
+    assert.match(sheetText(f), /\.a\s*\{/)
   })
 
   it('deleteRule : la règle retirée ne ressort plus', () => {
     const f = feuille('.a{color:red}.b{color:blue}')
     f.deleteRule(0)
-    assert.doesNotMatch(texteFeuille(f), /\.a\s*\{/)
-    assert.match(texteFeuille(f), /\.b\s*\{/)
+    assert.doesNotMatch(sheetText(f), /\.a\s*\{/)
+    assert.match(sheetText(f), /\.b\s*\{/)
   })
 
   it('replace après replaceSync : le nouveau texte', async () => {
     const f = feuille('.a{color:red}')
     await f.replace('.c{color:green}')
-    assert.equal(texteFeuille(f), '.c{color:green}')
+    assert.equal(sheetText(f), '.c{color:green}')
   })
 })

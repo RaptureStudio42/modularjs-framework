@@ -57,14 +57,14 @@ const SCENARIO = `(async () => {
   const hote = document.querySelector('mjs-main')
   const ombre = hote._shadow || hote
   const lignes = (ul) => [...ombre.querySelectorAll(ul + ' > li')]
-  for (const ul of ['.champs', '.plis', '.videos']) for (const li of lignes(ul)) li.__avant = 1
+  for (const ul of ['.champs', '.plis', '.videos']) for (const li of lignes(ul)) li.__before = 1
   const libre = ombre.querySelector('.champs .libre')
   if (libre) { libre.value = 'tapé'; libre.dispatchEvent(new Event('input', { bubbles: true })) }
   const pli = ombre.querySelector('.plis details')
   if (pli) pli.open = true
   ombre.querySelector('.changer').click()
   await new Promise((r) => setTimeout(r, 50))
-  const rendu = (ul) => lignes(ul).map((li) => ({ reprise: li.__avant === 1, texte: li.textContent.trim(), libre: li.querySelector('.libre')?.value, lie: li.querySelector('.lie')?.value, ouvert: li.querySelector('details')?.open }))
+  const rendu = (ul) => lignes(ul).map((li) => ({ reprise: li.__before === 1, texte: li.textContent.trim(), libre: li.querySelector('.libre')?.value, lie: li.querySelector('.lie')?.value, ouvert: li.querySelector('details')?.open }))
   return { champs: rendu('.champs'), plis: rendu('.plis'), videos: rendu('.videos') }
 })()`
 

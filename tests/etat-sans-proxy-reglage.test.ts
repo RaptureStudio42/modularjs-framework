@@ -38,14 +38,14 @@ const coeur = async (used: Set<string>, opts: Record<string, unknown> = {}) => {
 }
 
 // l'enveloppe et les aides qu'elle est seule à appeler, par le début de leur définition
-const ENVELOPPE = ['proxy = new Proxy(target, handler);', 'const MJS_ENV_TRAPS = (class {', 'function _mjsEnvWrap(h, obj) {', 'function _mjsEnvMut(h, obj, prop, val) {', 'function _mjsEnvRelais(h, obj) {', 'MJS_DATE_MUTATORS = new Set([', 'function _mjsSnapBefore(el, rootKey, obj) {', 'function _mjsMutated(h, obj, snap) {', 'function _mjsKidsOubli() {']
+const ENVELOPPE = ['proxy = new Proxy(target, handler);', 'const MJS_ENV_TRAPS = (class {', 'function _mjsEnvWrap(h, obj) {', 'function _mjsEnvMut(h, obj, prop, val) {', 'function _mjsEnvRelay(h, obj) {', 'MJS_DATE_MUTATORS = new Set([', 'function _mjsSnapBefore(el, rootKey, obj) {', 'function _mjsMutated(h, obj, snap) {', 'function _mjsKidsForget() {']
 // les deux aides de lecture qu'elle partage avec µ.state et µ.Store (mjs_init.ts)
 const AIDES     = ['µ._mjs_fixed = (o, k) =>', 'µ._mjs_readFn = (o, k, f, p, w) =>']
 // le refus du mur des prototypes, qu'elle partage avec µ.state et µ.Store (mjs_element.ts) : gardé pour eux sans elle
-const MUR       = ['function _mjsEnvRefus(seg) {']
+const MUR       = ['function _mjsEnvReject(seg) {']
 // l'objet rangé tel quel, sa clé notée
-const TELQUEL   = ['_mjs_wrapDeep(target, rootKey) {']
-const BLOCS     = ['enveloppe', 'sans-enveloppe', 'enveloppe-aides', 'mur']
+const TELQUEL = ['_mjs_wrapDeep(target, rootKey) {']
+const BLOCS   = ['wrapper', 'no-wrapper', 'wrapper-helpers', 'wall']
 
 const tous    = (texte: string, jalons: string[], quoi: string) => { for (const j of jalons) assert.ok(texte.includes(j), `${quoi} : « ${j} » manque`) }
 const aucun   = (texte: string, jalons: string[], quoi: string) => { for (const j of jalons) assert.ok(!texte.includes(j), `${quoi} : « ${j} » est encore là`) }
@@ -110,7 +110,7 @@ describe('cœur sans enveloppe de l\'état (réglage proxy: false)', function ()
       tous(texte, [...ENVELOPPE, ...AIDES, ...MUR], cas)
       aucun(texte, TELQUEL, cas)
       // gardé, le bloc des aides garde ses marques en commentaire, comme les aides d'écriture voisines ; l'enveloppe perd les siennes
-      marques(texte, ['enveloppe', 'sans-enveloppe'])
+      marques(texte, ['wrapper', 'no-wrapper'])
       valide(texte)
     }
   })

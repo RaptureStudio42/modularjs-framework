@@ -85,7 +85,7 @@ describe('réglage proxy: false — écritures par un élément de liste signal�
   })
 
   // chaque ligne qui change, telle qu'attendue avec le réglage : l'écriture par l'élément passe par l'aide gardée, une clé calculée de
-  // sa chaîne par `µ._mjs_deepCle` ; le reste de la ligne ne bouge pas
+  // sa chaîne par `µ._mjs_deepKey` ; le reste de la ligne ne bouge pas
   it('avec le réglage, comparé à la sortie sans lui : seules les écritures par un élément changent, passées par l\'aide gardée', () => {
     const a = defaut.split('\n')
     const b = sans.split('\n')
@@ -94,7 +94,7 @@ describe('réglage proxy: false — écritures par un élément de liste signal�
     assert.deepEqual(changees, [
       ['this.f0 = function() { for (const y of $.l) y.n++; };', 'this.f0 = function() { for (const y of $.l) {let _mjs_n;(_mjs_n = y.n, µ._mjs_deepSetOn("l", y, "n", ++_mjs_n));} };'],
       ['this.f1 = function(f) { $.l.filter(f).forEach((x) => x.n++); };', 'this.f1 = function(f) { $.l.filter(f).forEach((x) => ((_mjs_n, _mjs_v = _mjs_n++) => (µ._mjs_deepSetOn("l", x, "n", _mjs_n), _mjs_v))(x.n)); };'],
-      ['this.f2 = function() { $.l.forEach((x, i, arr) => { arr[i].n = 1; }); };', 'this.f2 = function() { $.l.forEach((x, i, arr) => { µ._mjs_deepSetOn("l", µ._mjs_deepCle(arr, i), "n", 1); }); };'],
+      ['this.f2 = function() { $.l.forEach((x, i, arr) => { arr[i].n = 1; }); };', 'this.f2 = function() { $.l.forEach((x, i, arr) => { µ._mjs_deepSetOn("l", µ._mjs_deepKey(arr, i), "n", 1); }); };'],
       ['this.f11 = function() { for (const [i, y] of $.l.entries()) y.n++; };', 'this.f11 = function() { for (const [i, y] of $.l.entries()) {let _mjs_n;(_mjs_n = y.n, µ._mjs_deepSetOn("l", y, "n", ++_mjs_n));} };'],
     ])
   })

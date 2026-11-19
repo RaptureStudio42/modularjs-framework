@@ -101,7 +101,7 @@ export function fxWrittenValues(demand: FxDemand, setting: string): ReadonlySet<
 
 function token(word: string, file: string): Token {
   const m = REGEX_TOKEN.exec(word)
-  if (!m) throw new Error(t('bundler.fx-sections.etiquette-illisible', { fichier: file, jeton: word }))
+  if (!m) throw new Error(t('bundler.fx-sections.label-unreadable', { file, token: word }))
   if (m[1]) return { effect: m[1], star: true }
   return { effect: m[2], setting: m[3], values: m[4] ? m[4].split(',') : undefined }
 }
@@ -140,19 +140,19 @@ export function selectFxSections(file: string, src: string, used: ReadonlySet<st
   // les valeurs que le fichier nomme, par réglage (pour `réglage=*`)
   const known = new Map<string, Set<string>>()
   for (const l of lines) for (const k of l.tokens) for (const v of k.values ?? []) if (v !== FX_ANY) add(known, k.setting!, v)
-  const ok  = (tokens: Token[]) => tokens.some((k) => holds(k, demand, known))
-  const out: string[] = []
-  const pile: boolean[] = [true]
+  const ok               = (tokens: Token[]) => tokens.some((k) => holds(k, demand, known))
+  const out: string[]    = []
+  const stack: boolean[] = [true]
   for (const l of lines) {
-    const inside = pile[pile.length - 1]
-    if (l.kind === 'open') pile.push(inside && ok(l.tokens))
+    const inside = stack[stack.length - 1]
+    if (l.kind === 'open') stack.push(inside && ok(l.tokens))
     else if (l.kind === 'close') {
-      if (pile.length === 1) throw new Error(t('bundler.fx-sections.section-sans-ouverture', { fichier: file }))
-      pile.pop()
+      if (stack.length === 1) throw new Error(t('bundler.fx-sections.section-no-opening', { file }))
+      stack.pop()
     }
     else if (inside && (l.kind === 'plain' || ok(l.tokens))) out.push(l.text)
   }
-  if (pile.length !== 1) throw new Error(t('bundler.fx-sections.section-non-fermee', { fichier: file }))
+  if (stack.length !== 1) throw new Error(t('bundler.fx-sections.section-not-closed', { file }))
   const text = out.join('\n')
   return client?.finish ? client.finish(text, { demand, known }) : text
 }

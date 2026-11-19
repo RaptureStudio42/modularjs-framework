@@ -8,7 +8,7 @@ import { FONT_SIZE_SHEET, fontSizeRootCss, rewriteFontSizes } from '../transpile
 import { cssTrapWarnings } from '../transpiler/index.js'
 import { t } from '../messages/index.js'
 import { minifyJs } from './minify.js'
-import { MARQUE_SORTIE, refusFichierAuteur } from './outputs.js'
+import { OUTPUT_MARK, authorFileReject } from './outputs.js'
 import type { Bundler } from './index.js'
 
 // feuille racine : adoptée par le document, son handle gardé pour µ._hotCss (dev, replaceSync en place) ; un bloc de
@@ -44,22 +44,33 @@ async function fontSizeBlock(bundler: Bundler, files: string[]): Promise<string>
     }
     catch { /* redite par la boucle des feuilles */ }
   }
-  const bloc = fontSizeRootCss(bundler['pendingFontSizes'], settings)
-  writeFontSizeSheet(bundler, bloc)
-  return bloc
+  const block = fontSizeRootCss(bundler['pendingFontSizes'], settings)
+  writeFontSizeSheet(bundler, block)
+  return block
 }
 
 // rendu serveur : le bloc dans son fichier à côté du manifeste (cf. FONT_SIZE_SHEET), repris par la tête que pose le serveur.
 // Récrit seulement s'il change ; aucun fichier tant qu'aucune taille n'est convertie. Construction dans le dossier des sources :
-// la marque en première ligne, et un fichier de l'auteur au même nom n'est jamais remplacé (cf. refusFichierAuteur)
-function writeFontSizeSheet(bundler: Bundler, bloc: string): void {
+// la marque en première ligne, et un fichier de l'auteur au même nom n'est jamais remplacé (cf. authorFileReject)
+function writeFontSizeSheet(bundler: Bundler, block: string): void {
   const target  = join(dirname(bundler.manifestPath), FONT_SIZE_SHEET)
-  const content = (bundler['ecritDansSources']() ? `${MARQUE_SORTIE}\n` : '') + bloc
-  if (existsSync(target) ? readFileSync(target, 'utf-8') === content : bloc === '') return
-  const refus   = refusFichierAuteur(bundler, target, 'feuille')
-  if (refus !== null) throw refus
+  const content = (bundler['writesToSources']() ? `${OUTPUT_MARK}\n` : '') + block
+  if (existsSync(target) ? readFileSync(target, 'utf-8') === content : block === '') return
+  const reject   = authorFileReject(bundler, target, 'sheet')
+  if (reject !== null) throw reject
   mkdirSync(dirname(target), { recursive: true })
   bundler['writeFileAtomicAlways'](target, content)
+}
+
+// deux feuilles partagées du même nom (`a.css` et `a.sass`) prendraient la même clé (`µ.CSS["a"]`) : une seule serait posée.
+// Un avertissement par nom, qui cite les fichiers ; `mjs_root` n'est pas posée sous une clé
+function sameNameSheetWarnings(files: string[]): string[] {
+  const byName = new Map<string, string[]>()
+  for (const file of files) {
+    const name = file.replace(/\.(sass|scss|css)$/, '')
+    if (name !== 'mjs_root') byName.set(name, [...(byName.get(name) ?? []), file])
+  }
+  return [...byName].filter(([, list]) => list.length > 1).map(([name, list]) => t('bundler.styles.sheets-same-name', { name: name, files: list.join(', ') }))
 }
 
 // bundleSharedStyles() : compile les .sass/.scss/.css de stylesheetsDir et
@@ -91,9 +102,9 @@ export async function bundleSharedStyles(bundler: Bundler): Promise<{ count: num
   const files = existsSync(bundler.stylesheetsDir)
     ? readdirSync(bundler.stylesheetsDir).filter(f => /\.(sass|scss|css)$/.test(f)).sort()
     : []
-  const bloc = await fontSizeBlock(bundler, files)
+  const block = await fontSizeBlock(bundler, files)
 
-  if (files.length === 0 && bloc === '') {
+  if (files.length === 0 && block === '') {
     bundler.manifest['__styles'] = ''
     bundler['trackSharedCssDiff'](newSharedCss, newRootCss)
     return { count: 0, warnings: [] }
@@ -117,7 +128,7 @@ export async function bundleSharedStyles(bundler: Bundler): Promise<{ count: num
   // composant (cf. cssTrapWarnings). `mjs_root.{sass,scss}` échappe au piège
   // (adopté en `document.adoptedStyleSheets`, HORS Shadow DOM) — volontairement
   // exclu du scan (branche `if baseName === 'mjs_root'` ci-dessous).
-  const cssWarnings: string[] = []
+  const cssWarnings: string[] = sameNameSheetWarnings(files)
 
   for (const file of files) {
     const path = join(bundler.stylesheetsDir, file)
@@ -145,9 +156,9 @@ export async function bundleSharedStyles(bundler: Bundler): Promise<{ count: num
 
     // mjs_root.{sass,scss} → adopté globalement
     if (baseName === 'mjs_root') {
-      js += rootSheetJs(css + bloc)
+      js += rootSheetJs(css + block)
       rootCount++
-      newRootCss = css + bloc
+      newRootCss = css + block
     } else {
       for (const w of cssTrapWarnings(css, bundler.lint)) cssWarnings.push(`[bundler] ${file} : ${w}`)
       const safeVar = baseName.replace(/[^a-zA-Z0-9]/g, '_')
@@ -169,10 +180,10 @@ export async function bundleSharedStyles(bundler: Bundler): Promise<{ count: num
   }
 
   // aucune feuille racine (fichier absent, vide ou en faute) : le bloc des tailles du texte en fait une, en fin de fichier
-  if (bloc !== '' && newRootCss === undefined) {
-    js += rootSheetJs(bloc)
+  if (block !== '' && newRootCss === undefined) {
+    js += rootSheetJs(block)
     rootCount++
-    newRootCss = bloc
+    newRootCss = block
   }
 
   if (rootCount + sharedCount === 0) {
@@ -181,7 +192,7 @@ export async function bundleSharedStyles(bundler: Bundler): Promise<{ count: num
     // Si TOUS les fichiers ont échoué (aucun succès), pas de quoi écrire —
     // mais surtout ne PAS avaler l'erreur silencieusement.
     if (cssErrors.length > 0) {
-      throw new Error(t('bundler.index.css-sass-erreurs', { erreurs: cssErrors.join('\n') }))
+      throw new Error(t('bundler.index.css-sass-errors', { errors: cssErrors.join('\n') }))
     }
     return { count: 0, warnings: cssWarnings }
   }
@@ -214,7 +225,7 @@ export async function bundleSharedStyles(bundler: Bundler): Promise<{ count: num
   // signale l'échec — remonté par le try/catch déjà en place chez le
   // caller dans stats.errors (le build ENTIER n'est pas vert pour autant).
   if (cssErrors.length > 0) {
-    throw new Error(t('bundler.index.css-sass-erreurs', { erreurs: cssErrors.join('\n') }))
+    throw new Error(t('bundler.index.css-sass-errors', { errors: cssErrors.join('\n') }))
   }
   return { count: rootCount + sharedCount, warnings: cssWarnings }
 }
@@ -293,10 +304,10 @@ export async function emitSplitStyles(bundler: Bundler): Promise<{ warnings: str
   const files = existsSync(bundler.stylesheetsDir)
     ? readdirSync(bundler.stylesheetsDir).filter(f => /\.(sass|scss|css)$/.test(f)).sort()
     : []
-  const bloc = await fontSizeBlock(bundler, files)
-  if (files.length === 0 && bloc === '') return { warnings: [] }
+  const block = await fontSizeBlock(bundler, files)
+  if (files.length === 0 && block === '') return { warnings: [] }
   const cssErrors: string[] = []
-  const cssWarnings: string[] = []
+  const cssWarnings: string[] = sameNameSheetWarnings(files)
   // CSS de chaque feuille : le registre des variables (computeVarRegistry) les lit, comme en mode 'bundle'
   const newSharedCss = new Map<string, string>()
   let newRootCss: string | undefined
@@ -320,7 +331,7 @@ export async function emitSplitStyles(bundler: Bundler): Promise<{ warnings: str
       // mjs_root : toujours eager (adopté sur le document, aucun composant ne le
       // déclare) — son propre fichier, importé par le manifeste dans TOUS les modes
       // qui splittent (jamais en mode 'bundle', où il reste dans mjs_styles.js).
-      newRootCss = await writeRootSheet(bundler, css + bloc)
+      newRootCss = await writeRootSheet(bundler, css + block)
     } else {
       for (const w of cssTrapWarnings(css, bundler.lint)) cssWarnings.push(`[bundler] ${file} : ${w}`)
       // safeVar sert AUSSI de base de nom de fichier ici (contrairement à
@@ -349,12 +360,12 @@ export async function emitSplitStyles(bundler: Bundler): Promise<{ warnings: str
       newSharedCss.set(baseName, css)
     }
   }
-  if (bloc !== '' && newRootCss === undefined) newRootCss = await writeRootSheet(bundler, bloc)
+  if (block !== '' && newRootCss === undefined) newRootCss = await writeRootSheet(bundler, block)
   // baseline seulement : en 'split' et 'lazy', le suivi « css seul » de trackSharedCssDiff ne s'applique pas
   bundler['lastSharedCss'] = newSharedCss
   bundler['lastRootCss'] = newRootCss
   if (cssErrors.length > 0) {
-    throw new Error(t('bundler.index.css-sass-erreurs', { erreurs: cssErrors.join('\n') }))
+    throw new Error(t('bundler.index.css-sass-errors', { errors: cssErrors.join('\n') }))
   }
   return { warnings: cssWarnings }
 }
@@ -389,10 +400,10 @@ export function finalizeSplitStyles(bundler: Bundler): { count: number; warnings
   bundler.splitEagerHashedPaths = [...undeclared, ...viewOnly].sort().map(name => bundler.splitStyleHashedPaths[name])
   const warnings: string[] = []
   if (undeclared.length > 0) {
-    bundler['lintPush'](warnings, 'cssSplit', t('bundler.index.css-split-feuilles-eager', { feuilles: undeclared.join(', ') }))
+    bundler['lintPush'](warnings, 'cssSplit', t('bundler.index.css-split-sheets-eager', { sheets: undeclared.join(', ') }))
   }
   if (viewOnly.length > 0) {
-    bundler['lintPush'](warnings, 'cssSplit', t('bundler.index.css-split-feuilles-eager-view', { feuilles: viewOnly.join(', ') }))
+    bundler['lintPush'](warnings, 'cssSplit', t('bundler.index.css-split-sheets-eager-view', { sheets: viewOnly.join(', ') }))
   }
   const count = known.length + (bundler.splitRootHashedPath ? 1 : 0)
   return { count, warnings }
@@ -416,15 +427,15 @@ export function finalizeSplitStyles(bundler: Bundler): { count: number; warnings
 // charger en différé ferait clignoter TOUTE la page, pas un composant.
 // --------------------------------------------------------------------------
 export async function emitLazyStyles(bundler: Bundler): Promise<{ warnings: string[] }> {
-  bundler.lazyStyleUrls = {}
+  bundler.lazyStyleUrls       = {}
   bundler.splitRootHashedPath = undefined
-  bundler['lastSharedCss'] = new Map()
-  bundler['lastRootCss'] = undefined
-  const files = existsSync(bundler.stylesheetsDir) ? readdirSync(bundler.stylesheetsDir).filter(f => /\.(sass|scss|css)$/.test(f)).sort() : []
-  const bloc  = await fontSizeBlock(bundler, files)
-  if (files.length === 0 && bloc === '') return { warnings: [] }
+  bundler['lastSharedCss']    = new Map()
+  bundler['lastRootCss']      = undefined
+  const files                 = existsSync(bundler.stylesheetsDir) ? readdirSync(bundler.stylesheetsDir).filter(f => /\.(sass|scss|css)$/.test(f)).sort() : []
+  const block                 = await fontSizeBlock(bundler, files)
+  if (files.length === 0 && block === '') return { warnings: [] }
   const cssErrors: string[]   = []
-  const cssWarnings: string[] = []
+  const cssWarnings: string[] = sameNameSheetWarnings(files)
   // CSS de chaque feuille : le registre des variables (computeVarRegistry) les lit, comme en mode 'bundle'
   const newSharedCss = new Map<string, string>()
   let newRootCss: string | undefined
@@ -445,7 +456,7 @@ export async function emitLazyStyles(bundler: Bundler): Promise<{ warnings: stri
     }
     if (css.trim() === '') continue
     if (baseName === 'mjs_root') {
-      newRootCss = await writeRootSheet(bundler, css + bloc)
+      newRootCss = await writeRootSheet(bundler, css + block)
     } else {
       for (const w of cssTrapWarnings(css, bundler.lint)) cssWarnings.push(`[bundler] ${file} : ${w}`)
       // même normalisation de nom qu'en 'split' : un nom de feuille avec espace ou
@@ -462,12 +473,12 @@ export async function emitLazyStyles(bundler: Bundler): Promise<{ warnings: stri
       newSharedCss.set(baseName, css)
     }
   }
-  if (bloc !== '' && newRootCss === undefined) newRootCss = await writeRootSheet(bundler, bloc)
+  if (block !== '' && newRootCss === undefined) newRootCss = await writeRootSheet(bundler, block)
   // baseline seulement, comme en 'split'
   bundler['lastSharedCss'] = newSharedCss
   bundler['lastRootCss'] = newRootCss
   if (cssErrors.length > 0) {
-    throw new Error(t('bundler.index.css-sass-erreurs', { erreurs: cssErrors.join('\n') }))
+    throw new Error(t('bundler.index.css-sass-errors', { errors: cssErrors.join('\n') }))
   }
   return { warnings: cssWarnings }
 }
@@ -491,7 +502,7 @@ export function finalizeLazyStyles(bundler: Bundler): { count: number; warnings:
   const undeclared = known.filter(name => !bundler.requestedSharedSheets.has(name) && !bundler.viewRequestedSheets.has(name))
   const warnings: string[] = []
   if (undeclared.length > 0) {
-    bundler['lintPush'](warnings, 'cssSplit', t('bundler.index.css-lazy-feuilles-jamais-reclamees', { feuilles: undeclared.join(', ') }))
+    bundler['lintPush'](warnings, 'cssSplit', t('bundler.index.css-lazy-sheets-never-requested', { sheets: undeclared.join(', ') }))
   }
   const count = known.length + (bundler.splitRootHashedPath ? 1 : 0)
   return { count, warnings }

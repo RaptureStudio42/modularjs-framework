@@ -55,6 +55,6 @@ describe('MJS-WS — pont : file de webhooks pleine, avertissement regroupé', f
     assert.equal(avertissements[0].meta.event, 'message:chat')
     await app.stop()
     assert.equal(avertissements.length, 2, 'la ligne de compte attendue à l\'arrêt : '+ JSON.stringify(avertissements.map(a => a.message)))
-    assert.equal(avertissements[1].meta.perdus, 495)
+    assert.equal(avertissements[1].meta.lost, 495)
   })
 })

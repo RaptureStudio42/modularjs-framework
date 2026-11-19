@@ -95,11 +95,11 @@ export function prerenderBanner(url: string, lang?: string): string {
 
 /** Ligne-bandeau des fragments écrits AVANT la marque (français et anglais, la seule forme qu'ils
  *  aient jamais eue) : un fragment d'un build antérieur reste reconnu, donc purgeable. */
-const ANCIEN_BANDEAU = /^<!-- Page (?:prérendue par|pre-rendered by) MJS \(mjs build\) /
+const OLD_BANNER = /^<!-- Page (?:prérendue par|pre-rendered by) MJS \(mjs build\) /
 
 /** Tête lue d'un `.html` candidat (octets) : la ligne-bandeau y tient largement, et aucune page
  *  entière n'est chargée pour un test de première ligne. */
-const TETE_OCTETS = 4096
+const HEAD_BYTES = 4096
 
 /**
  * Le prérendu a-t-il écrit CE fichier ? Sa première ligne porte la marque du bandeau, ou l'ancien
@@ -108,23 +108,23 @@ const TETE_OCTETS = 4096
  * `render.outDir` (il peut être partagé, ou être la racine du projet). Fichier illisible : pas à
  * nous non plus.
  */
-function ecritParLePrerendu(file: string): boolean {
-  let tete: string
+function writtenByPrerender(file: string): boolean {
+  let head: string
   try {
     const fd = openSync(file, 'r')
     try {
-      const tampon = Buffer.alloc(TETE_OCTETS)
-      const lus    = readSync(fd, tampon, 0, TETE_OCTETS, 0)
-      tete = tampon.toString('utf-8', 0, lus)
+      const buffer = Buffer.alloc(HEAD_BYTES)
+      const read   = readSync(fd, buffer, 0, HEAD_BYTES, 0)
+      head         = buffer.toString('utf-8', 0, read)
     } finally {
       closeSync(fd)
     }
   } catch {
     return false
   }
-  const fin   = tete.indexOf('\n')
-  const ligne = fin < 0 ? tete : tete.slice(0, fin)
-  return ligne.startsWith(PRERENDER_MARK) || ANCIEN_BANDEAU.test(ligne)
+  const end  = head.indexOf('\n')
+  const line = end < 0 ? head : head.slice(0, end)
+  return line.startsWith(PRERENDER_MARK) || OLD_BANNER.test(line)
 }
 
 /**
@@ -146,7 +146,7 @@ function ecritParLePrerendu(file: string): boolean {
  * pas, et relever une balise de trop ne coûte qu'un préchargement.
  */
 const RAW_TEXT_ELEMENTS = new Map<string, RegExp>(
-  ['style', 'script', 'textarea', 'title', 'xmp', 'iframe', 'noembed', 'noframes', 'plaintext', 'noscript'].map(nom => [nom, new RegExp(`</${nom}[\\s/>]`, 'gi')]),
+  ['style', 'script', 'textarea', 'title', 'xmp', 'iframe', 'noembed', 'noframes', 'plaintext', 'noscript'].map(name => [name, new RegExp(`</${name}[\\s/>]`, 'gi')]),
 )
 
 /** Attribut qui fait d'un `<template>` un Shadow DOM déclaratif : son contenu est alors le balisage
@@ -154,17 +154,17 @@ const RAW_TEXT_ELEMENTS = new Map<string, RegExp>(
 const DSD_ATTR = /\sshadowrootmode[\s/>=]/i
 
 /** Bornes d'un `<template>` : ouvrantes et fermantes, pour en compter les imbrications. */
-const TEMPLATE_BORNE = /<(\/?)template[\s/>]/gi
+const TEMPLATE_BOUND = /<(\/?)template[\s/>]/gi
 
 /** Index du `<` qui FERME le `<template>` ouvert avant `from` (imbrications comptées : un gabarit
  *  imbriqué ne ferme pas son parent) — fin du texte si la fermeture manque. */
-function finDuTemplate(html: string, from: number): number {
-  TEMPLATE_BORNE.lastIndex = from
-  let profondeur = 1
-  let borne: RegExpExecArray | null
-  while ((borne = TEMPLATE_BORNE.exec(html))) {
-    profondeur += borne[1] ? -1 : 1
-    if (profondeur === 0) return borne.index
+function templateEnd(html: string, from: number): number {
+  TEMPLATE_BOUND.lastIndex = from
+  let depth = 1
+  let bound: RegExpExecArray | null
+  while ((bound = TEMPLATE_BOUND.exec(html))) {
+    depth += bound[1] ? -1 : 1
+    if (depth === 0) return bound.index
   }
   return html.length
 }
@@ -186,10 +186,10 @@ function finDuTemplate(html: string, from: number): number {
  * préchargement, une balise manquée coûterait un aller-retour à l'affichage.
  */
 export function collectTags(html: string): string[] {
-  const vus = new Set<string>()
+  const seen = new Set<string>()
   // `y` (sticky) : le nom doit commencer EXACTEMENT au crochet trouvé — et rien n'est recopié, là où
   // un `slice()` par balise coûterait une copie de la page entière à chacune
-  const nomRe = /<([a-zA-Z][^\s/>]*)/y
+  const nameRe = /<([a-zA-Z][^\s/>]*)/y
   let i = 0
   while (i < html.length) {
     const lt = html.indexOf('<', i)
@@ -197,45 +197,45 @@ export function collectTags(html: string): string[] {
     // commentaire lu avec les bornes du navigateur (`<!-->` et `<!--->` vides, `--!>` qui referme) ; jamais refermé, il
     // couvre la fin de la page
     if (html.startsWith('<!--', lt)) {
-      const commentaire = readHtmlComment(html, lt)
-      i = commentaire === null ? html.length : commentaire.end
+      const comment = readHtmlComment(html, lt)
+      i = comment === null ? html.length : comment.end
       continue
     }
-    nomRe.lastIndex = lt
-    const nom = nomRe.exec(html)
-    if (!nom) { i = lt + 1; continue }
-    const balise = nom[1].toLowerCase()
-    if (/^mjs-[a-z0-9-]+$/.test(balise)) vus.add(balise)
+    nameRe.lastIndex = lt
+    const name = nameRe.exec(html)
+    if (!name) { i = lt + 1; continue }
+    const tag = name[1].toLowerCase()
+    if (/^mjs-[a-z0-9-]+$/.test(tag)) seen.add(tag)
     // jusqu'au `>` de FERMETURE de cette balise, valeurs quotées sautées d'un bloc
-    let j = lt + nom[0].length
+    let j = lt + name[0].length
     while (j < html.length && html[j] !== '>') {
       if (html[j] === '"' || html[j] === '\'') {
-        const fin = html.indexOf(html[j], j + 1)
-        j = fin < 0 ? html.length : fin + 1
+        const end = html.indexOf(html[j], j + 1)
+        j = end < 0 ? html.length : end + 1
         continue
       }
       j++
     }
     // contenu d'un élément à texte brut : sauté jusqu'à SA balise de fermeture (une balise auto-fermée
     // `<style/>` n'ouvre aucun contenu). Jamais fermé : plus rien n'est du balisage après lui.
-    const autoFermee = html[j - 1] === '/'
-    const brute = autoFermee ? undefined : RAW_TEXT_ELEMENTS.get(balise)
-    if (brute) {
-      brute.lastIndex = j + 1
-      const fin = brute.exec(html)
-      if (!fin) break
-      i = fin.index
+    const selfClosing = html[j - 1] === '/'
+    const raw = selfClosing ? undefined : RAW_TEXT_ELEMENTS.get(tag)
+    if (raw) {
+      raw.lastIndex = j + 1
+      const end = raw.exec(html)
+      if (!end) break
+      i = end.index
       continue
     }
     // gabarit INERTE (`<template>` sans `shadowrootmode`) : son contenu entier est sauté, sa
     // fermeture comptée par imbrication
-    if (balise === 'template' && !autoFermee && !DSD_ATTR.test(html.slice(lt, j + 1))) {
-      i = finDuTemplate(html, j + 1)
+    if (tag === 'template' && !selfClosing && !DSD_ATTR.test(html.slice(lt, j + 1))) {
+      i = templateEnd(html, j + 1)
       continue
     }
     i = j + 1
   }
-  return [...vus].sort((a, b) => a < b ? -1 : a > b ? 1 : 0)
+  return [...seen].sort((a, b) => a < b ? -1 : a > b ? 1 : 0)
 }
 
 /** Au-delà de ce nombre de pages, la ligne d'un avertissement les compte au lieu de les nommer. */
@@ -260,7 +260,7 @@ function warningScope(renders: { url: string; lang?: string }[]): string {
     byUrl.set(url, langs)
   }
   const tag = (langs: string[]): string => langs.length > 0 ? ` [${langs.join(', ')}]` : ''
-  if (byUrl.size > NAMED_PAGES) return t('server.prerender-avertissement-pages', { nb: byUrl.size }) + tag(all)
+  if (byUrl.size > NAMED_PAGES) return t('server.prerender-warning-pages', { count: byUrl.size }) + tag(all)
   if ([...byUrl.values()].every(langs => langs.join() === all.join())) return [...byUrl.keys()].join(', ') + tag(all)
   return [...byUrl].map(([url, langs]) => url + tag(langs)).join(', ')
 }
@@ -300,18 +300,18 @@ export async function prerenderPages(
   // qui déclarent un rendu.
   if (!render) return report
   // fichiers que CETTE configuration prérend (échec de rendu compris) : tout autre fragment du
-  // dossier est sans route, cf. purgerFragments
-  const attendus = new Set<string>()
+  // dossier est sans route, cf. purgeFragments
+  const expected = new Set<string>()
   // PURGE — appelée à chaque sortie de cette fonction, et pas seulement après un rendu : une
   // configuration qui ne prérend plus RIEN (dernière route passée en `csr`/`ssr`, `routes` retiré)
   // laissait sinon ses fragments sur disque, servis tels quels, avec des liens de démarrage vers les
   // fichiers de page que le MÊME build vient de purger. Rien après un échec de rendu (cf. la garde).
-  const purger = (): void => {
+  const purge = (): void => {
     if (report.skipped.some(s => s.fatal) || !existsSync(outDir)) return
-    purgerFragments(outDir, attendus, log)
+    purgeFragments(outDir, expected, log)
   }
   if (!render.routes) {
-    purger()
+    purge()
     return report
   }
 
@@ -326,13 +326,13 @@ export async function prerenderPages(
     if (isBuildPrerenderable(url, page.mode)) {
       pages.push({ url, component: page.component, settleMs: page.settleMs, engine: page.engine, light: page.light })
     } else if (page.mode === 'prerender') {
-      report.skipped.push({ url, reason: t('server.prerender-route-parametree') })
+      report.skipped.push({ url, reason: t('server.prerender-route-parameterized') })
     } else {
-      report.skipped.push({ url, reason: t('server.prerender-mode-non-buildable', { mode: page.mode }) })
+      report.skipped.push({ url, reason: t('server.prerender-mode-not-buildable', { mode: page.mode }) })
     }
   }
   if (pages.length === 0) {
-    purger()
+    purge()
     return report
   }
 
@@ -379,10 +379,10 @@ export async function prerenderPages(
     await closeQuietly(happyRenderer, browserRenderer)
     throw e
   }
-  const dernier = (browserRenderer ?? happyRenderer)?.bundler
+  const last = (browserRenderer ?? happyRenderer)?.bundler
   // `--cache` : la ligne de bilan de chaque moteur qui a compilé, comme celle de la construction
-  for (const r of [happyRenderer, browserRenderer]) if (r?.bundler.diskCacheLine) log(t('server.prerendu-cache', { ligne: r.bundler.diskCacheLine }))
-  if (dernier) Object.defineProperty(report, 'bundler', { value: dernier, enumerable: false, writable: true, configurable: true })
+  for (const r of [happyRenderer, browserRenderer]) if (r?.bundler.diskCacheLine) log(t('server.prerender-cache', { line: r.bundler.diskCacheLine }))
+  if (last) Object.defineProperty(report, 'bundler', { value: last, enumerable: false, writable: true, configurable: true })
 
   // Prérendu multi-langue OPT-IN : `render.locales` avec ≥ 2 entrées déclenche
   // une passe par langue (store.__mjsLang), écrite dans un sous-dossier
@@ -404,14 +404,14 @@ export async function prerenderPages(
         // jamais d'écriture hors de `render.outDir` — clé de route ou langue venue d'un appel direct,
         // sans la validation de la configuration : ni fragment écrit, ni fichier de même nom supprimé
         // sur un échec de rendu (cf. plus bas)
-        const versFichier = relative(outDir, file)
-        if (versFichier === '..' || versFichier.startsWith('..' + sep) || isAbsolute(versFichier)) {
-          const reason = t('server.prerender-hors-dossier', { url, file, outDir })
+        const relativeFile = relative(outDir, file)
+        if (relativeFile === '..' || relativeFile.startsWith('..' + sep) || isAbsolute(relativeFile)) {
+          const reason = t('server.prerender-outside-dir', { url, file, outDir })
           report.skipped.push({ url, reason, fatal: true })
           log(`   ✗ ${url}${langTag} : ${reason}`)
           continue
         }
-        attendus.add(file)
+        expected.add(file)
         try {
           // `light` : racine montée SANS Shadow DOM (clé de route `light`, cf. bundler/config.ts) —
           // simple transit, le rendu décide seul de ce qu'il en fait.
@@ -453,7 +453,7 @@ export async function prerenderPages(
           report.generated.push({ url, file, component, bytes: out.length, tags: collectTags(html) })
           log(`   ✓ ${url}${langTag} → ${file}  (${component}, moteur ${engine})`)
         } catch (e: any) {
-          report.skipped.push({ url, reason: t('server.prerender-echec-rendu', { component, langTag, err: e?.message || e }), fatal: true })
+          report.skipped.push({ url, reason: t('server.prerender-failed-render', { component, langTag, err: e?.message || e }), fatal: true })
           log(`   ✗ ${url}${langTag} : ${e?.message || e}`)
           // Une page qui échoue à SE prérendre ne doit jamais laisser servir le
           // HTML PÉRIMÉ d'un build antérieur (toujours COMPLET, juste FAUX) : suppression explicite
@@ -462,10 +462,10 @@ export async function prerenderPages(
           try {
             if (existsSync(file)) {
               unlinkSync(file)
-              log(`   🗑️  ${url}${langTag} : ${t('server.prerender-fichier-perime-supprime', { file })}`)
+              log(`   🗑️  ${url}${langTag} : ${t('server.prerender-file-stale-deleted', { file })}`)
             }
           } catch (delErr: any) {
-            log(`   ⚠️  ${url}${langTag} : ${t('server.prerender-echec-suppression', { file, err: delErr?.message || delErr })}`)
+            log(`   ⚠️  ${url}${langTag} : ${t('server.prerender-failed-deletion', { file, err: delErr?.message || delErr })}`)
           }
         }
       }
@@ -480,17 +480,17 @@ export async function prerenderPages(
   // COMPLET — le back le sert tel quel, avec le contenu ET les liens de démarrage d'un build
   // antérieur, sans que rien ne le signale. Retirés en fin de passe, une ligne de journal par fichier
   // (`mjs dev` recompile par la même fonction : même nettoyage).
-  purger()
+  purge()
   return report
 }
 
 /** Dossiers jamais balayés, quel que soit `render.outDir` : le prérendu n'y écrit pas de fragment, et
  *  `outDir` peut être la racine du projet (y descendre coûterait tout `node_modules` par build). */
-const HORS_BALAYAGE = new Set(['node_modules'])
+const SWEEP_SKIPPED = new Set(['node_modules'])
 
 /**
  * Balaie `dossier` et TOUS ses sous-dossiers, et retire les fragments que le prérendu a écrits
- * (première ligne = ligne-bandeau, cf. ecritParLePrerendu) et qu'aucune page de la configuration
+ * (première ligne = ligne-bandeau, cf. writtenByPrerender) et qu'aucune page de la configuration
  * n'attend. Récursif parce qu'un fragment vit dans un sous-dossier dès qu'une route est imbriquée
  * (`/a/b` → `a/b.html`) ou qu'une langue est déclarée — et parce qu'un dossier de langue retiré de la
  * configuration doit partir avec ses fragments.
@@ -503,34 +503,34 @@ const HORS_BALAYAGE = new Set(['node_modules'])
  * appelant le retire alors, mais SEULEMENT s'il en a lui-même retiré quelque chose — un dossier déjà
  * vide à l'arrivée n'est pas de notre fait.
  */
-function purgerFragments(dossier: string, attendus: Set<string>, log: (msg: string) => void): { retires: number; vide: boolean } {
-  let retires = 0
-  let restes  = 0
-  for (const entree of readdirSync(dossier, { withFileTypes: true })) {
-    const chemin = join(dossier, entree.name)
-    if (entree.isDirectory()) {
-      if (entree.name.startsWith('.') || HORS_BALAYAGE.has(entree.name)) { restes++; continue }
-      const bilan = purgerFragments(chemin, attendus, log)
-      retires += bilan.retires
-      if (!bilan.vide || bilan.retires === 0) { restes++; continue }
+function purgeFragments(dir: string, expected: Set<string>, log: (msg: string) => void): { removed: number; empty: boolean } {
+  let removed   = 0
+  let remaining = 0
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name)
+    if (entry.isDirectory()) {
+      if (entry.name.startsWith('.') || SWEEP_SKIPPED.has(entry.name)) { remaining++; continue }
+      const summary = purgeFragments(path, expected, log)
+      removed += summary.removed
+      if (!summary.empty || summary.removed === 0) { remaining++; continue }
       try {
-        rmdirSync(chemin)
-        log(`   🗑️  ${t('server.prerender-dossier-vide-retire', { dir: chemin })}`)
+        rmdirSync(path)
+        log(`   🗑️  ${t('server.prerender-dir-empty-removed', { dir: path })}`)
       } catch (e: any) {
-        restes++
-        log(`   ⚠️  ${t('server.prerender-echec-suppression', { file: chemin, err: e?.message || e })}`)
+        remaining++
+        log(`   ⚠️  ${t('server.prerender-failed-deletion', { file: path, err: e?.message || e })}`)
       }
       continue
     }
-    if (!entree.isFile() || !entree.name.endsWith('.html') || attendus.has(chemin) || !ecritParLePrerendu(chemin)) { restes++; continue }
+    if (!entry.isFile() || !entry.name.endsWith('.html') || expected.has(path) || !writtenByPrerender(path)) { remaining++; continue }
     try {
-      unlinkSync(chemin)
-      retires++
-      log(`   🗑️  ${t('server.prerender-fragment-sans-route', { file: chemin })}`)
+      unlinkSync(path)
+      removed++
+      log(`   🗑️  ${t('server.prerender-fragment-no-route', { file: path })}`)
     } catch (e: any) {
-      restes++
-      log(`   ⚠️  ${t('server.prerender-echec-suppression', { file: chemin, err: e?.message || e })}`)
+      remaining++
+      log(`   ⚠️  ${t('server.prerender-failed-deletion', { file: path, err: e?.message || e })}`)
     }
   }
-  return { retires, vide: restes === 0 }
+  return { removed, empty: remaining === 0 }
 }

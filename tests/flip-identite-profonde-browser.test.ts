@@ -20,6 +20,7 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, statSync } from 'no
 import { join, extname, normalize } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
+import { playTogether } from './helpers/engines-together.js'
 
 type Construction = { nom: string, env: 'dev' | 'prod', runtime: 'all' | string[] }
 
@@ -233,7 +234,7 @@ describe('@flip — chaque balise garde sa place à toute profondeur d\'une lign
 
   for (const c of CONSTRUCTIONS) {
     for (const nav of ['chromium', 'firefox'] as const) {
-      describe(`${c.nom} · ${nav}`, function () {
+      playTogether(describe(`${c.nom} · ${nav}`, function () {
         let browser: any
         let page: any
         let server: Server
@@ -392,7 +393,7 @@ describe('@flip — chaque balise garde sa place à toute profondeur d\'une lign
           assert.deepEqual(lus.map((x) => x.k + ':' + x.n), ['d:0', 'b:0', 'a:0', 'c:0'])
           assert.deepEqual(erreurs, [])
         })
-      })
+      }))
     }
   }
 })

@@ -16,7 +16,7 @@ import { mjsTmp } from './helpers/tmp.js'
 // un composant par cas : `@agir` fait la définition, `@vu` compte les rendus du paragraphe
 const DP = (decl: string, act: string, vue: string) => `<script>
 ${decl}
-@vu = -> window.__vu = (window.__vu or 0) + 1
+@vu = -> window.__seenMark = (window.__seenMark or 0) + 1
 @agir = -> ${act}
 </script>
 <p class="v">{${vue} + (@vu() && '')}</p>
@@ -47,14 +47,14 @@ const SCENARIO = `(async () => {
   const pause = (ms) => new Promise((r) => setTimeout(r, ms))
   const txt = (e) => (((e._shadow || e.shadowRoot)?.querySelector('p.v'))?.textContent || '').trim()
   for (const nom of ${JSON.stringify(Object.keys(CAS))}) {
-    window.__vu = 0
+    window.__seenMark = 0
     const e = document.createElement('mjs-' + nom)
     document.body.appendChild(e)
     await pause(200)
-    const avant = txt(e), n = window.__vu
+    const avant = txt(e), n = window.__seenMark
     e.agir()
     await pause(200)
-    R[nom] = { avant, apres: txt(e), rendus: window.__vu - n }
+    R[nom] = { avant, apres: txt(e), rendus: window.__seenMark - n }
     e.remove()
   }
   return JSON.stringify(R)

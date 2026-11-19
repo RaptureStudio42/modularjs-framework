@@ -481,6 +481,13 @@ function defaultLanes(): number {
   return Math.max(1, Math.min(MAX_LANES, Math.floor(availableParallelism() / 2), Math.floor(freemem() / LANE_MEMORY)))
 }
 
+// jetons de la file commune de script/test-enclos.sh (MJS_TEST_JETONS : 3 par défaut, 0 = sans file ; illisible, l'enclos joue sans file) :
+// une voie de plus que de jetons attendrait le sien sur le budget de la passe, et finirait « non finie »
+export function queueTokens(env: Record<string, string | undefined> = process.env): number {
+  const v = env.MJS_TEST_JETONS ?? '3'
+  return /^\d+$/.test(v) ? Number(v) : 0
+}
+
 // ----------------------------------------------------------------------------------------------------------------------
 // LIGNE DE COMMANDE
 // ----------------------------------------------------------------------------------------------------------------------
@@ -493,6 +500,7 @@ const USAGE = `npm run test:lies -- [fichiers changés…] [options]
   --build        reconstruit dist/ (npm run build:self) s'il est périmé, au lieu d'écarter les tests de bin/mjs
   --tout         tous les tests sont candidats, ceux sans relevé d'abord (pour remplir le relevé)
   MJS_MOTEURS    chromium par défaut ici ; tous pour Chromium, Firefox et WebKit
+  MJS_TEST_JETONS jetons de la file commune de l'enclos (3 par défaut, 0 = sans file) : pas plus de voies que de jetons
   MJS_TEST_TRACE dossier du relevé (défaut node_modules/.cache/mjs-tests), 0 pour l'éteindre`
 
 type Options = { files: string[], budget: number, lanes?: number, dryRun: boolean, build: boolean, all: boolean, help: boolean }
@@ -544,7 +552,9 @@ export async function main(argv: string[], out: (line: string) => void = console
   const stale   = staleDist(ROOT)
   const cli     = new Set(tests.filter((t) => t.cli || trace.get(t.file)?.spawns.some((x) => /^(bin\/mjs|dist\/)/.test(x))).map((t) => t.file))
   const blocked = stale && !opts.build ? chosen.filter((c) => cli.has(c.file)) : []
-  const lanesN  = opts.lanes ?? defaultLanes()
+  const tokens  = queueTokens()
+  const asked   = opts.lanes ?? defaultLanes()
+  const lanesN  = tokens > 0 ? Math.min(asked, tokens) : asked
   const plan    = planRun(chosen.filter((c) => !blocked.includes(c)), { budgetMs: opts.budget * 1000, lanes: lanesN, overheadMs: OVERHEAD_MS })
   const traced  = tests.filter((t) => trace.get(t.file)?.at).length
   const count   = (f: (c: Candidate) => boolean) => n(chosen.filter(f).length)
@@ -555,6 +565,7 @@ export async function main(argv: string[], out: (line: string) => void = console
   else out(`choisis : ${n(chosen.length)} — ${count((c) => c.level === 0)} test(s) changé(s), ${count((c) => c.level === 1)} nommé(s) d'après un fichier du cœur, d'un effet ou du runtime, ${count((c) => c.level === 2)} qui le citent, ${count((c) => c.level === 3)} lien(s) direct(s), ${count((c) => c.level === 4)} lien(s) à distance, ${count((c) => c.level === 5)} sans lien connu ; dont ${count((c) => !c.traced)} sans relevé (signalés)`)
   if (stale) out(opts.build ? `dist/ périmé (${stale} plus récent que dist/cli.js) : reconstruit avant de jouer (--build)` : `dist/ périmé (${stale} plus récent que dist/cli.js) : ${blocked.length} test(s) de bin/mjs écartés — lancez \`npm run build:self\` ou ajoutez --build`)
   out(`plan : ${plan.lanes.filter((l) => l.length).length} voie(s), budget ${opts.budget} s, moteur(s) ${engines === 'tous' ? 'Chromium, Firefox et WebKit' : engines}${engines === 'tous' ? '' : ' (MJS_MOTEURS=tous pour les trois)'} — ${n(plan.played.length)} joué(s), ≈ ${s(Math.max(0, ...plan.loads) + OVERHEAD_MS)} par voie`)
+  if (lanesN < asked) out(`voies : ${asked} demandées, ${lanesN} jouées — MJS_TEST_JETONS=${tokens} : pas plus de voies que de jetons de la file commune`)
   if (plan.notPlayed.length || blocked.length) out(`budget dépassé : ${n(plan.notPlayed.length + blocked.length)} non joué(s), coupés par la fin de l'ordre (priorité, puis un représentant par famille avant le deuxième) — la liste est écrite plus bas`)
   const warning = replayWarning(opts.budget, plan.played)
   if (warning) out(warning)
@@ -617,7 +628,8 @@ export async function main(argv: string[], out: (line: string) => void = console
   for (const r of outcome.laneFailures) out(`  voie en échec hors fichier (code ${r.code}) : ${r.log}`)
   out(`journaux : ${passDir}`)
   out(`durée : ${s(Date.now() - t0)}`)
-  return red.length || unsure.length || outcome.laneFailures.length || by('voie tombée').length ? 1 : 0
+  // un fichier non fini (voie coupée à l'échéance, ou tombée) : la passe n'a pas tout joué, le code le dit
+  return red.length || unsure.length || outcome.laneFailures.length || cut.length ? 1 : 0
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

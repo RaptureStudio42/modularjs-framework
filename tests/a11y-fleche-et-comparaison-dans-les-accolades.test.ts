@@ -16,7 +16,7 @@ describe('lint a11y — `>` dans une accolade d\'attribut', () => {
   })
 
   it('<button @click={-> $n++}> qui ne contient qu\'une icône : bouton sans nom signalé', () => {
-    assert.deepEqual(checkA11y('<button @click={-> $n++}><svg></svg></button>', 'carte'), [t('transpiler.a11y-bouton-nom-manquant', { moduleName: 'carte', ligne: 1 })])
+    assert.deepEqual(checkA11y('<button @click={-> $n++}><svg></svg></button>', 'carte'), [t('transpiler.a11y-button-name-missing', { moduleName: 'carte', line: 1 })])
   })
 
   it('témoin : une flèche sur un <button> qui a un aria-label', () => {

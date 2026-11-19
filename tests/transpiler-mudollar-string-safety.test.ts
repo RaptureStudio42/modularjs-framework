@@ -23,7 +23,7 @@ describe('µ$X = expr (assignation) : jamais réécrit à l\'intérieur d\'une c
 
   it('un VRAI `µ$count = 5` hors chaîne reste réécrit en état universel', () => {
     const out = applyMjsSugarToScript('µ$count = 5', 'civet')
-    assert.match(out, /µ_state\.count \?= µ\.state\(5\)/, 'un vrai usage doit toujours être réécrit')
+    assert.match(out, /µ_state\.count \?= µ\._mjs_univVal\(5\)/, 'un vrai usage doit toujours être réécrit')
   })
 
   it('un VRAI `export µ$total = 5` hors chaîne reste réécrit', () => {
@@ -34,6 +34,6 @@ describe('µ$X = expr (assignation) : jamais réécrit à l\'intérieur d\'une c
 
   it('une rhs contenant une chaîne ("µ$msg = \'bonjour\'") garde son contenu réel après réécriture', () => {
     const out = applyMjsSugarToScript(`µ$msg = 'bonjour'`, 'civet')
-    assert.match(out, /µ_state\.msg \?= µ\.state\('bonjour'\)/, 'la rhs réelle (chaîne comprise) doit être préservée dans la réécriture')
+    assert.match(out, /µ_state\.msg \?= µ\._mjs_univVal\('bonjour'\)/, 'la rhs réelle (chaîne comprise) doit être préservée dans la réécriture')
   })
 })

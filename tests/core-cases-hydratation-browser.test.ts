@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { createSSRRenderer, stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
 
 const MODES = ['markers', 'replace', 'positional', 'diff'] as const
 
@@ -105,7 +106,7 @@ function construire() {
   return construit
 }
 
-for (const nom of ['chromium', 'firefox'] as const) describe(`cases, interrupteurs, radios : page rendue par le serveur puis hydratée (${nom} réel)`, function () {
+for (const nom of ['chromium', 'firefox'] as const) playTogether(describe(`cases, interrupteurs, radios : page rendue par le serveur puis hydratée (${nom} réel)`, function () {
   this.timeout(180000)
   let present = false
   let browser: any
@@ -260,4 +261,4 @@ for (const nom of ['chromium', 'firefox'] as const) describe(`cases, interrupteu
       }
     })
   })
-})
+}))

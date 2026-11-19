@@ -32,8 +32,9 @@ import { t } from '../messages/index.js'
 import { maskInertSameLength } from '../lexer/index.js'
 import { maskHtmlComments, replaceBlocks } from '../mask.js'
 import { typedLine, printDiagnostic, type LintToggles } from '../diagnostics.js'
-import { derivesAuxLecturesConnues, type DeriveCandidat, type Recepteur } from './derived-reads.js'
-import { deriveesPrecises, variablesDouteuses } from './derived-classes.js'
+import { derivedToKnownReads, patternNames, blockScope, functionScope, type DerivedCandidate, type Receiver } from './derived-reads.js'
+import { preciseDerived, doubtfulVariables } from './derived-classes.js'
+import { rejectAwaitOutsideDerived, rejectSelfCitingWait, type WrittenScript } from './await-outside-derived.js'
 
 export interface AnalyzeSnippetResult {
   deps: string[]
@@ -44,16 +45,24 @@ export interface AnalyzerOutput {
   computed: Record<string, string[]>
   // nom de méthode (`@x = ->`) → lectures BRUTES de son corps ($.x,
   // deps store '$$x'/'$$*', et appels vers une AUTRE méthode connue marqués
-  // '@nom' — point-fixés par resolveMethodReadsPointFixe, cf. plus bas).
+  // '@nom' — point-fixés par resolveMethodReadsFixedPoint, cf. plus bas).
   methods: Record<string, string[]>
+  // noms du premier niveau du `<script>` qu'une expression du gabarit peut appeler par leur nom (cf. scriptFunctions) ; absent
+  // quand le script n'en déclare aucun
+  scriptNames?: Map<string, boolean>
+  // fonction du `<script>` que l'analyse sait lire → lectures BRUTES de son corps, comme `methods` (marqueurs '@nom' vers une
+  // méthode, '%nom' vers une fonction du script) ; et, par méthode, les fonctions du script qu'elle appelle ou passe en valeur
+  // ('%nom') — pour le gabarit seulement, `methods` reste ce que lisent les reffets
+  functions?: Record<string, string[]>
+  methodFunctions?: Record<string, string[]>
   // valeurs dérivées qui lisent l'état par une clé calculée (`$[$k]`) sans appeler de fonction : ce qui les affiche se
   // relance à toute écriture du composant (dépendance `*` du gabarit, cf. Analyzer.expandOneDep)
-  toute?: string[]
+  all?: string[]
   // valeurs dérivées qui appellent une fonction : ce qui les lit garde ses dépendances connues, jamais `*`
   // (cf. Analyzer.resolveSnippetDeps)
-  appels?: string[]
+  calls?: string[]
   // valeurs dérivées trouvées, avec le nœud de leur expression (classement de `mjs check --derived`, cf. derived-classes.ts)
-  candidats?: DeriveCandidat[]
+  candidates?: DerivedCandidate[]
   modifiedCode: string
 }
 
@@ -87,6 +96,33 @@ export function collectStoreMemberDep(node: any, ancestors: any[], deps: Set<str
   }
 }
 
+// un nom lu dans une fonction écrite sur place (expression du gabarit, corps d'une fonction du `<script>`) est masqué par un
+// paramètre ou une déclaration d'une fonction ou d'un bloc qui l'englobe (`total := …` dans une autre fonction), ou par le
+// paramètre d'un `catch`
+function isShadowed(name: string, ancestors: any[]): boolean {
+  for (const a of ancestors) {
+    if ((a.type === 'ArrowFunctionExpression' || a.type === 'FunctionExpression' || a.type === 'FunctionDeclaration') && functionScope(a).has(name)) return true
+    if (a.type === 'BlockStatement' && blockScope(a.body).has(name)) return true
+    if (a.type === 'CatchClause' && a.param) {
+      const seen: string[] = []
+      patternNames(a.param, seen)
+      if (seen.includes(name)) return true
+    }
+  }
+  return false
+}
+
+// marqueur d'un nom du `<script>` (cf. scriptFunctions) lu par une expression du gabarit ou par le corps d'une fonction :
+// '%nom' pour une fonction que l'analyse sait lire, appelée (`fmt()`) ou passée en valeur (`liste.map(fmt)`) ; '!nom' pour un
+// autre nom du premier niveau, appelé ; `null` pour tout le reste
+function nameMark(node: any, ancestors: any[], script: ReadonlyMap<string, boolean>): string | null {
+  const readable = script.get(node.name)
+  if (readable === undefined || isShadowed(node.name, ancestors)) return null
+  if (readable) return `%${node.name}`
+  const parent = ancestors[ancestors.length - 2]
+  return parent?.type === 'CallExpression' && parent.callee === node ? `!${node.name}` : null
+}
+
 // ============================================================================
 // Analyse standalone d'un snippet de JS (utilisée par batchCalculateVars)
 //
@@ -98,11 +134,12 @@ export function collectStoreMemberDep(node: any, ancestors: any[], deps: Set<str
 // (generator/state.ts) : décider s'il faut RETENTER avant de conclure à
 // l'absence de dépendance, plutôt que d'avaler l'échec en silence.
 // ============================================================================
-export function analyzeSnippetOrNull(jsCode: string, cle = false): string[] | null {
+// `script` : noms du premier niveau du `<script>` (cf. scriptFunctions), absent pour les appelants qui n'en ont pas
+export function analyzeSnippetOrNull(jsCode: string, key = false, script?: ReadonlyMap<string, boolean> | null): string[] | null {
   const deps = new Set<string>()
   // avec `cle` : accès calculé `$[expr]` lu, appel d'une fonction (cf. fin de la fonction)
-  let lit   = false
-  let appel = false
+  let reads  = false
+  let call = false
   let ast: acorn.Node
   try {
     ast = acorn.parse(jsCode, { ecmaVersion: 'latest', sourceType: 'module' })
@@ -119,8 +156,8 @@ export function analyzeSnippetOrNull(jsCode: string, cle = false): string[] | nu
         return
       }
       // `$[expr]` : la variable lue n'est connue qu'à l'exécution (cf. fin de la fonction)
-      if (cle && node.object.type === 'Identifier' && node.object.name === '$') {
-        lit = true
+      if (key && node.object.type === 'Identifier' && node.object.name === '$') {
+        reads = true
         return
       }
       // Store universel `$$x` (→ `µ.store.x`) — namespace préfixé '$$'.
@@ -135,7 +172,7 @@ export function analyzeSnippetOrNull(jsCode: string, cle = false): string[] | nu
     // par resolveSnippetDeps (classe Analyzer, via this.methodReads) — jamais
     // émis tel quel : aucune var '@fmt' n'existe côté runtime.
     CallExpression(node: any) {
-      appel = true
+      call = true
       const callee = node.callee
       if (!callee || callee.type !== 'MemberExpression' || callee.computed) return
       if (callee.object?.type !== 'ThisExpression' &&
@@ -143,15 +180,22 @@ export function analyzeSnippetOrNull(jsCode: string, cle = false): string[] | nu
       if (callee.property?.type !== 'Identifier') return
       deps.add(`@${callee.property.name}`)
     },
-    NewExpression() { appel = true },
-    TaggedTemplateExpression() { appel = true },
+    NewExpression() { call = true },
+    TaggedTemplateExpression() { call = true },
+    // nom du `<script>` lu par l'expression (nameMark) : '%fmt' résolu comme '@fmt' par resolveSnippetDeps, '!nom' dit par
+    // generator/state.ts ; sans `script`, rien de plus
+    Identifier(node: any, _state: any, ancestors: any[]) {
+      if (!script) return
+      const mark = nameMark(node, ancestors, script)
+      if (mark !== null) deps.add(mark)
+    },
   })
   // expression du gabarit (`cle`, cf. Analyzer.batchCalculateVars) : qui lit `$[expr]` sans rien appeler, dépendance `*`
-  // — toute écriture du composant la relance (`_mjsToute`, runtime/mjs_element.ts) ; qui appelle une fonction, marque
+  // — toute écriture du composant la relance (`_mjsAll`, runtime/mjs_element.ts) ; qui appelle une fonction, marque
   // `()` — elle garde ses dépendances connues, une requête n'est pas refaite à chaque écriture (resolveSnippetDeps)
-  if (cle) {
-    if (appel) deps.add('()')
-    else if (lit) deps.add('*')
+  if (key) {
+    if (call) deps.add('()')
+    else if (reads) deps.add('*')
   }
   return Array.from(deps)
 }
@@ -159,8 +203,8 @@ export function analyzeSnippetOrNull(jsCode: string, cle = false): string[] | nu
 /** Contrat historique — `[]` que l'échec soit un parse invalide ou une
  * expression sans dépendance. Cf. `analyzeSnippetOrNull` pour la variante
  * qui distingue les deux. */
-export function analyzeSnippet(jsCode: string, cle = false): string[] {
-  return analyzeSnippetOrNull(jsCode, cle) ?? []
+export function analyzeSnippet(jsCode: string, key = false, script?: ReadonlyMap<string, boolean> | null): string[] {
+  return analyzeSnippetOrNull(jsCode, key, script) ?? []
 }
 
 // ============================================================================
@@ -230,7 +274,7 @@ export function analyzeAttachMode(jsCode: string): 'direct' | 'factory' {
 // ET par detectUnparenthesizedDerivedIf() (cf. plus bas) — appliqué
 // à s1 (la structure if/switch/try) au lieu du RHS d'une simple assignation.
 // ============================================================================
-function scanReactiveReads(node: any): { deps: Set<string>; readsReactiveSource: boolean; hasAwait: boolean; cle: boolean; appel: boolean } {
+function scanReactiveReads(node: any): { deps: Set<string>; readsReactiveSource: boolean; hasAwait: boolean; key: boolean; call: boolean } {
   const deps = new Set<string>()
   // #4 — un RHS qui lit le contexte (`§x` → `this._mjs_getContext('x')`) mais
   // aucun `$.y` n'était PAS reconnu comme derived → assignation évaluée UNE
@@ -241,22 +285,23 @@ function scanReactiveReads(node: any): { deps: Set<string>; readsReactiveSource:
   let readsReactiveSource = false
   let hasAwait = false
   // lecture par une clé calculée (`$[$k]`) : la variable lue n'est connue qu'à l'exécution
-  let cle = false
+  let key = false
   // appel d'une fonction (hors marqueur de `µderived`) : la valeur garde ses dépendances connues (cf. AnalyzerOutput.appels)
-  let appel = false
+  let call = false
   // cible d'une affectation simple (`$a = $b = 0` : `$.b` est ÉCRIT, jamais lu) — comptée en lecture, elle faisait
   // de `$a` un dérivé qui écrivait `$b` et valait le retour de l'écriture (même motif que pureWriteTargets, plus bas)
-  const ecrits = new Set<any>()
-  walk.simple(node, { AssignmentExpression(a: any) { if (a.operator === '=') ecrits.add(a.left) } })
+  const written = new Set<any>()
+  walk.simple(node, { AssignmentExpression(a: any) { if (a.operator === '=') written.add(a.left) } })
   walk.ancestor(node, {
-    AwaitExpression() { hasAwait = true },
+    // l'expression elle-même attend, hors des fonctions qu'elle contient : `$x = $l.map((i) -> await f(i))` n'attend rien
+    AwaitExpression(_a: any, _s: any, ancestors: any[]) { if (!ancestors.some((p) => /Function/.test(p.type))) hasAwait = true },
     MemberExpression(c: any, _s: any, ancestors: any[]) {
-      if (ecrits.has(c)) return
+      if (written.has(c)) return
       if (c.object.type === 'Identifier' && c.object.name === '$') {
         if (!c.computed) {
           if (c.property.type === 'Identifier') deps.add(c.property.name)
         }
-        else cle = true
+        else key = true
       }
       // #7 — store universel (`$$x` → `µ.store.x`, ou tapé à la main en
       // `µ.store.x`) : source réactive sans `$.y`, donc même piège que le
@@ -272,8 +317,8 @@ function scanReactiveReads(node: any): { deps: Set<string>; readsReactiveSource:
       // d'une réponse (runtime/mjs_load.ts) ; le magasin lui-même (`$me = µload(url)`), rangé tel quel, et tout autre membre
       // (`µload(url).refresh()`, qui relancerait une requête à chaque calcul) restent une variable
       const o = c.object
-      const membre = c.computed ? (c.property.type === 'Literal' ? c.property.value : null) : c.property.name
-      if (o.type === 'CallExpression' && o.callee.type === 'MemberExpression' && !o.callee.computed && o.callee.object.type === 'Identifier' && o.callee.object.name === 'µ' && o.callee.property.type === 'Identifier' && o.callee.property.name === 'load' && (membre === 'data' || membre === 'pending' || membre === 'error')) readsReactiveSource = true
+      const member = c.computed ? (c.property.type === 'Literal' ? c.property.value : null) : c.property.name
+      if (o.type === 'CallExpression' && o.callee.type === 'MemberExpression' && !o.callee.computed && o.callee.object.type === 'Identifier' && o.callee.object.name === 'µ' && o.callee.property.type === 'Identifier' && o.callee.property.name === 'load' && (member === 'data' || member === 'pending' || member === 'error')) readsReactiveSource = true
       const before = deps.size
       collectStoreMemberDep(c, ancestors, deps)
       if (deps.size > before) readsReactiveSource = true
@@ -283,11 +328,11 @@ function scanReactiveReads(node: any): { deps: Set<string>; readsReactiveSource:
         readsReactiveSource = true
       }
     },
-    NewExpression() { appel = true },
-    TaggedTemplateExpression() { appel = true },
+    NewExpression() { call = true },
+    TaggedTemplateExpression() { call = true },
     CallExpression(c: any) {
       const m = c.callee
-      if (!(m.type === 'MemberExpression' && m.object.type === 'Identifier' && m.object.name === 'µ' && m.property.type === 'Identifier' && m.property.name === '_mjs_forceDeps')) appel = true
+      if (!(m.type === 'MemberExpression' && m.object.type === 'Identifier' && m.object.name === 'µ' && m.property.type === 'Identifier' && m.property.name === '_mjs_forceDeps')) call = true
       // `§x` → this._mjs_getContext('x') (contexte NON réactif, lu 1×).
       // `§§x` → this._mjs_getRCtx('x') (contexte RÉACTIF de sous-arbre) : sans
       // le détecter ici, `$x = §§y` n'était PAS wrappé en computed → évalué
@@ -304,7 +349,7 @@ function scanReactiveReads(node: any): { deps: Set<string>; readsReactiveSource:
       }
     },
   })
-  return { deps, readsReactiveSource, hasAwait, cle, appel }
+  return { deps, readsReactiveSource, hasAwait, key, call }
 }
 
 // ============================================================================
@@ -326,7 +371,7 @@ function scanReactiveReads(node: any): { deps: Set<string>; readsReactiveSource:
 // celui vu par le walk juste après, qui continue de voir s0/s1/s2 intacts —
 // et n'y fait rien, vu qu'un RHS `ref` nu ne matche aucune de ses conditions).
 // ============================================================================
-function detectUnparenthesizedDerivedIf(ast: any, ms: MagicString, dependencies: Record<string, string[]>, candidats: DeriveCandidat[], fermetures: Fermeture[], toute: Set<string>, appels: Set<string>): void {
+function detectUnparenthesizedDerivedIf(ast: any, ms: MagicString, dependencies: Record<string, string[]>, candidates: DerivedCandidate[], closings: Closing[], all: Set<string>, calls: Set<string>, waits: Set<string>): void {
   const body = ast.body
   for (let i = 0; i + 2 < body.length; i++) {
     const s0 = body[i]
@@ -392,26 +437,28 @@ function detectUnparenthesizedDerivedIf(ast: any, ms: MagicString, dependencies:
     if (usedElsewhere) continue
 
     const varName = assign.left.property.name
-    const { deps, readsReactiveSource, hasAwait, cle, appel } = scanReactiveReads(s1)
-    if (deps.size === 0 && !readsReactiveSource) continue // rien de réactif dedans → instantané légitime
+    const { deps, readsReactiveSource, hasAwait, key, call } = scanReactiveReads(s1)
+    // rien de réactif dedans → instantané légitime ; une valeur qui attend sans variable citée est appelée une fois
+    if (deps.size === 0 && !readsReactiveSource && !hasAwait) continue
 
     if (deps.size > 0) dependencies[varName] = Array.from(deps)
-    if (appel) appels.add(varName)
-    else if (cle) toute.add(varName)
+    if (hasAwait) waits.add(varName)
+    if (call) calls.add(varName)
+    else if (key) all.add(varName)
     ms.appendLeft(s0.start, `$.${varName} = { _mjs_c: true, f: ${hasAwait ? 'async ' : ''}() => { `)
     ms.overwrite(s2.start, assign.right.start, 'return ')
-    candidats.push({ nom: varName, noeud: s1, locaux: [refName] })
-    fermetures.push({ nom: varName, pos: s2.end, simple: ' } };', marquee: ' }, _mjs_s: 1 };' })
+    candidates.push({ name: varName, node: s1, locals: [refName] })
+    closings.push({ name: varName, pos: s2.end, simple: ' } };', marquee: ' }, _mjs_s: 1 };' })
   }
 }
 
 // fin d'une enveloppe de valeur dérivée, posée une fois toutes les valeurs dérivées connues : `_mjs_s` marque celles dont toutes les lectures
 // sont connues (cf. derived-reads.ts) ou, avec l'option `derived: "precise"`, porte les sources de celles que le compilateur prouve précises
-// (cf. deriveesPrecises, derived-classes.ts), dans l'ordre où elles ont été trouvées
-interface Fermeture { nom: string; pos: number; simple: string; marquee: string }
+// (cf. preciseDerived, derived-classes.ts), dans l'ordre où elles ont été trouvées
+interface Closing { name: string; pos: number; simple: string; marquee: string }
 
 // ============================================================================
-// resolveMethodReadsPointFixe(methods) — une méthode qui APPELLE une
+// resolveMethodReadsFixedPoint(methods) — une méthode qui APPELLE une
 // autre méthode connue (marqueur '@nom' posé par analyze()/analyzeSnippet)
 // hérite de SES lectures. Même mécanique que resolveDependencyGraph
 // (computeds), sur un graphe distinct (appels de méthode plutôt que
@@ -420,9 +467,11 @@ interface Fermeture { nom: string; pos: number; simple: string; marquee: string 
 // (chacune récupère l'union de l'autre), sans code de rupture dédié.
 // Partagée entre analyze() (warning effet, table LOCALE brute) et
 // Analyzer.analyzeAndBuild (methodReads exposé, APRÈS filtre externalVars) —
-// une seule implémentation du point-fixe.
+// une seule implémentation du point-fixe. `markers` : table du gabarit, aux
+// clés '@nom' (méthode) et '%nom' (fonction du `<script>`), où chaque marqueur
+// lu se cherche tel quel (cf. Analyzer.templateReads).
 // ============================================================================
-function resolveMethodReadsPointFixe(methods: Record<string, string[]>, diag: { lint?: LintToggles; colorsEnabled?: boolean } = {}): Record<string, string[]> {
+function resolveMethodReadsFixedPoint(methods: Record<string, string[]>, diag: { lint?: LintToggles; colorsEnabled?: boolean } = {}, markers = false): Record<string, string[]> {
   // Object.create(null), même remède que
   // `dependencies` plus bas (analyze()) : `out[k] = …` où `k === '__proto__'` sur un `{}`
   // ordinaire ne crée jamais de clé réelle (le setter hérité de Object.prototype.__proto__
@@ -437,7 +486,7 @@ function resolveMethodReadsPointFixe(methods: Record<string, string[]>, diag: { 
     changed = false
     safety += 1
     if (safety > 100) {
-      const line = typedLine('reactivity', t('analyzer.resolve-dependance-non-convergent'), diag.lint)
+      const line = typedLine('reactivity', t('analyzer.resolve-dependency-not-convergent'), diag.lint)
       // eslint-disable-next-line no-console
       if (line !== null) printDiagnostic(line, diag.colorsEnabled ?? false)
       break
@@ -445,8 +494,8 @@ function resolveMethodReadsPointFixe(methods: Record<string, string[]>, diag: { 
     for (const [name, reads] of Object.entries(out)) {
       const newReads = new Set(reads)
       for (const r of reads) {
-        if (!r.startsWith('@')) continue
-        const sub = out[r.slice(1)]
+        if (r[0] !== '@' && !(markers && r[0] === '%')) continue
+        const sub = out[markers ? r : r.slice(1)]
         if (sub) for (const x of sub) newReads.add(x)
       }
       if (newReads.size > reads.length) {
@@ -460,8 +509,118 @@ function resolveMethodReadsPointFixe(methods: Record<string, string[]>, diag: { 
   // inconnus (jamais résolus, méthode hors table) : aucun des deux cas ne
   // doit survivre dans la sortie — un `@nom` littéral n'est ni une state var
   // ni une clé store, effect-deps.ts/resolveSnippetDeps ne doivent JAMAIS le voir.
-  for (const name of Object.keys(out)) out[name] = out[name].filter(d => !d.startsWith('@'))
+  for (const name of Object.keys(out)) out[name] = out[name].filter(d => d[0] !== '@' && d[0] !== '%')
   return out
+}
+
+// ============================================================================
+// scriptFunctions(ast) — noms du premier niveau du `<script>` qu'une expression du gabarit peut appeler par leur nom
+// (`{fmt()}`, `{liste.map(fmt)}`) : `true` pour une fonction écrite sur place et affectée une seule fois — déclaration
+// (`function fmt`), variable (`fmt := ->`, `let fmt = ->`, forme émise pour `fmt = ->`) ou affectation nue après un `let`
+// séparé —, dont l'expression suit les lectures comme celles d'une méthode ; `false` pour un nom affecté deux fois au premier
+// niveau, ou dont la valeur est rendue par un appel (`sauver = differe(-> …)`) : appelé par le gabarit, il est signalé à la
+// construction. Tout autre nom est retiré, ni suivi ni dit, comme un nom que le script ne déclare pas : fonction réaffectée dans
+// une autre fonction (`µmount`), alias d'une fonction du langage ou du navigateur (`arrondi = Math.round`), donnée. Une variable du
+// même nom déclarée dans une autre fonction, ou par `let` / `const` dans un bloc, est une autre variable.
+// ============================================================================
+function scriptFunctions(ast: any): { names: Map<string, boolean>; functions: Record<string, any> } {
+  const names                          = new Map<string, boolean>()
+  const functions: Record<string, any> = Object.create(null)  // même remède, cf. dependencies (analyze())
+  for (const stmt of ast.body) {
+    if ((stmt.type === 'FunctionDeclaration' || stmt.type === 'ClassDeclaration') && stmt.id) names.set(stmt.id.name, false)
+    else if (stmt.type === 'VariableDeclaration') {
+      for (const d of stmt.declarations) {
+        const seen: string[] = []
+        patternNames(d.id, seen)
+        for (const name of seen) names.set(name, false)
+      }
+    }
+    else if (stmt.type === 'ExpressionStatement' && stmt.expression.type === 'AssignmentExpression' && stmt.expression.left.type === 'Identifier') names.set(stmt.expression.left.name, false)
+  }
+  if (names.size === 0) return { names, functions: functions }
+  // affectations de chaque nom : au premier niveau (`premier`, et sa valeur), dans une fonction qui ne le déclare pas (`dedans`) ;
+  // `let nom` sans valeur ou à `undefined` (que la construction pose en tête quand un gestionnaire lit aussi le nom) : la
+  // déclaration de l'affectation nue qui suit, pas une affectation de plus
+  const first  = new Map<string, number>()
+  const inside = new Map<string, number>()
+  const values = new Map<string, any>()
+  const fn     = (a: any): boolean => a?.type === 'FunctionExpression' || a?.type === 'ArrowFunctionExpression' || a?.type === 'FunctionDeclaration'
+  const call   = (v: any): boolean => v?.type === 'CallExpression' || (v?.type === 'ChainExpression' && v.expression.type === 'CallExpression') || (v?.type === 'AwaitExpression' && call(v.argument))
+  const record = (pattern: any, top: any[], value: any): void => {
+    const seen: string[] = []
+    patternNames(pattern, seen)
+    for (const name of seen) {
+      if (!names.has(name) || isShadowed(name, top)) continue
+      if (top.some(fn)) inside.set(name, (inside.get(name) ?? 0) + 1)
+      else {
+        first.set(name, (first.get(name) ?? 0) + 1)
+        values.set(name, pattern.type === 'Identifier' ? value : null)
+      }
+    }
+  }
+  ;(walk as any).fullAncestor(ast, (n: any, _st: any, anc: any[]) => {
+    const top = anc.slice(0, -1)
+    if (n.type === 'VariableDeclarator') {
+      // déclarée dans une fonction, ou par `let` / `const` dans un bloc : une autre variable
+      if (top.some(fn) || (top[top.length - 1]?.kind !== 'var' && top[top.length - 2]?.type !== 'Program')) return
+      if (n.init && !(n.init.type === 'Identifier' && n.init.name === 'undefined')) record(n.id, top, n.init)
+    }
+    else if (n.type === 'AssignmentExpression') record(n.left, top, n.operator === '=' ? n.right : null)
+    else if (n.type === 'UpdateExpression') record(n.argument, top, null)
+    else if ((n.type === 'FunctionDeclaration' || n.type === 'ClassDeclaration') && n.id && top[top.length - 1]?.type === 'Program') record(n.id, top, n.type === 'FunctionDeclaration' ? n : null)
+    else if ((n.type === 'ForOfStatement' || n.type === 'ForInStatement') && n.left.type !== 'VariableDeclaration') record(n.left, top, null)
+  })
+  for (const name of [...names.keys()]) {
+    const p = first.get(name) ?? 0
+    const v = values.get(name)
+    if (p === 1 && !inside.get(name) && fn(v)) {
+      names.set(name, true)
+      functions[name] = v
+    }
+    else if (!(p >= 2 || (p === 1 && call(v)))) names.delete(name)
+  }
+  return { names, functions: functions }
+}
+
+// lectures BRUTES du corps d'une fonction du `<script>` (`tout`), comme celles d'une méthode (methodsRaw, analyze()) — `$.x`,
+// magasin, marqueur '@nom' d'une méthode appelée — avec ses marqueurs '%nom' (fonction du script appelée ou passée en valeur,
+// nameMark) ; sans `tout`, ces marqueurs seuls (corps d'une méthode, dont le reste est déjà relevé). Toute la chaîne d'objet
+// de la cible d'une affectation simple est écrite, pas lue (`$o.a.b = …` écrit `$o`, `$$ui.locked = …` écrit `$$ui`, motifs de
+// décomposition compris) ; la clé calculée d'un maillon (`$q[$k] = …`) reste lue, comme `+=`, `||=`, `??=`, `++` et `delete`
+function bodyReads(fnNode: any, script: ReadonlyMap<string, boolean>, all: boolean): string[] {
+  const reads   = new Set<string>()
+  const clean   = functionScope(fnNode)
+  const written = new Set<any>()
+  if (fnNode.body?.type === 'BlockStatement') for (const name of blockScope(fnNode.body.body).keys()) clean.set(name, 'var')
+  const write = (target: any): void => {
+    if (!target) return
+    if (target.type === 'MemberExpression') for (let m = target; m?.type === 'MemberExpression'; m = m.object) written.add(m)
+    else if (target.type === 'ArrayPattern') for (const e of target.elements) write(e)
+    else if (target.type === 'ObjectPattern') for (const p of target.properties) write(p.type === 'RestElement' ? p.argument : p.value)
+    else if (target.type === 'AssignmentPattern') write(target.left)
+    else if (target.type === 'RestElement') write(target.argument)
+  }
+  if (all) walk.simple(fnNode.body, { AssignmentExpression(a: any) { if (a.operator === '=') write(a.left) } })
+  walk.ancestor(fnNode.body, {
+    MemberExpression(m: any, _s: any, anc: any[]) {
+      if (!all || written.has(m)) return
+      if (m.object.type === 'Identifier' && m.object.name === '$' && !m.computed) {
+        if (m.property.type === 'Identifier') reads.add(m.property.name)
+        return
+      }
+      collectStoreMemberDep(m, anc, reads)
+    },
+    CallExpression(c: any) {
+      const cc = c.callee
+      if (all && cc.type === 'MemberExpression' && !cc.computed && (cc.object.type === 'ThisExpression' || (cc.object.type === 'Identifier' && cc.object.name === '_mjsThis')) && cc.property.type === 'Identifier') reads.add(`@${cc.property.name}`)
+    },
+    Identifier(node: any, _s: any, anc: any[]) {
+      if (clean.has(node.name)) return
+      const mark = nameMark(node, anc, script)
+      if (mark !== null && mark[0] === '%') reads.add(mark)
+    },
+  })
+  return Array.from(reads)
 }
 
 // ============================================================================
@@ -470,7 +629,7 @@ function resolveMethodReadsPointFixe(methods: Record<string, string[]>, diag: { 
 // `preAst` : l'AST de `jsCode` déjà analysé ; absent ou `null` (analyse échouée en amont), le texte est relu — et l'erreur
 // d'analyse levée comme avant
 // `moduleVars` : noms du premier niveau du `<script module>` ; `externalVars` : variables externes (`$nom`)
-export function analyze(jsCode: string, diag: { lint?: LintToggles; colorsEnabled?: boolean; moduleVars?: string[]; externalVars?: string[]; brut?: boolean; precise?: boolean } = {}, preAst?: acorn.Node | null): AnalyzerOutput {
+export function analyze(jsCode: string, diag: { lint?: LintToggles; colorsEnabled?: boolean; moduleVars?: string[]; externalVars?: string[]; raw?: boolean; precise?: boolean; written?: WrittenScript } = {}, preAst?: acorn.Node | null): AnalyzerOutput {
   const stateVariables = new Set<string>()
   // Object.create(null) sur TOUS les dicts de ce
   // fichier indexés par un nom UTILISATEUR (méthode/état/computed) : un `{}` ordinaire
@@ -478,13 +637,13 @@ export function analyze(jsCode: string, diag: { lint?: LintToggles; colorsEnable
   // de Object.prototype (change le PROTOTYPE de dict au lieu d'y créer une clé) — la
   // valeur est perdue, et une lecture `dict['__proto__']` ultérieure retombe sur
   // Object.prototype (objet TRUTHY, non itérable) au lieu d'undefined. Défense en
-  // profondeur : la garde `RESERVED_STATE_NAMES` (assertNomEtatAutorise/rejet inline
+  // profondeur : la garde `RESERVED_STATE_NAMES` (assertStateNameAllowed/rejet inline
   // ci-dessous) reste la protection PRIMAIRE, celle-ci couvre tout chemin qui l'aurait
   // contournée.
   const dependencies: Record<string, string[]> = Object.create(null)
   // valeurs dérivées qui lisent l'état par une clé calculée, ou qui appellent une fonction (cf. AnalyzerOutput)
-  const toute  = new Set<string>()
-  const appels = new Set<string>()
+  const all   = new Set<string>()
+  const calls = new Set<string>()
   // méthodes du composant (`@x = ->`) : nom → nœud fonction (RHS),
   // collectées par le handler AssignmentExpression plus bas. Sert à la garde
   // état/méthode homonymes (transpile(), après auto-déclaration template) ET
@@ -512,9 +671,11 @@ export function analyze(jsCode: string, diag: { lint?: LintToggles; colorsEnable
   // pré-passe DÉDIÉE, AVANT le walk : édite `ms` directement, ne
   // mute jamais `ast` (le walk ci-dessous continue de voir s0/s1/s2 intacts,
   // cf. detectUnparenthesizedDerivedIf() plus haut pour le détail du motif)
-  const candidats: DeriveCandidat[] = []
-  const fermetures: Fermeture[] = []
-  detectUnparenthesizedDerivedIf(ast, ms, dependencies, candidats, fermetures, toute, appels)
+  const candidates: DerivedCandidate[] = []
+  const closings: Closing[] = []
+  // valeurs dérivées qui attendent (`$x = await f($q)`, transpiler/await-derived.ts)
+  const waits = new Set<string>()
+  detectUnparenthesizedDerivedIf(ast, ms, dependencies, candidates, closings, all, calls, waits)
 
   walk.ancestor(ast, {
     MemberExpression(node: any) {
@@ -551,7 +712,7 @@ export function analyze(jsCode: string, diag: { lint?: LintToggles; colorsEnable
         // vars (`Analyzer.RESERVED_STATE_NAMES`, référence AVANT sa propre définition —
         // sûr : `analyze()` n'est jamais appelée avant la fin de l'évaluation du module).
         if (Analyzer.RESERVED_STATE_NAMES.includes(node.left.property.name)) {
-          throw new Error(t('analyzer.nom-methode-reserve', { name: node.left.property.name }))
+          throw new Error(t('analyzer.name-method-reserved', { name: node.left.property.name }))
         }
         methodNames.add(node.left.property.name)
         methodNodes[node.left.property.name] = node.right
@@ -588,7 +749,7 @@ export function analyze(jsCode: string, diag: { lint?: LintToggles; colorsEnable
         // ce qui matche `/^_mjs_/`, donc le state user `$._mjs_foo` serait
         // manglé avec le risque de collision.
         if (typeof varName === 'string' && varName.startsWith('_mjs_')) {
-          const line = typedLine('naming', t('analyzer.prefixe-mjs-reserve', { varName, nomCourt: varName.slice(5) }), diag.lint)
+          const line = typedLine('naming', t('analyzer.prefix-mjs-reserved', { varName, shortName: varName.slice(5) }), diag.lint)
           // eslint-disable-next-line no-console
           if (line !== null) printDiagnostic(line, diag.colorsEnabled ?? false)
         }
@@ -628,24 +789,26 @@ export function analyze(jsCode: string, diag: { lint?: LintToggles; colorsEnable
         // PARCOURT node.right EN ENTIER, marqueur µ._mjs_forceDeps compris —
         // c'est ce qui fait détecter $a/$b (arguments 2+ du marqueur) SANS
         // code dédié, cf. commentaire isForceDepsMarker plus haut
-        const { deps, readsReactiveSource, hasAwait, cle, appel } = scanReactiveReads(node.right)
+        const { deps, readsReactiveSource, hasAwait, key, call } = scanReactiveReads(node.right)
 
-        if (deps.size > 0 || readsReactiveSource) {
+        // `$moi = await charger()`, sans aucune variable citée : une valeur qui attend aussi, appelée une fois
+        if (deps.size > 0 || readsReactiveSource || hasAwait) {
           if (deps.size > 0) dependencies[varName] = Array.from(deps)
           // `µderived` : les dépendances nommées sont celles que l'affichage suit, accès calculé compris
-          if (appel) appels.add(varName)
-          else if (cle && !isForceDepsMarker) toute.add(varName)
+          if (call) calls.add(varName)
+          else if (key && !isForceDepsMarker) all.add(varName)
           const isAlreadyFunction =
             effectiveRight.type === 'FunctionExpression' ||
             effectiveRight.type === 'ArrowFunctionExpression'
           if (!isAlreadyFunction) {
+            if (hasAwait) waits.add(varName)
             // un derived dont le RHS contient `await` doit être une flèche
             // ASYNC, sinon `() => (await …)` est une SyntaxError.
             ms.appendLeft(effectiveRight.start, hasAwait ? '{ _mjs_c: true, f: async () => (' : '{ _mjs_c: true, f: () => (')
-            const force   = isForceDepsMarker && node.right.arguments.length >= 2
-            const nommees = force ? node.right.arguments.slice(1).map((a: any) => a.type === 'MemberExpression' && !a.computed && a.object.type === 'Identifier' && a.object.name === '$' && a.property.type === 'Identifier' ? a.property.name : '') : []
-            candidats.push({ nom: varName, noeud: effectiveRight, force, ...(force && !nommees.includes('') ? { nommees } : {}) })
-            fermetures.push({ nom: varName, pos: effectiveRight.end, simple: ') }', marquee: '), _mjs_s: 1 }' })
+            const force = isForceDepsMarker && node.right.arguments.length >= 2
+            const named = force ? node.right.arguments.slice(1).map((a: any) => a.type === 'MemberExpression' && !a.computed && a.object.type === 'Identifier' && a.object.name === '$' && a.property.type === 'Identifier' ? a.property.name : '') : []
+            candidates.push({ name: varName, node: effectiveRight, force, ...(force && !named.includes('') ? { named: named } : {}) })
+            closings.push({ name: varName, pos: effectiveRight.end, simple: ') }', marquee: '), _mjs_s: 1 }' })
           }
         }
       }
@@ -714,10 +877,16 @@ export function analyze(jsCode: string, diag: { lint?: LintToggles; colorsEnable
     },
   })
 
+  // `await` hors d'une valeur dérivée, au premier niveau du script, et valeur qui attend qui se cite : refusés avec la forme juste
+  // (await-outside-derived.ts), avant l'avertissement du cycle réactif, qui proposerait `=:` ; `diag.ecrit` : le texte écrit du script, où
+  // chaque refus lit sa ligne
+  rejectAwaitOutsideDerived(ast, candidates.map((c) => c.node), diag.written)
+  rejectSelfCitingWait(dependencies, waits, diag.written)
+
   // lectures BRUTES de chaque méthode : `$.x` (état), deps store
   // ('$$x'/'$$*', collectStoreMemberDep) et appels vers une AUTRE méthode
   // connue (marqueur '@nom', point-fixé par la classe Analyzer — cf.
-  // resolveMethodReadsPointFixe). `µread $x`/`µwrite $x` compilent en
+  // resolveMethodReadsFixedPoint). `µread $x`/`µwrite $x` compilent en
   // `µ._stateRaw.x`/`µ._mjs_storeRaw.x` : objet 'µ', jamais '$' — invisibles ici
   // PAR CONSTRUCTION (aucun code dédié, opt-out gratuit).
   const methodsRaw: Record<string, string[]> = Object.create(null)  // même remède, cf. dependencies plus haut
@@ -743,11 +912,23 @@ export function analyze(jsCode: string, diag: { lint?: LintToggles; colorsEnable
     methodsRaw[name] = Array.from(mReads)
   }
 
+  // fonctions du `<script>` (cf. scriptFunctions) : lectures BRUTES de leur corps, et fonctions du script appelées ou passées
+  // en valeur par chaque méthode — pour le gabarit seulement (cf. Analyzer.templateReads)
+  const script = scriptFunctions(ast)
+  let functions: Record<string, string[]> | undefined
+  let methodFunctions: Record<string, string[]> | undefined
+  if (script.names.size > 0) {
+    functions       = Object.create(null)  // même remède, cf. dependencies plus haut
+    methodFunctions = Object.create(null)
+    for (const [name, fnNode] of Object.entries(script.functions)) functions![name] = bodyReads(fnNode, script.names, true)
+    for (const [name, fnNode] of Object.entries(methodNodes)) methodFunctions![name] = bodyReads(fnNode, script.names, false)
+  }
+
   // Warning boucle réactive — émis ICI (après le point-fixe local des méthodes,
   // pas dans le CallExpression handler ci-dessus) : un effet qui APPELLE une
   // méthode lisant la MÊME $var qu'il écrit doit warner aussi.
   if (pendingEffectWarnings.length > 0) {
-    const methodsResolved = resolveMethodReadsPointFixe(methodsRaw, diag)
+    const methodsResolved = resolveMethodReadsFixedPoint(methodsRaw, diag)
     for (const { reads, writes, calledMethods } of pendingEffectWarnings) {
       const allReads = new Set(reads)
       for (const m of calledMethods) {
@@ -755,33 +936,33 @@ export function analyze(jsCode: string, diag: { lint?: LintToggles; colorsEnable
         if (sub) for (const r of sub) allReads.add(r)
       }
       // une variable lue par un dérivé (`$e = $n + 1` lu par `$n = $e`) relance l'effet comme une lecture directe
-      const aSuivre = [...allReads]
-      for (let i = 0; i < aSuivre.length; i++) {
-        for (const r of dependencies[aSuivre[i]] ?? []) { if (!allReads.has(r)) { allReads.add(r); aSuivre.push(r) } }
+      const toVisit = [...allReads]
+      for (let i = 0; i < toVisit.length; i++) {
+        for (const r of dependencies[toVisit[i]] ?? []) { if (!allReads.has(r)) { allReads.add(r); toVisit.push(r) } }
       }
       const looped = Array.from(writes).filter(w => allReads.has(w))
       if (looped.length > 0) {
-        const line = typedLine('reactivity', t('analyzer.effect-lit-ecrit-boucle', { liste: looped.map(v => '$' + v).join(', ') }), diag.lint)
+        const line = typedLine('reactivity', t('analyzer.effect-reads-writes-loop', { list: looped.map(v => '$' + v).join(', ') }), diag.lint)
         // eslint-disable-next-line no-console
         if (line !== null) printDiagnostic(line, diag.colorsEnabled ?? false)
       }
     }
   }
 
-  // lectures connues en sommeil (`LECTURES_CONNUES`, derived-reads.ts) : aucune valeur marquée, aucun receveur enveloppé
-  const recepteurs = new Map<string, Recepteur[]>()
-  const connues = derivesAuxLecturesConnues(ast, candidats, dependencies, diag.moduleVars ?? [], diag.externalVars ?? [], recepteurs)
-  // option `derived: "precise"` : les valeurs précises (deriveesPrecises, derived-classes.ts) portent leurs sources sur l'enveloppe, que le
+  // lectures connues en sommeil (`KNOWN_READS`, derived-reads.ts) : aucune valeur marquée, aucun receveur enveloppé
+  const receivers = new Map<string, Receiver[]>()
+  const known = derivedToKnownReads(ast, candidates, dependencies, diag.moduleVars ?? [], diag.externalVars ?? [], receivers)
+  // option `derived: "precise"` : les valeurs précises (preciseDerived, derived-classes.ts) portent leurs sources sur l'enveloppe, que le
   // runtime compare ; sans elle, la règle de l'horloge
-  const precises = diag.precise === true ? deriveesPrecises(candidats, diag.externalVars ?? [], variablesDouteuses(ast, diag.brut === true)).sources : null
-  for (const f of fermetures) ms.appendRight(f.pos, precises === null ? (connues.has(f.nom) ? f.marquee : f.simple) : precises.has(f.nom) ? f.marquee.replace('_mjs_s: 1', '_mjs_s: ' + JSON.stringify(precises.get(f.nom))) : f.simple)
+  const precises = diag.precise === true ? preciseDerived(candidates, diag.externalVars ?? [], doubtfulVariables(ast, diag.raw === true)).sources : null
+  for (const f of closings) ms.appendRight(f.pos, precises === null ? (known.has(f.name) ? f.marquee : f.simple) : precises.has(f.name) ? f.marquee.replace('_mjs_s: 1', '_mjs_s: ' + JSON.stringify(precises.get(f.name))) : f.simple)
   // receveur d'une méthode ordinaire, ou itérable d'un parcours (`Symbol.iterator`), d'une valeur connue : vérifié à chaque
   // calcul (`_mjs_rcv`, runtime/mjs_element.ts) — la méthode ou l'itérateur d'un objet de l'utilisateur peut lire l'état par
   // une fermeture, la valeur passe alors à « toute écriture la périme »
-  for (const [nom, liste] of recepteurs) {
-    for (const r of liste) {
-      ms.appendLeft(r.noeud.start, '_mjsThis._mjs_rcv(')
-      ms.appendRight(r.noeud.end, `, ${r.methode === null ? 'Symbol.iterator' : `'${r.methode}'`}, '${nom}')`)
+  for (const [name, list] of receivers) {
+    for (const r of list) {
+      ms.appendLeft(r.node.start, '_mjsThis._mjs_rcv(')
+      ms.appendRight(r.node.end, `, ${r.method === null ? 'Symbol.iterator' : `'${r.method}'`}, '${name}')`)
     }
   }
   const modifiedCode = ms.toString()
@@ -797,16 +978,17 @@ export function analyze(jsCode: string, diag: { lint?: LintToggles; colorsEnable
   // mentionnant "_mjs_forceDeps(" dans une chaîne littérale n'est PAS le marqueur — sans ce
   // masquage, il faisait échouer tout le build avec ce même message trompeur.
   if (maskInertSameLength(modifiedCode).includes('_mjs_forceDeps(')) {
-    throw new Error(t('analyzer.derived-hors-racine'))
+    throw new Error(t('analyzer.derived-outside-root'))
   }
 
   return {
     state: Array.from(stateVariables),
     computed: dependencies,
     methods: methodsRaw,
-    toute: Array.from(toute),
-    appels: Array.from(appels),
-    candidats,
+    ...(script.names.size > 0 ? { scriptNames: script.names, functions: functions, methodFunctions } : {}),
+    all: Array.from(all),
+    calls: Array.from(calls),
+    candidates: candidates,
     modifiedCode,
   }
 }
@@ -824,12 +1006,12 @@ export class Analyzer {
   /** Valeurs dérivées qui lisent l'état par une clé calculée (`$[$k]`, cf. AnalyzerOutput.toute) : une expression du
    * gabarit qui en lit une reçoit la dépendance `*` (expandOneDep). Hors de `computedDeps` : les valeurs dérivées du
    * runtime (`_mjs_computedDeps`) et les dépendances des µeffect n'en savent rien */
-  computedToute: Set<string> = new Set()
+  computedAll: Set<string> = new Set()
   /** Valeurs dérivées qui appellent une fonction (cf. AnalyzerOutput.appels) : une expression du gabarit qui en lit une
    * ne reçoit jamais `*` (resolveSnippetDeps) */
-  computedAppel: Set<string> = new Set()
+  computedCall: Set<string> = new Set()
   // valeurs dérivées du script, avec le nœud de leur expression (cf. AnalyzerOutput.candidats)
-  derivedCandidates: DeriveCandidat[] = []
+  derivedCandidates: DerivedCandidate[] = []
   /** Registre de présence des vars (valeur 1 par var). Pas un bitmask, juste
    * un objet permettant aux stores universels de tester `_mjs_var_bits[k] !== undefined`.
    * Pour rétro-compat avec mjs_store.ts et mjs_runes.ts.
@@ -841,7 +1023,7 @@ export class Analyzer {
    * état/méthode homonymes (transpile(), après auto-déclaration template). */
   methodNames: Set<string> = new Set()
   /** lectures ($x/$$x) de chaque méthode, point-fixées (une méthode qui
-   * en appelle une autre hérite de SES lectures) — cf. resolveMethodReadsPointFixe.
+   * en appelle une autre hérite de SES lectures) — cf. resolveMethodReadsFixedPoint.
    * Consommé par resolveSnippetDeps (`@nom` dans un snippet de template) et par
    * effect-deps.ts (`@nom` appelée dans un `µeffect`).
    * Object.create(null) — même remède que dependencies (analyze()) : c'est ICI
@@ -849,6 +1031,16 @@ export class Analyzer {
    * itérable) → « reads is not iterable » dans resolveSnippetDeps, sans jamais nommer la
    * cause. */
   methodReads: Record<string, string[]> = Object.create(null)
+  /** noms du premier niveau du `<script>` qu'une expression du gabarit peut appeler par leur nom : `true` pour une fonction que
+   * l'analyse sait lire, `false` sinon (cf. scriptFunctions) ; `null` quand le script n'en déclare aucun */
+  scriptNames: Map<string, boolean> | null = null
+  /** lectures de chaque méthode ('@nom') et de chaque fonction du `<script>` ('%nom') pour le gabarit, point-fixées ensemble :
+   * locale → locale, locale → méthode, méthode → locale (cf. resolveMethodReadsFixedPoint) ; `null` sans nom du script, le
+   * gabarit lit alors `methodReads`, que les reffets lisent toujours (effect-deps.ts) */
+  private templateReads: Record<string, string[]> | null = null
+  /** dépendances BRUTES des snippets qui lisent un nom du `<script>` ('%nom', '!nom') : relues quand le gabarit masque ce nom
+   * (getEffectVars) et pour l'avertissement d'un nom que l'analyse ne sait pas lire (unreadableFunctions) */
+  private snippetNames: Map<string, string[]> = new Map()
 
   /** Cache des varNames par snippet — clé du dispatch direct. Pour un snippet
    * donné, on stocke l'UNION des state vars dont il dépend transitivement
@@ -860,11 +1052,11 @@ export class Analyzer {
   private lint?: LintToggles
   private colorsEnabled = false
   // cycles réactifs déjà signalés : un par nom, jamais répété d'une passe de resolveDependencyGraph à l'autre
-  private cyclesSignales = new Set<string>()
+  private reportedCycles = new Set<string>()
   private externalVars: string[] = []
   private moduleVars: string[] = []
-  // le composant écrit l'état sans MJS : aucune valeur précise (cf. ECRITURE_BRUTE, derived-classes.ts)
-  brut: boolean
+  // le composant écrit l'état sans MJS : aucune valeur précise (cf. RAW_WRITE, derived-classes.ts)
+  raw: boolean
   // option `derived: "precise"` : les valeurs que le compilateur prouve précises portent leurs sources (cf. analyze)
   precise: boolean
   // miroirs Set des `includes` chauds (`stateVars`/`externalVars` testés
@@ -891,26 +1083,27 @@ export class Analyzer {
 
   // `preAst` : l'AST du script déjà analysé par le transpileur (partagé, jamais modifié ici)
   // `moduleVars` : noms du premier niveau du `<script module>` (leurs fonctions ne voient pas l'état de l'instance)
-  constructor(jsScriptCode: string, externalVars: string[] = [], lint?: LintToggles, colorsEnabled = false, preAst?: acorn.Node | null, moduleVars: string[] = [], brut = false, precise = false) {
+  // `ecrit` : le texte écrit du script, où les refus de la valeur qui attend lisent leur ligne (await-outside-derived.ts)
+  constructor(jsScriptCode: string, externalVars: string[] = [], lint?: LintToggles, colorsEnabled = false, preAst?: acorn.Node | null, moduleVars: string[] = [], raw = false, precise = false, written?: WrittenScript) {
     this.externalVars = externalVars
     this.moduleVars = moduleVars
-    this.brut = brut
+    this.raw = raw
     this.precise = precise
     this.externalVarsSet = new Set(externalVars)
     this.lint = lint
     this.colorsEnabled = colorsEnabled
-    this.analyzeAndBuild(jsScriptCode, preAst)
+    this.analyzeAndBuild(jsScriptCode, preAst, written)
   }
 
   // ------------------------------------------------------------------------
   // Analyse principale + registre de présence des vars
   // ------------------------------------------------------------------------
-  private analyzeAndBuild(jsScriptCode: string, preAst?: acorn.Node | null): void {
-    const out = analyze(jsScriptCode, { lint: this.lint, colorsEnabled: this.colorsEnabled, moduleVars: this.moduleVars, externalVars: this.externalVars, brut: this.brut, precise: this.precise }, preAst)
+  private analyzeAndBuild(jsScriptCode: string, preAst?: acorn.Node | null, written?: WrittenScript): void {
+    const out = analyze(jsScriptCode, { lint: this.lint, colorsEnabled: this.colorsEnabled, moduleVars: this.moduleVars, externalVars: this.externalVars, raw: this.raw, precise: this.precise, written }, preAst)
     this.modifiedCode = out.modifiedCode
 
     this.stateVars = out.state.filter(v => !this.externalVarsSet.has(`$${v}`))
-    for (const v of this.stateVars) this.assertNomEtatAutorise(v)
+    for (const v of this.stateVars) this.assertStateNameAllowed(v)
     this.stateVarsSet = new Set(this.stateVars)
 
     this.computedDeps = Object.create(null)  // même remède, cf. dependencies (analyze())
@@ -918,20 +1111,27 @@ export class Analyzer {
       if (this.externalVarsSet.has(`$${k}`)) continue
       this.computedDeps[k] = v.filter(d => !this.externalVarsSet.has(`$${d}`))
     }
-    this.computedToute = new Set((out.toute ?? []).filter(k => !this.externalVarsSet.has(`$${k}`)))
-    this.computedAppel = new Set((out.appels ?? []).filter(k => !this.externalVarsSet.has(`$${k}`)))
-    this.derivedCandidates = out.candidats ?? []
+    this.computedAll = new Set((out.all ?? []).filter(k => !this.externalVarsSet.has(`$${k}`)))
+    this.computedCall = new Set((out.calls ?? []).filter(k => !this.externalVarsSet.has(`$${k}`)))
+    this.derivedCandidates = out.candidates ?? []
 
     // méthodes du composant : filtre externalVars (même partition
     // que computedDeps ci-dessus), PUIS point-fixe (méthode qui en appelle une
-    // autre → hérite de SES lectures), cf. resolveMethodReadsPointFixe.
+    // autre → hérite de SES lectures), cf. resolveMethodReadsFixedPoint.
     const methodsFiltered: Record<string, string[]> = Object.create(null)  // même remède, cf. dependencies (analyze())
     for (const [k, v] of Object.entries(out.methods)) {
       if (this.externalVarsSet.has(`$${k}`)) continue
       methodsFiltered[k] = v.filter(d => !this.externalVarsSet.has(`$${d}`))
     }
     this.methodNames = new Set(Object.keys(methodsFiltered))
-    this.methodReads = resolveMethodReadsPointFixe(methodsFiltered, { lint: this.lint, colorsEnabled: this.colorsEnabled })
+    this.methodReads = resolveMethodReadsFixedPoint(methodsFiltered, { lint: this.lint, colorsEnabled: this.colorsEnabled })
+    if (out.scriptNames && out.functions) {
+      this.scriptNames = out.scriptNames
+      const table: Record<string, string[]> = Object.create(null)  // même remède, cf. dependencies (analyze())
+      for (const [k, v] of Object.entries(methodsFiltered)) table[`@${k}`] = v.concat(out.methodFunctions?.[k] ?? [])
+      for (const [k, v] of Object.entries(out.functions)) table[`%${k}`] = v.filter(d => !this.externalVarsSet.has(`$${d}`))
+      this.templateReads = resolveMethodReadsFixedPoint(table, { lint: this.lint, colorsEnabled: this.colorsEnabled }, true)
+    }
 
     this.allDependencies = [...this.stateVars]
     this.resolveDependencyGraph()
@@ -945,8 +1145,8 @@ export class Analyzer {
   // garde, `expandOneDep` (generator/, hors périmètre) plante en silence sur
   // `computedDeps['__proto__']` (résout au PROTOTYPE JS, pas une entrée
   // absente) — `TypeError: sub is not iterable`, sans jamais nommer la cause.
-  private assertNomEtatAutorise(name: string): void {
-    if (Analyzer.RESERVED_STATE_NAMES.includes(name)) throw new Error(t('analyzer.nom-etat-reserve', { name }))
+  private assertStateNameAllowed(name: string): void {
+    if (Analyzer.RESERVED_STATE_NAMES.includes(name)) throw new Error(t('analyzer.name-state-reserved', { name }))
   }
 
   // ------------------------------------------------------------------------
@@ -985,50 +1185,50 @@ export class Analyzer {
     // ne compte pas (même règle que maskInterpolations, transpiler/index.ts) ; dans le texte, une
     // apostrophe reste du texte.
     const blank = (s: string): string => {
-      let out        = ''
-      let profondeur = 0
-      let chaine     = ''
+      let out   = ''
+      let depth = 0
+      let str   = ''
       for (let i = 0; i < s.length; i++) {
         const c = s[i]
-        if (profondeur === 0) {
-          if (c === '{') profondeur = 1
+        if (depth === 0) {
+          if (c === '{') depth = 1
           out += c === '{' || c === '\n' ? c : ' '
           continue
         }
-        if (chaine) {
+        if (str) {
           if (c === '\\') { out += c + (s[i + 1] ?? ''); i++; continue }
-          if (c === chaine) chaine = ''
+          if (c === str) str = ''
         }
-        else if (c === '"' || c === "'" || c === '`') chaine = c
-        else if (c === '{') profondeur++
-        else if (c === '}') profondeur--
+        else if (c === '"' || c === "'" || c === '`') str = c
+        else if (c === '{') depth++
+        else if (c === '}') depth--
         out += c
       }
       return out
     }
     // fin de l'expression `{…}` ouverte en `i` (même lecture des chaînes que blank)
-    const finAccolade = (s: string, i: number): number => {
-      let profondeur = 0
-      let chaine     = ''
+    const braceEnd = (s: string, i: number): number => {
+      let depth = 0
+      let str   = ''
       for (let k = i; k < s.length; k++) {
         const c = s[k]
-        if (chaine) {
+        if (str) {
           if (c === '\\') k++
-          else if (c === chaine) chaine = ''
+          else if (c === str) str = ''
         }
-        else if (c === '"' || c === "'" || c === '`') chaine = c
-        else if (c === '{') profondeur++
-        else if (c === '}' && --profondeur === 0) return k + 1
+        else if (c === '"' || c === "'" || c === '`') str = c
+        else if (c === '{') depth++
+        else if (c === '}' && --depth === 0) return k + 1
       }
       return s.length
     }
     // fin de la balise ouverte en `i` : son `>`, hors valeurs entre guillemets et hors `{…}`
-    const finBalise = (s: string, i: number): number => {
+    const tagEnd = (s: string, i: number): number => {
       let k = i + 1
       while (k < s.length) {
         const c = s[k]
         if (c === '>') return k + 1
-        if (c === '{') { k = finAccolade(s, k); continue }
+        if (c === '{') { k = braceEnd(s, k); continue }
         if (c === '"' || c === "'") {
           const f = s.indexOf(c, k + 1)
           k = f < 0 ? s.length : f + 1
@@ -1041,28 +1241,28 @@ export class Analyzer {
     // le TEXTE est verbatim partout, pas seulement dans <pre>/<code> : seuls les `{…}` et l'intérieur des balises
     // (attributs, sous toutes leurs formes, gardés tels quels) portent du code — un `$constructor` cité dans un <p>
     // faisait échouer la construction, « 5 $US » déclarait un état fantôme `US`
-    const blankHorsBalises = (s: string): string => {
-      let out   = ''
-      let texte = 0
-      let i     = 0
+    const blankOutsideTags = (s: string): string => {
+      let out  = ''
+      let text = 0
+      let i    = 0
       while (i < s.length) {
-        if (s[i] === '{') { i = finAccolade(s, i); continue }
+        if (s[i] === '{') { i = braceEnd(s, i); continue }
         if (s[i] === '<' && /[a-zA-Z@\/]/.test(s[i + 1] ?? '')) {
-          const fin = finBalise(s, i)
-          out += blank(s.slice(texte, i)) + s.slice(i, fin)
-          texte = i = fin
+          const end = tagEnd(s, i)
+          out += blank(s.slice(text, i)) + s.slice(i, end)
+          text = i = end
           continue
         }
         i++
       }
-      return out + blank(s.slice(texte))
+      return out + blank(s.slice(text))
     }
     // `<pre>` puis `<code>`, aux bornes de leurs regex, d'ouverture en ouverture (replaceBlocks) : un `<pre x` sans `>` ou un
     // `<pre>` sans fermante ne fait pas relire la fin du texte depuis chacun
     const withoutPreCode = replaceBlocks(replaceBlocks(htmlRaw, ['pre'], blank), ['code'], blank)
-    const withoutComments = blankHorsBalises(maskHtmlComments(withoutPreCode))
+    const withoutComments = blankOutsideTags(maskHtmlComments(withoutPreCode))
     // nom ENTIER, lettres accentuées comprises : `$prénom` déclarait aussi une variable fantôme `pr` (une première
-    // lettre accentuée, `$âge`, est refusée à la construction, cf. refuseEtatAccentue dans sigils.ts)
+    // lettre accentuée, `$âge`, est refusée à la construction, cf. rejectAccentedState dans sigils.ts)
     const regex = /(?<![\p{L}\p{N}_.$])\$([\p{L}_][\p{L}\p{M}\p{N}_]*)/gu
     let m: RegExpExecArray | null
     while ((m = regex.exec(withoutComments)) !== null) found.add(m[1])
@@ -1072,7 +1272,7 @@ export class Analyzer {
       if (this.stateVarsSet.has(v)) continue
       if (Analyzer.RESERVED_VARS.includes(v)) continue
       if (this.externalVarsSet.has(`$${v}`)) continue
-      this.assertNomEtatAutorise(v)
+      this.assertStateNameAllowed(v)
       newVars.push(v)
     }
     if (newVars.length === 0) return
@@ -1082,6 +1282,7 @@ export class Analyzer {
     this.allDependencies.push(...newVars)
     this.buildVarBitsDict()
     this.batchVarsCache.clear()
+    this.snippetNames.clear()
   }
 
   // ------------------------------------------------------------------------
@@ -1093,15 +1294,33 @@ export class Analyzer {
     const unique = Array.from(new Set(snippets))
     const missing = unique.filter(s => !this.batchVarsCache.has(s))
     for (const snippet of missing) {
-      const deps = analyzeSnippet(snippet, true)
+      const deps = analyzeSnippet(snippet, true, this.scriptNames)
       this.batchVarsCache.set(snippet, this.resolveSnippetDeps(deps))
+      if (this.scriptNames && deps.some((d) => d[0] === '%' || d[0] === '!')) this.snippetNames.set(snippet, deps)
     }
   }
 
   /** Récupère la closure des state vars d'un snippet (dispatch direct V2).
-   * Retourne [] si snippet inconnu ou aucune state var référencée. */
-  getEffectVars(snippetCode: string): string[] {
+   * Retourne [] si snippet inconnu ou aucune state var référencée.
+   * `masques` : noms que le gabarit met en portée à cet endroit (variable d'un `{for}`, `{const}`, valeur d'une branche) — une
+   * fonction du `<script>` du même nom n'est pas celle qu'appelle l'expression, ses lectures ne comptent pas. `withoutFunctions` :
+   * aucune fonction du `<script>` n'y compte (une attache, qui agit sans s'afficher, garde son seul passage). */
+  getEffectVars(snippetCode: string, masks?: ReadonlySet<string> | null, withoutFunctions = false): string[] {
+    // attache : le snippet relu sans les noms du script, ses méthodes résolues par `methodReads` (sans les lectures des fonctions
+    // du script qu'elles appellent), comme avant que le gabarit ne suive ces fonctions
+    if (withoutFunctions && this.templateReads) return this.resolveSnippetDeps(analyzeSnippet(snippetCode, true), true)
+    const rawNames = masks && masks.size > 0 ? this.snippetNames.get(snippetCode) : undefined
+    const masked   = (d: string): boolean => (d[0] === '%' || d[0] === '!') && masks!.has(d.slice(1))
+    if (rawNames && rawNames.some(masked)) return this.resolveSnippetDeps(rawNames.filter((d) => !masked(d)))
     return this.batchVarsCache.get(snippetCode) ?? []
+  }
+
+  /** Noms du premier niveau du `<script>` que l'expression appelle sans que l'analyse sache les lire ('!nom', cf.
+   * scriptFunctions), hors des noms que le gabarit masque à cet endroit : l'expression ne suit pas ce qu'ils lisent. */
+  unreadableFunctions(snippetCode: string, masks?: ReadonlySet<string> | null, withoutFunctions = false): string[] {
+    const rawNames = this.snippetNames.get(snippetCode)
+    if (!rawNames || withoutFunctions) return []
+    return rawNames.filter((d) => d[0] === '!' && !masks?.has(d.slice(1))).map((d) => d.slice(1))
   }
 
   /** Étend UNE dep (state/computed/store) dans `out` — factorisé pour être
@@ -1118,13 +1337,13 @@ export class Analyzer {
     // celle-ci ou l'une de celles dont elle dépend (`computedDeps` est déjà une fermeture transitive)
     if (d === '*') { out.add(d); return }
     if (this.stateVarsSet.has(d)) out.add(d)
-    if (this.computedToute.has(d)) out.add('*')
+    if (this.computedAll.has(d)) out.add('*')
     const sub = this.computedDeps[d]
     if (sub) {
       out.add(d) // garder le nom du computed lui-même (utile pour _mjs_effectsByVar)
       for (const x of sub) {
         out.add(x)
-        if (this.computedToute.has(x)) out.add('*')
+        if (this.computedAll.has(x)) out.add('*')
       }
     }
   }
@@ -1134,31 +1353,42 @@ export class Analyzer {
    * computeds dans la liste pour permettre au store universel de matcher
    * `$$key` aussi — c'est sans effet sur le dispatch puisque _mjs_effectsByVar
    * n'aura d'entrée que pour les vars réellement émises. */
-  private resolveSnippetDeps(deps: string[]): string[] {
+  // `methods` : les méthodes résolues par `methodReads`, sans les lectures des fonctions du script qu'elles appellent (attache)
+  private resolveSnippetDeps(deps: string[], methods = false): string[] {
     const out = new Set<string>()
     // `()` : l'expression appelle une fonction (analyzeSnippetOrNull)
-    let appel = false
+    let call = false
     for (const d of deps) {
       if (d === '()') {
-        appel = true
+        call = true
         continue
       }
       // `@fmt` (méthode appelée dans le snippet, cf. analyzeSnippet) :
       // jamais émise telle quelle (aucune var '@fmt' n'existe au runtime) —
       // étend CHACUNE de ses lectures (déjà point-fixées, cf.
-      // resolveMethodReadsPointFixe) comme une dep normale. Méthode INCONNUE
+      // resolveMethodReadsFixedPoint) comme une dep normale. Méthode INCONNUE
       // (jamais collectée dans <script>, ex. mixin externe) → ignorée en
       // silence, aucune contribution.
       if (d.startsWith('@')) {
-        const reads = this.methodReads[d.slice(1)]
+        const reads = this.templateReads && !methods ? this.templateReads[d] : this.methodReads[d.slice(1)]
         if (reads) for (const r of reads) this.expandOneDep(r, out)
         continue
       }
+      // `%fmt` : fonction du `<script>` appelée ou passée en valeur — ses lectures, point-fixées avec celles des méthodes, comme
+      // `@fmt` ; `!nom` : nom du `<script>` que l'analyse ne sait pas lire, aucune lecture connue — jamais en silence, l'expression
+      // est signalée à la construction (generator/state.ts, `generator.script-function-unreadable`), comme une dépendance
+      // non analysable : une méthode inconnue, elle, ne contribue rien sans un mot (ci-dessus)
+      if (d[0] === '%') {
+        const reads = this.templateReads?.[d]
+        if (reads) for (const r of reads) this.expandOneDep(r, out)
+        continue
+      }
+      if (d[0] === '!') continue
       this.expandOneDep(d, out)
     }
     // `*` réservé à ce qui ne lit que l'état : une expression qui appelle une fonction, ou qui lit une valeur dérivée qui
     // en appelle une, garde ses dépendances connues — l'appel (une requête) serait refait à chaque écriture
-    if (out.has('*') && (appel || [...out].some((n) => this.computedAppel.has(n)))) out.delete('*')
+    if (out.has('*') && (call || [...out].some((n) => this.computedCall.has(n)))) out.delete('*')
     return Array.from(out)
   }
 
@@ -1206,7 +1436,7 @@ export class Analyzer {
         // coupure de sécurité : sur un graphe pathologique (>100 niveaux
         // de chaînage), la closure transitive reste INCOMPLÈTE → certains effets
         // ne se réabonnent pas. Improbable, mais ne plus le taire.
-        const line = typedLine('reactivity', t('analyzer.resolve-dependance-non-convergent'), this.lint)
+        const line = typedLine('reactivity', t('analyzer.resolve-dependency-not-convergent'), this.lint)
         // eslint-disable-next-line no-console
         if (line !== null) printDiagnostic(line, this.colorsEnabled)
         break
@@ -1220,9 +1450,9 @@ export class Analyzer {
         }
         if (newDeps.has(func)) {
           // cycle réactif : signalé une fois par nom (la fermeture refait des passes tant qu'un autre nom grandit)
-          if (!this.cyclesSignales.has(func)) {
-            this.cyclesSignales.add(func)
-            const line = typedLine('reactivity', t('analyzer.cycle-reactif-detecte', { func }), this.lint)
+          if (!this.reportedCycles.has(func)) {
+            this.reportedCycles.add(func)
+            const line = typedLine('reactivity', t('analyzer.cycle-reactive-detected', { func }), this.lint)
             // eslint-disable-next-line no-console
             if (line !== null) printDiagnostic(line, this.colorsEnabled)
           }

@@ -131,7 +131,7 @@ const SONDE = () => {
     const couche = place && place.querySelector('[mjs-fx-layer="loader"]')
     const feuilles = o && o.adoptedStyleSheets ? Array.from(o.adoptedStyleSheets).map((f: any) => Array.from(f.cssRules).map((r: any) => r.cssText).join('')).filter((c: string) => c.includes('mjs-i18n-skel')) : []
     // l'instant où le module paraît AVEC son contenu (avant sa mise à niveau, la balise vide a déjà une boîte)
-    if (h && vu(h) && o && o.querySelector('h1.t') && !w.__vu) w.__vu = performance.now()
+    if (h && vu(h) && o && o.querySelector('h1.t') && !w.__seenMark) w.__seenMark = performance.now()
     const image  = { hote: h ? vu(h) : null, titre: texte(o, 'h1.t'), n: texte(o, 'p.n'), chargeur: couche ? vu(couche) : false, feuille: feuilles.length > 0 ? feuilles[0] : null }
     const d      = w.__images[w.__images.length - 1]
     if (!d || JSON.stringify(d) !== JSON.stringify(image)) w.__images.push(image)
@@ -214,7 +214,7 @@ describe('attente des textes traduits — dans de vrais navigateurs', function (
           // le module rendu (avant sa mise à niveau, la balise vide a déjà une boîte)
           await page.waitForFunction(() => { const a = (window as any).__images; const d = a[a.length - 1]; return !!d && d.hote === true && d.titre !== null }, null, { timeout: 20000 })
           const images: Image[] = await page.evaluate(() => (window as any).__images)
-          const vu: number = await page.evaluate(() => (window as any).__vu)
+          const vu: number = await page.evaluate(() => (window as any).__seenMark)
           assert.ok(vu >= 2800, `le module ne paraît qu'après le délai de secours (paru à ${Math.round(vu)} ms)`)
           assert.equal(nus(images).length, 0, 'jamais nu')
           const premiere = images.find(i => i.hote === true && i.titre !== null)!

@@ -1,6 +1,6 @@
 // preuve navigateur réel : sur une page qui pose
 // un <base href> vers un tiers, fetch() résout une URL relative contre CE <base>, pas contre
-// location.href. AVANT le fix, _mjajaxMemeOrigine jugeait « même origine » (résolution via
+// location.href. AVANT le fix, _mjajaxSameOrigin jugeait « même origine » (résolution via
 // location.href) et posait le jeton CSRF — qui partait alors RÉELLEMENT vers le tiers.
 
 import assert from 'node:assert/strict'

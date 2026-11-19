@@ -43,7 +43,7 @@ describe('MJS-WS — rooms.ts join/canSeePresence qui lèvent : message généri
     s.room('salon'); await tick()
     assert.equal(app.room('salon').size, 0)
     assert.notEqual(s.lastError.message, SECRET, 'le détail interne ne doit JAMAIS atteindre le client')
-    assert.equal(s.lastError.message, t('ws.rooms.acces-salon-refuse'))
+    assert.equal(s.lastError.message, t('ws.rooms.access-room-refused'))
     s.destroy(); await app.stop()
   })
 
@@ -55,7 +55,7 @@ describe('MJS-WS — rooms.ts join/canSeePresence qui lèvent : message généri
     s.room('salon'); await tick()
     s.presence('salon'); await tick()
     assert.notEqual(s.lastError.message, SECRET, 'le détail interne ne doit JAMAIS atteindre le client')
-    assert.equal(s.lastError.message, t('ws.rooms.acces-presence-refuse'))
+    assert.equal(s.lastError.message, t('ws.rooms.access-presence-refused'))
     s.destroy(); await app.stop()
   })
 })

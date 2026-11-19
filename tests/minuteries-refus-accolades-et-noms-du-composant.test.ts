@@ -54,8 +54,8 @@ describe('minuteries : accolades du gabarit, chaînes de l’objet global, noms 
 
   it('accolade illisible : refusée si son texte nomme une minuterie hors des chaînes, acceptée sinon', async () => {
     const utils: any = await import('../src/generator/utils.js')
-    assert.equal(typeof utils.refuserMinuterieDuGabarit, 'function')
-    assert.throws(() => utils.refuserMinuterieDuGabarit('setTimeout(f, 1) +'), /setTimeout/)
-    assert.doesNotThrow(() => utils.refuserMinuterieDuGabarit("'setTimeout' +"))
+    assert.equal(typeof utils.rejectTemplateTimer, 'function')
+    assert.throws(() => utils.rejectTemplateTimer('setTimeout(f, 1) +'), /setTimeout/)
+    assert.doesNotThrow(() => utils.rejectTemplateTimer("'setTimeout' +"))
   })
 })

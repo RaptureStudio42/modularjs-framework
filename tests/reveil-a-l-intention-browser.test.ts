@@ -19,6 +19,7 @@ import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { createSSRRenderer } from '../src/server/renderToString.js'
 import { prerenderPages } from '../src/server/prerender.js'
+import { playTogether } from './helpers/engines-together.js'
 
 const ENVS       = ['dev', 'prod'] as const
 const MODES      = ['replace', 'markers', 'positional', 'diff', 'prerender'] as const
@@ -194,7 +195,7 @@ function construire(): Promise<Construit> {
   return construit
 }
 
-for (const nom of ['chromium', 'firefox', 'webkit'] as const) for (const env of ENVS) describe(`le réveil à l'intention : ${nom}, ${env}`, function () {
+for (const nom of ['chromium', 'firefox', 'webkit'] as const) for (const env of ENVS) playTogether(describe(`le réveil à l'intention : ${nom}, ${env}`, function () {
   this.timeout(180000)
   let present = false
   let browser: any
@@ -499,4 +500,4 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) for (const env of 
       await page.close()
     }
   })
-})
+}))

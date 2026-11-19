@@ -12,7 +12,7 @@ const mode     = process.argv[3]
 const handlers: Record<string, (p: unknown, c: unknown) => void> = {}
 const app: any = { on(type: string, h: (p: unknown, c: unknown) => void) { handlers[type] = h }, stop: async () => {} }
 
-heatmapPackage({ origins: ['https://site.fr'], file }).installer(app)
+heatmapPackage({ origins: ['https://site.fr'], file }).install(app)
 handlers['heatmap:point']({ url: 'https://site.fr/', ev: 'click', z: [['document', 0.5, 0.25, 1280, 3000]] }, { meta: { origin: 'https://site.fr' } })
 
 setInterval(() => {}, 1000)

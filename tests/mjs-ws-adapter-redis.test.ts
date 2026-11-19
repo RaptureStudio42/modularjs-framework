@@ -226,15 +226,15 @@ describe('mjs-ws/adapter-redis — RedisConnection : flux RESP corrompu (robuste
   })
 })
 
-// RedisAdapter expose désormais ignoresOrigin/reconnexions en LOCAL (getters, cf.
-// adapter-redis.ts) : MÊMES familles que MjsWsStatsAdaptateur (stats.ts), pas encore branchées
+// RedisAdapter expose désormais ignoredOrigin/reconnects en LOCAL (getters, cf.
+// adapter-redis.ts) : MÊMES familles que MjsWsStatsAdapter (stats.ts), pas encore branchées
 // sur le registre app-wide (ça touche core.ts/index.ts, hors du périmètre ici) — testé
 // ici en isolation, sans vrai Redis, même patron « faux serveur node:net » que la description
 // précédente.
-describe('mjs-ws/adapter-redis — RedisAdapter : compteurs LOCAUX ignoresOrigin / reconnexions', function () {
+describe('mjs-ws/adapter-redis — RedisAdapter : compteurs LOCAUX ignoredOrigin / reconnects', function () {
   this.timeout(8000)
 
-  it("message reçu avec origin === processId (écho pub/sub) → ignoré, PAS livré au handler, ignoresOrigin incrémenté (un message d'origine étrangère traverse normalement)", async () => {
+  it("message reçu avec origin === processId (écho pub/sub) → ignoré, PAS livré au handler, ignoredOrigin incrémenté (un message d'origine étrangère traverse normalement)", async () => {
     let subSocket: Socket | null = null
     const server: Server = createServer((socket: Socket) => {
       socket.on('data', (chunk: Buffer) => {
@@ -252,7 +252,7 @@ describe('mjs-ws/adapter-redis — RedisAdapter : compteurs LOCAUX ignoresOrigin
     adapter.subscribe('test', (msg) => received.push(msg))
     await new Promise(resolve => setTimeout(resolve, 200))   // laisse la confirmation SUBSCRIBE arriver
     assert.ok(subSocket, 'la connexion abonné doit avoir envoyé SUBSCRIBE')
-    assert.equal(adapter.ignoresOrigin, 0, 'zéro avant tout push reçu')
+    assert.equal(adapter.ignoredOrigin, 0, 'zéro avant tout push reçu')
 
     // 1er push : origin = SOI-MÊME (écho pub/sub, cf. RedisAdapter.publish) → doit être ignoré
     subSocket!.write(encodeCommand(['message', 'test', JSON.stringify({ origin: adapter.processId, payload: 'echo' })]))
@@ -261,13 +261,13 @@ describe('mjs-ws/adapter-redis — RedisAdapter : compteurs LOCAUX ignoresOrigin
     await new Promise(resolve => setTimeout(resolve, 200))
 
     assert.deepEqual(received, ['ok'], "seul le message d'origine ÉTRANGÈRE doit atteindre le handler")
-    assert.equal(adapter.ignoresOrigin, 1, "le message d'écho (origin = soi-même) doit avoir été compté UNE fois")
+    assert.equal(adapter.ignoredOrigin, 1, "le message d'écho (origin = soi-même) doit avoir été compté UNE fois")
 
     await adapter.stop()
     await new Promise<void>(resolve => server.close(() => resolve()))
   })
 
-  it("reconnexion RÉUSSIE du mini-client RESP après coupure → reconnexions incrémenté (JAMAIS à la connexion initiale)", async () => {
+  it("reconnexion RÉUSSIE du mini-client RESP après coupure → reconnects incrémenté (JAMAIS à la connexion initiale)", async () => {
     let cmdSocket: Socket | null = null
     const server: Server = createServer((socket: Socket) => {
       socket.on('data', (chunk: Buffer) => {
@@ -280,12 +280,12 @@ describe('mjs-ws/adapter-redis — RedisAdapter : compteurs LOCAUX ignoresOrigin
     const adapter = new RedisAdapter({ url: `redis://127.0.0.1:${port}`, onLog: () => {} })
     await adapter.start()
     assert.ok(cmdSocket, 'la connexion "command" doit avoir envoyé PING (start() l\'attend)')
-    assert.equal(adapter.reconnexions, 0, 'zéro reconnexion juste après la connexion initiale')
+    assert.equal(adapter.reconnects, 0, 'zéro reconnexion juste après la connexion initiale')
 
     cmdSocket!.destroy()   // coupure CÔTÉ SERVEUR de la connexion 'command' — force une reconnexion à backoff
     await new Promise(resolve => setTimeout(resolve, 1500))   // > backoffDelayMs(0) = 1000ms (RECONNECT_BACKOFF_MS[0]), marge large
 
-    assert.equal(adapter.reconnexions, 1, 'la reconnexion réussie doit avoir été comptée UNE fois')
+    assert.equal(adapter.reconnects, 1, 'la reconnexion réussie doit avoir été comptée UNE fois')
 
     await adapter.stop()
     await new Promise<void>(resolve => server.close(() => resolve()))

@@ -1,6 +1,7 @@
 // transpiler/directives — extraction et traitement des directives racines (@css, @display, @persist, @import).
 // Port de la section directives de la V1 Ruby, transpiler.rb.
 
+import { FaultFix } from '../fault-fix.js'
 import { parseVtValue, suggestKey } from '../bundler/config.js'
 import { t } from '../messages/index.js'
 import { SIGN } from '../parser/mjs-words.js'
@@ -31,7 +32,7 @@ export interface DirectivesResult {
   /** Imports auto-injectés en haut du module. */
   pendingAutoImports: string[]
   /** Directive `@import` de chaque import de `pendingAutoImports`, au même rang : sa ligne dans le fichier et son texte. */
-  directivesDesImports: { ligne: number; texte: string }[]
+  importDirectives: { line: number; text: string }[]
   /** Vars `$xxx` importées (à exclure du store local). */
   externalReactives: Set<string>
   /** Section i18n du module (`@i18n 'panier'`) — préfixe les clés `µt(...)`
@@ -69,97 +70,102 @@ export const IMPORT_DIRECTIVE_RE = /^[ \t]*@import\s+(?:(?:(default)\s+)?(\{[a-z
 export interface ImportDirective {
   /** début de la directive dans le texte lu, et son texte exact (plusieurs lignes si `multiligne`) */
   index: number
-  texte: string
+  text: string
   isDefault: boolean
   /** noms tels qu'écrits, accolades comprises (`{ a b }`) ; vide pour un import sans nom */
-  noms: string
-  accolades: boolean
-  cible: string
+  names: string
+  braces: boolean
+  target: string
   multiligne: boolean
 }
 
-const ELEMENTS_VIDES = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'])
+const VOID_ELEMENTS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'])
 
 // bornes d'une correspondance, qu'elle porte ses `indices` ou non
-const borneDe = (m: RegExpMatchArray): [number, number] => (m.indices ? [m.indices[0][0], m.indices[0][1]] : [m.index!, m.index! + m[0].length])
+const boundOf = (m: RegExpMatchArray): [number, number] => (m.indices ? [m.indices[0][0], m.indices[0][1]] : [m.index!, m.index! + m[0].length])
 
 // blanchit des zones d'un texte, sauts de ligne gardés (mêmes positions, mêmes numéros de ligne)
 function blankZones(text: string, zones: [number, number][]): string {
   if (zones.length === 0) return text
   const chars = text.split('')
-  for (const [debut, fin] of zones) {
-    for (let i = debut; i < fin; i++) if (chars[i] !== '\n') chars[i] = ' '
+  for (const [start, end] of zones) {
+    for (let i = start; i < end; i++) if (chars[i] !== '\n') chars[i] = ' '
   }
   return chars.join('')
 }
 
 // zones d'un composant pour la lecture des @import : `vue` (même longueur que le texte), identique là où une directive
-// vaut, blanchie ailleurs ; `horsCode`, le texte où seuls <script>, <style>, commentaires HTML, <pre> et <code> sont
+// vaut, blanchie ailleurs ; `outsideCode`, le texte où seuls <script>, <style>, commentaires HTML, <pre> et <code> sont
 // blanchis ; `elements`, le texte de chaque élément refermé du gabarit, avec son nom
-function importZones(text: string): { vue: string, horsCode: string, elements: { debut: number, fin: number, nom: string }[] } {
-  const { moduleScripts, scripts: simples } = findScriptMatches(text, true)
-  const scripts = [...moduleScripts, ...simples].sort((a, b) => borneDe(a)[0] - borneDe(b)[0])
-  const inertes = findStyleMatches(text, scripts, true).matches.map(borneDe)
+function importZones(text: string): { view: string, outsideCode: string, elements: { start: number, end: number, name: string }[] } {
+  const { moduleScripts, scripts: plainScripts } = findScriptMatches(text, true)
+  const scripts = [...moduleScripts, ...plainScripts].sort((a, b) => boundOf(a)[0] - boundOf(b)[0])
+  const inert = findStyleMatches(text, scripts, true).matches.map(boundOf)
   // hors <script> et <style> : commentaires HTML, <pre>, <code>, puis le texte des éléments du gabarit
-  let horsCode  = blankZones(text, [...inertes, ...scripts.map(borneDe)])
+  let outsideCode  = blankZones(text, [...inert, ...scripts.map(boundOf)])
   for (const kind of ['<!--', 'pre', 'code']) {
-    const zones = findBlocks(horsCode, [kind]).map((b): [number, number] => [b.start, b.end])
-    inertes.push(...zones)
-    horsCode = blankZones(horsCode, zones)
+    const zones = findBlocks(outsideCode, [kind]).map((b): [number, number] => [b.start, b.end])
+    inert.push(...zones)
+    outsideCode = blankZones(outsideCode, zones)
   }
   // un élément ne compte que refermé dans le fichier : une balise seule (`Array<string>` d'un module, `{a<b}`) ne crée
   // aucune zone
-  const elements: { debut: number, fin: number, nom: string }[] = []
-  const ouverts: { nom: string, fin: number }[]                 = []
-  for (const m of horsCode.matchAll(/<(\/?)([a-zA-Z][\w-]*)[^>]*>/g)) {
-    const nom = m[2].toLowerCase()
+  const elements: { start: number, end: number, name: string }[] = []
+  const open: { name: string, end: number }[]                    = []
+  for (const m of outsideCode.matchAll(/<(\/?)([a-zA-Z][\w-]*)[^>]*>/g)) {
+    const name = m[2].toLowerCase()
     if (m[1] === '') {
-      if (!ELEMENTS_VIDES.has(nom) && !m[0].endsWith('/>')) ouverts.push({ nom, fin: m.index! + m[0].length })
+      if (!VOID_ELEMENTS.has(name) && !m[0].endsWith('/>')) open.push({ name, end: m.index! + m[0].length })
       continue
     }
-    const k = ouverts.map(o => o.nom).lastIndexOf(nom)
+    const k = open.map(o => o.name).lastIndexOf(name)
     if (k === -1) continue
-    elements.push({ debut: ouverts[k].fin, fin: m.index!, nom })
-    ouverts.length = k
+    elements.push({ start: open[k].end, end: m.index!, name })
+    open.length = k
   }
   // dans un <script>, le code reste actif ; ses chaînes, gabarits, commentaires et regex sont blanchis
-  let vue = blankZones(text, [...inertes, ...elements.map(e => [e.debut, e.fin] as [number, number])])
+  let view = blankZones(text, [...inert, ...elements.map(e => [e.start, e.end] as [number, number])])
   for (const m of scripts) {
-    const [debut, fin] = borneDe(m)
-    const ouverture    = text.indexOf('>', debut) + 1
-    const fermeture    = fin - '</script>'.length
-    const langue       = text.slice(debut, ouverture).match(/lang[ \t]*=[ \t]*['"]([^'"]+)['"]/)
-    vue = vue.slice(0, ouverture) + maskNonCode(text.slice(ouverture, fermeture), langue ? langue[1] : 'civet') + vue.slice(fermeture)
+    const [start, end] = boundOf(m)
+    const opener       = text.indexOf('>', start) + 1
+    const closer       = end - '</script>'.length
+    const lang         = text.slice(start, opener).match(/lang[ \t]*=[ \t]*['"]([^'"]+)['"]/)
+    view               = view.slice(0, opener) + maskNonCode(text.slice(opener, closer), lang ? lang[1] : 'civet') + view.slice(closer)
   }
-  return { vue, horsCode, elements }
+  return { view, outsideCode, elements }
 }
 
+// une ligne de code qui commence par une directive de MJS (`@css './s.css'`), que Civet ou CoffeeScript liraient `this.css(…)` ;
+// une propriété suivie d'un mot-opérateur (`@lang or "fr"`) ou d'un opérateur est du code ordinaire. Cherchée hors des textes, par
+// `mjs ws` dans une entrée serveur et par la construction dans une bibliothèque (cf. libraryDirectives, bundler/index.ts)
+export const DIRECTIVE_LINE_RE = /^[ \t]*@(import|css|routes|i18nPlaceholder|i18n|display|lang)(?=[ \t]+(?!(?:or|and|xor|not|is|isnt|in|of|instanceof|if|unless|then|else|for|while|until|when|by|as|satisfies)\b)[^\s=+\-*\/%&|^<>!?.,;:)\]}]|[ \t]*$)/m
+
 // dernière vue calculée : un même texte est lu par les contrôles du compilateur, puis par ses passes
-let derniereVue: { text: string, langueModule: string, vue: string } | null = null
+let lastView: { text: string, moduleLang: string, view: string } | null = null
 
 // vue d'un fichier pour la lecture des @import : même longueur que le texte, identique là où une directive vaut, blanchie
-// ailleurs. Un module (`langueModule` : 'civet', 'coffee') n'a que du code : ses chaînes et commentaires sont blanchis
+// ailleurs. Un module (`moduleLang` : 'civet', 'coffee') n'a que du code : ses chaînes et commentaires sont blanchis
 // comme ceux d'un <script>
-export function importActiveView(text: string, langueModule = ''): string {
-  if (derniereVue !== null && derniereVue.langueModule === langueModule && derniereVue.text === text) return derniereVue.vue
-  const vue   = langueModule ? maskNonCode(text, langueModule) : importZones(text).vue
-  derniereVue = { text, langueModule, vue }
-  return vue
+export function importActiveView(text: string, moduleLang = ''): string {
+  if (lastView !== null && lastView.moduleLang === moduleLang && lastView.text === text) return lastView.view
+  const view = moduleLang ? maskNonCode(text, moduleLang) : importZones(text).view
+  lastView   = { text, moduleLang, view }
+  return view
 }
 
 // directives @import d'un texte, dans l'ordre des lignes ; `actif` (même longueur) dit où une directive vaut — par
 // défaut la vue d'un composant ; un module passe la sienne (importActiveView(texte, langue)), une entrée serveur aussi
 // (chaînes et commentaires masqués)
-export function readImportDirectives(text: string, actif?: string): ImportDirective[] {
-  const lignes = [...text.matchAll(IMPORT_DIRECTIVE_RE)]
-  if (lignes.length === 0) return []
-  const vue                           = actif ?? importActiveView(text)
+export function readImportDirectives(text: string, active?: string): ImportDirective[] {
+  const lines = [...text.matchAll(IMPORT_DIRECTIVE_RE)]
+  if (lines.length === 0) return []
+  const view                          = active ?? importActiveView(text)
   const directives: ImportDirective[] = []
-  for (const m of lignes) {
+  for (const m of lines) {
     const at = m.index! + m[0].indexOf('@')
-    if (vue[at] !== text[at]) continue
-    const noms = (m[2] ?? '').trim()
-    directives.push({ index: m.index!, texte: m[0], isDefault: m[1] !== undefined, noms, accolades: noms.startsWith('{'), cible: m[4], multiligne: m[0].trim().includes('\n') })
+    if (view[at] !== text[at]) continue
+    const names = (m[2] ?? '').trim()
+    directives.push({ index: m.index!, text: m[0], isDefault: m[1] !== undefined, names, braces: names.startsWith('{'), target: m[4], multiligne: m[0].trim().includes('\n') })
   }
   return directives
 }
@@ -167,43 +173,43 @@ export function readImportDirectives(text: string, actif?: string): ImportDirect
 // directives lisibles écrites dans le texte d'un élément du gabarit, hors <pre>, <code> et <doc-code> (on y montre du
 // code) : affichées telles quelles, signalées par un avertissement ; position de leur `@` dans le texte
 export function importsInElementText(text: string): number[] {
-  const lignes = [...text.matchAll(IMPORT_DIRECTIVE_RE)]
-  if (lignes.length === 0) return []
-  const { vue, horsCode, elements } = importZones(text)
-  const dans                        = (at: number, e: { debut: number, fin: number }) => e.debut <= at && at < e.fin
-  const codeMontre                  = elements.filter(e => e.nom === 'doc-code')
-  return lignes.map(m => m.index! + m[0].indexOf('@')).filter(at => vue[at] !== text[at] && horsCode[at] === text[at] && elements.some(e => dans(at, e)) && !codeMontre.some(e => dans(at, e)))
+  const lines = [...text.matchAll(IMPORT_DIRECTIVE_RE)]
+  if (lines.length === 0) return []
+  const { view, outsideCode, elements } = importZones(text)
+  const inside                          = (at: number, e: { start: number, end: number }) => e.start <= at && at < e.end
+  const shownCode                       = elements.filter(e => e.name === 'doc-code')
+  return lines.map(m => m.index! + m[0].indexOf('@')).filter(at => view[at] !== text[at] && outsideCode[at] === text[at] && elements.some(e => inside(at, e)) && !shownCode.some(e => inside(at, e)))
 }
 
 // noms d'une directive, accolades ôtées ; mêmes refus et mêmes messages partout : plusieurs lignes, virgule, `default`
 // suivi d'accolades, cible vide ou douteuse
 export function importNames(d: ImportDirective): string[] {
-  if (d.multiligne) throw new Error(t('transpiler.import-une-ligne', { ligne: d.texte.trim().replace(/\s+/g, ' '), cible: d.cible }))
-  const noms = d.noms.replace(/^\{|\}$/g, '')
-  if (noms.includes(',')) throw new Error(t('transpiler.import-virgule-interdite', { rawVars: d.noms.replace(/\s+/g, ' '), targetPath: d.cible }))
+  if (d.multiligne) throw FaultFix.attach(new Error(t('transpiler.import-one-line', { line: d.text.trim().replace(/\s+/g, ' '), target: d.target })), d.text.trim(), d.text.trim().replace(/\s+/g, ' '))
+  const names = d.names.replace(/^\{|\}$/g, '')
+  if (names.includes(',')) throw FaultFix.attach(new Error(t('transpiler.import-comma-forbidden', { rawVars: d.names.replace(/\s+/g, ' '), targetPath: d.target })), d.text.trim(), d.text.trim().replace(d.names, () => d.names.replace(/\s*,\s*/g, ' ')))
   // accolades vides après `default` : ni un nom ni un import d'effet, le message donne les deux écritures valides
-  if (d.isDefault && d.accolades && noms.trim() === '') throw new Error(t('transpiler.import-default-accolades-vides', { noms: d.noms.replace(/\s+/g, ' '), cible: d.cible }))
-  if (d.isDefault && d.accolades) throw new Error(t('transpiler.import-default-accolades', { noms: d.noms.replace(/\s+/g, ' '), nom: noms.trim().split(/\s+/)[0], cible: d.cible }))
-  if (d.cible === '' || /['"\\\n\0`]|#\{|\$\{/.test(d.cible)) throw new Error(t('transpiler.import-cible-invalide', { cible: d.cible }))
-  const liste = noms.split(/\s+/).filter(s => s.length > 0)
+  if (d.isDefault && d.braces && names.trim() === '') throw new Error(t('transpiler.import-default-braces-empty', { names: d.names.replace(/\s+/g, ' '), target: d.target }))
+  if (d.isDefault && d.braces) throw FaultFix.attach(new Error(t('transpiler.import-default-braces', { names: d.names.replace(/\s+/g, ' '), name: names.trim().split(/\s+/)[0], target: d.target })), d.text.trim(), d.text.trim().replace(d.names, () => names.trim().split(/\s+/)[0]))
+  if (d.target === '' || /['"\\\n\0`]|#\{|\$\{/.test(d.target)) throw new Error(t('transpiler.import-target-invalid', { target: d.target }))
+  const list = names.split(/\s+/).filter(s => s.length > 0)
   // `default` ne nomme qu'un export, des accolades vides n'en nomment aucun : jamais un nom ignoré ni un import d'effet déguisé
-  if (d.isDefault && liste.length > 1) throw new Error(t('transpiler.import-default-un-nom', { noms: liste.join(' '), nom: liste[0], cible: d.cible }))
-  if (d.accolades && liste.length === 0) throw new Error(t('transpiler.import-accolades-vides', { cible: d.cible }))
-  return liste
+  if (d.isDefault && list.length > 1) throw new Error(t('transpiler.import-default-one-name', { names: list.join(' '), name: list[0], target: d.target }))
+  if (d.braces && list.length === 0) throw new Error(t('transpiler.import-braces-empty', { target: d.target }))
+  return list
 }
 
 // nom en `$x` d'une directive (jamais `µ$$x`) : refusé partout, un singleton s'importe et se consomme par `µ$$x`
 export function importDollarName(d: ImportDirective): string | null {
-  return d.noms.match(/(?<![µ$])\$[a-zA-Z_]\w*/)?.[0] ?? null
+  return d.names.match(/(?<![µ$])\$[a-zA-Z_]\w*/)?.[0] ?? null
 }
 
 // clause `import` native d'une directive : sans nom, pour son seul effet (exécuté une fois, comme tout module ES)
-export function importClause(d: ImportDirective, noms: string[], from: string): string {
-  if (noms.length === 0) return `import ${from}`
-  return d.isDefault ? `import ${noms[0]} from ${from}` : `import { ${noms.join(', ')} } from ${from}`
+export function importClause(d: ImportDirective, names: string[], from: string): string {
+  if (names.length === 0) return `import ${from}`
+  return d.isDefault ? `import ${names[0]} from ${from}` : `import { ${names.join(', ')} } from ${from}`
 }
 
-export function extractDirectives(content: string, langueModule = ''): DirectivesResult {
+export function extractDirectives(content: string, moduleLang = ''): DirectivesResult {
   let modulePreload: string | null = null
   let moduleFormAssociated = false
   let moduleFormAssociatedTwice = false
@@ -214,7 +220,7 @@ export function extractDirectives(content: string, langueModule = ''): Directive
   const persistLocalVars: PersistEntry[] = []
   const persistSessionVars: PersistEntry[] = []
   const pendingAutoImports: string[] = []
-  const directivesDesImports: { ligne: number; texte: string }[] = []
+  const importDirectives: { line: number; text: string }[] = []
   const externalReactives = new Set<string>()
 
   // Les directives racines (`@css`, `@display`, `@persist`, `@import`) peuvent
@@ -235,14 +241,14 @@ export function extractDirectives(content: string, langueModule = ''): Directive
     return `\x00MASK${nonce}_${masks.length - 1}\x00`
   }
   // ligne du fichier où tombe la position `at` du texte courant : un bloc masqué, jeton sur une seule ligne, rend les siennes
-  const ligneDuFichier = (text: string, at: number): number => {
-    const jeton = new RegExp(`\\x00MASK${nonce}_(\\d+)\\x00`, 'g')
-    let avant   = text.slice(0, at)
-    for (let tour = 0; tour <= masks.length && jeton.test(avant); tour++) {
-      jeton.lastIndex = 0
-      avant           = avant.replace(jeton, (_, i) => masks[+i])
+  const fileLine = (text: string, at: number): number => {
+    const token = new RegExp(`\\x00MASK${nonce}_(\\d+)\\x00`, 'g')
+    let before  = text.slice(0, at)
+    for (let turn = 0; turn <= masks.length && token.test(before); turn++) {
+      token.lastIndex = 0
+      before          = before.replace(token, (_, i) => masks[+i])
     }
-    return avant.split('\n').length
+    return before.split('\n').length
   }
   // les COMMENTAIRES HTML rejoignent <pre>/<code> dans ce masquage.
   // Trou de fond (présent sur @viewTransition, mais commun à TOUTES les
@@ -461,14 +467,14 @@ export function extractDirectives(content: string, langueModule = ''): Directive
   // cf. sections.ts). La forme racine est une ERREUR DE COMPILATION explicite.
   cleaned = activeDirective(cleaned, /^[ \t]*@css[ \t]+([a-zA-Z0-9_ \t-]+?)[ \t]*$/gm, (_m, names) => {
     const clean = (names as string).trim()
-    throw new Error(t('transpiler.css-racine-interdite', { ligne: `@css ${clean}`, remplacement: `<style :css="${clean}">` }))
+    throw new Error(t('transpiler.css-root-forbidden', { line: `@css ${clean}`, replacement: `<style :css="${clean}">` }))
   })
 
   // ----- @display ----- RELOGÉ : attribut du `<style>` de
   // base (`<style @display="inline-block">`, cf. sections.ts). Forme racine =
   // erreur de compilation explicite.
   cleaned = activeDirective(cleaned, /^[ \t]*@display[ \t]+([a-zA-Z-]+)[ \t]*$/gm, (_m, val) => {
-    throw new Error(t('transpiler.display-racine-interdite', { ligne: `@display ${val}`, remplacement: `<style :display="${val}">` }))
+    throw new Error(t('transpiler.display-root-forbidden', { line: `@display ${val}`, replacement: `<style :display="${val}">` }))
   })
 
   // ----- @i18n ----- (sections i18n du module, la première préfixe les clés `µt(...)` relatives)
@@ -482,17 +488,17 @@ export function extractDirectives(content: string, langueModule = ''): Directive
   cleaned = activeDirective(
     cleaned,
     /^[ \t]*@i18n((?:[ \t]+['"][^'"]+['"])+)[ \t]*$/gm,
-    (_m, noms) => {
-      const sections = [...(noms as string).matchAll(/['"]([^'"]+)['"]/g)].map(m => m[1])
+    (_m, names) => {
+      const sections = [...(names as string).matchAll(/['"]([^'"]+)['"]/g)].map(m => m[1])
       if (moduleI18nSection !== null) {
-        throw new Error(t('transpiler.i18n-double', { ancienneSection: [moduleI18nSection, ...moduleI18nExtraSections].join(' '), section: sections.join(' ') }))
+        throw new Error(t('transpiler.i18n-duplicate', { oldSection: [moduleI18nSection, ...moduleI18nExtraSections].join(' '), section: sections.join(' ') }))
       }
       sections.forEach((section, i) => {
         if (!/^[a-z0-9_-]+$/.test(section)) {
-          throw new Error(t('transpiler.i18n-section-invalide', { section }))
+          throw new Error(t('transpiler.i18n-section-invalid', { section }))
         }
         if (sections.indexOf(section) !== i) {
-          throw new Error(t('transpiler.i18n-section-ecrite-deux-fois', { section }))
+          throw new Error(t('transpiler.i18n-section-written-twice', { section }))
         }
       })
       moduleI18nSection       = sections[0]
@@ -508,7 +514,7 @@ export function extractDirectives(content: string, langueModule = ''): Directive
     cleaned,
     /^[ \t]*@i18n(?![A-Za-z0-9_$.(\[?!])[^\n]*$/gm,
     (m: string) => {
-      throw new Error(t('transpiler.i18n-ligne-invalide', { ligne: m.trim() }))
+      throw new Error(t('transpiler.i18n-line-invalid', { line: m.trim() }))
     }
   )
 
@@ -520,10 +526,10 @@ export function extractDirectives(content: string, langueModule = ''): Directive
   cleaned = activeDirective(
     cleaned,
     /^[ \t]*@i18nPlaceholder[ \t]+(\S[^\n]*?)[ \t]*$/gm,
-    (_m, valeur) => {
-      const lu = parsePlaceholder(valeur, PLACEHOLDER_DIRECTIVE)
-      moduleI18nPlaceholder   = lu.mode
-      moduleI18nPlaceholderFx = lu.settings
+    (_m, value) => {
+      const read              = parsePlaceholder(value, PLACEHOLDER_DIRECTIVE)
+      moduleI18nPlaceholder   = read.mode
+      moduleI18nPlaceholderFx = read.settings
       return ''
     }
   )
@@ -534,7 +540,7 @@ export function extractDirectives(content: string, langueModule = ''): Directive
   cleaned = activeDirective(
     cleaned,
     /^[ \t]*@preload(?:[ \t]*=)?[ \t]*["']?eager["']?[ \t]*$/gm,
-    () => { throw new Error(t('transpiler.preload-eager-renomme', { ou: 'directive racine @preload' })) },
+    () => { throw new Error(t('transpiler.preload-eager-renamed', { where: 'directive racine @preload' })) },
   )
   cleaned = activeDirective(
     cleaned,
@@ -548,8 +554,8 @@ export function extractDirectives(content: string, langueModule = ''): Directive
   cleaned = activeDirective(
     cleaned,
     /^[ \t]*@formAssociated(?![A-Za-z0-9_$.(\[?!])([^\n]*)$/gm,
-    (m: string, reste: string) => {
-      if (reste.trim() !== '') throw new Error(t('transpiler.form-associated-ligne-invalide', { ligne: m.trim() }))
+    (m: string, rest: string) => {
+      if (rest.trim() !== '') throw new Error(t('transpiler.form-associated-line-invalid', { line: m.trim() }))
       if (moduleFormAssociated) moduleFormAssociatedTwice = true
       moduleFormAssociated = true
       return ''
@@ -573,16 +579,16 @@ export function extractDirectives(content: string, langueModule = ''): Directive
     /^[ \t]*@(viewTransition|vt)\b(.*)$/gm,
     (_m: string, directive: string, restRaw: string) => {
       // `label` : le nom dans le message, `:viewTransition` (l'alias `@vt` se cite tel qu'écrit) ; `ecrit` : la ligne telle qu'écrite
-      const ecrit = `@${directive}`
-      const label = directive === 'vt' ? ecrit : SIGN + directive
+      const written = `@${directive}`
+      const label   = directive === 'vt' ? written : SIGN + directive
       // `@vt` n'est plus un alias sur `<style>` : le remplacement propose TOUJOURS
       // le nom long, sinon le lecteur corrige et retombe aussitot sur une 2e erreur.
-      const cible = SIGN + 'viewTransition'
-      const rest  = restRaw.replace(/[ \t]+$/, '')
+      const target = SIGN + 'viewTransition'
+      const rest   = restRaw.replace(/[ \t]+$/, '')
 
       // Forme nue : rien après la directive (à l'espace près) → attribut nu.
       if (rest.trim() === '') {
-        throw new Error(t('transpiler.viewtransition-racine-interdite', { label, ligne: ecrit, remplacement: `<style ${cible}>` }))
+        throw new Error(t('transpiler.viewtransition-root-forbidden', { label, line: written, replacement: `<style ${target}>` }))
       }
 
       // Forme à POINT (canonique) : `.<nom>[:dir][={ ... }]`.
@@ -592,24 +598,24 @@ export function extractDirectives(content: string, langueModule = ''): Directive
         const optsRaw: string | undefined = dotMatch[2]
         const base = nameAndDir.split(':')[0]
         if (base === 'off') {
-          throw new Error(t('transpiler.vt-off-nexiste-pas', { label }))
+          throw new Error(t('transpiler.vt-off-does-not-exist', { label }))
         }
         if (base === 'on') {
-          throw new Error(t('transpiler.vt-on-implicite', { label }))
+          throw new Error(t('transpiler.vt-on-implicit', { label }))
         }
         // Le suffixe `:direction` n'existe plus, la SEULE façon
         // d'orienter est la clé d'option (`${label}.cube={ dir: left }`).
         if (nameAndDir.includes(':')) {
-          throw new Error(t('transpiler.vt-direction-plus-dans-nom', { label, example: `${label}.cube={ dir: left }` }))
+          throw new Error(t('transpiler.vt-direction-no-longer-in-name', { label, example: `${label}.cube={ dir: left }` }))
         }
         const verbatim = optsRaw !== undefined ? `${nameAndDir}={${optsRaw}}` : nameAndDir
         const parsed = parseVtValue(verbatim)
         // Cast explicite : strictNullChecks:false (tsconfig du projet) désactive le
         // narrowing natif des unions discriminées — cf. le même commentaire dans config.ts.
         if (!parsed.ok) {
-          throw new Error(t('transpiler.vt-nom-erreur-parsing', { label, nameAndDir, erreur: (parsed as { ok: false; error: string }).error }))
+          throw new Error(t('transpiler.vt-name-error-parsing', { label, nameAndDir, error: (parsed as { ok: false; error: string }).error }))
         }
-        throw new Error(t('transpiler.viewtransition-racine-interdite', { label, ligne: `${ecrit}.${verbatim}`, remplacement: `<style ${cible}.${verbatim}>` }))
+        throw new Error(t('transpiler.viewtransition-root-forbidden', { label, line: `${written}.${verbatim}`, replacement: `<style ${target}.${verbatim}>` }))
       }
 
       // Ancienne écriture (espace, ou `=`/`= "nom"` sans point) — détecte
@@ -617,12 +623,12 @@ export function extractDirectives(content: string, langueModule = ''): Directive
       const legacyMatch = rest.match(/^(?:[ \t]*=)?[ \t]*["']?([a-zA-Z][a-zA-Z0-9-]*(?::(?:left|right|up|down))?)["']?(?:[ \t]+\d+)?[ \t]*$/)
       const legacyName = legacyMatch ? legacyMatch[1] : null
       if (legacyName === 'off') {
-        throw new Error(t('transpiler.vt-off-nexiste-pas', { label }))
+        throw new Error(t('transpiler.vt-off-does-not-exist', { label }))
       }
       if (legacyName === 'on') {
-        throw new Error(t('transpiler.vt-on-implicite', { label }))
+        throw new Error(t('transpiler.vt-on-implicit', { label }))
       }
-      throw new Error(t('transpiler.vt-ancienne-ecriture-remplacee', { label }))
+      throw new Error(t('transpiler.vt-old-write-replaced', { label }))
     },
   )
 
@@ -693,42 +699,42 @@ export function extractDirectives(content: string, langueModule = ''): Directive
   // lecture partagée (readImportDirectives, plus haut), dans l'ordre des lignes : les imports posés en tête gardent
   // l'ordre d'exécution écrit (un fichier qui pose des prototypes avant celui qui s'en sert). Un nom en µ ou § (singleton
   // réactif `@import µ$$x`) suit son propre chemin (transpiler/index.ts) : sa ligne reste telle quelle ici. Un module
-  // (`langueModule`) se lit dans sa langue : une ligne de ses commentaires ou de ses chaînes reste du texte
-  const imports = readImportDirectives(cleaned, langueModule ? importActiveView(cleaned, langueModule) : undefined).filter(d => !/[µ§]/.test(d.noms))
+  // (`moduleLang`) se lit dans sa langue : une ligne de ses commentaires ou de ses chaînes reste du texte
+  const imports = readImportDirectives(cleaned, moduleLang ? importActiveView(cleaned, moduleLang) : undefined).filter(d => !/[µ§]/.test(d.names))
   for (const d of imports) {
-    const noms  = importNames(d)
-    const isUrl = /^https?:\/\//.test(d.cible)
-    for (const v of noms) {
+    const names = importNames(d)
+    const isUrl = /^https?:\/\//.test(d.target)
+    for (const v of names) {
       if (v.startsWith('$')) externalReactives.add(v)
     }
-    pendingAutoImports.push(importClause(d, noms, isUrl ? `'${d.cible}'` : `"µasset('${d.cible}')"`))
+    pendingAutoImports.push(importClause(d, names, isUrl ? `'${d.target}'` : `"µasset('${d.target}')"`))
     // la faute d'un nom de la directive est citée à sa ligne du fichier, pas à celle de l'import posé en tête du module
-    directivesDesImports.push({ ligne: ligneDuFichier(cleaned, d.index), texte: d.texte })
+    importDirectives.push({ line: fileLine(cleaned, d.index), text: d.text })
   }
-  for (const d of [...imports].reverse()) cleaned = cleaned.slice(0, d.index) + cleaned.slice(d.index + d.texte.length)
+  for (const d of [...imports].reverse()) cleaned = cleaned.slice(0, d.index) + cleaned.slice(d.index + d.text.length)
 
   // directive racine mal écrite (`@improt`, `@persit`) = ERREUR — la garde exige
   // la FORME de la directive (cible entre guillemets / variable `$`), pas seulement un mot proche : une ligne
   // de prose qui commence par `@importe` ou `@persil` compile (faux positif prouvé)
-  const horsSections = cleaned.replace(/<(script|style|theme)\b[^>]*>[\s\S]*?<\/\1>/gi, (m) => m.replace(/[^\n]/g, ' '))
-  for (const m of horsSections.matchAll(/^[ \t]*@([a-zA-Z][a-zA-Z0-9]*)\s+(?:default\s+)?[a-zA-Z0-9_$,\s]+?\s+(['"]).*?\2[ \t]*$/gm)) {
-    const nom = m[1]
-    if (nom === 'import') continue
-    const suggestion = suggestKey(nom, ['import'])
-    if (suggestion) throw new Error(t('transpiler.directive-racine-inconnue', { nom, suggestion }))
+  const outsideSections = cleaned.replace(/<(script|style|theme)\b[^>]*>[\s\S]*?<\/\1>/gi, (m) => m.replace(/[^\n]/g, ' '))
+  for (const m of outsideSections.matchAll(/^[ \t]*@([a-zA-Z][a-zA-Z0-9]*)\s+(?:default\s+)?[a-zA-Z0-9_$,\s]+?\s+(['"]).*?\2[ \t]*$/gm)) {
+    const name = m[1]
+    if (name === 'import') continue
+    const suggestion = suggestKey(name, ['import'])
+    if (suggestion) throw new Error(t('transpiler.directive-root-unknown', { name: name, suggestion }))
   }
-  for (const m of horsSections.matchAll(/^[ \t]*@([a-zA-Z][a-zA-Z0-9]*)(?:[ \t]+(?:session|local):)?[ \t]+\$[a-zA-Z0-9_]/gm)) {
-    const nom = m[1]
-    if (nom === 'persist') continue
-    const suggestion = suggestKey(nom, ['persist'])
-    if (suggestion) throw new Error(t('transpiler.directive-racine-inconnue', { nom, suggestion }))
+  for (const m of outsideSections.matchAll(/^[ \t]*@([a-zA-Z][a-zA-Z0-9]*)(?:[ \t]+(?:session|local):)?[ \t]+\$[a-zA-Z0-9_]/gm)) {
+    const name = m[1]
+    if (name === 'persist') continue
+    const suggestion = suggestKey(name, ['persist'])
+    if (suggestion) throw new Error(t('transpiler.directive-root-unknown', { name: name, suggestion }))
   }
 
   // `wait` et `*loader` diffèrent le premier rendu tant que la section n'est pas chargée —
   // sans section @i18n, rien à attendre. key/*skeleton restent autorisés seuls
   // (ils agissent sur les clés racine, hors scope de section).
   if ((moduleI18nPlaceholder === 'wait' || moduleI18nPlaceholder === '*loader') && moduleI18nSection === null) {
-    throw new Error(t('transpiler.i18n-placeholder-wait-sans-section', { mode: moduleI18nPlaceholder }))
+    throw new Error(t('transpiler.i18n-placeholder-wait-no-section', { mode: moduleI18nPlaceholder }))
   }
 
   // Restaure les blocs <pre>/<code>/commentaires HTML masqués pendant le scan. Boucle, car les
@@ -738,7 +744,7 @@ export function extractDirectives(content: string, langueModule = ''): Directive
   // Bornée à `masks.length + 1` tours : imbrication réelle = profondeur finie, et un source qui
   // porterait un `\x00MASK…\x00` littéral ne peut pas faire tourner la boucle sans fin.
   const maskRe = new RegExp(`\\x00MASK${nonce}_(\\d+)\\x00`, 'g')
-  for (let tour = 0; tour <= masks.length && maskRe.test(cleaned); tour++) {
+  for (let turn = 0; turn <= masks.length && maskRe.test(cleaned); turn++) {
     maskRe.lastIndex = 0
     cleaned = cleaned.replace(maskRe, (_, i) => masks[+i])
   }
@@ -751,7 +757,7 @@ export function extractDirectives(content: string, langueModule = ''): Directive
     persistLocalVars,
     persistSessionVars,
     pendingAutoImports,
-    directivesDesImports,
+    importDirectives,
     externalReactives,
     moduleI18nSection,
     moduleI18nExtraSections,
@@ -798,7 +804,7 @@ export function buildPersistCode(
       // « $a $b ») fabriquait `_mjs_p_key_a $b` → erreur lexer Civet
       // indéchiffrable (ni @persist ni la var cités). Message clair à la place.
       if (!/^[a-zA-Z_]\w*$/.test(clean)) {
-        throw new Error(t('transpiler.persist-nom-invalide', { nomVar: entry.var.trim() }))
+        throw new Error(t('transpiler.persist-name-invalid', { varName: entry.var.trim() }))
       }
       const keyExpr = entry.suffix
         ? `"${tagKeyPrefix}:${clean}:" + (${entry.suffix})`

@@ -120,9 +120,9 @@ describe('littéraux regex `/…/` : zone inerte pour µimport/µtoggle', functi
   //     reçoit un 3e paramètre `diese`, `false` pour les fenêtres (cf. bandeaux datés sur
   //     skipInertFrom/rewriteMuImportWindows/rewriteMuToggleWindows plus haut dans sigils.ts).
   //   RÉGRESSION 2 — perf quasi-quadratique de `ouvreUneRegex`, appelée à CHAQUE `/` par
-  //     skipInertFrom : `gauche.replace(/\s+$/, '')` scanne toute la chaîne déjà émise à chaque
+  //     skipInertFrom : `left.replace(/\s+$/, '')` scanne toute la chaîne déjà émise à chaque
   //     appel (O(i)), sur potentiellement O(n) positions `/` → O(n²) (mesures : cf. describe perf
-  //     ci-dessous). Remède : ne regarder que la QUEUE de `gauche` (whitespace trailing
+  //     ci-dessous). Remède : ne regarder que la QUEUE de `left` (whitespace trailing
   //     + 16 derniers caractères), signature et sémantique inchangées pour les appelants.
   describe('régression 1 : corruption des fenêtres sur `#`/champ privé', function () {
     it('W1 — un commentaire `#` DANS une fenêtre `${…}` ne dévore plus le `}` fermant (µtoggle)', function () {

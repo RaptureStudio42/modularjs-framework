@@ -1,7 +1,7 @@
 // ============================================================================
 // Classement des valeurs dérivées : « précise » ou « horloge » (lu par `mjs check --derived`).
 //
-// PRÉCISE : le compilateur prouve ce qu'elle lit (cf. deriveesPrecises plus bas : variables `$` du composant, littéraux,
+// PRÉCISE : le compilateur prouve ce qu'elle lit (cf. preciseDerived plus bas : variables `$` du composant, littéraux,
 // opérateurs, champs lus, appels de la liste courte) ; au runtime, elle suit ses sources, sauf quand elle repasse à l'horloge (docs/03-reactivite.md).
 // HORLOGE : tout le reste ; elle garde la règle de toujours (refaite à sa lecture après toute écriture du composant).
 // Chaque valeur à l'horloge donne sa raison — une lecture qui échappe à l'analyse des lectures ci-dessous, ou à défaut la
@@ -31,508 +31,508 @@
 //   simple      calcul plus court que sa vérification (lectures, `.length`, opérateurs, `Math.*`, conversions) : la refaire
 //               coûte moins que vérifier ses sources
 // `par` : la fonction ou la variable du composant par laquelle passe la lecture.
-// Calculé seulement sur demande (`TranspileOpts.derived`) : le code produit n'en dépend jamais.
+// Calculé seulement sur demande (`TranspileOpts.derived`) ; le code produit en dépend par `preciseDerived` et `doubtfulVariables`, que lit l'analyseur (analyzer/index.ts).
 // ============================================================================
 
 import * as acorn from 'acorn'
 import * as walk from 'acorn-walk'
-import { collecter, porteeFonction, porteeBloc, porteeDeclaration, chercher, nomsMotif, racine, estMagasin, GLOBAUX, ESPACES, METHODES, MUTATEURS, type Portee, type Affectation, type Changement, type DeriveCandidat } from './derived-reads.js'
+import { collect, functionScope, blockScope, declarationScope, find, patternNames, root, isStore, GLOBALS, SPACES, METHODS, MUTATEURS, type Scope, type Assignment, type Change, type DerivedCandidate } from './derived-reads.js'
 
-export type RaisonCode = 'import' | 'variable' | 'globale' | 'instance' | 'heure' | 'hasard' | 'methode' | 'fonction' | 'rune' | 'contexte' | 'cle' | 'etat' | 'alias' | 'attente' | 'derivee' | 'double' | 'inconnue' | 'liste' | 'garde' | 'simple'
+export type ReasonCode = 'import' | 'variable' | 'global' | 'instance' | 'time' | 'random' | 'method' | 'function' | 'rune' | 'context' | 'key' | 'state' | 'alias' | 'await' | 'derived' | 'double' | 'unknown' | 'list' | 'guard' | 'simple'
 
-export interface RaisonHorloge { code: RaisonCode; nom?: string; par?: string }
+export interface ClockReason { code: ReasonCode; name?: string; by?: string }
 
-export interface DeriveeClassee {
+export interface ClassifiedDerived {
   /** nom sans `$` */
-  nom: string
-  classe: 'precise' | 'horloge'
+  name: string
+  class: 'precise' | 'clock'
   /** vide pour une valeur précise */
-  raisons: RaisonHorloge[]
+  reasons: ClockReason[]
 }
 
-export interface EntreeClassement {
+export interface ClassificationInput {
   /** AST du JS compilé du `<script>` (null : aucun) */
   script: any
   /** AST du JS compilé du `<script module>`, imports de `@import` compris (null : aucun) */
   module: any
-  candidats: DeriveCandidat[]
+  candidates: DerivedCandidate[]
   moduleVars: string[]
   /** variables externes, avec leur `$` (`µ$$x` importé : `$x`) */
   externalVars: string[]
   /** noms posés par les imports du `<script module>` */
   imports: string[]
   /** JS compilé des gestionnaires du gabarit (vide : aucun) */
-  gestionnaires: string
+  handlers: string
   /** variables nues de `@this=!{nom}` */
   refs: string[]
-  /** le composant écrit l'état sans MJS (cf. ECRITURE_BRUTE) : aucune valeur précise */
-  brut?: boolean
+  /** le composant écrit l'état sans MJS (cf. RAW_WRITE) : aucune valeur précise */
+  raw?: boolean
   /** méthodes du composant (`@m = ->`, écrites une seule fois, au premier niveau) suivies comme les fonctions du
    *  `<script>` ; sans lui, une valeur qui en appelle une est à l'horloge (propriété du composant) */
-  suivreMethodes?: boolean
+  trackMethods?: boolean
 }
 
 interface Ctx {
-  // 'derive' : l'expression ; 'script' : valeur d'une variable du `<script>` ; 'module' : du `<script module>`
-  mode: 'derive' | 'script' | 'module'
+  // 'derived' : l'expression ; 'script' : valeur d'une variable du `<script>` ; 'module' : du `<script module>`
+  mode: 'derived' | 'script' | 'module'
   // portées d'indice inférieur : locales d'une fonction qui entoure la valeur lue (provenance inconnue)
-  borne: number
-  dansFonction: boolean
-  raisons: RaisonHorloge[]
-  script: Map<string, RaisonHorloge[]>
-  module: Map<string, RaisonHorloge[]>
+  bound: number
+  inFunction: boolean
+  reasons: ClockReason[]
+  script: Map<string, ClockReason[]>
+  module: Map<string, ClockReason[]>
   imports: Set<string>
-  externes: Set<string>
+  external: Set<string>
   // noms que le gabarit change sans que le `<script>` les déclare (`@this=!{nom}` auto-déclaré…)
-  gabarit: Set<string>
+  template: Set<string>
 }
 
-const CLES = new Set(['type', 'start', 'end', 'loc', 'range'])
+const KEYS = new Set(['type', 'start', 'end', 'loc', 'range'])
 
-function noter(c: Ctx, r: RaisonHorloge): void {
-  c.raisons.push(r)
+function record(c: Ctx, r: ClockReason): void {
+  c.reasons.push(r)
 }
 
 // raisons d'une variable du composant, lue par la valeur : la lecture passe par elle
-function reprendre(c: Ctx, liste: RaisonHorloge[], par: string): void {
-  for (const r of liste) c.raisons.push(r.code === 'variable' && r.nom === par ? r : { ...r, par })
+function resume(c: Ctx, list: ClockReason[], by: string): void {
+  for (const r of list) c.reasons.push(r.code === 'variable' && r.name === by ? r : { ...r, by: by })
 }
 
-function lireNom(nom: string, portees: Portee[], c: Ctx, appele: boolean): void {
-  if (nom === '$') return noter(c, { code: 'etat', nom: '$' })
-  if (nom === 'µ') return noter(c, { code: 'rune', nom: 'µ' })
-  if (nom === '_mjsThis') return noter(c, { code: 'instance', nom: '@@' })
-  if (nom === 'arguments') return noter(c, { code: 'inconnue', nom: 'arguments' })
-  const r = chercher(nom, portees)
+function readName(name: string, scopes: Scope[], c: Ctx, called: boolean): void {
+  if (name === '$') return record(c, { code: 'state', name: '$' })
+  if (name === 'µ') return record(c, { code: 'rune', name: 'µ' })
+  if (name === '_mjsThis') return record(c, { code: 'instance', name: '@@' })
+  if (name === 'arguments') return record(c, { code: 'unknown', name: 'arguments' })
+  const r = find(name, scopes)
   if (r) {
-    if (r.i < c.borne) return noter(c, { code: 'variable', nom })
-    if (appele && r.nature !== 'fn') noter(c, { code: 'fonction', nom: nom + '()' })
+    if (r.i < c.bound) return record(c, { code: 'variable', name: name })
+    if (called && r.nature !== 'fn') record(c, { code: 'function', name: name + '()' })
     return
   }
-  if (c.script.has(nom)) return reprendre(c, c.script.get(nom)!, nom)
-  if (c.gabarit.has(nom)) return noter(c, { code: 'variable', nom })
-  if (c.module.has(nom)) return reprendre(c, c.module.get(nom)!, nom)
+  if (c.script.has(name)) return resume(c, c.script.get(name)!, name)
+  if (c.template.has(name)) return record(c, { code: 'variable', name: name })
+  if (c.module.has(name)) return resume(c, c.module.get(name)!, name)
   // `µ$$x` importé : un magasin, donc une source
-  if (c.externes.has(nom)) return
-  if (c.imports.has(nom)) return noter(c, { code: 'import', nom })
-  if (GLOBAUX.has(nom)) return
-  noter(c, { code: 'globale', nom })
+  if (c.external.has(name)) return
+  if (c.imports.has(name)) return record(c, { code: 'import', name: name })
+  if (GLOBALS.has(name)) return
+  record(c, { code: 'global', name: name })
 }
 
 // l'heure et le hasard : une valeur qui change sans aucune écriture
-function heureOuHasard(n: any): RaisonHorloge | null {
+function clockOrRandom(n: any): ClockReason | null {
   const f = n.callee
-  if (f.type === 'Identifier') return f.name === 'Date' && (n.type === 'CallExpression' || n.arguments.length === 0) ? { code: 'heure', nom: n.type === 'NewExpression' ? 'new Date()' : 'Date()' } : null
+  if (f.type === 'Identifier') return f.name === 'Date' && (n.type === 'CallExpression' || n.arguments.length === 0) ? { code: 'time', name: n.type === 'NewExpression' ? 'new Date()' : 'Date()' } : null
   if (f.type !== 'MemberExpression' || f.computed || f.property.type !== 'Identifier') return null
   const m = f.property.name
   const o = f.object.type === 'Identifier' ? f.object.name : null
-  if (o === 'Date' && m === 'now') return { code: 'heure', nom: 'Date.now()' }
-  if (o === 'performance' && m === 'now') return { code: 'heure', nom: 'performance.now()' }
-  if (o === 'Math' && m === 'random') return { code: 'hasard', nom: 'Math.random()' }
-  if ((m === 'format' || m === 'formatToParts') && n.arguments.length === 0) return { code: 'heure', nom: m + '()' }
+  if (o === 'Date' && m === 'now') return { code: 'time', name: 'Date.now()' }
+  if (o === 'performance' && m === 'now') return { code: 'time', name: 'performance.now()' }
+  if (o === 'Math' && m === 'random') return { code: 'random', name: 'Math.random()' }
+  if ((m === 'format' || m === 'formatToParts') && n.arguments.length === 0) return { code: 'time', name: m + '()' }
   return null
 }
 
 // `§x` : la clé lue, quand elle est écrite en toutes lettres
-function cleContexte(appel: any): string {
-  const a = appel.arguments[0]
+function contextKey(call: any): string {
+  const a = call.arguments[0]
   return a && a.type === 'Literal' && typeof a.value === 'string' ? a.value : '…'
 }
 
-function appeler(f: any, portees: Portee[], c: Ctx, appel: any): void {
-  if (f.type === 'Identifier') return lireNom(f.name, portees, c, true)
+function visitCall(f: any, scopes: Scope[], c: Ctx, call: any): void {
+  if (f.type === 'Identifier') return readName(f.name, scopes, c, true)
   // fonction appelée sur place : son corps tourne au moment de l'appel
-  if (f.type === 'FunctionExpression' || f.type === 'ArrowFunctionExpression') return fonction(f, portees, c, false)
+  if (f.type === 'FunctionExpression' || f.type === 'ArrowFunctionExpression') return walkFunction(f, scopes, c, false)
   if (f.type !== 'MemberExpression') {
-    noter(c, { code: 'fonction', nom: '…()' })
-    return parcourir(f, portees, c, appel)
+    record(c, { code: 'function', name: '…()' })
+    return traverse(f, scopes, c, call)
   }
   const o = f.object
   if (f.computed || f.property.type !== 'Identifier') {
-    noter(c, { code: 'fonction', nom: '[…]()' })
-    parcourir(o, portees, c, f)
-    return parcourir(f.property, portees, c, f)
+    record(c, { code: 'function', name: '[…]()' })
+    traverse(o, scopes, c, f)
+    return traverse(f.property, scopes, c, f)
   }
   const m = f.property.name
   if (o.type === 'Identifier') {
-    if (o.name === '$') return noter(c, { code: 'fonction', nom: '$' + m + '()' })
+    if (o.name === '$') return record(c, { code: 'function', name: '$' + m + '()' })
     if (o.name === '_mjsThis') {
       // `§§x` : contexte réactif, une source
       if (m === '_mjs_getRCtx') return
-      if (m === '_mjs_getContext') return noter(c, { code: 'contexte', nom: '§' + cleContexte(appel) })
-      if (c.script.has('@' + m)) return reprendre(c, c.script.get('@' + m)!, '@@' + m)
-      return noter(c, { code: 'instance', nom: '@@' + m + '()' })
+      if (m === '_mjs_getContext') return record(c, { code: 'context', name: '§' + contextKey(call) })
+      if (c.script.has('@' + m)) return resume(c, c.script.get('@' + m)!, '@@' + m)
+      return record(c, { code: 'instance', name: '@@' + m + '()' })
     }
-    if (o.name === 'µ') return noter(c, { code: 'rune', nom: 'µ.' + m })
-    // `Math.max`, `JSON.stringify`, `Object.keys`… (`Math.random` : cf. heureOuHasard)
-    if (ESPACES.has(o.name) && !chercher(o.name, portees) && !c.script.has(o.name) && !c.module.has(o.name) && !c.imports.has(o.name)) return
+    if (o.name === 'µ') return record(c, { code: 'rune', name: 'µ.' + m })
+    // `Math.max`, `JSON.stringify`, `Object.keys`… (`Math.random` : cf. clockOrRandom)
+    if (SPACES.has(o.name) && !find(o.name, scopes) && !c.script.has(o.name) && !c.module.has(o.name) && !c.imports.has(o.name)) return
   }
-  if (o.type === 'ThisExpression') return c.script.has('@' + m) ? reprendre(c, c.script.get('@' + m)!, '@' + m) : noter(c, { code: 'instance', nom: '@' + m + '()' })
-  if (estMagasin(o)) return noter(c, { code: 'fonction', nom: '$$' + m + '()' })
-  const avant = c.raisons.length
-  parcourir(o, portees, c, f)
+  if (o.type === 'ThisExpression') return c.script.has('@' + m) ? resume(c, c.script.get('@' + m)!, '@' + m) : record(c, { code: 'instance', name: '@' + m + '()' })
+  if (isStore(o)) return record(c, { code: 'function', name: '$$' + m + '()' })
+  const before = c.reasons.length
+  traverse(o, scopes, c, f)
   // receveur déjà à l'horloge : la méthode n'ajoute rien
-  if (c.raisons.length > avant) return
+  if (c.reasons.length > before) return
   if (o.type === 'Literal' || o.type === 'TemplateLiteral' || o.type === 'ArrayExpression' || o.type === 'ObjectExpression') return
-  if (METHODES.has(m) || MUTATEURS.has(m)) return
+  if (METHODS.has(m) || MUTATEURS.has(m)) return
   // receveur pris d'une constante du `<script>` ou du module, ou d'un espace du langage (`Math.max.apply`) : ses
   // méthodes sont des valeurs qu'on a lues
-  const r = racine(o)
-  if (r !== null && !chercher(r, portees) && (c.script.has(r) || c.module.has(r) || (ESPACES.has(r) && !c.imports.has(r)))) return
-  noter(c, { code: 'methode', nom: '.' + m + '()' })
+  const r = root(o)
+  if (r !== null && !find(r, scopes) && (c.script.has(r) || c.module.has(r) || (SPACES.has(r) && !c.imports.has(r)))) return
+  record(c, { code: 'method', name: '.' + m + '()' })
 }
 
-// `differee` : fonction définie ici, appelée plus tard (rappel, fonction rangée) ; faux : appelée sur place
-function fonction(n: any, portees: Portee[], c: Ctx, differee = true): void {
-  const pp = [...portees, porteeFonction(n)]
-  const c2 = differee && !c.dansFonction ? { ...c, dansFonction: true } : c
-  for (const p of n.params) motif(p, pp, c2)
-  parcourir(n.body, pp, c2, n)
+// `deferred` : fonction définie ici, appelée plus tard (rappel, fonction rangée) ; faux : appelée sur place
+function walkFunction(n: any, scopes: Scope[], c: Ctx, deferred = true): void {
+  const pp = [...scopes, functionScope(n)]
+  const c2 = deferred && !c.inFunction ? { ...c, inFunction: true } : c
+  for (const p of n.params) pattern(p, pp, c2)
+  traverse(n.body, pp, c2, n)
 }
 
-function motif(p: any, portees: Portee[], c: Ctx): void {
+function pattern(p: any, scopes: Scope[], c: Ctx): void {
   if (!p) return
   switch (p.type) {
     case 'Identifier':        return
-    case 'AssignmentPattern': motif(p.left, portees, c); return parcourir(p.right, portees, c, p)
-    case 'RestElement':       return motif(p.argument, portees, c)
-    case 'ArrayPattern':      for (const q of p.elements) motif(q, portees, c); return
+    case 'AssignmentPattern': pattern(p.left, scopes, c); return traverse(p.right, scopes, c, p)
+    case 'RestElement':       return pattern(p.argument, scopes, c)
+    case 'ArrayPattern':      for (const q of p.elements) pattern(q, scopes, c); return
     case 'ObjectPattern':
       for (const q of p.properties) {
-        if (q.type === 'RestElement') motif(q.argument, portees, c)
+        if (q.type === 'RestElement') pattern(q.argument, scopes, c)
         else {
-          if (q.computed) parcourir(q.key, portees, c, q)
-          motif(q.value, portees, c)
+          if (q.computed) traverse(q.key, scopes, c, q)
+          pattern(q.value, scopes, c)
         }
       }
       return
-    case 'MemberExpression':  return parcourir(p, portees, c, null)
-    default:                  return noter(c, { code: 'inconnue', nom: p.type })
+    case 'MemberExpression':  return traverse(p, scopes, c, null)
+    default:                  return record(c, { code: 'unknown', name: p.type })
   }
 }
 
 // cible d'une écriture faite par la valeur lue elle-même
-function cible(t: any, portees: Portee[], c: Ctx): void {
-  if (t.type !== 'Identifier') return motif(t, portees, c)
-  const r = chercher(t.name, portees)
+function target(t: any, scopes: Scope[], c: Ctx): void {
+  if (t.type !== 'Identifier') return pattern(t, scopes, c)
+  const r = find(t.name, scopes)
   if (r) {
-    if (r.i < c.borne) noter(c, { code: 'variable', nom: t.name })
+    if (r.i < c.bound) record(c, { code: 'variable', name: t.name })
     return
   }
-  // variable du composant écrite ici : `collecter` l'a déjà comptée comme changée
-  if (c.script.has(t.name)) return reprendre(c, c.script.get(t.name)!, t.name)
-  if (c.module.has(t.name)) return reprendre(c, c.module.get(t.name)!, t.name)
-  noter(c, { code: 'globale', nom: t.name })
+  // variable du composant écrite ici : `collect` l'a déjà comptée comme changée
+  if (c.script.has(t.name)) return resume(c, c.script.get(t.name)!, t.name)
+  if (c.module.has(t.name)) return resume(c, c.module.get(t.name)!, t.name)
+  record(c, { code: 'global', name: t.name })
 }
 
-function parcourir(n: any, portees: Portee[], c: Ctx, parent: any): void {
+function traverse(n: any, scopes: Scope[], c: Ctx, parent: any): void {
   if (!n || typeof n.type !== 'string') return
   switch (n.type) {
     case 'Literal': case 'TemplateElement': case 'EmptyStatement': case 'DebuggerStatement': case 'BreakStatement': case 'ContinueStatement':
       return
     case 'Identifier':
-      return lireNom(n.name, portees, c, false)
+      return readName(n.name, scopes, c, false)
     case 'ThisExpression':
-      return noter(c, { code: 'instance', nom: '@' })
+      return record(c, { code: 'instance', name: '@' })
     case 'Super': case 'ClassExpression': case 'ClassDeclaration': case 'WithStatement':
-      return noter(c, { code: 'inconnue', nom: n.type === 'Super' ? 'super' : n.type === 'WithStatement' ? 'with' : 'class' })
+      return record(c, { code: 'unknown', name: n.type === 'Super' ? 'super' : n.type === 'WithStatement' ? 'with' : 'class' })
     case 'MetaProperty':
-      return noter(c, { code: 'inconnue', nom: `${n.meta.name}.${n.property.name}` })
+      return record(c, { code: 'unknown', name: `${n.meta.name}.${n.property.name}` })
     case 'ImportExpression':
-      noter(c, { code: 'import', nom: 'import()' })
-      return parcourir(n.source, portees, c, n)
+      record(c, { code: 'import', name: 'import()' })
+      return traverse(n.source, scopes, c, n)
     case 'AwaitExpression':
-      noter(c, { code: 'attente', nom: 'await' })
-      return parcourir(n.argument, portees, c, n)
+      record(c, { code: 'await', name: 'await' })
+      return traverse(n.argument, scopes, c, n)
     case 'MemberExpression': {
       const o = n.object
       if (o.type === 'Identifier' && o.name === '$') {
         if (n.computed) {
-          noter(c, { code: 'cle', nom: '$[…]' })
-          return parcourir(n.property, portees, c, n)
+          record(c, { code: 'key', name: '$[…]' })
+          return traverse(n.property, scopes, c, n)
         }
         // lue une fois, au premier niveau : la variable garde la valeur (un objet de l'état, par alias)
-        if (c.mode === 'script' && !c.dansFonction) noter(c, { code: 'alias', nom: '$' + n.property.name })
-        else if (c.mode === 'module') noter(c, { code: 'etat', nom: '$' })
+        if (c.mode === 'script' && !c.inFunction) record(c, { code: 'alias', name: '$' + n.property.name })
+        else if (c.mode === 'module') record(c, { code: 'state', name: '$' })
         return
       }
       if (o.type === 'Identifier' && o.name === 'µ') {
-        const nomme = parent != null && parent.type === 'MemberExpression' && parent.object === n
-        if (estMagasin(n)) {
-          if (!nomme) return noter(c, { code: 'etat', nom: '$$' })
-          if (parent.computed) return noter(c, { code: 'cle', nom: '$$[…]' })
-          if (c.mode !== 'derive' && !c.dansFonction) noter(c, { code: 'alias', nom: '$$' + parent.property.name })
+        const named = parent != null && parent.type === 'MemberExpression' && parent.object === n
+        if (isStore(n)) {
+          if (!named) return record(c, { code: 'state', name: '$$' })
+          if (parent.computed) return record(c, { code: 'key', name: '$$[…]' })
+          if (c.mode !== 'derived' && !c.inFunction) record(c, { code: 'alias', name: '$$' + parent.property.name })
           return
         }
         // `µread $$x` : le magasin lu sans s'abonner
-        if (!n.computed && (n.property.name === '_mjs_storeRaw' || n.property.name === '_stateRaw') && nomme && !parent.computed) return
-        noter(c, { code: 'rune', nom: 'µ.' + (n.computed ? '[…]' : n.property.name) })
-        if (n.computed) parcourir(n.property, portees, c, n)
+        if (!n.computed && (n.property.name === '_mjs_storeRaw' || n.property.name === '_stateRaw') && named && !parent.computed) return
+        record(c, { code: 'rune', name: 'µ.' + (n.computed ? '[…]' : n.property.name) })
+        if (n.computed) traverse(n.property, scopes, c, n)
         return
       }
       if (o.type === 'ThisExpression' || (o.type === 'Identifier' && o.name === '_mjsThis')) {
         // `µread $x` (`_mjsThis._state.x`) : lu sans s'abonner
         if (o.type === 'Identifier' && !n.computed && n.property.name === '_state' && parent != null && parent.type === 'MemberExpression' && parent.object === n && !parent.computed) return
-        noter(c, { code: 'instance', nom: (o.type === 'ThisExpression' ? '@' : '@@') + (n.computed ? '[…]' : n.property.name) })
-        if (n.computed) parcourir(n.property, portees, c, n)
+        record(c, { code: 'instance', name: (o.type === 'ThisExpression' ? '@' : '@@') + (n.computed ? '[…]' : n.property.name) })
+        if (n.computed) traverse(n.property, scopes, c, n)
         return
       }
-      parcourir(o, portees, c, n)
-      if (n.computed) parcourir(n.property, portees, c, n)
+      traverse(o, scopes, c, n)
+      if (n.computed) traverse(n.property, scopes, c, n)
       return
     }
     case 'CallExpression': case 'NewExpression': {
-      const h = heureOuHasard(n)
-      if (h) noter(c, h)
-      else appeler(n.callee, portees, c, n)
-      for (const a of n.arguments) parcourir(a, portees, c, n)
+      const h = clockOrRandom(n)
+      if (h) record(c, h)
+      else visitCall(n.callee, scopes, c, n)
+      for (const a of n.arguments) traverse(a, scopes, c, n)
       return
     }
     case 'TaggedTemplateExpression':
-      appeler(n.tag, portees, c, n)
-      return parcourir(n.quasi, portees, c, n)
+      visitCall(n.tag, scopes, c, n)
+      return traverse(n.quasi, scopes, c, n)
     case 'FunctionExpression': case 'ArrowFunctionExpression': case 'FunctionDeclaration':
-      return fonction(n, portees, c)
+      return walkFunction(n, scopes, c)
     case 'BlockStatement': case 'StaticBlock': {
-      const pp = [...portees, porteeBloc(n.body)]
-      for (const s of n.body) parcourir(s, pp, c, n)
+      const pp = [...scopes, blockScope(n.body)]
+      for (const s of n.body) traverse(s, pp, c, n)
       return
     }
     case 'SwitchStatement': {
-      parcourir(n.discriminant, portees, c, n)
-      const pp = [...portees, porteeBloc(n.cases.flatMap((k: any) => k.consequent))]
-      for (const k of n.cases) parcourir(k, pp, c, n)
+      traverse(n.discriminant, scopes, c, n)
+      const pp = [...scopes, blockScope(n.cases.flatMap((k: any) => k.consequent))]
+      for (const k of n.cases) traverse(k, pp, c, n)
       return
     }
     case 'ForStatement': case 'ForInStatement': case 'ForOfStatement': {
-      if (n.type === 'ForOfStatement' && n.await) noter(c, { code: 'attente', nom: 'for await' })
+      if (n.type === 'ForOfStatement' && n.await) record(c, { code: 'await', name: 'for await' })
       const init = n.type === 'ForStatement' ? n.init : n.left
-      const pp   = init && init.type === 'VariableDeclaration' && init.kind !== 'var' ? [...portees, porteeDeclaration(init)] : portees
-      if (n.type !== 'ForStatement' && init && init.type !== 'VariableDeclaration') cible(init, pp, c)
-      else parcourir(init, pp, c, n)
-      for (const k of ['test', 'update', 'right', 'body']) parcourir(n[k], pp, c, n)
+      const pp   = init && init.type === 'VariableDeclaration' && init.kind !== 'var' ? [...scopes, declarationScope(init)] : scopes
+      if (n.type !== 'ForStatement' && init && init.type !== 'VariableDeclaration') target(init, pp, c)
+      else traverse(init, pp, c, n)
+      for (const k of ['test', 'update', 'right', 'body']) traverse(n[k], pp, c, n)
       return
     }
     case 'CatchClause': {
-      const m: Portee = new Map()
+      const m: Scope = new Map()
       const t: string[] = []
-      nomsMotif(n.param, t)
+      patternNames(n.param, t)
       for (const x of t) m.set(x, 'var')
-      return parcourir(n.body, [...portees, m], c, n)
+      return traverse(n.body, [...scopes, m], c, n)
     }
     case 'VariableDeclarator':
-      motif(n.id, portees, c)
-      return parcourir(n.init, portees, c, n)
+      pattern(n.id, scopes, c)
+      return traverse(n.init, scopes, c, n)
     case 'AssignmentExpression':
-      cible(n.left, portees, c)
-      return parcourir(n.right, portees, c, n)
+      target(n.left, scopes, c)
+      return traverse(n.right, scopes, c, n)
     case 'UpdateExpression':
-      return cible(n.argument, portees, c)
+      return target(n.argument, scopes, c)
     case 'Property':
-      if (n.computed) parcourir(n.key, portees, c, n)
-      return parcourir(n.value, portees, c, n)
+      if (n.computed) traverse(n.key, scopes, c, n)
+      return traverse(n.value, scopes, c, n)
     case 'LabeledStatement':
-      return parcourir(n.body, portees, c, n)
+      return traverse(n.body, scopes, c, n)
   }
   for (const k of Object.keys(n)) {
-    if (CLES.has(k)) continue
+    if (KEYS.has(k)) continue
     const v = n[k]
-    if (Array.isArray(v)) { for (const x of v) parcourir(x, portees, c, n) }
-    else if (v && typeof v.type === 'string') parcourir(v, portees, c, n)
+    if (Array.isArray(v)) { for (const x of v) traverse(x, scopes, c, n) }
+    else if (v && typeof v.type === 'string') traverse(v, scopes, c, n)
   }
 }
 
-function dedoublonner(liste: RaisonHorloge[]): RaisonHorloge[] {
-  const vues = new Set<string>()
-  const out: RaisonHorloge[] = []
-  for (const r of liste) {
-    const cle = `${r.code}\u0000${r.nom ?? ''}\u0000${r.par ?? ''}`
-    if (vues.has(cle)) continue
-    vues.add(cle)
+function dedoublonner(list: ClockReason[]): ClockReason[] {
+  const seen = new Set<string>()
+  const out: ClockReason[] = []
+  for (const r of list) {
+    const key = `${r.code}\u0000${r.name ?? ''}\u0000${r.by ?? ''}`
+    if (seen.has(key)) continue
+    seen.add(key)
     out.push(r)
   }
   return out
 }
 
-// changements comptés : hors du premier niveau (`premierNiveau` : lui aussi), sauf une fonction passée en rappel
+// changements comptés : hors du premier niveau (`topLevel` : lui aussi), sauf une fonction passée en rappel
 // (`setTimeout(f)`, `$l.map(f)`)
-function changee(l: Changement[] | undefined, valeurs: Affectation[] | undefined, premierNiveau = false): boolean {
+function changed(l: Change[] | undefined, values: Assignment[] | undefined, topLevel = false): boolean {
   if (!l) return false
-  const fn          = (valeurs ?? []).filter((a) => a.valeur != null)
-  const estFonction = fn.length > 0 && fn.every((a) => /Function/.test(a.valeur.type))
-  return l.some((x) => (premierNiveau || !x.haut) && !(x.passe && estFonction))
+  const fn         = (values ?? []).filter((a) => a.value != null)
+  const isFunction = fn.length > 0 && fn.every((a) => /Function/.test(a.value.type))
+  return l.some((x) => (topLevel || !x.top) && !(x.pass && isFunction))
 }
 
 // raisons de chaque variable d'un programme (`<script>` ou `<script module>`) : point fixe sur ses valeurs, celles
 // qu'on lui affecte et celles qu'on range dedans ; une variable changée ou inconnue garde sa raison telle quelle
-function pointFixe(noms: string[], col: ReturnType<typeof collecter>, fixes: Map<string, RaisonHorloge[]>, mode: 'script' | 'module', base: Omit<Ctx, 'mode' | 'borne' | 'dansFonction' | 'raisons'>, etats: Map<string, RaisonHorloge[]>): void {
-  for (const v of noms) etats.set(v, fixes.get(v) ?? [])
-  let encore = true
-  while (encore) {
-    encore = false
-    for (const v of noms) {
+function fixedPoint(names: string[], col: ReturnType<typeof collect>, fixes: Map<string, ClockReason[]>, mode: 'script' | 'module', base: Omit<Ctx, 'mode' | 'bound' | 'inFunction' | 'reasons'>, states: Map<string, ClockReason[]>): void {
+  for (const v of names) states.set(v, fixes.get(v) ?? [])
+  let again = true
+  while (again) {
+    again = false
+    for (const v of names) {
       if (fixes.has(v)) continue
-      const raisons: RaisonHorloge[] = []
-      for (const a of [...(col.table.get(v) ?? []), ...(col.membres.get(v) ?? [])]) {
-        if (a.valeur == null) continue
-        parcourir(a.valeur, a.portees, { ...base, mode, borne: a.portees.length, dansFonction: false, raisons }, null)
+      const reasons: ClockReason[] = []
+      for (const a of [...(col.table.get(v) ?? []), ...(col.members.get(v) ?? [])]) {
+        if (a.value == null) continue
+        traverse(a.value, a.scopes, { ...base, mode, bound: a.scopes.length, inFunction: false, reasons: reasons }, null)
       }
-      const d = dedoublonner(raisons)
-      if (d.length !== etats.get(v)!.length) {
-        etats.set(v, d)
-        encore = true
+      const d = dedoublonner(reasons)
+      if (d.length !== states.get(v)!.length) {
+        states.set(v, d)
+        again = true
       }
     }
   }
 }
 
 // variables `$` qu'un nœud lit (`$.x`), et variables du composant qu'il cite
-function lectures(n: any, etat: Set<string>, cites: Set<string>, connues: Set<string>): void {
+function reads(n: any, state: Set<string>, cited: Set<string>, known: Set<string>): void {
   if (!n || typeof n.type !== 'string') return
-  if (n.type === 'MemberExpression' && !n.computed && n.object.type === 'Identifier' && n.object.name === '$' && n.property.type === 'Identifier') etat.add(n.property.name)
-  else if (n.type === 'MemberExpression' && !n.computed && (n.object.type === 'ThisExpression' || (n.object.type === 'Identifier' && n.object.name === '_mjsThis')) && connues.has('@' + n.property.name)) cites.add('@' + n.property.name)
-  else if (n.type === 'Identifier' && connues.has(n.name)) cites.add(n.name)
+  if (n.type === 'MemberExpression' && !n.computed && n.object.type === 'Identifier' && n.object.name === '$' && n.property.type === 'Identifier') state.add(n.property.name)
+  else if (n.type === 'MemberExpression' && !n.computed && (n.object.type === 'ThisExpression' || (n.object.type === 'Identifier' && n.object.name === '_mjsThis')) && known.has('@' + n.property.name)) cited.add('@' + n.property.name)
+  else if (n.type === 'Identifier' && known.has(n.name)) cited.add(n.name)
   for (const k of Object.keys(n)) {
-    if (CLES.has(k)) continue
+    if (KEYS.has(k)) continue
     const v = n[k]
-    if (Array.isArray(v)) { for (const x of v) lectures(x, etat, cites, connues) }
-    else if (v && typeof v.type === 'string') lectures(v, etat, cites, connues)
+    if (Array.isArray(v)) { for (const x of v) reads(x, state, cited, known) }
+    else if (v && typeof v.type === 'string') reads(v, state, cited, known)
   }
 }
 
 // méthodes du composant que la valeur peut suivre : `this.m = fonction` (ou `_mjsThis.m`), écrite une seule fois, au
 // premier niveau du `<script>` ; rangées sous `@m`, avec les variables
-function methodesSuivies(ast: any): Map<string, Affectation[]> {
-  const ecrites = new Map<string, number>()
-  const out     = new Map<string, Affectation[]>()
-  const visiter = (n: any, haut: boolean): void => {
+function trackedMethods(ast: any): Map<string, Assignment[]> {
+  const written = new Map<string, number>()
+  const out     = new Map<string, Assignment[]>()
+  const visit = (n: any, top: boolean): void => {
     if (!n || typeof n.type !== 'string') return
     const l = n.type === 'AssignmentExpression' ? n.left : null
     if (l && l.type === 'MemberExpression' && !l.computed && l.property.type === 'Identifier' && (l.object.type === 'ThisExpression' || (l.object.type === 'Identifier' && l.object.name === '_mjsThis'))) {
       const m = l.property.name
-      ecrites.set(m, (ecrites.get(m) ?? 0) + 1)
-      if (haut && n.operator === '=' && /Function/.test(n.right.type)) out.set('@' + m, [{ valeur: n.right, portees: [] }])
+      written.set(m, (written.get(m) ?? 0) + 1)
+      if (top && n.operator === '=' && /Function/.test(n.right.type)) out.set('@' + m, [{ value: n.right, scopes: [] }])
     }
-    const dedans = haut && !/Function/.test(n.type)
+    const inside = top && !/Function/.test(n.type)
     for (const k of Object.keys(n)) {
-      if (CLES.has(k)) continue
+      if (KEYS.has(k)) continue
       const v = n[k]
-      if (Array.isArray(v)) { for (const x of v) visiter(x, dedans) }
-      else if (v && typeof v.type === 'string') visiter(v, dedans)
+      if (Array.isArray(v)) { for (const x of v) visit(x, inside) }
+      else if (v && typeof v.type === 'string') visit(v, inside)
     }
   }
-  visiter(ast, true)
-  for (const [m, nb] of ecrites) if (nb > 1) out.delete('@' + m)
+  visit(ast, true)
+  for (const [m, count] of written) if (count > 1) out.delete('@' + m)
   return out
 }
 
-function analyserGestionnaires(js: string): ReturnType<typeof collecter> | null {
+function analyzeHandlers(js: string): ReturnType<typeof collect> | null {
   if (!js.trim()) return null
   try {
-    return collecter(acorn.parse(js, { ecmaVersion: 'latest', sourceType: 'module' }), new Set(), new Set())
+    return collect(acorn.parse(js, { ecmaVersion: 'latest', sourceType: 'module' }), new Set(), new Set())
   }
   catch {
     return null
   }
 }
 
-export function classerDerivees(e: EntreeClassement): DeriveeClassee[] {
+export function classifyDerived(e: ClassificationInput): ClassifiedDerived[] {
   const imports   = new Set(e.imports)
-  const externes  = new Set(e.externalVars)
+  const external  = new Set(e.externalVars)
   const refs      = new Set(e.refs)
-  const noeuds    = new Set(e.candidats.map((k) => k.noeud))
-  const vide      = { table: new Map(), membres: new Map(), inconnues: new Set<string>(), changes: new Map(), confies: [] } as ReturnType<typeof collecter>
-  const colScript = e.script ? collecter(e.script, new Set(), noeuds) : vide
-  const colModule = e.module ? collecter(e.module, new Set(), new Set()) : vide
+  const nodes     = new Set(e.candidates.map((k) => k.node))
+  const empty     = { table: new Map(), members: new Map(), unknowns: new Set<string>(), changes: new Map(), handed: [] } as ReturnType<typeof collect>
+  const colScript = e.script ? collect(e.script, new Set(), nodes) : empty
+  const colModule = e.module ? collect(e.module, new Set(), new Set()) : empty
   // gestionnaires illisibles : on ne sait pas ce qu'ils changent, toute variable compte comme changée
-  const colGabarit     = analyserGestionnaires(e.gestionnaires)
-  const gabaritInconnu = colGabarit === null && e.gestionnaires.trim() !== ''
-  const parGabarit     = (v: string, valeurs: Affectation[] | undefined): boolean => refs.has(v) || gabaritInconnu || changee(colGabarit?.changes.get(v), valeurs)
+  const templateCol     = analyzeHandlers(e.handlers)
+  const unknownTemplate = templateCol === null && e.handlers.trim() !== ''
+  const byTemplate      = (v: string, values: Assignment[] | undefined): boolean => refs.has(v) || unknownTemplate || changed(templateCol?.changes.get(v), values)
 
   // méthodes suivies : rangées avec les variables du `<script>`, sous `@m`
-  const methodes    = e.suivreMethodes && e.script ? methodesSuivies(e.script) : new Map<string, Affectation[]>()
-  const tableScript = new Map([...colScript.table, ...methodes])
-  const scriptNoms  = [...tableScript.keys()]
-  const scriptSet   = new Set(scriptNoms)
-  const moduleNoms  = e.moduleVars.filter((v) => !scriptSet.has(v))
-  const gabarit     = new Set([...refs, ...(colGabarit ? colGabarit.changes.keys() : [])].filter((v) => !scriptSet.has(v) && !moduleNoms.includes(v)))
+  const methods     = e.trackMethods && e.script ? trackedMethods(e.script) : new Map<string, Assignment[]>()
+  const tableScript = new Map([...colScript.table, ...methods])
+  const scriptNames = [...tableScript.keys()]
+  const scriptSet   = new Set(scriptNames)
+  const moduleNames = e.moduleVars.filter((v) => !scriptSet.has(v))
+  const template    = new Set([...refs, ...(templateCol ? templateCol.changes.keys() : [])].filter((v) => !scriptSet.has(v) && !moduleNames.includes(v)))
 
-  const etatsModule = new Map<string, RaisonHorloge[]>()
-  const etatsScript = new Map<string, RaisonHorloge[]>()
-  const base        = { script: etatsScript, module: etatsModule, imports, externes, gabarit }
+  const moduleStates = new Map<string, ClockReason[]>()
+  const scriptStates = new Map<string, ClockReason[]>()
+  const base         = { script: scriptStates, module: moduleStates, imports, external, template }
 
   // le `<script module>` : ses variables, changées par ses fonctions, par le `<script>` (même au premier niveau : chaque
   // instance le rejoue) ou par le gabarit
-  const fixesModule = new Map<string, RaisonHorloge[]>()
-  for (const v of moduleNoms) {
-    const valeurs = colModule.table.get(v)
-    if (changee(colModule.changes.get(v), valeurs) || changee(colScript.changes.get(v), valeurs, true) || parGabarit(v, valeurs)) fixesModule.set(v, [{ code: 'variable', nom: v }])
-    else if (colModule.inconnues.has(v)) fixesModule.set(v, [{ code: 'inconnue', nom: v }])
+  const moduleFixed = new Map<string, ClockReason[]>()
+  for (const v of moduleNames) {
+    const values = colModule.table.get(v)
+    if (changed(colModule.changes.get(v), values) || changed(colScript.changes.get(v), values, true) || byTemplate(v, values)) moduleFixed.set(v, [{ code: 'variable', name: v }])
+    else if (colModule.unknowns.has(v)) moduleFixed.set(v, [{ code: 'unknown', name: v }])
   }
-  pointFixe(moduleNoms, colModule, fixesModule, 'module', { ...base, script: new Map() }, etatsModule)
+  fixedPoint(moduleNames, colModule, moduleFixed, 'module', { ...base, script: new Map() }, moduleStates)
 
-  const fixesScript = new Map<string, RaisonHorloge[]>()
-  for (const v of scriptNoms) {
-    const valeurs = colScript.table.get(v)
-    if (changee(colScript.changes.get(v), valeurs) || parGabarit(v, valeurs)) fixesScript.set(v, [{ code: 'variable', nom: v }])
-    else if (colScript.inconnues.has(v)) fixesScript.set(v, [{ code: 'inconnue', nom: v }])
+  const scriptFixed = new Map<string, ClockReason[]>()
+  for (const v of scriptNames) {
+    const values = colScript.table.get(v)
+    if (changed(colScript.changes.get(v), values) || byTemplate(v, values)) scriptFixed.set(v, [{ code: 'variable', name: v }])
+    else if (colScript.unknowns.has(v)) scriptFixed.set(v, [{ code: 'unknown', name: v }])
   }
-  pointFixe(scriptNoms, { ...colScript, table: tableScript }, fixesScript, 'script', base, etatsScript)
+  fixedPoint(scriptNames, { ...colScript, table: tableScript }, scriptFixed, 'script', base, scriptStates)
 
   // les valeurs dérivées, dans l'ordre où elles sont écrites (une définie deux fois : une seule entrée)
   const definitions = new Map<string, number>()
-  for (const k of e.candidats) definitions.set(k.nom, (definitions.get(k.nom) ?? 0) + 1)
-  const raisons          = new Map<string, RaisonHorloge[]>()
-  const lus              = new Map<string, Set<string>>()
-  const composant        = new Set([...scriptNoms, ...moduleNoms])
-  const citesParVariable = new Map<string, { etat: Set<string>; cites: Set<string> }>()
-  for (const v of composant) {
-    const etat  = new Set<string>()
-    const cites = new Set<string>()
-    for (const a of [...(tableScript.get(v) ?? []), ...(colScript.membres.get(v) ?? []), ...(colModule.table.get(v) ?? []), ...(colModule.membres.get(v) ?? [])]) lectures(a.valeur, etat, cites, composant)
-    citesParVariable.set(v, { etat, cites })
+  for (const k of e.candidates) definitions.set(k.name, (definitions.get(k.name) ?? 0) + 1)
+  const reasons         = new Map<string, ClockReason[]>()
+  const read            = new Map<string, Set<string>>()
+  const component       = new Set([...scriptNames, ...moduleNames])
+  const citedByVariable = new Map<string, { state: Set<string>; cited: Set<string> }>()
+  for (const v of component) {
+    const state = new Set<string>()
+    const cited = new Set<string>()
+    for (const a of [...(tableScript.get(v) ?? []), ...(colScript.members.get(v) ?? []), ...(colModule.table.get(v) ?? []), ...(colModule.members.get(v) ?? [])]) reads(a.value, state, cited, component)
+    citedByVariable.set(v, { state, cited })
   }
-  for (const k of e.candidats) {
-    const l = raisons.get(k.nom) ?? []
-    raisons.set(k.nom, l)
-    if (definitions.get(k.nom)! > 1 && l.length === 0) l.push({ code: 'double', nom: '$' + k.nom })
-    const locaux: Portee[] = k.locaux ? [new Map(k.locaux.map((x) => [x, 'var'] as [string, 'var']))] : []
-    parcourir(k.noeud, locaux, { ...base, mode: 'derive', borne: 0, dansFonction: false, raisons: l }, null)
+  for (const k of e.candidates) {
+    const l = reasons.get(k.name) ?? []
+    reasons.set(k.name, l)
+    if (definitions.get(k.name)! > 1 && l.length === 0) l.push({ code: 'double', name: '$' + k.name })
+    const locals: Scope[] = k.locals ? [new Map(k.locals.map((x) => [x, 'var'] as [string, 'var']))] : []
+    traverse(k.node, locals, { ...base, mode: 'derived', bound: 0, inFunction: false, reasons: l }, null)
     // variables `$` lues, en toutes lettres ou par une fonction du composant qu'elle cite
-    const etat = lus.get(k.nom) ?? new Set<string>()
-    lus.set(k.nom, etat)
-    const cites = new Set<string>()
-    lectures(k.noeud, etat, cites, composant)
-    const aVoir = [...cites]
-    for (let i = 0; i < aVoir.length; i++) {
-      const x = citesParVariable.get(aVoir[i])
+    const state = read.get(k.name) ?? new Set<string>()
+    read.set(k.name, state)
+    const cited = new Set<string>()
+    reads(k.node, state, cited, component)
+    const toVisit = [...cited]
+    for (let i = 0; i < toVisit.length; i++) {
+      const x = citedByVariable.get(toVisit[i])
       if (!x) continue
-      for (const s of x.etat) etat.add(s)
-      for (const y of x.cites) if (!cites.has(y)) { cites.add(y); aVoir.push(y) }
+      for (const s of x.state) state.add(s)
+      for (const y of x.cited) if (!cited.has(y)) { cited.add(y); toVisit.push(y) }
     }
   }
   // une valeur dérivée qui en lit une autre à l'horloge l'est aussi, la raison notée même quand elle en a déjà une
-  const horloges = new Set([...raisons].filter(([, l]) => l.length > 0).map(([nom]) => nom))
-  let encore     = true
-  while (encore) {
-    encore = false
-    for (const [nom, l] of raisons) {
-      for (const x of lus.get(nom)!) {
-        if (x === nom || !horloges.has(x) || l.some((r) => r.code === 'derivee' && r.nom === '$' + x)) continue
-        l.push({ code: 'derivee', nom: '$' + x })
-        if (!horloges.has(nom)) {
-          horloges.add(nom)
-          encore = true
+  const clocks = new Set([...reasons].filter(([, l]) => l.length > 0).map(([name]) => name))
+  let again   = true
+  while (again) {
+    again = false
+    for (const [name, l] of reasons) {
+      for (const x of read.get(name)!) {
+        if (x === name || !clocks.has(x) || l.some((r) => r.code === 'derived' && r.name === '$' + x)) continue
+        l.push({ code: 'derived', name: '$' + x })
+        if (!clocks.has(name)) {
+          clocks.add(name)
+          again = true
         }
       }
     }
   }
-  // la classe : celle du runtime (deriveesPrecises) ; ses raisons, celles de l'analyse des lectures ou la forme refusée
-  const precision = deriveesPrecises(e.candidats, e.externalVars, variablesDouteuses(e.script, e.brut === true))
-  return [...raisons].map(([nom, l]) => {
-    if (precision.sources.has(nom)) return { nom, classe: 'precise', raisons: [] }
+  // la classe : celle du runtime (preciseDerived) ; ses raisons, celles de l'analyse des lectures ou la forme refusée
+  const precision = preciseDerived(e.candidates, e.externalVars, doubtfulVariables(e.script, e.raw === true))
+  return [...reasons].map(([name, l]) => {
+    if (precision.sources.has(name)) return { name: name, class: 'precise', reasons: [] }
     const d = dedoublonner(l)
-    return { nom, classe: 'horloge', raisons: d.length > 0 ? d : [precision.refus.get(nom) ?? { code: precision.simples.has(nom) ? 'simple' : 'liste', nom: '$' + nom }] }
+    return { name: name, class: 'clock', reasons: d.length > 0 ? d : [precision.reject.get(name) ?? { code: precision.simpleNames.has(name) ? 'simple' : 'list', name: '$' + name }] }
   })
 }
 
@@ -549,82 +549,82 @@ export function classerDerivees(e: EntreeClassement): DeriveeClassee[] {
 // ============================================================================
 
 // méthodes de liste et de chaîne de la liste courte (aucune ne change son receveur)
-const PURES_METHODES = new Set(['filter', 'map', 'reduce', 'reduceRight', 'some', 'every', 'find', 'findIndex', 'findLast', 'findLastIndex', 'flatMap', 'includes', 'indexOf', 'lastIndexOf', 'join', 'slice', 'concat', 'at', 'flat', 'toUpperCase', 'toLowerCase', 'trim', 'trimStart', 'trimEnd', 'startsWith', 'endsWith', 'padStart', 'padEnd', 'repeat', 'substring', 'charAt', 'split', 'toFixed'])
+const PURE_METHODS = new Set(['filter', 'map', 'reduce', 'reduceRight', 'some', 'every', 'find', 'findIndex', 'findLast', 'findLastIndex', 'flatMap', 'includes', 'indexOf', 'lastIndexOf', 'join', 'slice', 'concat', 'at', 'flat', 'toUpperCase', 'toLowerCase', 'trim', 'trimStart', 'trimEnd', 'startsWith', 'endsWith', 'padStart', 'padEnd', 'repeat', 'substring', 'charAt', 'split', 'toFixed'])
 // celles qui reçoivent une fonction écrite sur place
-const PURES_RAPPELS = new Set(['filter', 'map', 'reduce', 'reduceRight', 'some', 'every', 'find', 'findIndex', 'findLast', 'findLastIndex', 'flatMap'])
-const PURES_FONCTIONS = new Set(['String', 'Number', 'Boolean', 'parseInt', 'parseFloat', 'isNaN', 'isFinite'])
-const PURES_MATH = new Set(['abs', 'ceil', 'floor', 'round', 'trunc', 'sign', 'min', 'max', 'pow', 'sqrt'])
-const PURES_NOMS = new Set(['undefined', 'NaN', 'Infinity'])
+const PURE_CALLBACKS = new Set(['filter', 'map', 'reduce', 'reduceRight', 'some', 'every', 'find', 'findIndex', 'findLast', 'findLastIndex', 'flatMap'])
+const PURE_FUNCTIONS = new Set(['String', 'Number', 'Boolean', 'parseInt', 'parseFloat', 'isNaN', 'isFinite'])
+const PURE_MATH = new Set(['abs', 'ceil', 'floor', 'round', 'trunc', 'sign', 'min', 'max', 'pow', 'sqrt'])
+const PURE_NAMES = new Set(['undefined', 'NaN', 'Infinity'])
 // champs qui mènent aux objets partagés du langage
-const PURES_INTERDITS = new Set(['constructor', 'prototype', '__proto__'])
+const PURE_FORBIDDEN = new Set(['constructor', 'prototype', '__proto__'])
 
 export interface Precision {
   /** valeurs précises : nom sans `$` → ses sources (variables `$`, sans `$`) */
   sources: Map<string, string[]>
   /** valeurs à l'horloge : la première forme hors de la liste courte */
-  refus: Map<string, RaisonHorloge>
+  reject: Map<string, ClockReason>
   /** valeurs prouvées mais laissées à l'horloge : leur calcul coûte moins que leur vérification (cf. couteuse) */
-  simples: Set<string>
+  simpleNames: Set<string>
 }
 
 // calcul qui coûte plus que la vérification de ses sources : un appel de méthode (liste, chaîne), un appel sur une liste
 // étalée, une liste ou un objet bâti (la précision garde aussi son identité) ; lectures, `.length`, opérateurs, `Math.*` et
 // conversions (`String`, `Number`…) non — refaits à chaque lecture après une écriture, ils coûtent moins que leur vérification
-function couteuse(n: any): boolean {
-  let oui = false
+function isCostly(n: any): boolean {
+  let found = false
   walk.full(n, (x: any) => {
-    if (oui) return
-    if (x.type === 'ArrayExpression' || x.type === 'ObjectExpression') oui = true
-    else if (x.type === 'CallExpression') oui = (x.callee.type === 'MemberExpression' && !(x.callee.object.type === 'Identifier' && x.callee.object.name === 'Math')) || x.arguments.some((a: any) => a.type === 'SpreadElement')
+    if (found) return
+    if (x.type === 'ArrayExpression' || x.type === 'ObjectExpression') found = true
+    else if (x.type === 'CallExpression') found = (x.callee.type === 'MemberExpression' && !(x.callee.object.type === 'Identifier' && x.callee.object.name === 'Math')) || x.arguments.some((a: any) => a.type === 'SpreadElement')
   })
-  return oui
+  return found
 }
 
 // la forme refusée, en quelques mots, pour `mjs check --derived`
-function decrire(n: any): string {
+function describe(n: any): string {
   if (n.type === 'Identifier') return n.name === '_mjsThis' ? '@@' : n.name
   if (n.type === 'ThisExpression') return '@'
-  if (n.type === 'CallExpression' && n.callee.type === 'MemberExpression' && decrire(n.callee) === '§§') return '§§' + (n.arguments[0]?.type === 'Literal' ? n.arguments[0].value : '…')
-  if (n.type === 'CallExpression' || n.type === 'NewExpression') return (n.type === 'NewExpression' ? 'new ' : '') + decrire(n.callee) + '()'
+  if (n.type === 'CallExpression' && n.callee.type === 'MemberExpression' && describe(n.callee) === '§§') return '§§' + (n.arguments[0]?.type === 'Literal' ? n.arguments[0].value : '…')
+  if (n.type === 'CallExpression' || n.type === 'NewExpression') return (n.type === 'NewExpression' ? 'new ' : '') + describe(n.callee) + '()'
   if (n.type === 'MemberExpression') {
-    if (estMagasin(n.object) && !n.computed) return '$$' + n.property.name
+    if (isStore(n.object) && !n.computed) return '$$' + n.property.name
     const o = n.object
     if (o.type === 'MemberExpression' && !o.computed && o.object.type === 'Identifier' && o.object.name === '_mjsThis' && o.property.name === '_state' && !n.computed) return 'µread $' + n.property.name
     if (o.type === 'Identifier' && o.name === '_mjsThis' && !n.computed && n.property.name === '_mjs_getRCtx') return '§§'
     if (o.type === 'Identifier' && o.name === 'µ') return 'µ.' + (n.computed ? '…' : n.property.name)
-    return n.computed ? decrire(n.object) + '[…]' : '.' + n.property.name
+    return n.computed ? describe(n.object) + '[…]' : '.' + n.property.name
   }
   return n.type
 }
 
-// variables `$` lues par l'expression `n` (ajoutées à `lus`), ou la forme refusée ; `locaux` : paramètres des fonctions
+// variables `$` lues par l'expression `n` (ajoutées à `read`), ou la forme refusée ; `locaux` : paramètres des fonctions
 // écrites sur place qui l'entourent
-function prouver(n: any, locaux: Set<string>, lus: Set<string>): any {
+function prove(n: any, locals: Set<string>, read: Set<string>): any {
   if (!n) return null
   switch (n.type) {
     case 'Literal': return null
-    case 'Identifier': return locaux.has(n.name) || PURES_NOMS.has(n.name) ? null : n
+    case 'Identifier': return locals.has(n.name) || PURE_NAMES.has(n.name) ? null : n
     case 'TemplateLiteral': {
-      for (const x of n.expressions) { const r = prouver(x, locaux, lus); if (r) return r }
+      for (const x of n.expressions) { const r = prove(x, locals, read); if (r) return r }
       return null
     }
-    case 'ChainExpression': case 'ParenthesizedExpression': return prouver(n.expression, locaux, lus)
-    case 'UnaryExpression': return n.operator === 'delete' ? n : prouver(n.argument, locaux, lus)
+    case 'ChainExpression': case 'ParenthesizedExpression': return prove(n.expression, locals, read)
+    case 'UnaryExpression': return n.operator === 'delete' ? n : prove(n.argument, locals, read)
     case 'BinaryExpression':
       if (n.operator === 'in' || n.operator === 'instanceof') return n
-      return prouver(n.left, locaux, lus) || prouver(n.right, locaux, lus)
-    case 'LogicalExpression': return prouver(n.left, locaux, lus) || prouver(n.right, locaux, lus)
-    case 'ConditionalExpression': return prouver(n.test, locaux, lus) || prouver(n.consequent, locaux, lus) || prouver(n.alternate, locaux, lus)
-    case 'SpreadElement': return prouver(n.argument, locaux, lus)
+      return prove(n.left, locals, read) || prove(n.right, locals, read)
+    case 'LogicalExpression': return prove(n.left, locals, read) || prove(n.right, locals, read)
+    case 'ConditionalExpression': return prove(n.test, locals, read) || prove(n.consequent, locals, read) || prove(n.alternate, locals, read)
+    case 'SpreadElement': return prove(n.argument, locals, read)
     case 'ArrayExpression': {
-      for (const x of n.elements) { const r = x && prouver(x, locaux, lus); if (r) return r }
+      for (const x of n.elements) { const r = x && prove(x, locals, read); if (r) return r }
       return null
     }
     case 'ObjectExpression': {
       for (const p of n.properties) {
-        if (p.type === 'SpreadElement') { const r = prouver(p.argument, locaux, lus); if (r) return r; continue }
+        if (p.type === 'SpreadElement') { const r = prove(p.argument, locals, read); if (r) return r; continue }
         if (p.kind !== 'init' || p.method) return p
-        const r = (p.computed && prouver(p.key, locaux, lus)) || prouver(p.value, locaux, lus)
+        const r = (p.computed && prove(p.key, locals, read)) || prove(p.value, locals, read)
         if (r) return r
       }
       return null
@@ -633,43 +633,43 @@ function prouver(n: any, locaux: Set<string>, lus: Set<string>): any {
       const o = n.object
       if (o.type === 'Identifier' && o.name === '$') {
         if (n.computed || n.property.type !== 'Identifier') return n
-        lus.add(n.property.name)
+        read.add(n.property.name)
         return null
       }
-      if (n.property.type === 'PrivateIdentifier' || (!n.computed && PURES_INTERDITS.has(n.property.name))) return n
+      if (n.property.type === 'PrivateIdentifier' || (!n.computed && PURE_FORBIDDEN.has(n.property.name))) return n
       // champ lu sur autre chose que l'état : son nom, que le runtime cherche sur les prototypes du langage (une donnée que
       // l'application y aurait posée), noté `.nom` parmi les sources
-      if (!n.computed && n.property.name !== 'length') lus.add('.' + n.property.name)
+      if (!n.computed && n.property.name !== 'length') read.add('.' + n.property.name)
       // magasin, `µread $x`, rune, composant : nommés par la lecture entière
-      if ((o.type === 'Identifier' && (o.name === 'µ' || o.name === '_mjsThis')) || (o.type === 'MemberExpression' && (estMagasin(o) || (o.object.type === 'Identifier' && o.object.name === '_mjsThis')))) return n
-      return prouver(o, locaux, lus) || (n.computed ? prouver(n.property, locaux, lus) : null)
+      if ((o.type === 'Identifier' && (o.name === 'µ' || o.name === '_mjsThis')) || (o.type === 'MemberExpression' && (isStore(o) || (o.object.type === 'Identifier' && o.object.name === '_mjsThis')))) return n
+      return prove(o, locals, read) || (n.computed ? prove(n.property, locals, read) : null)
     }
     case 'CallExpression': {
       if (n.optional) return n
       const f = n.callee
-      let rappels = false
+      let callbacks = false
       if (f.type === 'Identifier') {
-        if (!PURES_FONCTIONS.has(f.name) || locaux.has(f.name)) return n
+        if (!PURE_FUNCTIONS.has(f.name) || locals.has(f.name)) return n
       }
       else if (f.type === 'MemberExpression' && !f.computed && f.property.type === 'Identifier') {
-        if (f.object.type === 'Identifier' && f.object.name === 'Math' && !locaux.has('Math')) {
-          if (!PURES_MATH.has(f.property.name)) return n
+        if (f.object.type === 'Identifier' && f.object.name === 'Math' && !locals.has('Math')) {
+          if (!PURE_MATH.has(f.property.name)) return n
         }
         else {
-          if (!PURES_METHODES.has(f.property.name)) return n
-          const r = prouver(f.object, locaux, lus)
+          if (!PURE_METHODS.has(f.property.name)) return n
+          const r = prove(f.object, locals, read)
           if (r) return r
-          rappels = PURES_RAPPELS.has(f.property.name)
+          callbacks = PURE_CALLBACKS.has(f.property.name)
         }
       }
       else return n
       for (const a of n.arguments) {
-        if (rappels && (a.type === 'ArrowFunctionExpression' || a.type === 'FunctionExpression')) {
-          const r = rappel(a, locaux, lus)
+        if (callbacks && (a.type === 'ArrowFunctionExpression' || a.type === 'FunctionExpression')) {
+          const r = callback(a, locals, read)
           if (r) return r
           continue
         }
-        const r = prouver(a, locaux, lus)
+        const r = prove(a, locals, read)
         if (r) return r
       }
       return null
@@ -679,25 +679,25 @@ function prouver(n: any, locaux: Set<string>, lus: Set<string>): any {
 }
 
 // fonction écrite sur place, argument d'une méthode de liste : paramètres simples, un seul retour
-function rappel(f: any, locaux: Set<string>, lus: Set<string>): any {
+function callback(f: any, locals: Set<string>, read: Set<string>): any {
   if (f.async || f.generator || !f.params.every((p: any) => p.type === 'Identifier')) return f
-  let corps = f.body
-  if (corps.type === 'BlockStatement') {
-    if (corps.body.length !== 1 || corps.body[0].type !== 'ReturnStatement' || !corps.body[0].argument) return f
-    corps = corps.body[0].argument
+  let body = f.body
+  if (body.type === 'BlockStatement') {
+    if (body.body.length !== 1 || body.body[0].type !== 'ReturnStatement' || !body.body[0].argument) return f
+    body = body.body[0].argument
   }
-  return prouver(corps, new Set([...locaux, ...f.params.map((p: any) => p.name)]), lus)
+  return prove(body, new Set([...locals, ...f.params.map((p: any) => p.name)]), read)
 }
 
 // écriture de l'état qui contourne MJS, lue dans le texte du composant (`<script>` et gabarit) : `_state`, `µread($x) += 1`,
 // `µread($x)++`, le composant passé à une fonction (`ecrire @, 7`, `f(this)`) qui peut écrire son `_state`
-export const ECRITURE_BRUTE = /_state\b|µread\s*\(?\s*\$[\w$]+\s*\)?\s*(?:\+\+|--|(?:[-+*\/%&|^]|\*\*|<<|>>>?|\?\?|\|\||&&)?=(?!=))|(?:\+\+|--)\s*µread|(?:^|[(,\s])(?:@|this)\s*(?:,|\)|$)/m
+export const RAW_WRITE = /_state\b|µread\s*\(?\s*\$[\w$]+\s*\)?\s*(?:\+\+|--|(?:[-+*\/%&|^]|\*\*|<<|>>>?|\?\?|\|\||&&)?=(?!=))|(?:\+\+|--)\s*µread|(?:^|[(,\s])(?:@|this)\s*(?:,|\)|$)/m
 
 // variables `$` que le compilateur ne peut pas prouver (null : toutes, le composant écrit l'état sans MJS) : `$x = nom`, où
 // `nom` n'est pas un paramètre de la fonction qui écrit — le script garde l'objet brut, qu'il peut changer sans que MJS le
 // voie
-export function variablesDouteuses(script: any, brut: boolean): Set<string> | null {
-  if (brut) return null
+export function doubtfulVariables(script: any, raw: boolean): Set<string> | null {
+  if (raw) return null
   const out = new Set<string>()
   if (!script) return out
   walk.ancestor(script, {
@@ -713,126 +713,126 @@ export function variablesDouteuses(script: any, brut: boolean): Set<string> | nu
 
 // valeurs précises d'un composant et leurs sources (celles des valeurs précises qu'elles lisent comprises, et leurs noms :
 // une valeur dérivée réécrite devient une variable) ; `externes` : variables externes, avec leur `$`, et `douteuses` (cf.
-// variablesDouteuses) — une valeur qui en lit une reste à l'horloge
-export function deriveesPrecises(candidats: DeriveCandidat[], externes: string[] = [], douteuses: Set<string> | null = new Set()): Precision {
+// doubtfulVariables) — une valeur qui en lit une reste à l'horloge
+export function preciseDerived(candidates: DerivedCandidate[], external: string[] = [], doubtful: Set<string> | null = new Set()): Precision {
   const definitions = new Map<string, number>()
-  for (const k of candidats) definitions.set(k.nom, (definitions.get(k.nom) ?? 0) + 1)
-  const dehors = new Set(externes.map((v) => v.replace(/^\$+/, '')))
-  const lus    = new Map<string, Set<string>>()
-  const refus  = new Map<string, RaisonHorloge>()
-  for (const k of candidats) {
-    if (refus.has(k.nom) || lus.has(k.nom)) continue
-    if (definitions.get(k.nom)! > 1) { refus.set(k.nom, { code: 'double', nom: '$' + k.nom }); continue }
-    if (douteuses === null) { refus.set(k.nom, { code: 'liste', nom: '_state' }); continue }
-    if (k.force || (k.locaux && k.locaux.length > 0)) { refus.set(k.nom, { code: 'liste', nom: k.force ? 'µderived' : 'if' }); continue }
+  for (const k of candidates) definitions.set(k.name, (definitions.get(k.name) ?? 0) + 1)
+  const outer  = new Set(external.map((v) => v.replace(/^\$+/, '')))
+  const read   = new Map<string, Set<string>>()
+  const reject = new Map<string, ClockReason>()
+  for (const k of candidates) {
+    if (reject.has(k.name) || read.has(k.name)) continue
+    if (definitions.get(k.name)! > 1) { reject.set(k.name, { code: 'double', name: '$' + k.name }); continue }
+    if (doubtful === null) { reject.set(k.name, { code: 'list', name: '_state' }); continue }
+    if (k.force || (k.locals && k.locals.length > 0)) { reject.set(k.name, { code: 'list', name: k.force ? 'µderived' : 'if' }); continue }
     const l = new Set<string>()
-    const r = prouver(k.noeud, new Set(), l)
-    if (r) { refus.set(k.nom, { code: 'liste', nom: decrire(r) }); continue }
-    const ext = [...l].find((x) => dehors.has(x) || douteuses.has(x))
-    if (ext !== undefined) { refus.set(k.nom, { code: douteuses.has(ext) ? 'garde' : 'liste', nom: '$' + ext }); continue }
-    lus.set(k.nom, l)
+    const r = prove(k.node, new Set(), l)
+    if (r) { reject.set(k.name, { code: 'list', name: describe(r) }); continue }
+    const ext = [...l].find((x) => outer.has(x) || doubtful.has(x))
+    if (ext !== undefined) { reject.set(k.name, { code: doubtful.has(ext) ? 'guard' : 'list', name: '$' + ext }); continue }
+    read.set(k.name, l)
   }
   // une valeur qui en lit une autre à l'horloge y reste aussi ; ses sources : aplaties, cycle refusé
   const sources = new Map<string, string[]>()
-  const aplatir = (nom: string, pile: Set<string>): string[] | null => {
-    if (sources.has(nom)) return sources.get(nom)!
-    if (refus.has(nom) || pile.has(nom)) return null
-    pile.add(nom)
+  const flatten = (name: string, stack: Set<string>): string[] | null => {
+    if (sources.has(name)) return sources.get(name)!
+    if (reject.has(name) || stack.has(name)) return null
+    stack.add(name)
     const out = new Set<string>()
-    for (const x of lus.get(nom)!) {
+    for (const x of read.get(name)!) {
       out.add(x)
       if (!definitions.has(x)) continue
-      const s = aplatir(x, pile)
+      const s = flatten(x, stack)
       if (s === null) {
-        if (!refus.has(nom)) refus.set(nom, { code: 'derivee', nom: '$' + x })
-        pile.delete(nom)
+        if (!reject.has(name)) reject.set(name, { code: 'derived', name: '$' + x })
+        stack.delete(name)
         return null
       }
       for (const y of s) out.add(y)
     }
-    pile.delete(nom)
-    const liste = [...out].sort()
-    sources.set(nom, liste)
-    return liste
+    stack.delete(name)
+    const list = [...out].sort()
+    sources.set(name, list)
+    return list
   }
-  for (const nom of lus.keys()) aplatir(nom, new Set())
-  for (const nom of [...sources.keys()]) if (refus.has(nom)) sources.delete(nom)
+  for (const name of read.keys()) flatten(name, new Set())
+  for (const name of [...sources.keys()]) if (reject.has(name)) sources.delete(name)
   // suivies : les valeurs au calcul coûteux (cf. couteuse) et les valeurs qu'elles lisent ; les autres, prouvées, restent à
-  // l'horloge (`simples`) — la refaire coûte moins que vérifier ses sources
-  const suivies = new Set<string>()
-  const suivre = (nom: string) => {
-    if (suivies.has(nom) || !sources.has(nom)) return
-    suivies.add(nom)
-    for (const x of lus.get(nom)!) if (definitions.has(x)) suivre(x)
+  // l'horloge (`simpleNames`) — la refaire coûte moins que vérifier ses sources
+  const tracked = new Set<string>()
+  const track = (name: string) => {
+    if (tracked.has(name) || !sources.has(name)) return
+    tracked.add(name)
+    for (const x of read.get(name)!) if (definitions.has(x)) track(x)
   }
-  for (const k of candidats) if (sources.has(k.nom) && couteuse(k.noeud)) suivre(k.nom)
-  const simples = new Set<string>()
-  for (const nom of [...sources.keys()]) {
-    if (suivies.has(nom)) continue
-    sources.delete(nom)
-    simples.add(nom)
+  for (const k of candidates) if (sources.has(k.name) && isCostly(k.node)) track(k.name)
+  const simpleNames = new Set<string>()
+  for (const name of [...sources.keys()]) {
+    if (tracked.has(name)) continue
+    sources.delete(name)
+    simpleNames.add(name)
   }
-  return { sources, refus, simples }
+  return { sources, reject, simpleNames }
 }
 
 // cible d'une écriture : `$.x` (affectation, `+=`, `++`, motif de déstructuration, tête de `for…of`) ou `µwrite $x`
 // (`µ._mjs_rawWrite(_mjsThis).x`) ; `noms` : les valeurs dérivées cherchées
-function cibleChoisie(t: any, noms: Set<string>, out: Set<string>): void {
+function chosenTarget(t: any, names: Set<string>, out: Set<string>): void {
   if (!t) return
   switch (t.type) {
     case 'MemberExpression': {
       const o      = t.object
       const dollar = o.type === 'Identifier' && o.name === '$'
-      const brute  = o.type === 'CallExpression' && o.callee.type === 'MemberExpression' && !o.callee.computed && o.callee.property.type === 'Identifier' && o.callee.property.name === '_mjs_rawWrite'
-      if (!t.computed && t.property.type === 'Identifier' && noms.has(t.property.name) && (dollar || brute)) out.add(t.property.name)
+      const raw    = o.type === 'CallExpression' && o.callee.type === 'MemberExpression' && !o.callee.computed && o.callee.property.type === 'Identifier' && o.callee.property.name === '_mjs_rawWrite'
+      if (!t.computed && t.property.type === 'Identifier' && names.has(t.property.name) && (dollar || raw)) out.add(t.property.name)
       return
     }
-    case 'ArrayPattern': for (const x of t.elements) cibleChoisie(x, noms, out); return
-    case 'ObjectPattern': for (const p of t.properties) cibleChoisie(p.type === 'RestElement' ? p.argument : p.value, noms, out); return
-    case 'AssignmentPattern': cibleChoisie(t.left, noms, out); return
-    case 'RestElement': cibleChoisie(t.argument, noms, out); return
+    case 'ArrayPattern': for (const x of t.elements) chosenTarget(x, names, out); return
+    case 'ObjectPattern': for (const p of t.properties) chosenTarget(p.type === 'RestElement' ? p.argument : p.value, names, out); return
+    case 'AssignmentPattern': chosenTarget(t.left, names, out); return
+    case 'RestElement': chosenTarget(t.argument, names, out); return
   }
 }
 
 // valeurs dérivées que le code écrit : dans une fonction du `<script>` (son premier niveau les définit), partout dans les
-// gestionnaires du gabarit (`partout`)
-function choixEcrits(ast: any, noms: Set<string>, out: Set<string>, partout: boolean): void {
-  const visiter = (n: any, dedans: boolean): void => {
+// gestionnaires du gabarit (`everywhere`)
+function writtenChoices(ast: any, names: Set<string>, out: Set<string>, everywhere: boolean): void {
+  const visit = (n: any, inside: boolean): void => {
     if (!n || typeof n.type !== 'string') return
-    if (dedans) {
-      if (n.type === 'AssignmentExpression') cibleChoisie(n.left, noms, out)
-      else if (n.type === 'UpdateExpression') cibleChoisie(n.argument, noms, out)
-      else if ((n.type === 'ForOfStatement' || n.type === 'ForInStatement') && n.left.type !== 'VariableDeclaration') cibleChoisie(n.left, noms, out)
+    if (inside) {
+      if (n.type === 'AssignmentExpression') chosenTarget(n.left, names, out)
+      else if (n.type === 'UpdateExpression') chosenTarget(n.argument, names, out)
+      else if ((n.type === 'ForOfStatement' || n.type === 'ForInStatement') && n.left.type !== 'VariableDeclaration') chosenTarget(n.left, names, out)
     }
-    const d = dedans || /Function/.test(n.type)
+    const d = inside || /Function/.test(n.type)
     for (const k of Object.keys(n)) {
-      if (CLES.has(k)) continue
+      if (KEYS.has(k)) continue
       const v = n[k]
-      if (Array.isArray(v)) { for (const x of v) visiter(x, d) }
-      else if (v && typeof v.type === 'string') visiter(v, d)
+      if (Array.isArray(v)) { for (const x of v) visit(x, d) }
+      else if (v && typeof v.type === 'string') visit(v, d)
     }
   }
-  visiter(ast, partout)
+  visit(ast, everywhere)
 }
 
 // dépendances nommées des `µderived $x = expr, $a` que le composant écrit (dans une fonction du `<script>` ou un gestionnaire
 // du gabarit) : texte d'une `Map` nom → dépendances, lue par le runtime à l'écriture (`_mjs_computedSrc`,
 // runtime/mjs_element.ts). Null sans `µderived` écrite : le code produit ne change pas
-export function deriveesChoisies(script: any, candidats: DeriveCandidat[], gestionnaires: string): string | null {
-  const nommees = new Map<string, string[]>()
-  for (const k of candidats) if (k.nommees) nommees.set(k.nom, k.nommees)
-  if (nommees.size === 0) return null
-  const noms = new Set(nommees.keys())
-  const out  = new Set<string>()
-  if (script) choixEcrits(script, noms, out, false)
-  if (gestionnaires.trim()) {
+export function chosenDerived(script: any, candidates: DerivedCandidate[], handlers: string): string | null {
+  const named = new Map<string, string[]>()
+  for (const k of candidates) if (k.named) named.set(k.name, k.named)
+  if (named.size === 0) return null
+  const names = new Set(named.keys())
+  const out   = new Set<string>()
+  if (script) writtenChoices(script, names, out, false)
+  if (handlers.trim()) {
     try {
-      choixEcrits(acorn.parse(gestionnaires, { ecmaVersion: 'latest', sourceType: 'module' }), noms, out, true)
+      writtenChoices(acorn.parse(handlers, { ecmaVersion: 'latest', sourceType: 'module' }), names, out, true)
     }
     catch {
       // gestionnaires illisibles : leurs écritures ne sont pas vues, la valeur écrite par eux seuls devient une variable ordinaire
     }
   }
-  const table = [...out].map((nom) => [nom, nommees.get(nom)!.filter((s) => s !== nom)] as const).filter(([, s]) => s.length > 0)
+  const table = [...out].map((name) => [name, named.get(name)!.filter((s) => s !== name)] as const).filter(([, s]) => s.length > 0)
   return table.length > 0 ? `new Map(${JSON.stringify(table)})` : null
 }

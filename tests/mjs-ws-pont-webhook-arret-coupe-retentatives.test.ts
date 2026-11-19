@@ -48,7 +48,7 @@ describe('MJS-WS — pont : app.stop() coupe les retentatives et les envois de w
     })
     await app.listen()
     await connecter(transport)
-    await attendre(() => app.stats().pont.webhooksEchoues >= 1)
+    await attendre(() => app.stats().bridge.webhooksFailed >= 1)
     await app.stop()
     assert.equal(timeouts(), avant, 'une minuterie du pont est restée vivante après app.stop()')
   })

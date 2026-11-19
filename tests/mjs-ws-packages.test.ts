@@ -92,7 +92,7 @@ describe('MJS-WS — paquets activables (app.use, MjsPackage, definirPaquet)', (
     await app.stop()
   })
 
-  it('4. definirPaquet(nom, installer) — installable et fonctionnel', async () => {
+  it('4. definePackage(name, install) — installable et fonctionnel', async () => {
     const { transport, app } = await startApp()
     const paquetPing = definePackage('ping', a => a.serve('ping', () => ({ pong: true })))
     app.use(paquetPing)

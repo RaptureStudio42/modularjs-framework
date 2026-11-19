@@ -3,8 +3,8 @@
 // seulement si une source du projet écrit `<@element`/`<@module` (scan textuel, cf.
 // bundler/index.ts) — le µeffect qui pilote la mise à jour dépend aussi de mjs_effect.ts,
 // forcé par le même signal.
-// deux parties qui ne se servent pas l'une de l'autre, la balise (bloc `<element-dynamique>`) et le composant (bloc
-// `<module-dynamique>`) : en production, chacune quitte le cœur quand aucune unité du build ne l'appelle, sauf si `runtime`
+// deux parties qui ne se servent pas l'une de l'autre, la balise (bloc `<dynamic-element>`) et le composant (bloc
+// `<dynamic-module>`) : en production, chacune quitte le cœur quand aucune unité du build ne l'appelle, sauf si `runtime`
 // demande le module (`'all'`, ou `'dynamic'` dans la liste ; bundler/index.ts) ; les aides communes restent hors des deux blocs
 //
 // Le transpiler rend un placeholder <div mjs-el="N"> avec les enfants, et émet
@@ -43,26 +43,26 @@
 };
 
 // masque/démasque partagés entre µ._updDynEl et µ._updModule. Le
-// marqueur `_mjs_mjsMasque` distingue NOTRE display:none (posé par la garde falsy) d'un display
+// marqueur `_mjs_mjsMask` distingue NOTRE display:none (posé par la garde falsy) d'un display
 // choisi par l'auteur : `removeProperty` ne part jamais sur un style qu'on n'a pas nous-même
-// écrasé. `_mjs_mjsDisplayAvant` mémorise la valeur d'auteur AVANT l'écrasement (idempotent : un
+// écrasé. `_mjs_mjsDisplayPrev` mémorise la valeur d'auteur AVANT l'écrasement (idempotent : un
 // second masquage ne réécrit pas la mémoire) pour la restaurer telle quelle au démasquage —
 // sans elle, un `style="display:flex"` masqué puis re-basculé perdait sa valeur pour de bon.
 µ._mjs_dynMask = function(cur) {
   if (!cur.style) return;
-  if (!cur._mjs_mjsMasque) cur._mjs_mjsDisplayAvant = cur.style.display;
+  if (!cur._mjs_mjsMask) cur._mjs_mjsDisplayPrev = cur.style.display;
   cur.style.display = 'none';
-  cur._mjs_mjsMasque = true;
+  cur._mjs_mjsMask = true;
 };
 µ._mjs_dynUnmask = function(cur) {
-  if (!cur.style || !cur._mjs_mjsMasque) return;
-  if (cur._mjs_mjsDisplayAvant) cur.style.display = cur._mjs_mjsDisplayAvant;
+  if (!cur.style || !cur._mjs_mjsMask) return;
+  if (cur._mjs_mjsDisplayPrev) cur.style.display = cur._mjs_mjsDisplayPrev;
   else cur.style.removeProperty('display');
-  cur._mjs_mjsMasque = false;
-  cur._mjs_mjsDisplayAvant = null;
+  cur._mjs_mjsMask = false;
+  cur._mjs_mjsDisplayPrev = null;
 };
 
-// <element-dynamique>
+// <dynamic-element>
 // la dernière balise demandée pour chaque repère d'un composant (balise, `accept`), que reprend le repère neuf d'une branche recréée
 // (µ._mjs_dynRe) ; dans une table du cœur, jamais sur le composant
 var _mjs_dynArgs = new WeakMap();
@@ -81,24 +81,24 @@ function _mjsDynRef(x) {
   // bloc {if}/{key}/{await} refermé puis rouvert, une ligne retirée détachent les leurs, que le cache pointerait encore (replaceWith =
   // no-op silencieux, ou pire early-return sur tagName identique) —, puis les repères neufs, retrouvés par leur marqueur : ligne ajoutée,
   // branche recréée. `re` (µ._mjs_dynRe) : seuls les repères neufs prennent la balise, les nœuds connus ont déjà la leur
-  var l = els[key] || [], vus = new Set(), curs = [], racine = component._shadow, out = _mjs_dynOut.get(component), tous, neufs, j, n, cur, autre, refus, vieux;
+  var l = els[key] || [], seen = new Set(), curs = [], root = component._shadow, out = _mjs_dynOut.get(component), all, fresh, j, n, cur, other, rejection, old;
   if (!out) _mjs_dynOut.set(component, out = {});
   out = out[key] || (out[key] = []);
   for (j = 0; j < l.length; j++) {
     if (!l[j].isConnected) out.push(_mjsDynRef(l[j]));
-    else if (!vus.has(l[j])) {
-      vus.add(l[j]);
+    else if (!seen.has(l[j])) {
+      seen.add(l[j]);
       curs.push(l[j]);
     }
   }
-  neufs = curs.length;
+  fresh = curs.length;
   // les nœuds sortis de la page sont gardés sans être retenus : revenus, ils prennent la balise demandée comme un repère neuf ; partis
   // pour de bon, oubliés
   for (j = out.length - 1; j >= 0; j--) {
     n = out[j].deref();
-    if (n === void 0 || vus.has(n)) out.splice(j, 1);
+    if (n === void 0 || seen.has(n)) out.splice(j, 1);
     else if (n.isConnected) {
-      vus.add(n);
+      seen.add(n);
       curs.push(n);
       out.splice(j, 1);
     }
@@ -106,15 +106,15 @@ function _mjsDynRef(x) {
   // les repères du composant lui-même : un enfant léger (`:lightDom`) rend son contenu dans la même ombre, avec ses propres repères
   // numérotés depuis zéro comme les nôtres ; les nôtres sont ceux qu'aucun hôte léger ne sépare de notre racine. À défaut, un repère
   // que nous glissons chez un enfant léger, jamais celui que l'enfant a déjà pris pour lui (même numéro)
-  tous = racine.querySelectorAll('[mjs-el="' + key + '"]');
-  for (j = 0; j < tous.length; j++) {
-    if (vus.has(tous[j])) continue;
-    n = tous[j].parentNode;
-    while (n !== racine && !n._mjs_isLight) n = n.parentNode;
-    if (n === racine) curs.push(tous[j]);
-    else if (!autre && !(n._mjs_dynEls && n._mjs_dynEls[key] && n._mjs_dynEls[key].indexOf(tous[j]) >= 0)) autre = tous[j];
+  all = root.querySelectorAll('[mjs-el="' + key + '"]');
+  for (j = 0; j < all.length; j++) {
+    if (seen.has(all[j])) continue;
+    n = all[j].parentNode;
+    while (n !== root && !n._mjs_isLight) n = n.parentNode;
+    if (n === root) curs.push(all[j]);
+    else if (!other && !(n._mjs_dynEls && n._mjs_dynEls[key] && n._mjs_dynEls[key].indexOf(all[j]) >= 0)) other = all[j];
   }
-  if (!curs.length && autre) curs.push(autre);
+  if (!curs.length && other) curs.push(other);
   els[key] = curs;
   // tag falsy → masquer (garde AUSSI la valeur ÉPURÉE : ' ' seul passait la garde
   // brute puis levait sur document.createElement('') — bruyant, capté par le µeffect englobant
@@ -122,7 +122,7 @@ function _mjsDynRef(x) {
   // création ET le message.
   var tagStr = (tag == null || tag === false) ? '' : String(tag).trim();
   var newTagName = tagStr.toUpperCase();
-  for (j = re ? neufs : 0; j < curs.length; j++) {
+  for (j = re ? fresh : 0; j < curs.length; j++) {
     cur = curs[j];
     if (tagStr === '') {
       µ._mjs_dynMask(cur);
@@ -137,7 +137,7 @@ function _mjsDynRef(x) {
     // SÉCURITÉ — accept ABSENT : pool `µ._mjs_dynTagsRefuses` seul refuse (8 balises). accept
     // PRÉSENT (chaîne ou tableau, casse insensible) : liste FERMÉE, seuls les noms qu'elle contient
     // sont créés — pool ou pas ; une liste normalisée vide n'autorise donc plus rien. Jugée une fois pour toutes les lignes, dite une fois
-    if (refus === void 0) {
+    if (rejection === void 0) {
       var norm = tagStr.toLowerCase();
       var hasAccept  = typeof accept === 'string' || Array.isArray(accept);
       var acceptNorm = µ._mjs_dynAcceptList(accept);
@@ -149,15 +149,25 @@ function _mjsDynRef(x) {
       if (refuseList) {
         µ.warn(µ._mjs_msg('dynNotListed', { norm: norm, list: acceptNorm.join(' ') }, '<@element>/<@module> : balise « {norm} » refusée — hors de la liste accept="{list}" ; quand accept est présent, seuls les noms qu\'il liste sont créés.'));
       }
-      refus = refusePool || refuseList;
+      rejection = refusePool || refuseList;
     }
-    if (refus) continue;
+    if (rejection) continue;
     // retire NOTRE masque avant de copier les attributs vers le nouveau nœud :
     // sinon un nœud masqué puis basculé vers un autre tag hérite du display:none (la boucle copie
     // l'attribut `style` de l'ancien nœud). `_mjs_dynUnmask` ne touche RIEN si on n'a
     // jamais masqué (un display d'auteur au tout premier rendu survit donc, intact).
     µ._mjs_dynUnmask(cur);
-    var nn = document.createElement(tagStr), i, a = cur.attributes;
+    var nn, i, a = cur.attributes;
+    // un nom qui n'est pas un nom de balise (une espace, un chiffre en tête : une valeur venue d'une donnée) fait lever le navigateur, et
+    // l'erreur arrêterait le composant entier : la balise en place reste, dit une fois pour toutes les lignes
+    // au rendu serveur, le document ne contrôle pas le nom et l'écrirait tel quel dans la page (« img src=x onerror=… » y deviendrait une balise
+    // qui exécute son gestionnaire) : le nom passe d'abord le contrôle du navigateur, une lettre en tête, ni espace, ni « / », ni « > »
+    try { if (!/^[a-zA-Z][^\s/>\0]*$/.test(tagStr)) throw new TypeError(tagStr); nn = document.createElement(tagStr); }
+    catch {
+      µ.warn(µ._mjs_msg('dynBadName', { norm: tagStr }, '<@element>/<@module> : « {norm} » n\'est pas un nom de balise — la balise en place reste.'));
+      rejection = true;
+      continue;
+    }
     // `mjs-appearing` (le bouclier sans transition d'un composant, mjs_init.ts) ne suit pas : la balise neuve ne le perdrait jamais
     for (i = 0; i < a.length; i++) {
       if (a[i].name !== 'mjs-el' && a[i].name !== 'mjs-appearing') nn.setAttribute(a[i].name, a[i].value);
@@ -191,19 +201,19 @@ function _mjsDynRef(x) {
     // qui quitte ensuite l'objet quitte aussi la balise neuve. Hors du bloc de la classe : il part en production quand aucune classe écrite
     // ne l'appelle (`<@element $tag {...$x}>` seul), le relevé des clés doit rester
     nn._mjs_spk = cur._mjs_spk;
-    // <etale-classe>
+    // <spread-class>
     // sa part de la classe et la classe écrite calculée suivent aussi, pour que l'étalement qui change ou perd sa classe ne retire que ce
     // qu'il avait apporté, jamais un jeton de la classe écrite
     nn._mjs_spm = cur._mjs_spm; _mjs_clsBases.set(nn, _mjs_clsBases.get(cur));
     if (_mjs_spCk.has(cur)) _mjs_spCk.set(nn, _mjs_spCk.get(cur));
-    // </etale-classe>
+    // </spread-class>
     // `_mjs_once_fired` (mjs_element.ts) est une
     // WeakMap<nœud, Set<clé>> : le nouveau nœud est une clé neuve, un `.once` déjà déclenché
     // repartait donc à chaque remplacement. On transfère l'entrée existante vers le nouveau nœud.
     var onceMap = component._mjs_once_fired; if (onceMap && onceMap.has(cur)) onceMap.set(nn, onceMap.get(cur));
     µ._mjs_swap(cur, nn);
     curs[j] = nn;
-    (vieux || (vieux = new Map())).set(cur, nn);
+    (old || (old = new Map())).set(cur, nn);
     // resynchronise toute référence du composant qui pointait sur l'ancien nœud : une
     // liaison réactive (@style.*, attribut) posée sur ce <@element> compile vers `this._mjs_nodes.sN`,
     // figée sur le placeholder sans cette passe — les effets suivants écriraient pour toujours sur
@@ -216,11 +226,11 @@ function _mjsDynRef(x) {
   // la place de l'ancienne, sinon la ligne retirée ou déplacée laisserait la balise neuve dans la page. De même dans les réfs de la ligne
   // (`__nodes`), que ses mises à jour relisent (generator/compile.ts) : sinon ses liaisons écrivaient sur l'ancienne balise, hors de la page
   var lc = component._mjs_list_cache, c, e, m;
-  if (vieux && lc) {
+  if (old && lc) {
     for (c in lc) {
       if (lc[c]) for (e of lc[c].values()) {
-        for (m = 0; e.nodes && m < e.nodes.length; m++) if (vieux.has(e.nodes[m])) e.nodes[m] = vieux.get(e.nodes[m]);
-        for (m in e.__nodes) if (vieux.has(e.__nodes[m])) e.__nodes[m] = vieux.get(e.__nodes[m]);
+        for (m = 0; e.nodes && m < e.nodes.length; m++) if (old.has(e.nodes[m])) e.nodes[m] = old.get(e.nodes[m]);
+        for (m in e.__nodes) if (old.has(e.__nodes[m])) e.__nodes[m] = old.get(e.__nodes[m]);
       }
     }
   }
@@ -233,9 +243,9 @@ function _mjsDynRef(x) {
   var args = _mjs_dynArgs.get(component), k;
   for (k in args) µ._updDynEl(component, k, args[k][0], args[k][1], 1);
 };
-// </element-dynamique>
+// </dynamic-element>
 
-// <module-dynamique>
+// <dynamic-module>
 // ============================================================================
 // <@module $comp> — composant dynamique (équivalent <svelte:component this={X}>)
 // ============================================================================
@@ -264,14 +274,14 @@ function _mjsDynRef(x) {
 // (`tuto-card-a` → `mjs-tuto-card-a`) quand le projet le connaît — défini, ou listé au manifeste
 // (`µ.paths`, clé = nom sans préfixe : un composant pas encore chargé y figure) ; sinon le nom reste
 // tel quel : déjà complet (`mjs-…`), balise HTML native (`section`), élément tiers (`mon-widget`).
-µ._mjs_modTag = function(nom) {
-  var n = nom.toLowerCase();
-  if (n.slice(0, 4) === 'mjs-') return nom;
-  var connu = (µ.paths && Object.prototype.hasOwnProperty.call(µ.paths, n)) || (typeof customElements !== 'undefined' && customElements.get('mjs-' + n));
+µ._mjs_modTag = function(name) {
+  var n = name.toLowerCase();
+  if (n.slice(0, 4) === 'mjs-') return name;
+  var known = (µ.paths && Object.prototype.hasOwnProperty.call(µ.paths, n)) || (typeof customElements !== 'undefined' && customElements.get('mjs-' + n));
   // une balise HTML connue reste native, même si un composant porte le même nom (`section`) : le
   // composant s'écrit alors par son nom complet (`mjs-section`)
-  if (connu && n.indexOf('-') < 0 && !(document.createElement(n) instanceof HTMLUnknownElement)) return nom;
-  return connu ? 'mjs-' + nom : nom;
+  if (known && n.indexOf('-') < 0 && !(document.createElement(n) instanceof HTMLUnknownElement)) return name;
+  return known ? 'mjs-' + name : name;
 };
 
 // µ._mjs_modProps — pose les props d'un <@module> sur `el`, comme le fait un composant écrit en dur :
@@ -281,14 +291,14 @@ function _mjsDynRef(x) {
 // vidé en microtâche) ne repose pas la même valeur — un littéral `{ u: $u }` aurait sinon une 2ᵉ référence au montage
 µ._mjs_modProps = function(el, props) {
   if (!props) return;
-  var neuf = typeof props === 'function';
-  if (neuf) props = props();
+  var fresh = typeof props === 'function';
+  if (fresh) props = props();
   for (var k in props) {
     if (el._set) el._set(k, props[k]);
     else µ._mjs_pend(el, k, props[k]);
     µ._mjs_modGlob(el, k, props[k]);
   }
-  if (neuf) {
+  if (fresh) {
     // les VALEURS posées à la création : l'effet d'une prop ne se tait que s'il apporte la même
     el._mjs_modFresh = props;
     queueMicrotask(function() { el._mjs_modFresh = null; });
@@ -323,25 +333,25 @@ function _mjsDynRef(x) {
 
 // µ._mjs_modGlob — un attribut global que le navigateur lit sur la balise (`title`, `role`, `hidden`, `tabindex`, `lang`, `dir`,
 // `slot`) se pose AUSSI sur la balise d'un composant `mjs-…`, en plus de sa prop, comme sur un composant écrit en dur (même liste
-// et même règle, cf. logiqueComposant, generator/attributes/index.ts ; `id` et `class` sont des attributs de la balise, cf.
+// et même règle, cf. componentLogic, generator/attributes/index.ts ; `id` et `class` sont des attributs de la balise, cf.
 // µ._mjs_modAttrs) — sauf quand le composant déclare lui-même une prop de ce nom (`_mjs_var_bits`, nom comparé sans la casse) :
 // il la garde pour lui, sans attribut. Un composant pas encore défini (chargé à la demande) ne dit pas ses props : l'attribut
 // attend sa définition, une seule attente par balise (`_mjs_haw`), et c'est la dernière valeur écrite (`_mjs_ha`, sous le nom écrit, `_mjs_hk`)
 // qui se pose
 µ._mjs_modGlob = function(el, k, v) {
-  var nom = k.toLowerCase();
-  if (!/^(?:title|role|hidden|tabindex|lang|dir|slot)$/.test(nom) || el.localName.slice(0, 4) !== 'mjs-') return;
-  (el._mjs_ha || (el._mjs_ha = Object.create(null)))[nom] = v;
-  (el._mjs_hk || (el._mjs_hk = Object.create(null)))[nom] = k;
-  var pose = function(x) {
+  var name = k.toLowerCase();
+  if (!/^(?:title|role|hidden|tabindex|lang|dir|slot)$/.test(name) || el.localName.slice(0, 4) !== 'mjs-') return;
+  (el._mjs_ha || (el._mjs_ha = Object.create(null)))[name] = v;
+  (el._mjs_hk || (el._mjs_hk = Object.create(null)))[name] = k;
+  var sets = function(x) {
     var d = el._mjs_var_bits && Object.keys(el._mjs_var_bits).find(function(y) { return y.toLowerCase() === x; });
     if (!d) µ._mjs_updAttrNode(el, x, el._mjs_ha[x], 1);
     else if (d !== el._mjs_hk[x]) el._set(d, el._mjs_ha[x]);
   };
-  if (el._mjs_var_bits) pose(nom);
+  if (el._mjs_var_bits) sets(name);
   else if (!el._mjs_haw) {
     el._mjs_haw = 1;
-    customElements.whenDefined(el.localName).then(function() { el._mjs_haw = 0; for (var x in el._mjs_ha) pose(x); });
+    customElements.whenDefined(el.localName).then(function() { el._mjs_haw = 0; for (var x in el._mjs_ha) sets(x); });
   }
 };
 
@@ -358,30 +368,30 @@ function _mjsDynRef(x) {
 µ._mjs_modKeep = function(cur, props, attrs) {
   µ._mjs_dynUnmask(cur);
   if (typeof props !== 'function') µ._mjs_modProps(cur, props);
-  // <reprise-serveur>
+  // <server-resume>
   else if (!cur._mjs_modOrig && !cur.hasAttribute('mjs-mod')) {
     cur._mjs_modOrig = cur;
     µ._mjs_modProps(cur, props);
   }
-  // </reprise-serveur>
+  // </server-resume>
   µ._mjs_modAttrs(cur, attrs);
 };
 
 // les rangs d'une ligne de `{for}` (`_mjs_idx_N`), que sa mise à jour pose sur la tête du repère (`node`), suivent le composant vivant, où
 // un gestionnaire de la ligne retrouve son élément : les quatre premiers nommés ici, les suivants par la description de la ligne (`ix`)
-function _mjsModRangs(de, a) {
-  var rg = de._mjs_ev && de._mjs_ev._mjs_reg, r;
-  a._mjs_idx_0 = de._mjs_idx_0;
-  a._mjs_idx_1 = de._mjs_idx_1;
-  a._mjs_idx_2 = de._mjs_idx_2;
-  a._mjs_idx_3 = de._mjs_idx_3;
-  if (rg && rg.ix) for (r in rg.ix) a[r] = de[r];
+function _mjsModRanks(from, a) {
+  var rg = from._mjs_ev && from._mjs_ev._mjs_reg, r;
+  a._mjs_idx_0 = from._mjs_idx_0;
+  a._mjs_idx_1 = from._mjs_idx_1;
+  a._mjs_idx_2 = from._mjs_idx_2;
+  a._mjs_idx_3 = from._mjs_idx_3;
+  if (rg && rg.ix) for (r in rg.ix) a[r] = from[r];
 }
 µ._updModule = function(component, key, Comp, accept, props, node, attrs, refs) {
   var cur = node;
   if (cur && cur._mjs_modLive) cur = cur._mjs_modLive;
   // dans une ligne, la tête a reçu les rangs de cette passe (ligne déplacée, liste refaite) : le composant vivant les reprend
-  if (refs && cur !== node) _mjsModRangs(node, cur);
+  if (refs && cur !== node) _mjsModRanks(node, cur);
   if (!cur) {
     component._mjs_mods || (component._mjs_mods = {});
     cur = component._mjs_mods[key];
@@ -411,8 +421,8 @@ function _mjsModRangs(de, a) {
       return;
     }
     // Déjà monté sur ce tag ? → ne pas recréer (préserve l'état du composant), les props suivent.
-    var balise = µ._mjs_modTag(compStr);
-    if (cur.tagName === balise.toUpperCase()) return µ._mjs_modKeep(cur, props, attrs);
+    var compTag = µ._mjs_modTag(compStr);
+    if (cur.tagName === compTag.toUpperCase()) return µ._mjs_modKeep(cur, props, attrs);
     // SÉCURITÉ — même garde que µ._updDynEl : accept ABSENT → pool `µ._mjs_dynTagsRefuses` seul
     // refuse ; accept PRÉSENT → liste FERMÉE, seuls les noms qu'elle contient sont créés, pool ou
     // pas.
@@ -421,7 +431,7 @@ function _mjsModRangs(de, a) {
     var acceptNorm = µ._mjs_dynAcceptList(accept);
     var refusePool = !hasAccept && µ._mjs_dynTagsRefuses.indexOf(norm) !== -1;
     // le nom tapé OU la balise créée : `accept="tuto-ca"` et `accept="mjs-tuto-ca"` valent la même chose
-    var tag        = balise.toLowerCase();
+    var tag        = compTag.toLowerCase();
     var refuseList = hasAccept && acceptNorm.indexOf(norm) === -1 && acceptNorm.indexOf(tag) === -1 && !(tag.slice(0, 4) === 'mjs-' && acceptNorm.indexOf(tag.slice(4)) !== -1);
     if (refusePool) {
       return µ.warn(µ._mjs_msg('dynRefused', { norm: norm }, '<@element>/<@module> : balise « {norm} » refusée — un élément dynamique ne peut pas devenir {norm} ; pour l\'autoriser explicitement : accept="{norm}".'));
@@ -429,7 +439,11 @@ function _mjsModRangs(de, a) {
     if (refuseList) {
       return µ.warn(µ._mjs_msg('dynNotListed', { norm: norm, list: acceptNorm.join(' ') }, '<@element>/<@module> : balise « {norm} » refusée — hors de la liste accept="{list}" ; quand accept est présent, seuls les noms qu\'il liste sont créés.'));
     }
-    nn = document.createElement(balise);
+    // même garde que µ._updDynEl : un nom qui n'est pas un nom de balise laisse le composant en place
+    try { if (!/^[a-zA-Z][^\s/>\0]*$/.test(compTag)) throw new TypeError(compTag); nn = document.createElement(compTag); }
+    catch {
+      return µ.warn(µ._mjs_msg('dynBadName', { norm: compStr }, '<@element>/<@module> : « {norm} » n\'est pas un nom de balise — la balise en place reste.'));
+    }
   } else if (typeof Comp === 'function') {
     // Déjà cette classe ? → ne pas recréer.
     if (cur.constructor === Comp) return µ._mjs_modKeep(cur, props, attrs);
@@ -449,14 +463,14 @@ function _mjsModRangs(de, a) {
     // un attribut global posé par sa prop (µ._mjs_modGlob) ne suit pas : il se repose selon le composant neuf, qui peut garder la prop pour lui
     if (a[i].name !== 'mjs-mod' && !(ha && a[i].name in ha)) nn.setAttribute(a[i].name, a[i].value);
   }
-  // <etale-classe>
+  // <spread-class>
   // la classe qu'un étalement pose sur le composant (µ._mjs_spCls) et les autres clés qu'il y pose comme attributs viennent de suivre avec
   // les attributs : sa part de la classe et ses relevés aussi, pour que l'étalement qui change ou perd une clé ne retire, sur le composant
   // neuf, que ce qu'il avait apporté, et qu'une clé qui quitte l'objet quitte le composant neuf
   if (_mjs_spCk.has(cur)) _mjs_spCk.set(nn, _mjs_spCk.get(cur));
   nn._mjs_spm = cur._mjs_spm;
   nn._mjs_spk = cur._mjs_spk;
-  // </etale-classe>
+  // </spread-class>
   // cf. commentaire jumeau sur µ._updDynEl ci-dessus : filet explicite pour `style`.
   // cf. commentaire jumeau sur µ._updDynEl ci-dessus : garde `cssText` non vide (régression,
   // `style=""` parasite).
@@ -466,17 +480,17 @@ function _mjsModRangs(de, a) {
   while (cur.firstChild) nn.appendChild(cur.firstChild);
   // cf. commentaire jumeau sur µ._updDynEl ci-dessus : le routage des événements suit la balise neuve
   µ._mjs_evCopy(cur, nn);
-  // et les rangs de sa ligne, pris sur la tête (cf. _mjsModRangs) : sans eux, un clic sur le composant neuf agissait sur la première ligne
-  if (refs && node) _mjsModRangs(node, nn);
+  // et les rangs de sa ligne, pris sur la tête (cf. _mjsModRanks) : sans eux, un clic sur le composant neuf agissait sur la première ligne
+  if (refs && node) _mjsModRanks(node, nn);
   // cf. commentaire jumeau sur µ._updDynEl ci-dessus : transfère l'entrée `.once` déjà
   // déclenchée vers le nouveau nœud.
   var onceMap = component._mjs_once_fired; if (onceMap && onceMap.has(cur)) onceMap.set(nn, onceMap.get(cur));
   µ._mjs_swap(cur, nn);
   if (component._mjs_mods) component._mjs_mods[key] = nn;
-  var tete = cur._mjs_modOrig || cur;
-  tete._mjs_modLive = nn;
-  nn._mjs_modOrig   = tete;
-  var ent = refs && refs._mjs_en, ns = ent && ent.nodes;
+  var head          = cur._mjs_modOrig || cur;
+  head._mjs_modLive = nn;
+  nn._mjs_modOrig   = head;
+  var ent = refs && refs._mjs_ent, ns = ent && ent.nodes;
   if (ns) {
     for (var j = 0; j < ns.length; j++) { if (ns[j] === cur) ns[j] = nn; }
   }
@@ -486,4 +500,4 @@ function _mjsModRangs(de, a) {
     for (var k in component._mjs_nodes) { if (component._mjs_nodes[k] === cur) component._mjs_nodes[k] = nn; }
   }
 };
-// </module-dynamique>
+// </dynamic-module>

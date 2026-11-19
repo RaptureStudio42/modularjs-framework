@@ -55,8 +55,8 @@ describe('mjs_devinspect — le plafond de 200 entrées compte le reste sans tou
     const hote = window.document.createElement('div')
     window.document.body.appendChild(hote)
     window.µ._mjs_diRender(hote, valeur, { ns: 'plafond-' + Math.random() })
-    const reste = hote.querySelector('.di-reste')
-    return { lignes: hote.querySelectorAll('.di-ligne').length, reste: reste ? reste.textContent : '' }
+    const reste = hote.querySelector('.di-rest')
+    return { lignes: hote.querySelectorAll('.di-line').length, reste: reste ? reste.textContent : '' }
   }
 
   it('une Map de 50 000 entrées : 200 lues, « et 49800 de plus »', () => {

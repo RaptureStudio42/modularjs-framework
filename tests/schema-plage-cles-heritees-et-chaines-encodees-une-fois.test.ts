@@ -9,25 +9,25 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { creerRegistre, defSchema, encode, decode, bits, list } from '../src/schema/core.js'
+import { createRegistry, defineSchema, encode, decode, bits, list } from '../src/schema/core.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const schemaSrc = readFileSync(join(__dirname, '../src/runtime/mjs_schema.ts'), 'utf8')
 
 interface Codec {
-  nom: string
+  name: string
   declarer(nom: string, champs: any): void
   encoder(nom: string, objet: any): Uint8Array
   decoder(octets: Uint8Array): any
 }
 
 function codecServeur(): Codec {
-  const registre = creerRegistre()
+  const registre = createRegistry()
   return {
-    nom: 'serveur',
-    declarer: (nom, champs) => { defSchema(registre, nom, champs) },
+    name: 'serveur',
+    declarer: (nom, champs) => { defineSchema(registre, nom, champs) },
     encoder: (nom, objet) => encode(registre, nom, objet),
-    decoder: (octets) => decode(registre, octets).objet,
+    decoder: (octets) => decode(registre, octets).data,
   }
 }
 
@@ -42,15 +42,15 @@ function muClient(): any {
 function codecClient(): Codec {
   const µ = muClient()
   return {
-    nom: 'client',
+    name: 'client',
     declarer: (nom, champs) => { µ.schema(nom, champs) },
-    encoder: (nom, objet) => µ.interne.encoder(µ._mjs_mjschemaRegistre, nom, objet),
-    decoder: (octets) => µ.interne.decoder(µ._mjs_mjschemaRegistre, octets).objet,
+    encoder: (nom, objet) => µ.interne.encoder(µ._mjs_mjschemaRegistry, nom, objet),
+    decoder: (octets) => µ.interne.decoder(µ._mjs_mjschemaRegistry, octets).object,
   }
 }
 
 for (const fabrique of [codecServeur, codecClient]) {
-  const cote = fabrique().nom
+  const cote = fabrique().name
 
   describe(`µschema (${cote}) — valeur hors de la plage du type`, () => {
     const cas: Array<[string, number]> = [['u8', 300], ['u8', -1], ['i8', 200], ['u16', 70000], ['u16', 1e10], ['i16', 40000], ['u32', -1], ['i32', 2 ** 31]]

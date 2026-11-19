@@ -22,10 +22,10 @@
 (function() {
   var MAX_SENDS   = 20;
   var MAX_MESSAGE = 300;
-  var MAX_PILE    = 7000;
+  var MAX_STACK   = 7000;
   var MAX_URL     = 500;
-  var sent = 0;
-  var seen = new Set();
+  var sent        = 0;
+  var seen        = new Set();
 
   var enabled = function() {
     return !!(µ.config && µ.config.journal === true);
@@ -40,10 +40,10 @@
     return s.length > max ? s.slice(0, max) : s;
   };
 
-  var buildPayload = function(message, pile) {
+  var buildPayload = function(message, stack) {
     return {
       message: truncate(String(message || ''), MAX_MESSAGE),
-      pile: truncate(String(pile || ''), MAX_PILE),
+      stack: truncate(String(stack || ''), MAX_STACK),
       url: truncate(location.pathname + location.search, MAX_URL),
       version: µ.version || null
     };
@@ -53,7 +53,7 @@
   µ._mjs_journalSend = function(payload) {
     try {
       if (!enabled()) return;
-      var sig = payload.message + '\n' + firstLine(payload.pile) + '\n' + payload.url;
+      var sig = payload.message + '\n' + firstLine(payload.stack) + '\n' + payload.url;
       if (seen.has(sig)) return;
       if (sent >= MAX_SENDS) return;
       seen.add(sig);

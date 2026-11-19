@@ -81,11 +81,33 @@ describe('navigation interne — la fiche du fichier de page est relue à chaque
       µ._mjs_navPageFile(reponse(fiche(JSON.stringify({ file, names: ['card'] }))))
       assert.equal(µ.paths.card, 'card-11111111.js', `refusé : ${file}`)
     }
-    for (const file of ['mjs_page-doc-aaaaaaaa.js', '/out/mjs_page-doc-aaaaaaaa.js', '/assets/modularJS_compiled/mjs_page-index-0f3a9c21.js']) {
+    // la forme des valeurs de `µ.paths` : le nom seul (préfixe factorisé, `µ.pathsPrefix`), ou ce nom à la racine du site
+    for (const file of ['mjs_page-doc-aaaaaaaa.js', '/mjs_page-doc-aaaaaaaa.js']) {
       const { µ, reponse } = monter({ card: 'card-11111111.js' })
       µ._mjs_navPageFile(reponse(fiche(JSON.stringify({ file, names: ['card'] }))))
       assert.equal(µ.paths.card, file, `accepté : ${file}`)
     }
+  })
+
+  // pourquoi ce test : un contenu de visiteur assaini, rendu par le serveur dans la page reçue (un élément ordinaire, l'id
+  // `__mjs_page` et du texte), faisait importer et exécuter un fichier déposé ailleurs sur le site (`../uploads/…`). La fiche
+  // n'est lue que dans le `<script type="application/json">` que le build écrit, et son fichier reste dans le dossier du cœur
+  it('une fiche hors de son script, ou un fichier hors du dossier du cœur, est ignorée', () => {
+    const json = '{"file":"mjs_page-doc-aaaaaaaa.js","names":["card"]}'
+    for (const corps of [`<div id="__mjs_page">${json}</div>`, `<p id="__mjs_page">${json}</p>`, `<script type="text/plain" id="__mjs_page">${json}</script>`]) {
+      const { µ, reponse } = monter({ card: 'card-11111111.js' })
+      µ._mjs_navPageFile(reponse(corps))
+      assert.equal(µ.paths.card, 'card-11111111.js', `refusé : ${corps}`)
+    }
+    for (const file of ['../uploads/mjs_page-x-aaaaaaaa.js', '/uploads/mjs_page-x-aaaaaaaa.js', 'uploads/mjs_page-x-aaaaaaaa.js', '/out/../uploads/mjs_page-x-aaaaaaaa.js', '/out/mjs_page-doc-aaaaaaaa.js']) {
+      const { µ, reponse } = monter({ card: 'card-11111111.js' })
+      µ._mjs_navPageFile(reponse(fiche(JSON.stringify({ file, names: ['card'] }))))
+      assert.equal(µ.paths.card, 'card-11111111.js', `refusé : ${file}`)
+    }
+    // un élément ordinaire du même id placé AVANT la vraie fiche ne la masque pas
+    const { µ, reponse } = monter({ card: 'card-11111111.js' })
+    µ._mjs_navPageFile(reponse(`<div id="__mjs_page">{"file":"../uploads/mjs_page-x-aaaaaaaa.js","names":["card"]}</div>${fiche(json)}`))
+    assert.equal(µ.paths.card, 'mjs_page-doc-aaaaaaaa.js')
   })
 
   // pourquoi ce test : si le fichier de page n'arrive pas (404 pendant un déploiement), l'Autoloader doit

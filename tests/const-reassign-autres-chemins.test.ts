@@ -2,7 +2,7 @@
 // compilent du Civet, pas seulement le `<script>` d'un composant et le module `.civet` autonome :
 //   - `<script module>` d'un composant (réaffectée dans le bloc lui-même, depuis une fonction) ;
 //   - `<script>` d'un composant qui réaffecte une constante de son `<script module>` ;
-//   - fichier serveur `.server.mjs` (mjs ws / mjs serveur) et entrée `.civet` brute ;
+//   - fichier serveur `.server.mjs` (mjs ws / mjs server) et entrée `.civet` brute ;
 //   - fichiers `.civet` réunis par un manifeste externe (`#= require`).
 // Sans ce refus : build vert, puis `TypeError: Assignment to constant variable` à l'exécution.
 // Un homonyme local (`.=` dans le `<script>`, paramètre) n'est jamais visé.
@@ -39,7 +39,7 @@ describe('constante `:=` — <script module> d\'un composant', function () {
   })
 })
 
-describe('constante `:=` — fichiers serveur (mjs ws / mjs serveur)', function () {
+describe('constante `:=` — fichiers serveur (mjs ws / mjs server)', function () {
   it('.server.mjs : réaffectée depuis une fonction imbriquée → refus à la compilation', async () => {
     const root  = mjsTmp('const-server-mjs')
     const entry = join(root, 'app.server.mjs')

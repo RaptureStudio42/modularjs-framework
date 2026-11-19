@@ -5,17 +5,18 @@ import { isComponentFile } from './bundler/class-files.js'
 import { existsSync, readdirSync, readFileSync, statSync, realpathSync, accessSync, constants } from 'node:fs'
 import { createRequire } from 'node:module'
 import { Bundler, type CompileStats } from './bundler/index.js'
-import type { DeriveeClassee } from './analyzer/derived-classes.js'
+import type { ClassifiedDerived } from './analyzer/derived-classes.js'
 import { StaticServer } from './server/index.js'
-import { findConfig, resolveBundlerOpts, refusManifestPath, cheminDansDossier } from './bundler/config.js'
+import { findConfig, resolveBundlerOpts, rejectManifestPath, pathInDir } from './bundler/config.js'
 import { runInit } from './cli/init.js'
 import { runWsCommand } from './cli/ws.js'
-import { runServeurCommand } from './cli/server.js'
+import { runServerCommand } from './cli/server.js'
 import { syncAgentsMd } from './cli/agents-md.js'
-import { startCheckJson, countWarningLines, filesOf } from './cli/check-json.js'
+import { startCheckJson, countWarningLines } from './cli/check-json.js'
+import { FaultListing } from './cli/check-faults.js'
 import { flushWorkerOutput } from './bundler/worker-pool.js'
 import { runMcp } from './cli/mcp.js'
-import { acquireDevLock, gardeArret, SHUTDOWN_GRACE_MS } from './cli/dev-lock.js'
+import { acquireDevLock, stopGuard, SHUTDOWN_GRACE_MS } from './cli/dev-lock.js'
 import { prerenderPages } from './server/prerender.js'
 import { emitStartup, latestBundler } from './bundler/startup.js'
 import { createDevPrerenderScheduler } from './cli/dev-prerender.js'
@@ -53,25 +54,25 @@ function readPackageVersion(): string | null {
 // et la garde refusait un projet parfaitement valide que le bundler, lui, aurait construit
 // (trouvé en testant).
 function hasComponents(dir: string): boolean {
-  const pile        = [dir]
-  const dossiersVus = new Set<string>()
-  while (pile.length > 0) {
-    const courant = pile.pop()!
-    let reel: string
-    try { reel = realpathSync(courant) } catch { continue }   // lien cassé — cette branche seulement
-    if (dossiersVus.has(reel)) continue
-    dossiersVus.add(reel)
-    for (const nom of readdirSync(courant)) {
-      if (nom.startsWith('.') || nom === 'node_modules') continue
-      const chemin = join(courant, nom)
+  const stack    = [dir]
+  const seenDirs = new Set<string>()
+  while (stack.length > 0) {
+    const current = stack.pop()!
+    let real: string
+    try { real = realpathSync(current) } catch { continue }   // lien cassé — cette branche seulement
+    if (seenDirs.has(real)) continue
+    seenDirs.add(real)
+    for (const name of readdirSync(current)) {
+      if (name.startsWith('.') || name === 'node_modules') continue
+      const path = join(current, name)
       let st
-      try { st = statSync(chemin) } catch { continue }
-      if (st.isDirectory()) pile.push(chemin)
+      try { st = statSync(path) } catch { continue }
+      if (st.isDirectory()) stack.push(path)
       // MÊME EXCLUSION que le bundler (`!basename(f, '.mjs').startsWith('_')`) : un partial
       // `_entete.mjs` n'est PAS un composant, seulement du contenu à inclure. Les compter faisait
       // passer la garde à un dossier qui n'en contient que — et rendait exactement le sinistre
       // qu'elle existe pour empêcher : « ✅ 2 fichiers écrits », code 0, `µ.paths = {}`.
-      else if (isComponentFile(nom) && !nom.startsWith('_') && st.size > 0) return true
+      else if (isComponentFile(name) && !name.startsWith('_') && st.size > 0) return true
     }
   }
   return false
@@ -146,14 +147,14 @@ const FS_ERROR_CODES = new Set(['EACCES', 'EPERM', 'ENOENT', 'EROFS', 'ENOSPC', 
 // contrainte SYMÉTRIQUE, un dossier déjà présent à cet emplacement n'échouait, lui, qu'en PLEINE
 // compilation (`EISDIR` au premier `readFileSync`/`writeFileSync` du manifeste), stack Node brute,
 // une partie de `outputDir` déjà écrite au moment du plantage.
-function checkWritablePath(target: string, cle: string, mustBeDir = false, mustBeFile = false): void {
+function checkWritablePath(target: string, key: string, mustBeDir = false, mustBeFile = false): void {
   const resolved = resolve(target)
   if (mustBeDir && existsSync(resolved) && !statSync(resolved).isDirectory()) {
-    console.error(t('cli.output-doit-etre-dossier', { cle, chemin: resolved }))
+    console.error(t('cli.output-must-be-dir', { key: key, path: resolved }))
     process.exit(1)
   }
   if (mustBeFile && existsSync(resolved) && statSync(resolved).isDirectory()) {
-    console.error(t('cli.manifest-doit-etre-fichier', { cle, chemin: resolved }))
+    console.error(t('cli.manifest-must-be-file', { key: key, path: resolved }))
     process.exit(1)
   }
   let ancestor = resolved
@@ -165,7 +166,7 @@ function checkWritablePath(target: string, cle: string, mustBeDir = false, mustB
   try {
     accessSync(ancestor, constants.W_OK)
   } catch (e: any) {
-    console.error(t('cli.chemin-non-inscriptible', { cle, chemin: target, ancetre: ancestor, erreur: e?.message || e }))
+    console.error(t('cli.path-not-writable', { key: key, path: target, ancestor, error: e?.message || e }))
     process.exit(1)
   }
 }
@@ -198,43 +199,43 @@ async function settleWarningLines(): Promise<number> {
 // celles imprimées en direct pendant la compilation (a11y…, threads de travail compris)
 function printWarningsSummary(bundler: Bundler, stats: CompileStats, direct: number): void {
   if (stats.warnings.length > 0) {
-    bundler.buildWarn(t('cli.avertissements-titre', { nb: stats.warnings.length + direct, plusHaut: direct }))
+    bundler.buildWarn(t('cli.warnings-title', { count: stats.warnings.length + direct, above: direct }))
     for (const w of stats.warnings) bundler.buildWarn('   '+ w)
   }
-  if ((stats.lintPrinted ?? 0) > 0 || printedTypedLines() > 0) bundler.buildWarn(t('cli.lint-aide-desactivation'))
+  if ((stats.lintPrinted ?? 0) > 0 || printedTypedLines() > 0) bundler.buildWarn(t('cli.lint-help-disable'))
 }
 
 // `mjs check --derived` : le mode de l'appli (option `derived` de mjs.config.json) et sa légende — à l'horloge, ce que la précision
 // changerait —, puis par fichier, chaque valeur dérivée, sa classe (« précise » ou « horloge ») et ses raisons, puis le total et le
 // compte des raisons (une dérivée compte une fois par raison) ; un fichier sans dérivée n'est pas listé
-function printDerivedReport(derivees: Map<string, DeriveeClassee[]>, racine: string, precise: boolean): void {
-  const fichiers = [...derivees].filter(([, l]) => l.length > 0).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-  console.log(precise ? t('cli.derivees-titre-precise') : t('cli.derivees-titre-horloge'))
-  if (fichiers.length === 0) {
-    console.log(t('cli.derivees-aucune'))
+function printDerivedReport(derived: Map<string, ClassifiedDerived[]>, root: string, precise: boolean): void {
+  const files = [...derived].filter(([, l]) => l.length > 0).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+  console.log(precise ? t('cli.derived-title-precise') : t('cli.derived-title-clock'))
+  if (files.length === 0) {
+    console.log(t('cli.derived-none'))
     console.log(``)
     return
   }
-  let total       = 0
-  let precises    = 0
-  const parRaison = new Map<string, number>()
-  for (const [fichier, liste] of fichiers) {
-    console.log(`   ${relative(racine, fichier)}`)
-    const large = Math.max(...liste.map((d) => d.nom.length + 1))
-    for (const d of liste) {
+  let total      = 0
+  let precises   = 0
+  const byReason = new Map<string, number>()
+  for (const [file, list] of files) {
+    console.log(`   ${relative(root, file)}`)
+    const large = Math.max(...list.map((d) => d.name.length + 1))
+    for (const d of list) {
       total++
-      const nom = ('$' + d.nom).padEnd(large)
-      if (d.classe === 'precise') {
+      const name = ('$' + d.name).padEnd(large)
+      if (d.class === 'precise') {
         precises++
-        console.log(`      ${nom}  ${t('cli.derivees-precise')}`)
+        console.log(`      ${name}  ${t('cli.derived-precise')}`)
         continue
       }
-      console.log(`      ${nom}  ${t('cli.derivees-horloge')} — ${d.raisons.map((r) => t('cli.derivees-raison', { code: r.code, nom: r.nom, par: r.par })).join(' ; ')}`)
-      for (const code of new Set(d.raisons.map((r) => r.code))) parRaison.set(code, (parRaison.get(code) ?? 0) + 1)
+      console.log(`      ${name}  ${t('cli.derived-clock')} — ${d.reasons.map((r) => t('cli.derived-reason', { code: r.code, name: r.name, by: r.by })).join(' ; ')}`)
+      for (const code of new Set(d.reasons.map((r) => r.code))) byReason.set(code, (byReason.get(code) ?? 0) + 1)
     }
   }
-  const detail = [...parRaison].sort((a, b) => b[1] - a[1]).map(([code, nb]) => t('cli.derivees-raison-courte', { code, nb })).join(', ')
-  console.log(t('cli.derivees-total', { nb: total, fichiers: fichiers.length, precises, horloges: total - precises, detail }))
+  const detail = [...byReason].sort((a, b) => b[1] - a[1]).map(([code, count]) => t('cli.derived-reason-short', { code, count: count })).join(', ')
+  console.log(t('cli.derived-total', { count: total, files: files.length, precise: precises, clocks: total - precises, detail }))
   console.log(``)
 }
 
@@ -243,8 +244,9 @@ function printBuildReport(stats: CompileStats): void {
   // en dessous (rien ne distinguait « succès » de « succès partiel, N cassés
   // repêchés » au premier coup d'œil) : la ligne d'échec passe maintenant
   // AVANT, toujours visible même si stats.sizes est vide.
-  if (stats.errors.length > 0) console.log(t('cli.build-rapport-echecs', { nb: stats.errors.length }))
-  console.log(t('cli.build-rapport', { nb: stats.written, ms: stats.durationMs }))
+  // les erreurs listées plus bas (une faute d'un fichier importé y est dite une fois), puis les composants en échec
+  if (stats.errors.length > 0) console.log(t('cli.build-report-failures', { count: stats.errors.length, components: stats.failedComponents ?? 0 }))
+  console.log(t('cli.build-report', { count: stats.written, ms: stats.durationMs }))
   if (stats.sizes.length === 0) return
 
   // Top 10 par taille (le bundle, le runtime, les composants les plus gros)
@@ -257,7 +259,7 @@ function printBuildReport(stats: CompileStats): void {
   if (stats.sizes.length > 10) {
     const rest = stats.sizes.slice(10)
     const restBytes = rest.reduce((a, b) => a + b.bytes, 0)
-    const label = t('cli.plus-n-autres', { nb: rest.length })
+    const label = t('cli.n-more', { count: rest.length })
     console.log(`   ${label.padEnd(maxName)}  ${fmtBytes(restBytes).padStart(8)}`)
   }
   const total = stats.sizes.reduce((a, b) => a + b.bytes, 0)
@@ -267,7 +269,7 @@ function printBuildReport(stats: CompileStats): void {
 
 const USAGE = t('cli.usage')
 
-const COMMANDS = ['init', 'build', 'dev', 'check', 'serve', 'ws', 'serveur', 'mcp'] as const
+const COMMANDS = ['init', 'build', 'dev', 'check', 'serve', 'ws', 'server', 'mcp'] as const
 
 // distance d'édition (insertion, suppression, substitution, transposition de deux voisins)
 function editDistance(a: string, b: string): number {
@@ -283,24 +285,24 @@ function editDistance(a: string, b: string): number {
 }
 
 // commande la plus proche d'un mot mal tapé, ou null si aucune n'est assez proche
-function closestCommand(mot: string): string | null {
+function closestCommand(word: string): string | null {
   let best: string | null = null
   let bestDist = Infinity
   for (const c of COMMANDS) {
-    const dist = c.startsWith(mot.toLowerCase()) ? 1 : editDistance(mot.toLowerCase(), c)
+    const dist = c.startsWith(word.toLowerCase()) ? 1 : editDistance(word.toLowerCase(), c)
     if (dist < bestDist) { best = c; bestDist = dist }
   }
   return bestDist <= 2 ? best : null
 }
 
 interface Args {
-  command: 'init' | 'build' | 'dev' | 'check' | 'serve' | 'ws' | 'serveur' | 'mcp'
+  command: 'init' | 'build' | 'dev' | 'check' | 'serve' | 'ws' | 'server' | 'mcp'
   root: string
   manifest?: string
   output?: string
   port?: number
-  /** --host : hôte pour `mjs ws` et `mjs serveur` — cf. WsCommandArgs.host,
-   *  cli/ws.ts et ServeurCommandArgs.host, cli/server.ts */
+  /** --host : hôte pour `mjs ws` et `mjs server` — cf. WsCommandArgs.host,
+   *  cli/ws.ts et ServerCommandArgs.host, cli/server.ts */
   host?: string
   entry?: string
   help?: boolean
@@ -313,8 +315,8 @@ interface Args {
   /** `--json` : `mjs check` rend un seul document JSON, erreurs et avertissements en objets (cf. cli/check-json.ts) */
   json?: boolean
   /** `--cache` : `mjs build` ne recompile que les fichiers changés depuis la construction d'avant (cf. Bundler.loadDiskCache) */
-  /** `--cache=verifier` : la même construction, puis comparée à l'octet à une construction complète (cf. Bundler.verifyDiskCache) */
-  cache?: boolean | 'verifier'
+  /** `--cache=verify` : la même construction, puis comparée à l'octet à une construction complète (cf. Bundler.verifyDiskCache) */
+  cache?: boolean | 'verify'
   /** premier mot qui n'est ni une commande ni un drapeau : refusé par run(), jamais un build */
   unknownCommand?: string
 }
@@ -328,7 +330,7 @@ function parseArgs(argv: string[]): Args {
   const value = (flag: string): string | undefined => {
     const v = argv[i + 1]
     if (v === undefined || v.startsWith('-')) {
-      console.warn(t('cli.flag-valeur-manquante', { flag }))
+      console.warn(t('cli.flag-value-missing', { flag }))
       return undefined
     }
     i++ // consomme la valeur
@@ -351,10 +353,10 @@ function parseArgs(argv: string[]): Args {
       if (v !== undefined) {
         const p = parseInt(v, 10)
         if (Number.isFinite(p)) args.port = p
-        else console.warn(t('cli.port-invalide', { valeur: v }))
+        else console.warn(t('cli.port-invalid', { value: v }))
       }
     } else if (a === '--host') {
-      // hôte, pour `mjs ws` et `mjs serveur` — les autres commandes ignorent args.host
+      // hôte, pour `mjs ws` et `mjs server` — les autres commandes ignorent args.host
       const v = value('--host'); if (v !== undefined) args.host = v
     } else if (a === '--once') {
       args.command = 'build'
@@ -368,8 +370,8 @@ function parseArgs(argv: string[]): Args {
       args.json = true
     } else if (a === '--cache') {
       args.cache = true
-    } else if (a === '--cache=verifier') {
-      args.cache = 'verifier'
+    } else if (a === '--cache=verify') {
+      args.cache = 'verify'
     } else if (a === '-h' || a === '--help') {
       args.help = true
     } else if (a === '-v' || a === '--version') {
@@ -383,7 +385,7 @@ function parseArgs(argv: string[]): Args {
       // constatant que l'option attendue n'a "pour une raison inconnue"
       // pas été appliquée. Un MOT inconnu (commande mal tapée) n'est plus un simple avertissement :
       // la commande par défaut (`build`) écrasait la sortie, cf. run().
-      if (a.startsWith('-')) console.warn(t('cli.flag-inconnu', { arg: a }))
+      if (a.startsWith('-')) console.warn(t('cli.flag-unknown', { arg: a }))
       else args.unknownCommand ??= a
     }
     i++
@@ -399,7 +401,7 @@ async function run(argv: string[]): Promise<void> {
   if (args.version) {
     const version = readPackageVersion()
     if (version === null) {
-      console.error(t('cli.version-illisible'))
+      console.error(t('cli.version-unreadable'))
       process.exit(1)
     }
     console.log(t('cli.version', { version }))
@@ -412,23 +414,23 @@ async function run(argv: string[]): Promise<void> {
   // commande mal tapée (`mjs biuld`, `mjs serv`) : refusée AVANT tout — retomber sur `build`
   // écrasait la sortie servie par un build de développement, avec un code 0
   if (args.unknownCommand !== undefined) {
-    console.error(t('cli.commande-inconnue', { commande: args.unknownCommand }))
-    const proche = closestCommand(args.unknownCommand)
-    if (proche) console.error(t('cli.commande-suggestion', { commande: proche }))
-    else console.error(t('cli.commande-voir-aide'))
+    console.error(t('cli.command-unknown', { command: args.unknownCommand }))
+    const near = closestCommand(args.unknownCommand)
+    if (near) console.error(t('cli.command-suggestion', { command: near }))
+    else console.error(t('cli.command-see-help'))
     process.exit(1)
   }
   // `--derived` ne vaut que pour `mjs check` : ailleurs, dit plutôt qu'ignoré sans un mot
-  if (args.derived && args.command !== 'check') console.warn(t('cli.derived-hors-check', { commande: args.command }))
+  if (args.derived && args.command !== 'check') console.warn(t('cli.derived-outside-check', { command: args.command }))
   // `--json` : même règle que `--derived`
-  if (args.json && args.command !== 'check') console.warn(t('cli.json-hors-check', { commande: args.command }))
+  if (args.json && args.command !== 'check') console.warn(t('cli.json-outside-check', { command: args.command }))
   // `--cache` ne vaut que pour `mjs build` : même règle
-  if (args.cache && args.command !== 'build') console.warn(t('cli.cache-hors-build', { commande: args.command }))
+  if (args.cache && args.command !== 'build') console.warn(t('cli.cache-outside-build', { command: args.command }))
   // capture posée AVANT tout le reste : la sortie standard ne portera que le document, refus avant compilation compris
   const checkJson = args.json && args.command === 'check' ? startCheckJson(readPackageVersion()) : null
   if (!checkJson && (args.command === 'build' || args.command === 'check' || args.command === 'dev')) warningLines = countWarningLines()
 
-  // Résolu en ABSOLU AVANT le chdir : `mjs ws`/`mjs serveur` repassent `args.root` tel quel à
+  // Résolu en ABSOLU AVANT le chdir : `mjs ws`/`mjs server` repassent `args.root` tel quel à
   // resolveEntryPath (cli/ws.ts, cli/server.ts) — un `--root child` RELATIF, encore relatif après
   // ce chdir, se voit alors ré-ancré depuis le cwd DÉJÀ déplacé (<root>/child/child/…, introuvable).
   // Un chemin déjà absolu traverse `resolve()` inchangé, aucune régression pour l'usage courant.
@@ -436,10 +438,10 @@ async function run(argv: string[]): Promise<void> {
     args.root = resolve(args.root)
     // racine absente ou fichier : dit tel quel, la racine nommée — sans ça le filet final
     // annonçait « impossible d'écrire » avec le dossier COURANT
-    let estDossier = false
-    try { estDossier = statSync(args.root).isDirectory() } catch { /* absente : estDossier reste faux */ }
-    if (!estDossier) {
-      console.error(t('cli.racine-introuvable', { racine: args.root }))
+    let isDir = false
+    try { isDir = statSync(args.root).isDirectory() } catch { /* absente : estDossier reste faux */ }
+    if (!isDir) {
+      console.error(t('cli.root-not-found', { root: args.root }))
       process.exit(1)
     }
     process.chdir(args.root)
@@ -472,9 +474,9 @@ async function run(argv: string[]): Promise<void> {
     // resolveBundlerOpts() (bundler/config.ts) : même piège structurel que le reste de ce
     // littéral (cf. commentaire ci-dessus).
     // `render` (bloc des pages, lu par le bundler pour le seul module d'hydratation) : idem.
-    : { sourceDir: undefined, outputDir: undefined, manifestPath: undefined, manifestExternal: undefined, stylesheetsDir: undefined, assetDirs: undefined, runtimeDir: undefined, urlPrefix: undefined, defaultScriptLang: undefined, templateLang: undefined, sigil: undefined, contextAlias: undefined, varPrefix: undefined, defaultTheme: undefined, preload: undefined, viewTransition: undefined, logLevel: undefined, messages: undefined, types: undefined, typesReport: undefined, derivedMode: undefined, routesPreload: undefined, blocksPreload: undefined, proxy: undefined, responsiveFontSize: undefined, collections: undefined, effects: undefined, bundles: undefined, maxStateVars: undefined, a11y: undefined, ujsForm: undefined, lint: undefined, image: undefined, minify: 'auto' as const, devPort: undefined, devHost: undefined, runtime: undefined, css: undefined, js: undefined, csp: undefined, anchorHistory: undefined, sourceMap: undefined, i18n: undefined, render: undefined, prune: undefined }
+    : { sourceDir: undefined, outputDir: undefined, manifestPath: undefined, manifestExternal: undefined, stylesheetsDir: undefined, assetDirs: undefined, runtimeDir: undefined, urlPrefix: undefined, defaultScriptLang: undefined, templateLang: undefined, sigil: undefined, contextAlias: undefined, varPrefix: undefined, defaultTheme: undefined, preload: undefined, viewTransition: undefined, logLevel: undefined, messages: undefined, types: undefined, typesReport: undefined, derivedMode: undefined, reffetsMode: undefined, routesPreload: undefined, blocksPreload: undefined, proxy: undefined, responsiveFontSize: undefined, collections: undefined, effects: undefined, bundles: undefined, maxStateVars: undefined, a11y: undefined, ujsForm: undefined, lint: undefined, image: undefined, minify: 'auto' as const, devPort: undefined, devHost: undefined, runtime: undefined, css: undefined, js: undefined, csp: undefined, anchorHistory: undefined, sourceMap: undefined, i18n: undefined, render: undefined, prune: undefined }
   if (found) {
-    console.log(t('cli.config-trouve', { dossier: found.configDir }))
+    console.log(t('cli.config-found', { dir: found.configDir }))
   }
 
   // GARDE ANTI-BOURDE — `mjs build` lancé DEPUIS LE MAUVAIS
@@ -496,13 +498,13 @@ async function run(argv: string[]): Promise<void> {
     // présente dont le `sourceDir` avait été renommé rejouait le sinistre à l'identique,
     // « ✅ 2 fichiers écrits », code 0, manifeste écrasé (même sinistre, vérifié en testant).
     if (!existsSync(sourceDir)) {
-      console.error(t('cli.build-racine-vide', { commande: args.command, racine: process.cwd(), source: sourceDir, origine: t(cfgOpts.sourceDir ? 'cli.source-origine-config' : 'cli.source-origine-defaut') }))
+      console.error(t('cli.build-root-empty', { command: args.command, root: process.cwd(), source: sourceDir, origin: t(cfgOpts.sourceDir ? 'cli.source-origin-config' : 'cli.source-origin-default') }))
       process.exit(1)
     }
     // `mjs dev` reste tolérant au dossier VIDE : on lance couramment le watcher avant
     // d'écrire son premier composant. `build` et `check`, eux, écrivent pour de bon.
     if (args.command !== 'dev' && !hasComponents(sourceDir)) {
-      console.error(t('cli.build-aucun-composant', { commande: args.command, source: sourceDir }))
+      console.error(t('cli.build-no-component', { command: args.command, source: sourceDir }))
       process.exit(1)
     }
   }
@@ -521,9 +523,9 @@ async function run(argv: string[]): Promise<void> {
     const sourceDir = cfgOpts.sourceDir ?? resolve(found?.configDir ?? process.cwd(), 'app/modularjs')
     const i18nDir = join(sourceDir, 'i18n')
     if (existsSync(i18nDir)) {
-      const langues = readI18nLanguages(i18nDir)
-      if (langues.length > 0 && !langues.includes(found.config.i18n.default)) {
-        const line = typedLine('i18n', t('cli.i18n-default-sans-dictionnaire', { defaut: found.config.i18n.default, langues: langues.join(', ') }), cfgOpts.lint)
+      const langs = readI18nLanguages(i18nDir)
+      if (langs.length > 0 && !langs.includes(found.config.i18n.default)) {
+        const line = typedLine('i18n', t('cli.i18n-default-no-dictionary', { defaultValue: found.config.i18n.default, langs: langs.join(', ') }), cfgOpts.lint)
         if (line !== null) printDiagnostic(line, colorsEnabled)
       }
     }
@@ -540,9 +542,9 @@ async function run(argv: string[]): Promise<void> {
   // déploiement : un `mjs build` lancé sans `--prod` y annonce « DÉVELOPPEMENT ». La minification se dit à part,
   // par la règle du Bundler : `"minify": true` minifie un build de développement, `false` laisse lisible la production.
   if (args.command === 'build' || args.command === 'check' || args.command === 'dev' || args.command === 'serve') {
-    const origine = args.env ? t('cli.env-origine-flag') : t('cli.env-origine-defaut')
+    const origin  = args.env ? t('cli.env-origin-flag') : t('cli.env-origin-default')
     const minifie = Bundler.minifies(cfgOpts.minify ?? 'auto', envBuild)
-    console.log(t(envBuild === 'prod' ? 'cli.env-prod' : 'cli.env-dev', { origine, minifie }))
+    console.log(t(envBuild === 'prod' ? 'cli.env-prod' : 'cli.env-dev', { origin: origin, minified: minifie }))
   }
 
   const bundler = new Bundler({
@@ -587,6 +589,7 @@ async function run(argv: string[]): Promise<void> {
     types:             cfgOpts.types,
     typesReport:       cfgOpts.typesReport,
     derivedMode:       cfgOpts.derivedMode,
+    reffetsMode:       cfgOpts.reffetsMode,
     routesPreload:     cfgOpts.routesPreload,
     blocksPreload:     cfgOpts.blocksPreload,
     proxy:             cfgOpts.proxy,
@@ -672,24 +675,24 @@ async function run(argv: string[]): Promise<void> {
     // le manifeste écrase le dossier de sortie (ou l'inverse) en pleine compilation, laissant une
     // écriture PARTIELLE derrière une trace Node brute (EISDIR) — refusé AVANT toute compilation.
     if (resolve(bundler.outputDir) === resolve(bundler.manifestPath)) {
-      console.error(t('cli.output-manifest-identiques', { chemin: resolve(bundler.outputDir) }))
+      console.error(t('cli.output-manifest-identical', { path: resolve(bundler.outputDir) }))
       process.exit(1)
     }
     // manifeste sur son chemin DÉFINITIF, drapeaux compris : mjs.config.json est vérifié à la lecture, `--manifest` et
     // `--output` ne le sont qu'ici — `mjs build --manifest app/modularjs/manifest.civet` écrasait le manifeste de l'auteur.
-    // Les chemins seulement : un fichier existant de l'auteur est refusé par la construction elle-même (cf. Bundler.refusSortiesAuteur)
-    const refus = refusManifestPath({ manifestPath: bundler.manifestPath, sourceDir: bundler.sourceDir, outputDir: bundler.outputDir, manifestExternal: bundler.manifestExternal })
-    if (refus !== null) {
-      if (refus.raison === 'extension') console.error(t('cli.manifest-refuse-extension', { chemin: bundler.manifestPath, extension: refus.extension }))
-      else if (refus.raison === 'externe') console.error(t('cli.manifest-refuse-externe', { chemin: bundler.manifestPath }))
-      else console.error(t('cli.manifest-refuse-sources', { chemin: bundler.manifestPath, sourceDir: bundler.sourceDir, outputDir: bundler.outputDir }))
+    // Les chemins seulement : un fichier existant de l'auteur est refusé par la construction elle-même (cf. Bundler.authorOutputsReject)
+    const reject = rejectManifestPath({ manifestPath: bundler.manifestPath, sourceDir: bundler.sourceDir, outputDir: bundler.outputDir, manifestExternal: bundler.manifestExternal })
+    if (reject !== null) {
+      if (reject.reason === 'extension') console.error(t('cli.manifest-refused-extension', { path: bundler.manifestPath, extension: reject.extension }))
+      else if (reject.reason === 'external') console.error(t('cli.manifest-refused-external', { path: bundler.manifestPath }))
+      else console.error(t('cli.manifest-refused-sources', { path: bundler.manifestPath, sourceDir: bundler.sourceDir, outputDir: bundler.outputDir }))
       process.exit(1)
     }
     // dossier de sortie qui contient la racine du projet (dossier parent) : `mjs dev` et `mjs serve` serviraient tout ce dossier, les
     // fichiers privés d'une appli voisine compris. La racine elle-même reste permise : le serveur y garde les fichiers du projet
-    const racine = found?.configDir ?? process.cwd()
-    if (args.command !== 'check' && cheminDansDossier(racine, bundler.outputDir) && !cheminDansDossier(bundler.outputDir, racine)) {
-      console.error(t('cli.output-contient-racine', { chemin: resolve(bundler.outputDir), racine }))
+    const root = found?.configDir ?? process.cwd()
+    if (args.command !== 'check' && pathInDir(root, bundler.outputDir) && !pathInDir(bundler.outputDir, root)) {
+      console.error(t('cli.output-contains-root', { path: resolve(bundler.outputDir), root: root }))
       process.exit(1)
     }
     checkWritablePath(bundler.outputDir, 'outputDir', true)
@@ -711,23 +714,25 @@ async function run(argv: string[]): Promise<void> {
       printBuildReport(stats)
       // `--cache` : fichiers repris et recompilés, ou la raison d'une construction complète
       if (bundler.diskCacheLine !== null) console.log(bundler.diskCacheLine)
-      // `--cache=verifier` : la construction servie par le cache comparée à l'octet à une construction complète ; un écart jette le cache,
+      // `--cache=verify` : la construction servie par le cache comparée à l'octet à une construction complète ; un écart jette le cache,
       // la construction complète est refaite sur place et fait foi pour le prérendu et la purge (la sortie devient celle de `mjs build`),
       // puis la commande échoue
-      const verdict   = args.cache === 'verifier' && stats.errors.length === 0 ? await bundler.verifyDiskCache() : null
-      const cacheJete = verdict !== null && !verdict.ok
-      const base      = verdict?.rebuilt ?? bundler
-      const suite     = stats.errors.length === 0 && (verdict?.errors.length ?? 0) === 0
+      const verdict        = args.cache === 'verify' && stats.errors.length === 0 ? await bundler.verifyDiskCache() : null
+      const cacheDiscarded = verdict !== null && !verdict.ok
+      const base           = verdict?.rebuilt ?? bundler
+      const rest           = stats.errors.length === 0 && (verdict?.errors.length ?? 0) === 0
       if (verdict?.ok) console.log(verdict.line)
       else if (verdict) {
         for (const e of verdict.errors) console.error('  ', paintError(e.message, colorsEnabled))
         console.error(verdict.line)
         for (const f of verdict.gaps.slice(0, 10)) console.error(`   ${f}`)
-        if (verdict.gaps.length > 10) console.error(`   ${t('cli.plus-n-autres', { nb: verdict.gaps.length - 10 })}`)
+        if (verdict.gaps.length > 10) console.error(`   ${t('cli.n-more', { count: verdict.gaps.length - 10 })}`)
       }
       // groupes de fichiers (`bundles`) : un fichier par groupe en production, une ligne d'information sinon
       for (const line of bundler.groupInfo) console.log(line)
       for (const e of stats.errors) console.error('  ', paintError(e.message, colorsEnabled))
+      // la première faute de chaque fichier : `mjs check` les liste toutes
+      if (stats.errors.length > 0) console.error(t('cli.check-list-all'))
       printWarningsSummary(bundler, stats, above)
       // Prérendu des pages déclarées (bloc `render`) — opt-in, seulement si la
       // compilation a réussi. Génère le HTML figé des routes `prerender` que le
@@ -742,13 +747,13 @@ async function run(argv: string[]): Promise<void> {
       // (composant introuvable, exception…) est capturé PAR PAGE par prerenderPages elle-même
       // (report.skipped, `fatal: true`) SANS jamais lever — `prerenderFatal` restait `false`,
       // rejouant l'incident à l'identique sur une simple typo de composant. Couvert plus bas,
-      // après la boucle qui affiche chaque page ignorée (`echecsRendu`).
+      // après la boucle qui affiche chaque page ignorée (`renderFailures`).
       let prerenderFatal = false
       // Bundler dont le manifeste fait foi après le prérendu (le premier tant que celui-ci n'a rien recompilé)
-      let dernier = base
-      if (found?.config.render && suite) {
+      let last = base
+      if (found?.config.render && rest) {
         try {
-          console.log(t('cli.prerendu-debut'))
+          console.log(t('cli.prerender-start'))
           // Garde-fou — `args.output`/
           // `args.manifest` (mêmes overrides que ceux appliqués au `bundler`
           // ci-dessus) DOIVENT être transmis ici : sans eux, `prerenderPages`
@@ -763,12 +768,12 @@ async function run(argv: string[]): Promise<void> {
             outputDir: args.output,
             manifestPath: args.manifest,
             env: envBuild,
-            // `--cache` : le prérendu est servi par le même cache ; sous `--cache=verifier`, il recompile tout (rien de ce qui sort du
+            // `--cache` : le prérendu est servi par le même cache ; sous `--cache=verify`, il recompile tout (rien de ce qui sort du
             // cache n'échappe à la vérification), et en production aussi (sa reprise n'y est pas prouvée à l'octet)
             cache: args.cache === true && envBuild !== 'prod',
           })
           if (report.generated.length) {
-            console.log(t('cli.prerendu-resultat', { nb: report.generated.length, dossier: report.outDir }))
+            console.log(t('cli.prerender-result', { count: report.generated.length, dir: report.outDir }))
           }
           // Démarrage des pages prérendues (`render.startup`) : le fragment qui vient d'être écrit
           // reçoit ses propres liens de préchargement, et son fichier de page en production quand il
@@ -776,25 +781,25 @@ async function run(argv: string[]): Promise<void> {
           // de ce build porte les chemins hachés), jamais avant.
           // le manifeste du DERNIER compile du dossier de sortie (celui du prérendu), pas celui du premier : une source
           // modifiée entre les deux donnerait sinon des empreintes de fichiers disparus (cf. latestBundler)
-          dernier = latestBundler(base, report)
-          await emitStartup(dernier, found.config.render, report, { prod: envBuild === 'prod', log: m => console.log(m) })
-          for (const s of report.skipped) console.log(t('cli.prerendu-page-ignoree', { url: s.url, raison: s.reason }))
+          last = latestBundler(base, report)
+          await emitStartup(last, found.config.render, report, { prod: envBuild === 'prod', log: m => console.log(m) })
+          for (const s of report.skipped) console.log(t('cli.prerender-page-ignored', { url: s.url, reason: s.reason }))
           if (!report.generated.length && !report.skipped.length) {
-            console.log(t('cli.prerendu-aucune-page'))
+            console.log(t('cli.prerender-no-page'))
           }
           // Cf. commentaire au-dessus de `prerenderFatal` : un échec de RENDU par page
           // (jamais un skip VOULU comme route paramétrée/mode non buildable) fait échouer le build.
-          const echecsRendu = report.skipped.filter(s => s.fatal)
-          if (echecsRendu.length > 0) {
+          const renderFailures = report.skipped.filter(s => s.fatal)
+          if (renderFailures.length > 0) {
             prerenderFatal = true
-            console.error(t('cli.prerendu-echec-fatal', { nb: echecsRendu.length }))
+            console.error(t('cli.prerender-failed-fatal', { count: renderFailures.length }))
           }
         } catch (e: any) {
           prerenderFatal = Object.keys(found.config.render.routes ?? {}).length > 0
           // le build sort en erreur dès que des routes sont déclarées : le message le dit, il n'écrit « ignoré » que
           // pour un projet sans routes (rien n'est promis à personne)
-          console.warn(t(prerenderFatal ? 'cli.prerendu-echec-build' : 'cli.prerendu-echec', { erreur: e?.message || e }))
-          console.warn(t('cli.ssr-requiert-happy-dom'))
+          console.warn(t(prerenderFatal ? 'cli.prerender-failed-build' : 'cli.prerender-failed', { error: e?.message || e }))
+          console.warn(t('cli.ssr-requires-happy-dom'))
         }
       }
       // Purge des orphelins d'outputDir : DERNIER GESTE de la construction, seulement après un build
@@ -807,28 +812,28 @@ async function run(argv: string[]): Promise<void> {
       // qu'il a émis) — les fichiers du précédent restent servis. Opt-out `"prune": false` dans
       // mjs.config.json. Jamais un sous-dossier (i18n/, mjs_pages/), jamais un nom stable — cf.
       // Bundler.pruneOrphans
-      if (suite && !prerenderFatal && found?.config.prune !== false) {
-        const { removed, failed, skipped } = dernier.pruneOrphans()
-        const dossierPurge = relative(process.cwd(), dernier.outputDir) || '.'
+      if (rest && !prerenderFatal && found?.config.prune !== false) {
+        const { removed, failed, skipped } = last.pruneOrphans()
+        const purgedDir = relative(process.cwd(), last.outputDir) || '.'
         if (removed.length > 0) {
-          console.log(t('cli.build-purge', { nb: removed.length, dossier: dossierPurge }))
+          console.log(t('cli.build-purge', { count: removed.length, dir: purgedDir }))
           const shown = removed.slice(0, 20)
-          for (const f of shown) console.log(t('cli.build-purge-fichier', { fichier: f }))
-          if (removed.length > shown.length) console.log(`   ${t('cli.plus-n-autres', { nb: removed.length - shown.length })}`)
+          for (const f of shown) console.log(t('cli.build-purge-file', { file: f }))
+          if (removed.length > shown.length) console.log(`   ${t('cli.n-more', { count: removed.length - shown.length })}`)
         }
-        for (const f of failed) bundler.buildWarn(t('cli.build-purge-echec', { fichier: f }))
+        for (const f of failed) bundler.buildWarn(t('cli.build-purge-failed', { file: f }))
         // Garde muette côté CLI : `skipped` n'était jamais
         // affiché, un registre illisible/vide ou un cache-hit sautait la purge SANS UN MOT (les
         // 4 autres raisons — errors/empty/no-core/no-dir — restent silencieuses, déjà couvertes
         // par ailleurs ou non actionnables par l'utilisateur).
-        if (skipped === 'registry-unreadable') bundler.buildWarn(t('cli.build-purge-registre-illisible', { dossier: dossierPurge }))
-        if (skipped === 'registry-empty') bundler.buildWarn(t('cli.build-purge-registre-vide', { dossier: dossierPurge }))
-        if (skipped === 'cache') bundler.buildWarn(t('cli.build-purge-cache', { dossier: dossierPurge }))
+        if (skipped === 'registry-unreadable') bundler.buildWarn(t('cli.build-purge-registry-unreadable', { dir: purgedDir }))
+        if (skipped === 'registry-empty') bundler.buildWarn(t('cli.build-purge-registry-empty', { dir: purgedDir }))
+        if (skipped === 'cache') bundler.buildWarn(t('cli.build-purge-cache', { dir: purgedDir }))
       }
       // Termine le worker pool pour que Node puisse exit proprement.
       await bundler.close()
       if (base !== bundler) await base.close()
-      process.exit(stats.errors.length > 0 || prerenderFatal || cacheJete ? 1 : 0)
+      process.exit(stats.errors.length > 0 || prerenderFatal || cacheDiscarded ? 1 : 0)
     }
     case 'dev': {
       // Journal d'erreurs 3 étages, même magasin que `mjs serve` (cf. render-server.ts
@@ -848,14 +853,28 @@ async function run(argv: string[]): Promise<void> {
         ? (journalCfg?.server !== false ? (input) => journalStore.record('server', { ...input, version: readBuildVersion(bundler.manifestPath) }) : () => {})
         : undefined
 
+      // verrou D'ABORD, avant tout code du projet : `createServeEntry` (plus bas) importe, donc EXÉCUTE, `serve.server.mjs` — un
+      // second `mjs dev` refusé n'en lance rien. Les écouteurs SIGINT/SIGTERM/SIGHUP sont posés ici (cf. cli/dev-lock.ts — un
+      // écouteur ajouté APRÈS coup ne tournerait jamais, `acquireDevLock` appelle `process.exit()` de façon synchrone) ; leur rappel
+      // lit `stopDev`, complété dès que le serveur existe : un signal reçu avant n'a rien à fermer (le rendu ne touche le disque
+      // qu'à la première requête), le processus sort aussitôt.
+      // Rappel ASYNCHRONE, et ATTENDU : `close()` du handler de rendu rend une promesse (il ferme le
+      // renderer, donc son dossier de travail — cf. server/render-compile-dir.ts). Un rappel
+      // synchrone la jetait, `dev-lock.ts` n'attendait rien et sortait aussitôt : un dossier de
+      // travail restait derrière chaque session de développement.
+      // Le serveur HTTP cesse d'abord d'accepter des connexions ; ses réponses en cours d'écriture
+      // (gros fichier, client lent) vont jusqu'au bout avant la sortie au lieu d'être coupées net par `process.exit()`.
+      // verrou à la RACINE du projet (dossier de mjs.config.json, trouvé en remontant) : posé dans le
+      // dossier de lancement, `--root proj` et `--root proj/app` tournaient ensemble sur la même sortie
+      let stopDev = async (): Promise<void> => {}
+      acquireDevLock(join(found?.configDir ?? process.cwd(), '.mjs-dev.lock'), () => stopDev())
+
       // render.routes en dev (feature) — bloc `render` optionnel : quand présent,
       // MÊME moteur que `mjs serve` (createRenderHandler), pour voir le rendu
       // SSR/prérendu FRAIS directement en dev, sans lancer `mjs serve` à part.
-      // Créé ICI, AVANT `acquireDevLock()` (réordonné exprès — cf. juste en
-      // dessous) : `createRenderHandler` ne compile RIEN et ne touche pas le
+      // Créé APRÈS le verrou (cf. juste au-dessus) : `createRenderHandler` ne compile RIEN et ne touche pas le
       // disque tant qu'aucune requête SSR/navigateur n'arrive (mémoïsation
-      // paresseuse interne, cf. son commentaire) — sûr à construire même si le
-      // lock est ensuite refusé (rien à nettoyer, le process sort de toute façon).
+      // paresseuse interne, cf. son commentaire).
       // `envBuild` transmis (4e paramètre, déjà accepté par
       // createRenderHandler, cf. render-request.ts:120/isProd) : sans lui, le corps d'erreur SSR
       // d'un `mjs dev --prod` restait celui du dev (message brut) faute de NODE_ENV positionné.
@@ -871,26 +890,6 @@ async function run(argv: string[]): Promise<void> {
       // actions. Absent `found` (aucun mjs.config.json) ⇒ pas d'entry du tout, comportement
       // HISTORIQUE inchangé.
       const serveEntry = found ? await createServeEntry(found.config, found.configDir, recordServer) : null
-
-      // Lock APRÈS renderHandler/serveEntry (cf. ci-dessus) : nécessaire pour leur passer le
-      // callback de fermeture DÈS l'enregistrement des listeners SIGINT/SIGTERM/
-      // SIGHUP (cf. cli/dev-lock.ts — un handler ajouté APRÈS coup ne tournerait
-      // jamais, `acquireDevLock` appelle `process.exit()` de façon synchrone).
-      // Rappel ASYNCHRONE, et ATTENDU : `close()` du handler de rendu rend une promesse (il ferme le
-      // renderer, donc son dossier de travail — cf. server/render-compile-dir.ts). Un rappel
-      // synchrone la jetait, `dev-lock.ts` n'attendait rien et sortait aussitôt : un dossier de
-      // travail restait derrière chaque session de développement.
-      // Le serveur HTTP (`server`, créé juste en dessous, avant tout signal possible) cesse d'abord
-      // d'accepter des connexions ; ses réponses en cours d'écriture (gros fichier, client lent)
-      // vont jusqu'au bout avant la sortie au lieu d'être coupées net par `process.exit()`.
-      // verrou à la RACINE du projet (dossier de mjs.config.json, trouvé en remontant) : posé dans le
-      // dossier de lancement, `--root proj` et `--root proj/app` tournaient ensemble sur la même sortie
-      acquireDevLock(join(found?.configDir ?? process.cwd(), '.mjs-dev.lock'), async () => {
-        const arret = server.stop()
-        await renderHandler?.close()
-        serveEntry?.close()
-        await arret
-      })
 
       // Priorité port : --port flag > mjs.config.json dev.port > défaut 3939
       const server = new StaticServer({
@@ -930,6 +929,12 @@ async function run(argv: string[]): Promise<void> {
         entry: serveEntry ?? undefined,
         recordServer,
       })
+      stopDev = async () => {
+        const stop = server.stop()
+        await renderHandler?.close()
+        serveEntry?.close()
+        await stop
+      }
       await server.start()
       // bloc MJS de l'AGENTS.md du projet rétabli au démarrage (cf. cli/agents-md.ts) — jamais de fichier créé ici
       syncAgentsMd(found?.configDir ?? process.cwd(), { create: false })
@@ -950,15 +955,13 @@ async function run(argv: string[]): Promise<void> {
       // S'applique aussi au build initial (watch() l'invoque désormais lui-même).
       let lastErrors: Error[] = []
       // erreur affichée sur la page : un tour qui ne change rien d'autre (le texte revenu à celui d'avant) la retire, sans recharger
-      let erreurAffichee = false
+      let errorShown = false
       // composants du dernier échange à chaud : le terminal les nomme quand la page répond (échange fait, ou page rechargée)
-      let nomsAChaud = ''
-      if (server.hmr) server.hmr.onHotResult = (ok) => console.log(t(ok ? 'cli.composants-recharges-a-chaud' : 'cli.composants-page-rechargee', { noms: nomsAChaud }))
+      let hotNames = ''
+      if (server.hmr) server.hmr.onHotResult = (ok) => console.log(t(ok ? 'cli.components-hot-reloaded' : 'cli.components-page-reloaded', { names: hotNames }))
       // relevé des avertissements du premier build, pris dès la fin de sa compilation (cf. settleWarningLines) : watch() écrit ensuite
       // ses erreurs, puis rend la main au bilan
       let aboveInitial  = null as number | null
-      // les avertissements `lint.multilineString` du tour d'avant : seuls se redisent ceux du fichier recompilé, et les neufs
-      let entameesDites = new Set<string>()
       const origCompile = bundler.compile.bind(bundler)
       bundler.compile = async () => {
         const stats = await origCompile()
@@ -984,27 +987,22 @@ async function run(argv: string[]): Promise<void> {
           // partagé, collisions…) ne sortaient qu'avec `mjs build`/`mjs check` ; le redire à
           // chaque sauvegarde serait du bruit
           if (changed === '<initial>' && stats) printWarningsSummary(bundler, stats, aboveInitial ?? takeWarningLines())
+          // bilan de la première construction : `mjs check` liste toutes les fautes des fichiers en échec
+          if (changed === '<initial>' && lastErrors.length > 0) console.error(t('cli.check-list-all'))
           // premier passage sans résultat : pas de bilan, le relevé des avertissements ne sert plus
           else if (changed === '<initial>') takeWarningLines()
-          // une chaîne écrite sur plusieurs lignes entamée par un commentaire (lint.multilineString) perd du texte sans erreur : elle se
-          // redit à chaque recompilation de son fichier — le fichier sauvegardé, composant, module ou partiel — et dès qu'elle apparaît
-          if (stats) {
-            const entamees = stats.warnings.filter(w => w.endsWith('[lint.multilineString]'))
-            if (changed !== '<initial>') for (const w of entamees) if (!entameesDites.has(w) || filesOf(w, found?.configDir ?? process.cwd()).includes(resolve(changed))) bundler.buildWarn(w)
-            entameesDites = new Set(entamees)
-          }
           if (lastErrors.length > 0) {
             const msg = lastErrors.map(e => e.message).join('\n\n')
             server.hmr?.notifyError(msg)
-            erreurAffichee = true
+            errorShown = true
           }
           // sauvegarde sans changement (stats.unchanged, cf. bundler) : la page n'a rien à recevoir, elle ne bouge pas
           else if (stats?.unchanged) {
-            if (erreurAffichee) server.hmr?.notifyErrorCleared()
-            erreurAffichee = false
+            if (errorShown) server.hmr?.notifyErrorCleared()
+            errorShown = false
           }
           else {
-            erreurAffichee = false
+            errorShown = false
             // Renderer SSR/navigateur mémoïsé (createRenderHandler) : invalidé à CHAQUE recompile
             // RÉUSSI (y compris css-only, coût négligeable en dev — le SSR peut inliner du style)
             // — sans cet appel, un `mjs dev` avec bloc `render` servait indéfiniment le rendu
@@ -1025,12 +1023,12 @@ async function run(argv: string[]): Promise<void> {
               // stats.errors → branche notifyError ci-dessus (overlay), jamais css-only.
               if (stats?.cssOnly) {
                 server.hmr?.notifyCssUpdate(stats.cssOnly)
-                console.log(t('cli.css-seul-recharge'))
+                console.log(t('cli.css-only-reloaded'))
               }
               // composants seuls, nature inchangée (stats.hot, cf. bundler) : la page importe leurs nouveaux fichiers et redessine
               // leurs instances en gardant leur état (µ._hotSwap) ; elle se recharge en entier si l'échange n'est pas sûr, et le dit
               else if (stats?.hot) {
-                nomsAChaud = [...Object.keys(stats.hot.components), ...Object.keys(stats.hot.i18n ?? {}).map(l => 'i18n/' + l)].join(', ')
+                hotNames = [...Object.keys(stats.hot.components), ...Object.keys(stats.hot.i18n ?? {}).map(l => 'i18n/' + l)].join(', ')
                 server.hmr?.notifyHotUpdate(stats.hot)
               }
               else {
@@ -1045,7 +1043,7 @@ async function run(argv: string[]): Promise<void> {
     case 'serve': {
       // Serveur de rendu par requête. Exige un bloc `render`.
       if (!found?.config.render) {
-        console.error(t('cli.serve-bloc-render-requis'))
+        console.error(t('cli.serve-block-render-required'))
         process.exit(1)
       }
       // Compile d'abord : les assets servis + le renderer ont besoin d'un build frais.
@@ -1059,13 +1057,13 @@ async function run(argv: string[]): Promise<void> {
       // ARRÊT PROPRE (Ctrl-C) — sans ces écouteurs, le process mourait sur le signal par défaut :
       // `running.close()` n'était jamais atteint, donc ni le renderer de rendu par requête ni son
       // dossier de travail (`mjs-render-*`, cf. server/render-compile-dir.ts) — un dossier laissé
-      // derrière PAR SESSION. Même patron que `mjs ws`/`mjs serveur` : une seule passe (gardeArret :
+      // derrière PAR SESSION. Même patron que `mjs ws`/`mjs server` : une seule passe (stopGuard :
       // le même Ctrl+C reçu deux fois attend le premier, un 2e Ctrl+C plus d'une seconde après sort
       // aussitôt), sortie au code adéquat une fois tout refermé, bornée par SHUTDOWN_GRACE_MS. Les
       // écouteurs RESTENT posés pendant la fermeture asynchrone : retirés, le gestionnaire de
       // signaux de tsx (lancement depuis les sources) ne voyait plus aucun écouteur et sortait
       // aussitôt en 130, coupant les requêtes en vol.
-      const onSignal = gardeArret((): void => {
+      const onSignal = stopGuard((): void => {
         setTimeout(() => process.exit(0), SHUTDOWN_GRACE_MS).unref()
         void (async () => {
           let code = 0
@@ -1073,17 +1071,17 @@ async function run(argv: string[]): Promise<void> {
             await running.close()
             await bundler.close()
           } catch (e: any) {
-            console.error(t('cli.serve-arret-echec', { erreur: e?.message || e }))
+            console.error(t('cli.serve-stop-failed', { error: e?.message || e }))
             code = 1
           }
-          // 0 quand tout s'est refermé, comme `mjs ws`/`mjs serveur` : un arrêt demandé qui aboutit
+          // 0 quand tout s'est refermé, comme `mjs ws`/`mjs server` : un arrêt demandé qui aboutit
           // n'est pas un échec. Seule une fermeture EN ERREUR sort en 1.
           process.exit(code)
         })()
       }, () => process.exit(0))
       process.on('SIGINT', onSignal)
       process.on('SIGTERM', onSignal)
-      console.log(t('cli.serve-demarre', { hote: host, port: running.port }))
+      console.log(t('cli.serve-started', { host, port: running.port }))
       console.log(t('cli.serve-mode-info'))
       break
     }
@@ -1096,25 +1094,27 @@ async function run(argv: string[]): Promise<void> {
       await runWsCommand({ root: found?.configDir ?? args.root, entry: args.entry === undefined ? undefined : resolve(args.root, args.entry), port: args.port, host: args.host }, found?.config)
       break
     }
-    case 'serveur': {
+    case 'server': {
       // serveur de jeu (MJS-Server, mjsServer() + app.game()) — pas de compilation, `bundler`
       // construit ci-dessus n'est pas utilisé ici (cf. cli/server.ts pour la logique complète :
       // résolution d'entry, contrat, rechargement à chaud, arrêt propre — MÊME patron que `mjs ws`).
-      // même racine que `mjs ws` : le dossier de mjs.config.json pour `serveur.entry` et les défauts, le dossier courant pour `--entry`
-      await runServeurCommand({ root: found?.configDir ?? args.root, entry: args.entry === undefined ? undefined : resolve(args.root, args.entry), port: args.port, host: args.host }, found?.config)
+      // même racine que `mjs ws` : le dossier de mjs.config.json pour `server.entry` et les défauts, le dossier courant pour `--entry`
+      await runServerCommand({ root: found?.configDir ?? args.root, entry: args.entry === undefined ? undefined : resolve(args.root, args.entry), port: args.port, host: args.host }, found?.config)
       break
     }
     case 'check': {
-      const racine = found?.configDir ?? process.cwd()
+      const root = found?.configDir ?? process.cwd()
       // bloc MJS de l'AGENTS.md du projet rétabli (cf. cli/agents-md.ts) — jamais de fichier créé ici
-      syncAgentsMd(racine, { create: false })
+      syncAgentsMd(root, { create: false })
       // `--json` : la même compilation, rendue en un document (écrit à la sortie, cf. cli/check-json.ts)
       if (checkJson) {
         const stats   = await bundler.compile()
         // sans objet aujourd'hui : `--json` compile tout dans le processus principal (inlineTranspileLimit, plus haut), aucun pool ne vit et cet appel rend la main aussitôt — il reste le filet si des fils d'exécution écrivaient ici (leurs lignes capturées avant que le document soit rempli)
         await flushWorkerOutput()
-        const derived = args.derived ? [...bundler.derivees].flatMap(([fichier, liste]) => liste.map((d) => ({ file: relative(racine, fichier), name: d.nom, class: d.classe, reasons: d.raisons.map((r) => ({ code: r.code, name: r.nom, by: r.par })) }))) : undefined
-        checkJson.setResult({ components: Object.keys(stats.manifest).filter((k) => !k.startsWith('__')).sort(), errors: stats.errors.map((e) => e.message), warnings: stats.warnings, derived })
+        const derived = args.derived ? [...bundler.derivedClasses].flatMap(([file, list]) => list.map((d) => ({ file: relative(root, file), name: d.name, class: d.class, reasons: d.reasons.map((r) => ({ code: r.code, name: r.name, by: r.by })) }))) : undefined
+        // toutes les fautes de chaque fichier en échec, comme le texte (cf. cli/check-faults.ts)
+        const listing = stats.errors.length > 0 ? await FaultListing.collect(bundler, stats.errors, root) : null
+        checkJson.setResult({ components: Object.keys(stats.manifest).filter((k) => !k.startsWith('__')).sort(), errors: listing === null ? [] : listing.faults.map((f) => f.message), places: listing?.places(), warnings: stats.warnings, derived, listing: listing?.summary() })
         await bundler.close()
         process.exit(stats.errors.length > 0 ? 1 : 0)
       }
@@ -1135,27 +1135,25 @@ async function run(argv: string[]): Promise<void> {
       // corrigé + avertissement explicite avant de compiler (aucun dry-run
       // implémenté — refactor disproportionné pour ce cas ; l'important est
       // que l'utilisateur ne soit plus surpris).
-      console.log(t('cli.check-compile-reel', { dossier: bundler.outputDir }))
+      console.log(t('cli.check-compile-real', { dir: bundler.outputDir }))
       const stats = await bundler.compile()
       const above = await settleWarningLines()
       const components = Object.keys(stats.manifest)
         .filter(k => !k.startsWith('__'))
-      console.log(t('cli.composants-detectes', { nb: components.length }))
+      console.log(t('cli.components-detected', { count: components.length }))
       for (const c of components.slice(0, 20)) console.log(`   - ${c}`)
-      if (components.length > 20) console.log(t('cli.et-n-autres', { nb: components.length - 20 }))
+      if (components.length > 20) console.log(t('cli.and-n-others', { count: components.length - 20 }))
       console.log(``)
-      if (args.derived) printDerivedReport(bundler.derivees, process.cwd(), bundler.derivedPrecise)
-      if (stats.errors.length > 0) {
-        console.error(t('cli.erreurs-compilation', { nb: stats.errors.length }))
-        for (const e of stats.errors) console.error('  ', paintError(e.message, colorsEnabled))
-      }
+      if (args.derived) printDerivedReport(bundler.derivedClasses, process.cwd(), bundler.derivedPrecise)
+      // toutes les fautes de chaque fichier en échec, rangées par fichier (cf. cli/check-faults.ts)
+      if (stats.errors.length > 0) (await FaultListing.collect(bundler, stats.errors, root)).print(colorsEnabled)
       // même bilan d'avertissements que `mjs build` : `check` compile pareil, il doit dire pareil
       printWarningsSummary(bundler, stats, above)
       if (stats.errors.length > 0) {
         await bundler.close()
         process.exit(1)
       }
-      console.log(t('cli.tout-compile-ok', { nb: stats.written }))
+      console.log(t('cli.all-compile-ok', { count: stats.written }))
       await bundler.close()
       process.exit(0)
     }
@@ -1165,11 +1163,13 @@ async function run(argv: string[]): Promise<void> {
 run(process.argv.slice(2)).catch(e => {
   // Filet générique : `checkWritablePath` (ci-dessus) attrape le cas courant
   // AVANT de compiler, mais une erreur d'ÉCRITURE peut encore survenir en cours de build (droits
-  // révoqués en vol, disque plein…) — code fs CONNU → message catalogue nommant le chemin, plutôt
-  // que la stack Node brute (seule exception du fichier au catalogue). Le reste (erreur vraiment
-  // inattendue) garde sa trace complète, jamais moins d'information qu'avant.
+  // révoqués en vol, disque plein…) — code fs CONNU → message catalogue nommant le chemin ; port
+  // déjà pris (`EADDRINUSE`) → message qui nomme le port et `--port` ; plutôt que la stack Node
+  // brute. Le reste (erreur vraiment inattendue) garde sa trace complète, jamais moins d'information qu'avant.
   if (e && typeof e.code === 'string' && FS_ERROR_CODES.has(e.code)) {
-    console.error(t('cli.erreur-ecriture', { code: e.code, chemin: e.path ?? '?', erreur: e.message }))
+    console.error(t('cli.error-write', { code: e.code, path: e.path ?? '?', error: e.message }))
+  } else if (e?.code === 'EADDRINUSE') {
+    console.error(t('cli.port-already-taken', { port: e.port ?? '?', host: e.address ?? '?' }))
   } else {
     console.error('❌', e)
   }

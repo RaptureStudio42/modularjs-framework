@@ -1,5 +1,5 @@
 // littéraux regex masqués aux deux moteurs de sucre : `x = /§/` (§ n'est qu'un CARACTÈRE de la regex) levait
-// la garde « § nu » (transpiler.symbole-reserve-nu), et plus grave, un sucre pouvait RÉÉCRIRE
+// la garde « § nu » (transpiler.symbol-reserved-bare), et plus grave, un sucre pouvait RÉÉCRIRE
 // l'INTÉRIEUR d'une regex (`re = /µTotal/` → `re = /µ.Total/`, corruption silencieuse).
 //
 // Le PARSER (src/parser/index.ts, Scanner.avaleRegex/extractBalanced) sait déjà reconnaître un

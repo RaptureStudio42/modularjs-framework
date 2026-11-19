@@ -38,7 +38,7 @@ function entree(): any {
   const nodes: any = [{ nodeType: 1, tag: 'section', _mjs_page_cached: true }, { nodeType: 3, _mjs_page_cached: true }]
   nodes._mjs_mjsHead = { titre: 'gardée' }
   nodes._mjs_mjsCachePolicy = 'revalidate'
-  nodes._mjs_mjsRecu = 'empreinte'
+  nodes._mjs_mjsReceived = 'empreinte'
   return nodes
 }
 
@@ -69,10 +69,10 @@ function banc(page: string, lieu: string, differe: boolean) {
   µ._mjs_navRestoreHead = (head: any) => etapes.push(['tête', head.titre])
   µ._mjs_navTransplantPermanents = (zone: any, n: any) => etapes.push(['permanents', zone === body, n === nodes])
   µ._mjs_zoneFill = (zone: any, n: any) => etapes.push(['contenu', zone === body, n === nodes])
-  µ._mjs_navTrackZone = (a: any, b: any) => etapes.push(['suivi', a, b])
+  µ._mjs_navTrackZone = (a: any) => etapes.push(['suivi', a])
   µ._mjs_restoreScroll = (p: string) => etapes.push(['défilement', p, µ._mjs_lastUjsPath])
   µ._mjs_focusAfterSwap = (el: any) => etapes.push(['focus', el === nodes[0]])
-  µ._mjs_navRevalidate = (zone: any, p: string) => etapes.push(['revalidation', zone === body, p, µ._mjs_navCachePolicy, µ._mjs_navRecu])
+  µ._mjs_navRevalidate = (zone: any, p: string) => etapes.push(['revalidation', zone === body, p, µ._mjs_navCachePolicy, µ._mjs_navReceived])
   doc.addEventListener('mjs:load', (e: any) => etapes.push(['load', e.detail.via, e.detail.path, e.detail.zone === body]))
   return { µ, doc, win, nodes, etapes }
 }
@@ -106,7 +106,7 @@ function attendu(page: string, via: string): any[] {
     ['tête', 'gardée'],
     ['permanents', true, true],
     ['contenu', true, true],
-    ['suivi', null, null],
+    ['suivi', null],
     ['défilement', page, page],
     ['focus', true],
     ['revalidation', true, page, 'revalidate', 'empreinte'],

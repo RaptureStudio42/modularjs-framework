@@ -173,22 +173,22 @@ if (typeof MjsSocket !== 'undefined') {
   // mjs-server/game.ts::deepDiff) passe par `.splice` plutôt que `delete` — `delete` sur un
   // tableau laisse un TROU et ne corrige pas `.length` (un `undefined` en queue, silencieux).
   function _applyDeltaOps(view, delta) {
-    var racine = view || {}, i, op, segments, last, noeud, j, seg;
+    var root = view || {}, i, op, segments, last, node, j, seg;
     for (i = 0; i < delta.length; i++) {
       op = delta[i];
       segments = op.p.split('.');
       last = segments.pop();
-      noeud = racine;
+      node = root;
       for (j = 0; j < segments.length; j++) {
         seg = segments[j];
-        if (!_mjs_safeKey(seg)) { noeud = null; break; }
-        if (!(seg in noeud)) { noeud[seg] = {}; }
-        noeud = noeud[seg];
+        if (!_mjs_safeKey(seg)) { node = null; break; }
+        if (!(seg in node)) { node[seg] = {}; }
+        node = node[seg];
       }
-      if (!noeud || !_mjs_safeKey(last)) { continue; }
-      if ('x' in op) { if (Array.isArray(noeud)) { noeud.splice(Number(last), 1); } else { delete noeud[last]; } } else { noeud[last] = op.v; }
+      if (!node || !_mjs_safeKey(last)) { continue; }
+      if ('x' in op) { if (Array.isArray(node)) { node.splice(Number(last), 1); } else { delete node[last]; } } else { node[last] = op.v; }
     }
-    return racine;
+    return root;
   }
 
   // trame µgame:state — `frame.view` (vue COMPLÈTE, compat v1 inchangée) OU `frame.delta` (liste

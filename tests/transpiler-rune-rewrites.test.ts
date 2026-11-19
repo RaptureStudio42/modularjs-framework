@@ -7,20 +7,23 @@ import { transpile, applyMjsSugarToScript, lintNoRawImport } from '../src/transp
 
 describe('runes µ$ / store µ$$ compilables en Civet', () => {
   it('applyMjsSugar insère la DÉCLARATION lang-aware de µ_state', () => {
-    // Civet (défaut) → `.=` (let), pas d'assignation NUE (rejetée par le lint).
+    // Civet (défaut) → `.=` (let), pas d'assignation NUE (rejetée par le lint) ; l'état est celui de toute la page (`µ._mjs_univ`)
     const civet = applyMjsSugarToScript('µ$count = 0', 'civet')
-    assert.match(civet, /^µ_state \.= µ\.state\(\{\}\)/m)
-    assert.doesNotMatch(civet, /^µ_state = µ\.state/m)
-    // Coffee garde la forme nue (auto-déclaration native).
-    assert.match(applyMjsSugarToScript('µ$count = 0', 'coffee'), /^µ_state = µ\.state\(\{\}\)/m)
+    assert.match(civet, /^µ_state \.= \(µ\._mjs_univ \?\?= µ\.state\(\{\}\)\)/m)
+    assert.doesNotMatch(civet, /^µ_state = /m)
+    // Coffee garde la forme nue (auto-déclaration native), et son `?=`
+    assert.match(applyMjsSugarToScript('µ$count = 0', 'coffee'), /^µ_state = \(µ\._mjs_univ \?= µ\.state\(\{\}\)\)/m)
     // js/ts → `let` explicite.
-    assert.match(applyMjsSugarToScript('µ$count = 0', 'js'), /^let µ_state = µ\.state/m)
-    assert.match(applyMjsSugarToScript('µ$count = 0', 'ts'), /^let µ_state = µ\.state/m)
+    assert.match(applyMjsSugarToScript('µ$count = 0', 'js'), /^let µ_state = \(µ\._mjs_univ \?\?= µ\.state/m)
+    assert.match(applyMjsSugarToScript('µ$count = 0', 'ts'), /^let µ_state = \(µ\._mjs_univ \?\?= µ\.state/m)
+    // le script d'un composant aussi ; un fichier qui exporte un magasin garde son état à lui
+    assert.match(applyMjsSugarToScript('µ$count = 0', 'civet', undefined, '<script>', 1, undefined, undefined, true), /^µ_state \.= \(µ\._mjs_univ \?\?= µ\.state\(\{\}\)\)/m)
+    assert.match(applyMjsSugarToScript('export µ$$n = 0\nµ$count = 0', 'civet', undefined, '<script module>'), /^µ_state \.= µ\.state\(\{\}\)/m)
   })
 
   it('garde d\'idempotence : ne double PAS une déclaration `.=` déjà présente', () => {
     const twice = applyMjsSugarToScript('µ$a = 1\nµ$b = 2', 'civet')
-    assert.equal((twice.match(/µ_state \.= µ\.state\(\{\}\)/g) ?? []).length, 1)
+    assert.equal((twice.match(/µ_state \.= \(µ\._mjs_univ \?\?= µ\.state\(\{\}\)\)/g) ?? []).length, 1)
   })
 
   it('e2e : transpile(<script module> export µ$$x = 0) en Civet COMPILE (ex-blocage)', async function () {

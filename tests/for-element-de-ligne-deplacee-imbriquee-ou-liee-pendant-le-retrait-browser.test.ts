@@ -17,8 +17,8 @@ const script = `<script lang="coffee">
   $suffixe = ''
   $gs = [ { id: 1, nom: 'G1', rows: [ { id: 11, label: 'A', sous: { nom: 'S11' } }, { id: 12, label: 'B', sous: { nom: 'S12' } } ] } ]
   nom = (x, champ) -> if x? and x[champ]? then x[champ] else 'autre'
-  noter = (r) -> window.__vu.push(nom(r, 'label'))
-  noterDeux = (g, r) -> window.__vu.push(nom(g, 'nom') + '/' + nom(r, 'label'))
+  noter = (r) -> window.__seenMark.push(nom(r, 'label'))
+  noterDeux = (g, r) -> window.__seenMark.push(nom(g, 'nom') + '/' + nom(r, 'label'))
   @bouge = -> $rows = [ $rows[0], $rows[2], $rows[3], $rows[1] ]
   @tout = -> $rows = [ { id: 5, label: 'E' }, { id: 6, label: 'F' }, { id: 7, label: 'G' }, { id: 8, label: 'H' } ]
   @prendre = -> window.__pris = $rows[1]
@@ -43,12 +43,12 @@ const cible = construire('dev-parents-avant', SOURCES, BALISES)
 
 // focus dans le champ de rang `rang`, puis le geste ; rend les libellés affichés et ce que les gestionnaires ont reçu
 const jouer = (balise: string, rang: number, geste: string) => `(async () => {
-  window.__vu = []
+  window.__seenMark = []
   const h = document.querySelector('${balise}'), sh = h._shadow
   sh.querySelectorAll('input.f')[${rang}].focus()
   h.${geste}()
   await new Promise((r) => setTimeout(r, 150))
-  return { lignes: [...sh.querySelectorAll('.lbl')].map((s) => s.textContent).join(','), vu: window.__vu }
+  return { lignes: [...sh.querySelectorAll('.lbl')].map((s) => s.textContent).join(','), vu: window.__seenMark }
 })()`
 
 for (const moteur of ['chromium', 'firefox', 'webkit'] as const) describe(`{for} : ligne déplacée, boucle extérieure, liaison — l'élément de la ligne pendant son retrait (${moteur} réel)`, function () {
@@ -124,12 +124,12 @@ for (const moteur of ['chromium', 'firefox', 'webkit'] as const) describe(`{for}
     try {
       await o.page.waitForFunction(`document.querySelector('mjs-const-meme-nom')?._shadow?.querySelectorAll('section.row').length === 2`, null, { timeout: 10000 })
       const vu = await o.page.evaluate(`(async () => {
-        window.__vu = []
+        window.__seenMark = []
         const champ = document.querySelector('mjs-const-meme-nom')._shadow.querySelectorAll('input.f')[1]
         champ.focus()
         champ.blur()
         await new Promise((r) => setTimeout(r, 60))
-        return window.__vu
+        return window.__seenMark
       })()`)
       assert.deepEqual(vu, ['S12/B'])
       assert.deepEqual(o.erreurs, [])

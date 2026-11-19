@@ -44,7 +44,7 @@ if (mode === 'on') {
 }
 
 const pkg: any = heatmapPackage({ file, origins: ['https://site.fr'], onLog: () => {} })
-pkg.installer(app)
+pkg.install(app)
 if (mode === 'once-apres') process.once('SIGTERM', arretPropre)
 point()
 

@@ -14,7 +14,7 @@ import { computeForwardedOrigin } from '../src/server/render-request.js'
 
 // espionne console.warn le temps d'un findConfig (motif
 // tests/attr-directive-typo-erreur.test.ts), ne garde que les avertissements contenant "interne"
-// (clé bundler.config.forward-origin-trusted-host-interne).
+// (clé bundler.config.forward-origin-trusted-host-internal).
 function findConfigCaptureWarnings(root: string): { found: ReturnType<typeof findConfig>; warnings: string[] } {
   const warnings: string[] = []
   const orig = console.warn

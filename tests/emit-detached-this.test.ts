@@ -12,7 +12,7 @@
 //
 // `<script module>` n'a PAS de `_mjsThis` (code partagé, aucune
 // instance de composant) — µemit y est désormais une ERREUR DE COMPILATION
-// explicite (transpiler.rune-emit-dans-module), plutôt qu'un ReferenceError
+// explicite (transpiler.rune-emit-in-module), plutôt qu'un ReferenceError
 // runtime silencieux.
 
 import assert from 'node:assert/strict'

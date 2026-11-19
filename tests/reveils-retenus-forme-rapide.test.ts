@@ -1,5 +1,5 @@
 // Un composant dont le réveil attend la fin de la réconciliation de sa liste (enfant d'une ligne qui porte une directive qui lit sa balise
-// dans le document, ou d'un `{if}` de ligne refait dans une ligne déjà dans la page : bloc `<reveils-retenus>` de runtime/mjs_for.ts) garde
+// dans le document, ou d'un `{if}` de ligne refait dans une ligne déjà dans la page : bloc `<retained-wakes>` de runtime/mjs_for.ts) garde
 // des propriétés rapides pour V8, comme l'enfant d'une ligne sans directive. Une propriété posée sur l'élément le temps de l'attente puis
 // effacée le ferait passer en dictionnaire : chaque lecture de son état, à chaque mise à jour de sa ligne, en paierait le prix toute sa vie.
 // Lu par `%HasFastProperties`, dans un Node à part (drapeau de V8), sur le runtime de développement tel que le construit le Bundler, monté

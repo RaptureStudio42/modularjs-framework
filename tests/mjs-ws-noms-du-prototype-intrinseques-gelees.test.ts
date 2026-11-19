@@ -59,7 +59,7 @@ sortie.fluxEnvoye = fluxRecu ? propres(fluxRecu.p.values) : 'aucun instantané d
 sortie.antiEntropie = publies.length ? propres(publies[publies.length - 1].pairs) : 'rien de publié'
 const positions = {}
 NOMS.forEach((id, i) => Object.defineProperty(positions, id, { value: { x: i, y: i * 10 }, enumerable: true, writable: true, configurable: true }))
-await essai('historique', () => { const h = createHistory(4); h.pousser(1, 1000, positions); return h.rewind(1000, (p) => propres(p)) })
+await essai('historique', () => { const h = createHistory(4); h.push(1, 1000, positions); return h.rewind(1000, (p) => propres(p)) })
 await essai('grille', () => { const g = createSpace(10); NOMS.forEach((id, i) => g.set(id, i, i * 10)); return propres(g._snapshot()) })
 await app.stop()
 console.log('SORTIE ' + JSON.stringify(sortie))

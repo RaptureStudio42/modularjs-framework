@@ -8,7 +8,7 @@ describe('MJS-WS — banc : les types ouverts viennent du paquet comptes', () =>
     const ACCOUNTS_TYPES = (comptes as Record<string, unknown>).ACCOUNTS_TYPES as readonly string[]
     const servis: string[] = []
     const app: any = new Proxy({}, { get: (_cible, cle) => (cle === 'serve' || cle === 'on') ? (type: string) => { servis.push(type) } : () => {} })
-    comptes.accountsPackage({ secret: 'secret-de-test-types-du-banc-assez-long', onLog: () => {} }).installer(app)
+    comptes.accountsPackage({ secret: 'secret-de-test-types-du-banc-assez-long', onLog: () => {} }).install(app)
     assert.ok(Array.isArray(ACCOUNTS_TYPES) && ACCOUNTS_TYPES.length > 0, 'liste exportée par le paquet')
     assert.deepEqual([...ACCOUNTS_TYPES].sort(), servis.filter(t => t.startsWith('account:')).sort())
     assert.deepEqual([...ACCOUNTS_TYPES].sort(), ['account:create', 'account:login', 'account:logout'], 'même liste qu’avant')

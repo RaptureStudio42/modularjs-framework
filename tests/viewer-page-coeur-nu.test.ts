@@ -21,7 +21,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
-import { scanCompiledFeatures, DERIVED_VALUES, ATTR_UPDATE, ATTR_SELECT, PROPS_PENDING, ATTR_FILTER, ROOT_TEXT, SIG_FREE } from '../src/bundler/features.js'
+import { scanCompiledFeatures, DERIVED_VALUES, ATTR_UPDATE, ATTR_SELECT, PROPS_PENDING, ATTR_FILTER, ROOT_TEXT, SIG_FREE, LONE_HELPERS, loneHelperSignal } from '../src/bundler/features.js'
 import { transpile } from '../src/transpiler/index.js'
 import { ROW_CLONE } from '../src/bundler/features.js'
 import * as pageVisionneuse from '../src/server/viewer-page.js'
@@ -60,7 +60,7 @@ const BLOCS: Record<string, RegExp> = {
   [PROPS_PENDING]:  /\._mjs_pend = function/,
   [ATTR_FILTER]:    /\._mjs_safeAttr = function/,
   [ROOT_TEXT]:      /\b_mjs_updText\([^)]*\)\s*\{/,
-  // l'élément du dernier gabarit de ligne copié (bloc `<copie-de-ligne>`, mjs_init.ts) : gardé par tout cœur de développement
+  // l'élément du dernier gabarit de ligne copié (bloc `<line-copy>`, mjs_init.ts) : gardé par tout cœur de développement
   [ROW_CLONE]:      /\bvar _mjsLastHtml, _mjsLastEl;/,
 }
 
@@ -68,6 +68,8 @@ const BLOCS: Record<string, RegExp> = {
 // définition que le bloc pose, avec ou sans graphe des signaux
 const JOINTS: Record<string, RegExp> = {
   [SIG_FREE]: /\._mjs_sigFree (?:\|\|)?= /,
+  // les aides qu'une construction de production retire d'un cœur où aucune unité ne les nomme : la définition de leur premier membre
+  ...Object.fromEntries(LONE_HELPERS.map(([bloc, membres]) => [loneHelperSignal(bloc), new RegExp('\\.' + membres[0] + ' = function')])),
 }
 
 describe('visionneuses de développement — ce qu\'un cœur nu n\'embarque pas', function () {
@@ -123,15 +125,15 @@ describe('visionneuses de développement — ce qu\'un cœur nu n\'embarque pas'
     assert.ok(apport.length > tete.length, 'les fichiers sont joints derrière l\'import du cœur')
     const present = () => 'déjà là'
     // un cœur qui a déjà tous les membres : si un seul fichier n'était pas gardé, il s'exécuterait sur ce faux cœur et lèverait
-    const faux = { _mjs_deepSet: present, _mjs_safeAttr: present, _mjs_sigFree: present, _mjs_selVal: present, _mjs_updAttrNode: present, Element: { prototype: { _mjs_hook: present, _mjs_destroyWithHooks: present, _mjs_updIf: present, _mjs_updFor: present, _mjs_updList: present } } }
+    const faux = { _mjs_deepSet: present, _mjs_deepDelete: present, _mjs_snap: present, _mjs_lis: present, _mjs_safeAttr: present, _mjs_sigFree: present, _mjs_selVal: present, _mjs_updAttrNode: present, Element: { prototype: { _mjs_hook: present, _mjs_destroyWithHooks: present, _mjs_updIf: present, _mjs_updFor: present, _mjs_updList: present } } }
     new Function('µ', apport.slice(tete.length))(faux)
-    for (const membre of ['_mjs_deepSet', '_mjs_safeAttr', '_mjs_sigFree', '_mjs_selVal', '_mjs_updAttrNode']) assert.equal((faux as any)[membre], present, `${membre} n'est pas redéfini`)
+    for (const membre of ['_mjs_deepSet', '_mjs_deepDelete', '_mjs_snap', '_mjs_lis', '_mjs_safeAttr', '_mjs_sigFree', '_mjs_selVal', '_mjs_updAttrNode']) assert.equal((faux as any)[membre], present, `${membre} n'est pas redéfini`)
     for (const membre of Object.keys(faux.Element.prototype)) assert.equal((faux.Element.prototype as any)[membre], present, `${membre} n'est pas redéfini`)
     // et sur un cœur qui n'a rien, le premier fichier joint s'exécute bien (le garde ne saute pas tout)
     const vide: any = { Element: class {}, _mjs_msg: () => '', warn: () => {} }
     new Function('µ', apport.slice(tete.length))(vide)
     assert.equal(typeof vide._mjs_deepSet, 'function', 'sur un cœur sans rien, les mutations profondes sont posées')
-    for (const membre of ['_mjs_safeAttr', '_mjs_sigFree', '_mjs_selVal', '_mjs_updAttrNode']) assert.equal(typeof vide[membre], 'function', `sur un cœur sans rien, ${membre} est posé`)
+    for (const membre of ['_mjs_deepDelete', '_mjs_snap', '_mjs_lis', '_mjs_safeAttr', '_mjs_sigFree', '_mjs_selVal', '_mjs_updAttrNode']) assert.equal(typeof vide[membre], 'function', `sur un cœur sans rien, ${membre} est posé`)
     for (const membre of Object.keys(faux.Element.prototype)) assert.equal(typeof vide.Element.prototype[membre], 'function', `sur un cœur sans rien, ${membre} est posé`)
   })
 

@@ -52,7 +52,7 @@ describe('minuteries : posées par un passage de µmount ou de µeffect, composa
     it(`${rune} : µevery hors de la dernière ligne, une seule répétition après retrait et remise`, async () => {
       const { win, doc, el } = await monter(nom, S(rune + ' ->', '  µevery 20, immediate: false, -> window.__n = (window.__n or 0) + 1', '  null'))
       await attendre(10)
-      assert.equal(el._mjs_minuteries?.size, 1)
+      assert.equal(el._mjs_timers?.size, 1)
       let a = win.__n ?? 0
       await attendre(300)
       const avant = (win.__n ?? 0) - a
@@ -60,7 +60,7 @@ describe('minuteries : posées par un passage de µmount ou de µeffect, composa
       await attendre(40)
       doc.body.appendChild(el)
       await attendre(40)
-      assert.equal(el._mjs_minuteries?.size, 1, 'une seule minuterie dans le registre après retrait et remise')
+      assert.equal(el._mjs_timers?.size, 1, 'une seule minuterie dans le registre après retrait et remise')
       a = win.__n ?? 0
       await attendre(300)
       const apres = (win.__n ?? 0) - a
@@ -84,7 +84,7 @@ describe('minuteries : posées par un passage de µmount ou de µeffect, composa
     const retour = win.__m ?? 0
     await attendre(150)
     assert.ok((win.__m ?? 0) > retour, 'reprise au retour')
-    assert.equal(el._mjs_minuteries?.size, 1)
+    assert.equal(el._mjs_timers?.size, 1)
   })
 
   it('µmount : µafter … always: true hors de la dernière ligne part après le retrait', async () => {

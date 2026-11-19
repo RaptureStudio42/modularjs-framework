@@ -121,7 +121,7 @@ describe('éditeur riche — l\'outil color ne part qu\'avec une palette', funct
 })
 
 describe('Bundler.coreToolShown(\'color\') — la palette d\'un éditeur décide', () => {
-  const editeur = (texts: Record<string, string | null>, spread = false) => ({ file: 'a.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: { names: Object.keys(texts), spread, texts } })
+  const editeur = (texts: Record<string, string | null>, spread = false) => ({ file: 'a.mjs', name: 'editor', kind: 'shortcut-core', attrs: { names: Object.keys(texts), spread, texts } })
 
   // un dossier de sources réel et vide : aucune source du projet n'y fait douter
   function withRefs(refs: unknown[], fichiers: Record<string, string> = {}): Bundler {

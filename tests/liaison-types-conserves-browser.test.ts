@@ -12,6 +12,7 @@ import { existsSync } from 'node:fs'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { MODES, variantes, SHOW, construire, charger, attendre, lire, lever, graves, parent, enfant } from './helpers/liaison-navigateur.js'
 import type { Cible, Liaison, Lecture, Mode, Ouverture } from './helpers/liaison-navigateur.js'
+import { playTogether } from './helpers/engines-together.js'
 
 const SOURCES: Record<string, string> = {
   'c-zero.mjs': enfant('  $x = 0\n'),
@@ -72,7 +73,7 @@ function verifier(lu: Lecture, o: Ouverture, contexte: string) {
   assert.deepEqual(lu.binds.filter((b) => !REMONTES.includes(b)), [], `${contexte} : rien d'autre que la valeur du parent ne remonte (ni défaut, ni valeur changée en texte)`)
 }
 
-for (const nom of ['chromium', 'firefox'] as const) describe(`types d'une variable liée à deux sens (${nom} réel)`, function () {
+for (const nom of ['chromium', 'firefox'] as const) playTogether(describe(`types d'une variable liée à deux sens (${nom} réel)`, function () {
   this.timeout(300000)
   let present = false
   let browser: any
@@ -126,4 +127,4 @@ for (const nom of ['chromium', 'firefox'] as const) describe(`types d'une variab
       }
     })
   }
-})
+}))

@@ -65,7 +65,8 @@ describe('@xxx inconnu sur un élément = écouteur d\'événement, jamais véri
   })
 
   it('@confirn NU (sans valeur) : compile sans erreur, la sortie écoute "confirn"', async () => {
-    const { err, output } = await typoCheck('<button @confirn>go</button>', 'typoconfirnnu')
+    // la forme nue appelle la fonction du même nom, sinon la méthode : déclarée ici, sinon la construction refuse cette écoute morte
+    const { err, output } = await typoCheck('<script>\nconfirn = (e) -> 1\n</script>\n<button @confirn>go</button>', 'typoconfirnnu')
     assert.equal(err, undefined, `aucune erreur attendue : ${err?.message}`)
     assert.match(output ?? '', /"confirn"/)
   })

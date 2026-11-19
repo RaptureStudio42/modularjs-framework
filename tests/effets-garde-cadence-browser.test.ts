@@ -12,6 +12,7 @@ import { mjsTmp } from './helpers/tmp.js'
 import { attendreEtat } from './helpers/attente-page.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox' | 'webkit'): Promise<boolean> {
   try {
@@ -66,7 +67,7 @@ describe('la garde de cadence (navigateurs réels) — rien au repos, un vrai ge
   after(async () => { await terminateSharedWorkerPool() })
 
   for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
-    describe(nom, function () {
+    playTogether(describe(nom, function () {
       let present = false
       let browser: any = null
 
@@ -246,6 +247,6 @@ describe('la garde de cadence (navigateurs réels) — rien au repos, un vrai ge
         }, 'mjs-gc-retrait')
       })
 
-    })
+    }))
   }
 })

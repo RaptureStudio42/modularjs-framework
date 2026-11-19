@@ -101,7 +101,7 @@ const SOURCE = [
 
 // toutes les transitions qui se posent directement, chacune sur sa balise dans sa carte (le tracé de *draw est un <path>, le texte
 // de *typewriter un nœud texte seul)
-const TOUTES = ['fade', 'fly', 'slide', 'scale', 'rotate', 'blur', 'draw', 'iris', 'wheel', 'volet', 'reveal', 'flip', 'cube', 'turn', 'swipe', 'bars', 'blocks', 'shatter', 'pixelate', 'ink', 'typewriter']
+const TOUTES = ['fade', 'fly', 'slide', 'scale', 'rotate', 'blur', 'draw', 'iris', 'wheel', 'cover', 'reveal', 'flip', 'cube', 'turn', 'swipe', 'bars', 'blocks', 'shatter', 'pixelate', 'ink', 'typewriter']
 const SOURCE_TOUTES = [
   '<script>',
   '$img = \'data:image/svg+xml,\' + encodeURIComponent(\'<svg xmlns="http://www.w3.org/2000/svg" width="150" height="100"><rect width="150" height="100" fill="#6366f1"/><circle cx="105" cy="32" r="20" fill="#fde047"/></svg>\')',

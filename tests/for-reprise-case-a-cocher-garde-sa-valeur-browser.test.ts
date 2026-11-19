@@ -48,8 +48,8 @@ const lire = (page: any): Promise<{ cases: string, radios: string, valeurs: stri
   const r = document.querySelector('${B}')._shadow
   const v = (s) => Array.from(r.querySelectorAll(s)).map((n) => n.value).join(',')
   const lis = Array.from(r.querySelectorAll('ul.l li'))
-  const reprises = lis.filter((li) => li.__avant).length
-  lis.forEach((li) => { li.__avant = 1 })
+  const reprises = lis.filter((li) => li.__before).length
+  lis.forEach((li) => { li.__before = 1 })
   return { cases: v('input[name=c]'), radios: v('input[name=r]'), valeurs: v('input[name=v]'), textes: lis.map((li) => li.textContent).join(','), reprises }
 })()`)
 

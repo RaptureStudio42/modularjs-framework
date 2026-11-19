@@ -17,7 +17,9 @@ Le plus simple : une valeur ordinaire préfixée par `µ$$`, exportée depuis un
 export µ$$count = { value: 0 }
 ```
 
-La valeur de `export µ$$x =`, comme celle de `µ$x =`, s'écrit comme celle de toute affectation Civet : sur sa ligne, ou sur plusieurs lignes — liste ou objet ouverts en fin de ligne (`export µ$$liste = [` puis un élément par ligne), valeur écrite dessous, en retrait (`µ$x =` seul sur sa ligne), opérateur en fin de ligne, suite en `.` à la ligne d'après. La valeur entière, telle que Civet la lit pour `x =`, devient la valeur de départ. Dans un script écrit en CoffeeScript, TypeScript ou JavaScript (`lang`), écrivez-la sur une seule ligne : une valeur qui continue sous sa ligne y échoue, ou produit un code faux sans le signaler.
+La valeur de `export µ$$x =`, comme celle de `µ$x =`, s'écrit comme celle de toute affectation Civet : sur sa ligne, ou sur plusieurs lignes — objet ou liste ouverts en fin de ligne (`export µ$$panier = {` puis un champ par ligne), valeur écrite dessous, en retrait (`µ$x =` seul sur sa ligne), opérateur en fin de ligne, suite en `.` à la ligne d'après. La valeur entière, telle que Civet la lit pour `x =`, devient la valeur de départ. Dans un script écrit en JavaScript ou en TypeScript (`lang="js"`, `lang="ts"`), la valeur d'un `export µ$$x =` ou d'un `export µ$x =` peut continuer sous sa ligne tant qu'une parenthèse, un crochet ou une accolade ouverts sur sa ligne la tiennent (`export µ$$panier = {`, un champ par ligne, puis `};`). Toute autre valeur, celle d'un `µ$x =` sans `export` et toute valeur d'un script en CoffeeScript s'écrivent sur une seule ligne : une valeur qui continue sous sa ligne y échoue, ou produit un code faux sans le signaler.
+
+Un magasin tient un objet : une liste donnée comme valeur (`export µ$$l = [1, 2]`) y devient un objet dont les clés sont ses positions (`0`, `1`), sans `push` ni `length`. Rangez-la dans un champ (`export µ$$l = { items: [1, 2] }`, puis `µ$$l.items.push(3)` et `{µ$$l.items.length}`), ou tenez-la dans `µ$l = [1, 2]`, décrit plus bas, qui reste une liste.
 
 Dans le fichier du magasin, `µ$x` désigne l'objet du magasin : changez-le sur place (`µ$x.cle = valeur`, `Object.assign(µ$x, { … })`, `µ$x.liste.push(…)`). Le remplacer (`µ$x = { … }`, `µ$$x = { … }`, `µ$x ||= { … }`, `µ$x++`, `--µ$x`), même dans une fonction, est refusé à la construction, avec la ligne et ce qu'il faut écrire : les composants qui lisent `µ$$x` garderaient l'ancien objet. Un changement fait hors de MJS dans cet objet (une bibliothèque qui garde l'objet brut) se signale de même, sur place : écrivez une nouvelle valeur dans la clé qu'il a touchée (`µ$x.lignes = [...µ$x.lignes]`) ; `µrefresh` n'y signale qu'une clé du magasin (`µrefresh($$x)`), et `µrefresh(µ$x)` ou `µrefresh(µ$$x)` y est refusé à la construction.
 
@@ -44,40 +46,44 @@ Un store doit être **une seule et même valeur** pour tous les composants qui l
 
 ## 2. Classe `µStore` — état structuré, consommé via `µ$$`
 
-Pour un état plus riche (plusieurs champs, objets imbriqués, méthodes intégrées), on instancie la classe `µStore` (alias `µ.Store`). On l'`export`-e depuis un module, et on accède à son contenu via la propriété **`.data`** (un proxy réactif) :
+Pour un état plus riche (plusieurs champs, objets imbriqués, méthodes intégrées), on instancie la classe `µStore` (alias `µ.Store`). On l'`export`-e depuis un module sous un nom en `µ$$` (`export µ$$feed = …`), et on accède à son contenu via la propriété **`.data`** (un proxy réactif) :
 
 ```html
-# stores/feed.mjs
-export feedStore = new µStore(version: 0)
+# stores/feed.civet.mjs
+export µ$$feed = new µStore(version: 0)
 ```
 
 ```html
-# stores/page.mjs — un store « page » maison
+# stores/page.civet.mjs — un store « page » maison
 export pageStore = new µStore(url: window.location, params: {})
 
 window.addEventListener 'popstate', ->
   pageStore.data.url = new URL(window.location)
 ```
 
-Côté composant, on importe le store avec `@import µ$$feed 'chemin'` — le **même** symbole que le singleton léger — puis on lit/écrit ses champs directement avec `µ$$feed` :
+Côté composant, on importe le store avec `@import µ$$feed 'chemin'` — le **même** symbole que le singleton léger — puis on lit/écrit ses champs par sa propriété `.data`, `µ$$feed.data` :
 
 ```html
-@import µ$$feed 'stores/feed.mjs'
+@import µ$$feed 'stores/feed.civet.mjs'
 
 <script>
-  µ$$feed.version    # lu → dépendance enregistrée, le composant re-rend si version change
-  µ$$feed.version++  # écrit → tous les abonnés à cette clé sont invalidés
+  µ$$feed.data.version    # lu → dépendance enregistrée, le composant re-rend si version change
+  µ$$feed.data.version++  # écrit → tous les abonnés à cette clé sont invalidés
 </script>
 ```
 
 ```html
-# déclarer un CONTEXTE partagé directement à la racine de l'appli (sans module ni `new µStore`), lu par tout composant descendant — ceci reste `§§`, ce n'est PAS un import :
-§§cfg = await fetch('/api/config').then (r)-> r.json()
+# déclarer un CONTEXTE partagé directement à la racine de l'appli (sans module ni `new µStore`), lu par tout composant descendant — ceci reste `§§`, ce n'est PAS un import ; la réponse arrive dans µmount, le script d'un composant ne s'arrête pas pour attendre :
+§§cfg = {}
+µmount ->
+  §§cfg = await fetch('/api/config').then (r)-> r.json()
 ```
 
-Tout champ lu via `µ$$feed.x` enregistre le composant comme abonné à la clé `x` ; toute écriture `µ$$feed.x = …` (ou mutation d'un tableau/Map/Set, ou `++`) notifie précisément les abonnés de cette clé.
+Tout champ lu via `µ$$feed.data.x` enregistre le composant comme abonné à la clé `x` ; toute écriture `µ$$feed.data.x = …` (ou mutation d'un tableau/Map/Set, ou `++`) notifie précisément les abonnés de cette clé.
 
-> ⚠️ **`§§` n'est jamais un « global ».** Le symbole `§§` est, sans exception, un **contexte réactif de sous-arbre** (même mécanisme que `§`, en réactif — chapitre [Contexte](13-contexte.md)) : deux composants sans ancêtre commun déclarant `§§clé` ne partagent **rien**. Ni le singleton léger du §1, ni une instance `µStore` importée, ne passent par `§§` : les deux s'importent et se consomment avec le **même** symbole `µ$$` (`@import µ$$feed 'chemin'` → `µ$$feed.version`), qu'ils viennent d'un `export µ$$X = …` ou d'un `export feedStore = new µStore(…)`. `§§` reste réservé à la déclaration/lecture de contexte (`§§clé = valeur` posé par un ancêtre, lu par ses descendants) — y compris la variante « racine d'appli » vue plus haut (`§§cfg`), qui n'est jamais un import.
+Une classe qui hérite de `µStore` range sa donnée dans `.data`, en la passant à `super(…)` (`super({ rows: [] })`) : un champ à elle (`this.state = { rows: [] }`) n'est pas suivi, et l'écran qui le lit ne change pas avec lui. Le développement le dit, une fois par classe, quand `.data` reste vide après le constructeur et qu'un champ public tient un objet ordinaire ou une liste ; un champ qui tient un `µ.state` (l'écran le suit), un champ qui commence par `_`, une `Map` ou l'objet d'une classe (un client, un cache) n'est pas signalé.
+
+> ⚠️ **`§§` n'est jamais un « global ».** Le symbole `§§` est, sans exception, un **contexte réactif de sous-arbre** (même mécanisme que `§`, en réactif — chapitre [Contexte](13-contexte.md)) : deux composants sans ancêtre commun déclarant `§§clé` ne partagent **rien**. Ni le singleton léger du §1, ni une instance `µStore` importée, ne passent par `§§` : les deux s'importent et se consomment avec le **même** symbole `µ$$` (`@import µ$$feed 'chemin'`), qu'ils viennent d'un `export µ$$X = …` (lu `µ$$X.champ`) ou d'un `export µ$$feed = new µStore(…)` (lu par `.data` : `µ$$feed.data.version`). `§§` reste réservé à la déclaration/lecture de contexte (`§§clé = valeur` posé par un ancêtre, lu par ses descendants) — y compris la variante « racine d'appli » vue plus haut (`§§cfg`), qui n'est jamais un import.
 
 ### Un reffet dans le fichier du magasin
 
@@ -144,7 +150,7 @@ Jetez le magasin quand plus aucun composant affiché ne le lit : un composant qu
 <summary>🎓 <b>Pour débutants</b> — <code>µ$$</code> ou <code>µStore</code>&nbsp;?</summary>
 
 - `µ$$` : la valeur la plus simple possible, partagée. Parfait pour un compteur, un drapeau, une petite donnée. On la lit/mute directement (`µ$$count.value++`).
-- `µStore` : une classe pour de l'état structuré — plusieurs champs, objets imbriqués, abonnement *par champ* (un composant qui ne lit que `µ$$feed.version` ne re-rend pas si une autre clé change). À privilégier pour le vrai état d'application (session, panier, page).
+- `µStore` : une classe pour de l'état structuré — plusieurs champs, objets imbriqués, abonnement *par champ* (un composant qui ne lit que `µ$$feed.data.version` ne re-rend pas si une autre clé change). À privilégier pour le vrai état d'application (session, panier, page).
 
 Les deux sont des sources de vérité globales ; choisissez selon la richesse de la donnée.
 
@@ -180,12 +186,15 @@ Les règles :
 - **Deux appels écrits, deux magasins**, même dans la même dérivée (`[µload(a), µload(b)]`, `if $on then µload(a) else µload(b)`, `µload(a).data or µload(b).data`) : passer de l'un à l'autre montre le magasin de la nouvelle adresse — sa donnée si elle est encore gardée (voir **Mémoire**), sinon `pending` sans donnée —, jamais la donnée de l'autre appel. Une dérivée qui finit son calcul sans erreur lâche les adresses qu'elle n'a plus appelées (l'autre branche d'un ternaire, une condition devenue fausse) : leur requête en vol est annulée, elles ne sont plus relues après un envoi. Un calcul qui lève une erreur ne lâche rien : l'adresse affichée reste lue.
 - **Dans le gabarit** — une liaison, à la racine comme dans un bloc (la branche d'un `{if}`, d'un `{key}` ou d'un `{await}`, la condition d'un `{if}`, la liste ou une ligne d'un `{for}`) —, écrivez l'appel dans une dérivée du script, puis lisez-la : `$membres = µload("/api/members?q=#{$q}")`, puis `<p>{$membres.data?.length}</p>` ou `{for m in ($membres.data or [])}`. La dérivée lâche l'adresse qu'elle quitte. Écrit dans le gabarit lui-même (`<p>{µload(…).data?.length}</p>`, `{for m in (µload(…).data or [])}`), l'appel marche — chaque adresse a son magasin, le composant se redessine à chaque arrivée de sa donnée, et une adresse qu'il affiche reste tant qu'il est monté, quel que soit leur nombre : jamais évincée du cache ni redemandée au redessin, même en erreur (l'erreur reste affichée jusqu'au départ du composant ou à `refresh()`), et relue une fois après un envoi qui la touche, tout de suite, jamais au redessin suivant ; l'adresse d'un bloc fermé qu'il n'a pas encore lâchée (voir **Mémoire**) est relue de même, et le bloc rouvert montre la donnée fraîche —, mais n'est pas suivi : le composant ne lit pas ces adresses, ses requêtes dépassées ne sont pas annulées, une adresse qui change ne garde jamais la donnée d'avant (écrivez l'appel dans le script), et sa donnée ne reste au cache qu'une fois qu'il ne l'affiche plus (voir **Mémoire**) ; le développement le dit (voir plus bas).
 - **`refresh`** : `false` par défaut — la donnée n'est relue qu'après un envoi qui la touche, ou sur demande. Un nombre de secondes : relue en fond quand elle est lue et plus vieille que ce délai (aucune relecture si rien ne la lit). `'focus'` : relue au retour sur l'onglet, si elle a plus de 30 secondes. `'online'` : relue au retour du réseau. Les options s'écrivent en objet : `µload(url, 'focus')` ou `µload(url, 30)` écrit un avertissement (écrivez `µload(url, { refresh: 'focus' })`) et compte pour `false`, comme une autre valeur de `refresh` ou une autre option. Chaque appel garde sa règle : deux composants qui lisent la même adresse avec deux règles partagent la donnée et la requête, et chacun relit selon la sienne. `'focus'` et `'online'` s'écrivent en clair dans le code de l'appli : l'écoute du retour sur l'onglet et du réseau n'entre au cœur que si ces mots y figurent (une règle venue des données, sans ce mot dans le code, n'écoute rien). En production, au niveau de console `error` (défaut) ou `silent`, ces avertissements ne partent pas, ni le code qui les écrit.
-- **Relue après un envoi.** Un `µ.ajax.post`, `put`, `patch` ou `delete` réussi relit les adresses gardées dont le chemin est celui de l'envoi, ou l'un de ses parents, sur la même origine : `PATCH /api/me` relit `/api/me` ; `DELETE /api/members/42` relit `/api/members?q=…` ; `/api/members` n'est pas sous `/api/me`, il n'est pas relu. La barre finale ne compte pas (`/api/me/` est `/api/me`) ; la racine `/` n'est le parent d'aucun chemin : seul un envoi à `/` la relit. Une adresse lue, ou qu'un gabarit affiche encore (voir **Mémoire**), est relue tout de suite, une fois (une requête déjà en vol est annulée et repart) ; une adresse qu'on ne lit ni n'affiche plus est relue à sa prochaine lecture — un bloc rouvert, un composant qui l'appelle à nouveau. `µload.refresh('/api/me')` suit la même règle, sur demande, et rend une promesse tenue quand les relectures sont arrivées.
+- **Relue après un envoi.** Un `µ.ajax.post`, `put`, `patch` ou `delete` réussi, comme un appel `µajax url, method: …` réussi d'une autre méthode que `GET` et `HEAD` (`µajax '/api/me', method: 'PATCH', data: fiche`), relit les adresses gardées dont le chemin est celui de l'envoi, ou l'un de ses parents, sur la même origine : `PATCH /api/me` relit `/api/me` ; `DELETE /api/members/42` relit `/api/members?q=…` ; `/api/members` n'est pas sous `/api/me`, il n'est pas relu. La barre finale ne compte pas (`/api/me/` est `/api/me`) ; la racine `/` n'est le parent d'aucun chemin : seul un envoi à `/` la relit. Une adresse lue, ou qu'un gabarit affiche encore (voir **Mémoire**), est relue tout de suite, une fois (une requête déjà en vol est annulée et repart) ; une adresse qu'on ne lit ni n'affiche plus est relue à sa prochaine lecture — un bloc rouvert, un composant qui l'appelle à nouveau. `µload.refresh('/api/me')` suit la même règle, sur demande, et rend une promesse tenue quand les relectures sont arrivées. Un formulaire envoyé par la navigation (cf. [Navigation](21-navigation.md)) ne relit aucune adresse : après lui, appelez `µload.refresh(url)`.
 - **Erreur** : `error` est posée, `data` garde la dernière donnée reçue, et aucun nouvel essai n'est fait seul — `refresh()`, un envoi qui la touche ou la règle `refresh` relancent la requête. Une réponse qui n'est pas du JSON (type autre que `application/json` : une page de connexion servie à la place de l'API, par exemple) est une erreur : `error.message` le dit avec l'adresse (« µload : la réponse de /api/me n'est pas du JSON. »), le même texte en développement et en production, dans la langue de la page (libellé `mjs.load.notJson`, que le dictionnaire du site peut remplacer, cf. [i18n](29-i18n.md)) ; `error.body` porte le texte reçu et `error.url` l'adresse finale, après une redirection ; `data` ne la reçoit jamais.
 - **Mémoire** : une adresse vit tant qu'un composant la lit (il la tient dans son état, ou lit `data`, `pending` ou `error` pendant son rendu — sauf celle d'un appel écrit dans son gabarit, qu'il ne lit pas), ou que le gabarit d'un composant monté l'affiche, même au-delà de 50 adresses ; la dérivée qui ne l'appelle plus cesse de la lire ; le gabarit qui ne l'affiche plus — un bloc fermé, une liste raccourcie, une adresse qui change — la garde jusqu'au rendu complet suivant du composant, puis la laisse : l'arrivée d'une réponse qu'il affiche ou qu'il lit le redessine en entier, comme un `{await}` qui se résout ; la fermeture d'un bloc, non (une liste de 200 adresses raccourcie à 10 les garde toutes jusque-là, et un envoi qui touche l'une d'elles la relit) ; un composant qui quitte la page laisse tout ce qu'il lisait ou affichait : il n'est plus prévenu de rien. Quand plus personne ne la lit ni ne l'affiche, elle reste 5 minutes dans un cache de 50 adresses au plus, la plus ancienne partant la première : un composant qui la rouvre entre-temps affiche aussitôt la donnée gardée. Une adresse sans donnée (requête annulée, erreur seule) n'est pas gardée.
+- **Après une déconnexion** : `µload` ne sait rien des comptes : appelez `µload.clear()` à la déconnexion, et à un changement de compte. Il oublie toutes les adresses gardées (lues, affichées, ou dans le cache de 5 minutes), leurs requêtes en cours et la donnée gardée pendant une relecture ; un composant qui en affichait une repasse à son attente (`pending` vrai, sans la donnée d'avant) et la redemande. Sans lui, une adresse encore gardée montre au compte suivant la donnée du compte d'avant, sans requête, et `µload.refresh(url)` la garde pendant la relecture, même si celle-ci échoue. `µload.clear()` ne prend pas d'argument : pour relire une seule adresse, écrivez `µload.refresh(url)`. Il s'écrit en clair dans le code de l'appli : son code n'entre au cœur que si ces mots y figurent (`µload['clear']()` ou `const { clear } = µload` ne l'y font pas entrer).
 - **Rendu serveur** : la donnée que `µload` lit pendant le rendu est attendue comme un `{await}`, puis rangée dans la balise `#__mjs_store` (clé `__mjsLoad`, cf. [SSR](19-ssr.md)). Le client démarre avec elle, sans requête, en reprise (`markers`) comme en remplacement (`replace`) ; elle ne s'ajoute pas au magasin `$$`. Un échec pendant le rendu (réseau, réponse en erreur ou qui n'est pas du JSON) ne s'écrit jamais dans la page : elle part en attente (`pending` vrai), rien n'entre dans `#__mjs_store`, et le client refait la requête — `error` se pose chez lui si elle échoue encore. Un rendu qui dépasse `settleMs` en attendant `µload` le dit, avec les adresses attendues. Cette reprise part dans tout client qui appelle `µload`, même construit sans bloc `render` ni `hydrate` : la page peut venir d'un serveur qui rend par l'API, ce que la construction du client ignore. Le code que lit le rendu serveur lui-même (la donnée à ranger, l'échec qui ne s'écrit pas dans la page) n'entre au cœur que dans une construction qui peut rendre côté serveur : un bloc `render` qui n'est pas tout en `csr`, ou `hydrate` dans une liste `runtime`. Une route sans `mode` suit `render.default`, et sans `render.default` elle est prérendue (`prerender`).
 
 `µload` s'écrit dans le `<script>` d'un composant — une variable, une dérivée, un gestionnaire d'événement, `µmount` — ou dans un module : hors d'une dérivée, un même appel rend le même magasin pour une même adresse et une même règle. Dans un gestionnaire ou `µmount`, rangez le magasin dans une variable (`$m = µload(…)`) : le composant lit le magasin que tient son état. Appelé ailleurs pendant que le composant se rend — dans le gabarit (une liaison, racine comprise, ou un bloc), dans un `µeffect`, ou dans une aide que le gabarit appelle (`{@aide($q).data}`) —, l'appel n'est pas suivi : le composant est prévenu de l'arrivée de la donnée et se redessine, mais il ne lit pas le magasin — ses requêtes dépassées ne sont pas annulées, une adresse qui change ne garde pas la donnée d'avant, et la donnée n'est gardée que tant qu'il l'affiche (jusqu'à son rendu complet suivant), puis au cache (5 minutes, 50 adresses) ; une adresse qu'il affiche est relue une fois après un envoi qui la touche. En développement, un avertissement le dit, une fois par lieu et par composant, avec l'adresse : écrivez l'appel dans une dérivée du script (`$membres = µload(…)`, l'adresse peut lire des `$`), puis lisez-la dans le gabarit ; pour une ligne de `{for}`, dans le script d'un composant enfant. Un gestionnaire d'événement et `µmount` ne sont pas visés, ni le script d'un composant enfant qu'un bloc crée. Aucune construction de production n'emporte cet avertissement ni le code qui le surveille, minifiée ou non, à tout niveau de console. Son module n'entre au cœur que si le code de l'appli appelle `µload`, et il emmène `ajax`, qui fait la requête. Une liste `"runtime"` écrite à la main doit nommer `ajax` : sinon la construction le signale (`runtimeHint`).
+
+> 🔗 **Un magasin et `await`.** Dans le `<script>` d'un composant, `$$x = await …` est refusé à la construction : un magasin ne garde pas de valeur qui attend ; une donnée chargée depuis une adresse se partage par `µload(adresse)`, et une valeur qui attend s'écrit dans une variable `$` du composant (cf. [3](03-reactivite.md), « Qui fait quoi »). Le fichier d'un module et le `<script module>`, eux, peuvent remplir un magasin une fois, à leur chargement : `$$liste = await charger()` au premier niveau y est permis.
 
 ## Sous le capot depuis la statisation
 
@@ -197,6 +206,8 @@ générique imposerait à tous ses lecteurs.
 `$$` se suit toujours d'un nom écrit dans le code (`$$score`, puis `$$score[k]` pour une clé calculée sous ce nom) : `$$[k]` n'est
 pas une clé du magasin, et la construction le refuse, à sa ligne. Rangez ces valeurs sous une clé nommée (`$$valeurs[k]`), écrivez
 `µ.store[k]`, ou servez-vous d'un `µStore`.
+
+Le magasin n'a pas de clé `__proto__`, `constructor` ni `prototype` à lui. Une telle clé venue de données, lue par n'importe quel chemin — `µ.store[cle]`, une variable qui tient le magasin (`s = µ.store`, puis `s[cle]`), `µ['store'][cle]` —, rend un objet vide et gelé, jamais `Object.prototype` ni la fonction `Object`, avec ou sans le réglage `"proxy": false`, et en développement un avertissement nomme la clé refusée. Rien ne s'écrit dans cet objet : `Object.assign` et `Object.defineProperty` y lèvent une `TypeError`, `Reflect.set` rend `false`, et `µ.store[cle].valeur = v` ne fait rien ; écrire la clé elle-même (`µ.store[cle] = v`) ne fait rien non plus. Une clé de ce nom que vous posez vous-même sur le magasin (`Object.defineProperty(µ.store, 'constructor', …)`) reste lue telle quelle.
 
 Un objet du magasin passé à un enfant par une prop (`item={$$liste[0]}`, ou `item={r}` dans une ligne de `{for r in $$liste}`) suit
 les écritures de ses champs, quel que soit le composant qui les fait : `$$liste[0].nom = v`, `r.nom = v`, `$$cfg.l.push(x)`, `delete`
@@ -241,6 +252,13 @@ et les valeurs dérivées qui la lisent se refont, sans relancer de reffet (cf. 
 > trouvé (ci-dessous) — et une variable qui garde un objet de l'état local garde de même l'objet
 > qu'elle tenait (cf. [Réactivité — état profond](03-reactivite.md#état-profond--mutation-imbriquée)).
 > Pour écrire là où la clé pointe au moment de l'écriture, écrivez par le chemin (`$$cfg.on = false`).
+>
+> Une variable prise **entre crochets** dans `µ.store` (`x = µ.store[k]`, même `x = µ.store['cfg']`) suit une écriture faite
+> au premier niveau (`x.top = v`), mais pas une écriture faite deux niveaux plus bas : après `x.sous.valeur = v` (ou
+> `x.valeur = v` après `x = µ.store[k].sous`), l'objet change, l'écran ne suit pas. Prise par un détour (`s = µ.store`, puis
+> `x = s[k]`), elle ne suit aucune écriture. Écrivez alors par
+> le chemin (`µ.store[k].sous.valeur = v`), ou prenez la clé par un point (`x = µ.store.cfg`) ou par `$$cfg` (`x = $$cfg`) :
+> ces formes sont suivies.
 >
 > Le suivi est prudent : un nom déclaré plus d'une fois dans le `<script>` (même dans deux
 > fonctions différentes), réassigné, ou paramètre d'une fonction n'est jamais pris pour un alias du
@@ -461,7 +479,7 @@ et les valeurs dérivées qui la lisent se refont, sans relancer de reffet (cf. 
 > pour l'enfant qui tient un objet plus haut, cf. [41](41-refresh.md)) : `t.c += 1`, `t.c++`, `delete t.c`, une méthode (`t.l.push(x)`),
 > un nom réaffecté ou pris sur un appel (`t := $$l.find(f)`), une clé qui agit, une écriture faite dans un module `.civet` ou
 > `.coffee` importé. Ne sont pas prises non plus, et demandent `µrefresh($$s)` :
-> une écriture plus profonde que le nom (`fiche.suite.champ = v` quand `fiche` est le nom pris), un nom pris sur une clé qui n'est plus à portée au moment de l'écriture (`trouve = $$s.items[k]` dans une boucle sur `k`, puis `trouve.c = 5` après elle), `t.n += f()`, `t.l.push(f())`. De même, une écriture plus bas par la variable d'une boucle (`for t in $$liste` puis `t.adresse.ville = v`) ne redessine pas : `µrefresh($$liste)` reste requis.
+> une écriture plus profonde que le nom (`fiche.suite.champ = v` quand `fiche` est le nom pris), un nom pris sur une clé qui n'est plus à portée au moment de l'écriture (`trouve = $$s.items[k]` dans une boucle sur `k`, puis `trouve.c = 5` après elle), `t.n += f()`, `t.l.push(f())`. Une écriture plus bas par la variable d'une boucle (`for t in $$liste` puis `t.adresse.ville = v`) prévient, avec l'enveloppe, le composant qui garde la ligne et y a lu l'adresse ; avec `"proxy": false`, `µrefresh($$liste)` reste requis.
 >
 > Ce suivi n'entre dans l'appli que si l'un de ses fichiers range un objet du magasin, ou d'un état de module, là où une variable
 > peut le prendre : une variable ou une prop qui le lit, un nom qui le garde (`t := $$liste.find(f)`), une valeur dérivée ou une
@@ -473,12 +491,15 @@ et les valeurs dérivées qui la lisent se refont, sans relancer de reffet (cf. 
 >
 > Trois écritures ne préviennent que certains détenteurs :
 >
-> - par la variable d'un composant (`$sel.nom = v`) : ce composant, et le parent lié qui le lui a donné (`v=!{$sel}`), pas les autres
->   composants qui gardent le même objet — un objet de l'état d'un composant se conduit ainsi dans toutes les applis ; pour qu'ils
->   suivent tous, écrivez par le magasin (`$$liste[i].nom = v`) ;
+> - par la variable d'un composant (`$sel.nom = v`) : ce composant, le parent lié qui le lui a donné (`v=!{$sel}`) et, avec l'enveloppe,
+>   les autres composants qui gardent le même objet dans une variable `$` (cf. [03](03-reactivite.md)) ; pas ceux qui le lisent par le
+>   magasin, directement (`{$$liste[0].nom}`) ou par une variable qui reprend la liste (`$rows = $$liste`) : pour qu'ils suivent aussi,
+>   écrivez par le magasin (`$$liste[i].nom = v`) ;
 > - par un élément trouvé puis plus bas (`$$liste.find(f).adresse.ville = v`, ou `t := $$liste.find(f)` puis `t.adresse.ville = v`) :
->   le composant qui garde l'objet écrit (l'adresse) ou la liste entière, pas celui qui garde l'élément trouvé ; pour lui, écrivez
->   par le chemin (`$$liste[i].adresse.ville = v`) ;
+>   le composant qui garde l'objet écrit (l'adresse) ou la liste entière et, avec l'enveloppe, celui qui garde l'élément trouvé et y a
+>   lu l'adresse (l'enfant d'une ligne qui la montre) ; de même pour une méthode (`$$liste.find(f).tags.push(v)`) ou une suppression
+>   (`delete $$liste.find(f).adresse.x`) faites sur l'élément trouvé ; avec `"proxy": false`, pour lui, écrivez par le chemin
+>   (`$$liste[i].adresse.ville = v`) ;
 > - dans un état de module, plus bas que l'objet gardé (`µ$$panier.items[0].adresse.ville = v`) : le composant qui garde l'objet
 >   écrit, la valeur de la clé (`items`) ou l'état entier, pas celui qui garde `items[0]` ; pour lui, écrivez un champ de l'objet
 >   qu'il garde (`µ$$panier.items[0].adresse = { ...µ$$panier.items[0].adresse, ville: v }`).
@@ -555,6 +576,8 @@ et les valeurs dérivées qui la lisent se refont, sans relancer de reffet (cf. 
 
 > ⚠️ **Un même objet rangé sous deux clés racines** (`new µStore({a: partage, b: partage})`, `µ.state({a: partage, b: partage})`) : muter via une clé notifie aussi les lecteurs de l'AUTRE clé — les deux pointent le même objet, la mutation les concerne toutes les deux. Ce qui NE change pas d'un mécanisme à l'autre : l'**identité** des proxys rendus. `µStore` construit un proxy **distinct par clé** (`store.data.a !== store.data.b`, même s'ils enveloppent le même objet brut) ; `µ.state` construit un proxy **unique par objet**, partagé (`state.a === state.b`). Un objet qui n'est atteint que par une seule clé ne reçoit toujours qu'une notification par mutation, dans les deux cas. Un **même composant** abonné aux DEUX clés à la fois n'est, lui non plus, invalidé qu'**une seule fois** par mutation — jamais une fois par clé partagée — dans les deux mécanismes.
 
+> ⚠️ **Ne gelez pas un état `µ.state`** : `Object.freeze` passe sans erreur sur l'état, puis une écriture (`state.a = 2`) lève une `TypeError`, dont le texte change d'un navigateur à l'autre. Pour une donnée qui ne doit pas changer, gelez-la avant de la ranger (`µ.state({ config: Object.freeze(config) })`) : elle se lit, et se remplace par une autre.
+
 ## Ne pas exporter de `$foo` réactif
 
 Les variables réactives d'instance (`$foo`) sont liées à **une instance** d'un composant, pas au module : ne les `export`-ez pas pour faire du partage d'état. Pour partager, utilisez un `µ$$`, un `µStore`, ou un `§` contexte selon la portée voulue.
@@ -594,6 +617,8 @@ Les trois situations où une clé manque, et où l'accès optionnel s'impose :
 | `§§x` | Symbole de lecture/écriture réactive — contexte de sous-arbre, toujours (cf. [Contexte](13-contexte.md)) ; jamais un import de singleton, ni léger ni `µStore` (voir `µ$$x` ci-dessus) | `§§x = …` (déclaré par un ancêtre) | `§§x` (lecture = abonnement, écriture = invalidation) |
 
 > 🔗 À ne pas confondre avec `§` (contexte d'arbre, scopé à un ancêtre — chapitre [Contexte](13-contexte.md)) ni avec `µ$` (variable réactive universelle, même moteur que `µ$$` mais sémantique « variable » et non « store »).
+
+`µ$x` tient un objet (`µ$panier = { n: 0, lignes: [] }`), dont on change les champs (`µ$panier.n++`), et c'est le même objet pour toute la page : chaque composant, chaque exemplaire d'un composant et chaque module qui écrit `µ$panier` désigne cet objet. La première déclaration exécutée pose la valeur de départ ; les suivantes gardent l'objet déjà là, et un composant monté plus tard montre sa valeur du moment. Il peut aussi tenir une liste (`µ$l = [1, 2]`), suivie comme un objet (`µ$l.push(3)`, `µ$l.length`), ou un nombre, un texte, un booléen (`µ$nb = 0`) : `µ$nb++`, `µ$nb--`, `++µ$nb` et `µ$nb += 1` le changent comme une variable, pour toute la page. Une ligne `µ$x = …` du niveau du script est une déclaration, qu'elle soit sous un `if`, un `for` ou un `try`, dans un bloc, et quel que soit son retrait. La même ligne dans le corps d'une fonction — méthode, flèche, rappel, `µeffect`, `µafter`, fonction exportée par un module (`@raz = ->`, puis `µ$nb = 10` à la ligne suivante) — est une écriture, comme `@raz = -> µ$nb = 10` : elle change la valeur pour toute la page à chaque appel, quel que soit l'appelant, même une méthode appelée au niveau du script. Une fonction appelée là où elle est écrite (`(() => { … })()`, `do ->` en CoffeeScript) compte comme le niveau du script. Il en va de même en Civet, CoffeeScript, JavaScript et TypeScript. Il ne se lit pas dans le gabarit (`{µ$panier.n}` est refusé). Pour l'afficher, tenez-le dans une variable `$` du `<script>` — `$panier = µ$panier`, puis `{$panier.n}` dans le gabarit —, ou copiez le champ affiché par un reffet : `µeffect -> $n = µ$panier.n` (un nombre : `µeffect -> $n = µ$nb`), puis `{$n}`. L'écran de chaque composant qui le tient suit alors chaque changement, d'où qu'il vienne : `µ$panier.n++` dans une méthode du `<script>` de ce composant ou d'un autre (`@plus = -> µ$panier.n++`, appelée au clic), `$panier.n++` par la variable d'un autre composant, un champ plus profond (`µ$panier.lignes.push(x)`), une fonction exportée par un module qui porte la même déclaration (`µ$panier = …` en tête, puis `export ajouter = -> µ$panier.n++`). Il en va de même en développement et en production, et sous le réglage `"proxy": false` : ce réglage range les objets des variables `$` sans enveloppe, mais un objet `µ$x` garde la sienne, comme un `µ.state`. Un fichier qui exporte un magasin (`export µ$$x`, ou `export µ$x` dans le `<script module>` d'un composant) garde ses `µ$` pour lui, `<script>` du composant compris : `µ$x` y désigne l'objet du magasin, et un autre `µ$y` de ce fichier n'est pas celui de la page. Un magasin `µ$$x`, décrit plus haut, reste le choix pour un objet qui a son fichier : déclaré une fois, avec sa valeur de départ, il se lit directement dans le gabarit (`{$$x.n}`).
 
 Après un point, `$$x` n'est pas le store mais une propriété : `obj.$$x` lit la propriété `$$x` de `obj`, dans le `<script>` comme dans le gabarit, comme `obj.$x` lit sa propriété `$x`. Une plage ou une décomposition (`[1..$$n]`, `[...$$liste]`) lit bien le store.
 

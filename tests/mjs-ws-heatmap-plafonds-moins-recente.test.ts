@@ -19,7 +19,7 @@ function monte(opts: any = {}) {
   const handlers: Record<string, (p: unknown, c: unknown) => void> = {}
   const app: any = { on(type: string, h: (p: unknown, c: unknown) => void) { handlers[type] = h }, stop: async () => {} }
   const pkg: any = heatmapPackage({ origins: [SITE], onLog: () => {}, ...opts })
-  pkg.installer(app)
+  pkg.install(app)
   const clients = new Map<string, any>()
   const recoit = (p: unknown, qui = 'v', address?: string) => {
     if (!clients.has(qui)) clients.set(qui, { meta: { origin: SITE, address } })

@@ -23,6 +23,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox'): Promise<boolean> {
   try {
@@ -139,7 +140,7 @@ const SCENARIOS: Scenario[] = [
 ]
 
 for (const nomNavigateur of ['chromium', 'firefox'] as const) {
-  describe('envoi d\'un formulaire pris par la navigation malgré une coupure native de `submit` (' + nomNavigateur + ' réel)', function () {
+  playTogether(describe('envoi d\'un formulaire pris par la navigation malgré une coupure native de `submit` (' + nomNavigateur + ' réel)', function () {
     this.timeout(180000)
     let present = false
     let script  = ''
@@ -325,5 +326,5 @@ for (const nomNavigateur of ['chromium', 'firefox'] as const) {
         } finally { await ctx.page.close() }
       })
     }
-  })
+  }))
 }

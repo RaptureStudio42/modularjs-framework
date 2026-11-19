@@ -1,5 +1,5 @@
 // `µ$x =` dont la valeur continue sous sa ligne (écrite dessous en retrait, liste ou objet sur plusieurs lignes, suite en `.`) :
-// la valeur est celle que Civet lit pour `x =`, entourée une seule fois de `µ.state(…)`, lue dans l'arbre de Civet et jamais
+// la valeur est celle que Civet lit pour `x =`, entourée une seule fois de `µ._mjs_univVal(…)` (de `µ.state(…)` pour un magasin), lue dans l'arbre de Civet et jamais
 // sur le texte (un crochet seul dans une expression régulière ne trompe rien) ; une chaîne `"""` qui cite `µ$x =` garde son texte
 
 import assert from 'node:assert/strict'
@@ -8,19 +8,19 @@ import { transpile } from '../src/transpiler/index.js'
 import { applyMjsSugarToScript, singletonsDeclares } from '../src/transpiler/sugar.js'
 import { tokenize } from '../src/lexer/index.js'
 import { getAdapter } from '../src/languages/index.js'
-import { declarationsDeLaPasse } from '../src/languages/civet-declarations.js'
+import { passDeclarations } from '../src/languages/civet-declarations.js'
 
 const enLigne = (js: string) => 'data:text/javascript;base64,' + Buffer.from(js).toString('base64')
 const message = (e: any) => 'erreur : ' + String(e?.message ?? e).split('\n')[0]
 let numero    = 0
 
-// valeur rendue par `f()` d'un module compilé par ModularJS ; le faux `µ.state` enveloppe ce qu'il reçoit, pour le voir
+// valeur rendue par `f()` d'un module compilé par ModularJS ; le faux `µ._mjs_univVal`, comme le faux `µ.state`, enveloppe ce qu'il reçoit, pour le voir
 const valeurModule = async (src: string): Promise<string> => {
   try {
-    const passe    = declarationsDeLaPasse()
+    const passe    = passDeclarations()
     const texte    = tokenize(applyMjsSugarToScript(src, 'civet', undefined, '<script module>', 1, undefined, passe), { moduleMode: true, singletons: singletonsDeclares(src), fileName: 'essai.civet', firstLine: 1 })
-    const { code } = await getAdapter('civet').compileToJs(texte, { fileName: 'essai.civet', bare: true, declarerAffectations: true, declarationsDeLaPasse: passe })
-    const mod      = await import(enLigne('const µ = {state: (o) => ({etat: o})}\n' + code) + '#' + numero++)
+    const { code } = await getAdapter('civet').compileToJs(texte, { fileName: 'essai.civet', bare: true, declareAssignments: true, passDeclarations: passe })
+    const mod      = await import(enLigne('const µ = {state: (o) => ({etat: o}), _mjs_univVal: (o) => ({etat: o})}\n' + code) + '#' + numero++)
     return JSON.stringify(await mod.f())
   }
   catch (e: any) {
@@ -72,9 +72,9 @@ describe('µ$x = : une valeur sur plusieurs lignes, lue dans l\'arbre de Civet',
     assert.equal(await valeurModule(src), await valeurCivet(src))
   })
 
-  it('composant : un objet écrit sous `µ$x =` entre entier dans `µ.state(…)`', async () => {
+  it('composant : un objet écrit sous `µ$x =` entre entier dans `µ._mjs_univVal(…)`', async () => {
     const { output } = await transpile('<script>\nµ$x =\n  a: 1\n  b: 2\n</script>\n<p>a</p>\n', { moduleName: 'essai' })
-    assert.match(output, /µ\.state\(\s*\{\s*a: 1,\s*b: 2,?\s*\}\s*\)/)
+    assert.match(output, /µ\._mjs_univVal\(\s*\{\s*a: 1,\s*b: 2,?\s*\}\s*\)/)
   })
 
   it('composant : une chaîne """ qui cite `µ$x =` garde son texte', async () => {

@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox' | 'webkit'): Promise<boolean> {
   try {
@@ -113,7 +114,7 @@ describe('*filter(…, spot) : la zone nette suit la balise là où elle est, da
   after(async () => { await terminateSharedWorkerPool() })
 
   for (const nom of ['chromium', 'firefox'] as const) {
-    describe(nom, function () {
+    playTogether(describe(nom, function () {
       let present = false
       let browser: any = null
 
@@ -371,6 +372,6 @@ describe('*filter(…, spot) : la zone nette suit la balise là où elle est, da
           await ctx.close()
         }
       })
-    })
+    }))
   }
 })

@@ -27,10 +27,10 @@ describe('messages : vouvoiement et textes justes', () => {
   afterEach(() => setMessagesLang('fr'))
 
   it('les suggestions vouvoient : « vouliez-vous dire … ? »', () => {
-    assert.equal(t('effets.suggestion', { nom: 'blur' }), ' Vouliez-vous dire *blur ?')
-    assert.equal(t('bundler.index.tag-suggestion', { nom: 'cart', nature: 'dev' }), ' Vouliez-vous dire <@cart> (composant du projet) ?')
-    assert.equal(t('bundler.index.tag-suggestion', { nom: 'select', nature: 'coeur' }), ' Vouliez-vous dire <@@select> (module cœur) ?')
-    assert.match(t('types.regle-inconnue-suggestion', { bloc: '<vars>', ligne: 2, nom: 'Percnt', suggestion: 'Percent' }), /inconnue — vouliez-vous dire « Percent » \?/)
+    assert.equal(t('effects.suggestion', { name: 'blur' }), ' Vouliez-vous dire *blur ?')
+    assert.equal(t('bundler.index.tag-suggestion', { name: 'cart', nature: 'dev' }), ' Vouliez-vous dire <@cart> (composant du projet) ?')
+    assert.equal(t('bundler.index.tag-suggestion', { name: 'select', nature: 'core' }), ' Vouliez-vous dire <@@select> (module cœur) ?')
+    assert.match(t('types.rule-unknown-suggestion', { block: '<vars>', line: 2, name: 'Percnt', suggestion: 'Percent' }), /inconnue — vouliez-vous dire « Percent » \?/)
   })
 
   it('aucun message français ne tutoie', () => {
@@ -39,14 +39,14 @@ describe('messages : vouvoiement et textes justes', () => {
 
   it('les consignes vouvoient : « renommez », « ajoutez », « écrivez »', () => {
     assert.match(t('bundler.index.runtime-hint-game'), /Ajoutez 'socket'\./)
-    assert.match(t('effets.sock-absent', { nom: 'follow' }), /écrivez @sock = µsocket/)
+    assert.match(t('effects.sock-missing', { name: 'follow' }), /écrivez @sock = µsocket/)
     assert.match(t('bundler.config.suggestion-hint', { suggestion: 'outputDir' }), /vouliez-vous dire 'outputDir' \?/)
   })
 
   it('"effects" est un objet : le message cite ses cinq réglages, dans les deux langues', () => {
     for (const lang of ['fr', 'en'] as const) {
       setMessagesLang(lang)
-      const texte = t('bundler.config.effects-objet', { valeur: '"circle"' })
+      const texte = t('bundler.config.effects-object', { value: '"circle"' })
       for (const cle of ['"theme"', '"lite"', '"skeleton"', '"guard"', '"rate"']) assert.ok(texte.includes(cle), `${lang} : ${cle}`)
       assert.ok(texte.includes('"components"') && texte.includes('"delay"'), lang)
     }
@@ -54,23 +54,23 @@ describe('messages : vouvoiement et textes justes', () => {
 
   it('en anglais, des guillemets anglais', () => {
     setMessagesLang('en')
-    assert.equal(t('bundler.config.effects-element', { cle: 'skeleton', valeur: 'wait', valides: '"await", "components"' }), '[mjs.config.json] "effects.skeleton": "wait" — allowed: "await", "components".')
+    assert.equal(t('bundler.config.effects-element', { key: 'skeleton', value: 'wait', valid: '"await", "components"' }), '[mjs.config.json] "effects.skeleton": "wait" — allowed: "await", "components".')
     assert.deepEqual(fautives(en as Record<string, MsgEntry>, /[«»]/), [])
   })
 
   it('un modèle en fichier choisi par une valeur calculée : écrire layout={…}, le compilateur pose la balise', () => {
-    const vars = { tag: '@carte', nom: 'carte', modeles: 'compacte', premier: 'compacte', ligne: 3 }
-    const fra  = t('parser.modele-fichier-calcule', vars)
+    const vars = { tag: '@carte', name: 'carte', layouts: 'compacte', first: 'compacte', line: 3 }
+    const fra  = t('parser.layout-file-computed', vars)
     assert.ok(fra.includes('layout={$'), fra)
     assert.doesNotMatch(fra, /\{if\} autour/)
     setMessagesLang('en')
-    const eng  = t('parser.modele-fichier-calcule', vars)
+    const eng  = t('parser.layout-file-computed', vars)
     assert.ok(eng.includes('layout={$'), eng)
     assert.doesNotMatch(eng, /\{if\} around/)
   })
 
   it('*effet sur <@document> tenu par une variable : le message parle du HTML, pas du « gabarit »', () => {
-    const texte = t('effets.document-variable', { nom: 'ripple' })
+    const texte = t('effects.document-variable', { name: 'ripple' })
     assert.doesNotMatch(texte, /gabarit/)
     assert.match(texte, /HTML/)
   })

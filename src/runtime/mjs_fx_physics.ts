@@ -1096,17 +1096,17 @@
       // par une seule matrice (rien d'autre n'est écrit, rien n'est relu) : tournée, étirée en long, épaissie à ROPE, plus
       // longue de CAP à chaque bout (les bouts arrondis d'un trait) et inclinée de TILT (l'écart au bout : moins de 0,02 px)
       var tie = function(k) {
-        var b   = k.body;
-        var r   = b.rope;
-        var dx  = b.x + b.cs * r.lx - b.sn * r.ly - r.ax;
-        var dy  = b.y + b.sn * r.lx + b.cs * r.ly - r.ay;
-        var len = Math.sqrt(dx * dx + dy * dy);
-        var ux  = len > 0 ? dx / len : 0;
-        var uy  = len > 0 ? dy / len : 1;
-        var vx  = ux - TILT * uy;
-        var vy  = uy + TILT * ux;
-        var tot = len + 2 * CAP;
-        k.cord.style.transform = 'matrix(' + (-ROPE * vy).toFixed(4) + ',' + (ROPE * vx).toFixed(4) + ',' + (tot * vx).toFixed(3) + ',' + (tot * vy).toFixed(3) + ',' + (r.ax + ROPE / 2 * vy - CAP * vx).toFixed(3) + ',' + (r.ay - ROPE / 2 * vx - CAP * vy).toFixed(3) + ')';
+        var b                  = k.body;
+        var r                  = b.rope;
+        var dx                 = b.x + b.cs * r.lx - b.sn * r.ly - r.ax;
+        var dy                 = b.y + b.sn * r.lx + b.cs * r.ly - r.ay;
+        var len                = Math.sqrt(dx * dx + dy * dy);
+        var ux                 = len > 0 ? dx / len : 0;
+        var uy                 = len > 0 ? dy / len : 1;
+        var vx                 = ux - TILT * uy;
+        var vy                 = uy + TILT * ux;
+        var early              = len + 2 * CAP;
+        k.cord.style.transform = 'matrix(' + (-ROPE * vy).toFixed(4) + ',' + (ROPE * vx).toFixed(4) + ',' + (early * vx).toFixed(3) + ',' + (early * vy).toFixed(3) + ',' + (r.ax + ROPE / 2 * vy - CAP * vx).toFixed(3) + ',' + (r.ay - ROPE / 2 * vx - CAP * vy).toFixed(3) + ')';
       };
 
       // les fils de `hang` : un calque sans taille, un fil par corps (une balise, déplacée par `transform` seulement, quand

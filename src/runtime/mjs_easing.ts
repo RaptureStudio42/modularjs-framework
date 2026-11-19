@@ -292,14 +292,14 @@ var _txCancel = function(anim) {
   delay                = opts.delay ?? 0;
   ease                 = opts.cssEasing ?? 'linear';
   fill                 = opts.fill ?? 'forwards';
-  // <retour-sortie>
+  // <exit-reverse>
   // transition : remplie des deux côtés, la balise garde sa première image tant que l'animation attend son heure de départ (cf. `_txRunCss`)
   if (opts.direction && opts.fill == null) fill = 'both';
-  // </retour-sortie>
+  // </exit-reverse>
   before               = node.style.animation;
   node.style.animation = name + ' ' + dur + 'ms ' + ease + ' ' + delay + 'ms ' + fill;
   stamp                = performance.now();
-  // <retour-sortie>
+  // <exit-reverse>
   // l'animation de cette transition sur la balise : celle de ce nom
   var own = function() {
     return node.getAnimations ? node.getAnimations().find(function(x) { return x.animationName === name; }) : null;
@@ -310,7 +310,7 @@ var _txCancel = function(anim) {
   var now    = delay < 0 && document.timeline ? document.timeline.currentTime : null;
   var pinned = now != null ? own() : null;
   if (pinned) pinned.startTime = now;
-  // </retour-sortie>
+  // </exit-reverse>
   return new Promise(function(resolve) {
     var settle = function() {
       if (settled) return;
@@ -325,7 +325,7 @@ var _txCancel = function(anim) {
     var onEnd = function(ev) {
       if (ev.target !== node) return;
       if (ev.animationName && ev.animationName !== name) return;
-      // <retour-sortie>
+      // <exit-reverse>
       // l'animation de ce nom joue encore sur la balise : la transition n'est pas finie. Une annulation est celle d'une animation d'avant de
       // même nom (la sortie qu'un retour a arrêtée, reprise par ce retrait), arrivée à l'image suivante : la balise n'est pas retirée d'un
       // coup. Une fin est aussi annoncée par le navigateur quand l'animation recule avant son départ (heure de départ donnée après coup, plus
@@ -336,7 +336,7 @@ var _txCancel = function(anim) {
       // jusqu'au retrait de la balise ou à la transition qui la reprend (`abort`), au lieu de rendre la balise à son état normal tant qu'une
       // sortie intérieure plus longue la garde dans la page
       if (ev.type === 'animationend' && opts.direction === 'out' && node._mjs_outro) return resolve();
-      // </retour-sortie>
+      // </exit-reverse>
       node.style.animation = before;
       settle();
     };
@@ -345,21 +345,21 @@ var _txCancel = function(anim) {
       direction: opts.direction,
       tValue: function() {
         var p = Math.min(Math.max((performance.now() - stamp - delay) / Math.max(dur, 1e-6), 0), 1);
-        // <retour-sortie>
+        // <exit-reverse>
         // la position de l'animation elle-même : le navigateur la lance à sa première image, parfois bien après son écriture
         var a = own();
         if (a) p = a.effect.getComputedTiming().progress ?? 0;
-        // </retour-sortie>
+        // </exit-reverse>
         return opts.direction === 'in' ? p : 1 - p;
       },
       // écouteurs retirés AVANT que l'appelant n'écrive sa propre valeur de style.animation
       abort: function() {
         state.aborted = true;
-        // <retour-sortie>
+        // <exit-reverse>
         // la valeur d'avant revient sur la balise : l'animation qui prend la suite la remet à sa fin, au lieu de rejouer celle-ci tant qu'une
         // autre balise garde ses images clés
         node.style.animation = before;
-        // </retour-sortie>
+        // </exit-reverse>
         settle();
       }
     };
@@ -395,7 +395,7 @@ var _txRunShared = function(node, cfg, direction, txId) {
   }
 };
 
-// <retour-sortie>
+// <exit-reverse>
 // l'état « sortie finie et retenue » d'une balise de bloc (`:out`, `:transition`) : à la position 0, son image de fin tenue (`anim` : le
 // remplissage qui la tient, en mode css) jusqu'à son retrait, ou jusqu'à la transition qui la reprend de là comme elle reprend une sortie
 // en cours (`tValue`, puis `abort` qui rend le remplissage). Une balise de bloc a ainsi un seul état à tout instant : aucun (présente),
@@ -418,7 +418,7 @@ var _txHold = function(node, anim, cfg) {
 // `_txRunTick`) : celle de l'état d'avant s'il est de la même configuration — la transition se reprend elle-même, sa dernière image est
 // sur la balise —, sinon 1, l'état naturel (aucun état, ou celui d'une autre transition)
 var _txAt = 1;
-// </retour-sortie>
+// </exit-reverse>
 
 // mode tick : cfg.tick(t, u) à chaque image, état annulable, résolu une seule fois
 var _txRunTick = function(node, cfg, t1, t2, direction, txId) {
@@ -426,7 +426,7 @@ var _txRunTick = function(node, cfg, t1, t2, direction, txId) {
   var dur;
   var delay;
   var ease;
-  // <retour-sortie>
+  // <exit-reverse>
   // transition demandée à sa fin : son image de fin est posée (plus bas), rien d'autre ne le ferait. Sortie d'une balise de bloc (entrée
   // arrêtée avant sa première image, balise retirée de nouveau avant le départ de son retour) : image tenue, la balise n'est jamais
   // laissée à son état naturel jusqu'à son retrait. Entrée (reprise d'une sortie arrêtée à moins d'un dix-millième de la fin de l'entrée
@@ -434,7 +434,7 @@ var _txRunTick = function(node, cfg, t1, t2, direction, txId) {
   var end = Math.abs(delta) < 1e-4 && (direction === 'in' || node._mjs_outro);
   var at  = _txAt;
   if (!end)
-  // </retour-sortie>
+  // </exit-reverse>
   if (Math.abs(delta) < 1e-4) return Promise.resolve();
   dur   = Math.abs(delta) * (cfg.duration ?? 400);
   delay = Math.max(cfg.delay ?? 0, 0);
@@ -483,13 +483,13 @@ var _txRunTick = function(node, cfg, t1, t2, direction, txId) {
       progress = Math.min(elapsed / Math.max(dur, 1e-6), 1);
       if (!tick(t1 + delta * ease(progress))) return;
       if (progress < 1) raf = requestAnimationFrame(frame);
-      // <retour-sortie>
+      // <exit-reverse>
       // sortie de bloc allée au bout : finie et retenue (cf. `_txHold`) ; son image de fin reste sur la balise
       else if (direction === 'out' && node._mjs_outro) {
         finish();
         _txHold(node, null, cfg);
       }
-      // </retour-sortie>
+      // </exit-reverse>
       else finish();
     };
     state = {
@@ -502,7 +502,7 @@ var _txRunTick = function(node, cfg, t1, t2, direction, txId) {
       }
     };
     node._mjs_transition_state = state;
-    // <retour-sortie>
+    // <exit-reverse>
     state.cfg = cfg;
     // hors de ses images, `tick` n'est appelé que si la balise ne porte pas déjà l'image voulue (`at`, cf. `_txAt`). Demandée à sa fin :
     // la seule image de fin, sans attendre — l'entrée reprise tout près de sa fin n'y laisse pas son dernier palier, la sortie reprise
@@ -519,7 +519,7 @@ var _txRunTick = function(node, cfg, t1, t2, direction, txId) {
     // (`requestAnimationFrame`), la balise n'en passe aucune à son état naturel avant le premier `tick`. Une sortie neuve part de l'état
     // naturel, une transition reprise par elle-même de l'image qu'elle a posée : aucun appel de plus
     if (at !== t1 && (node._mjs_intro || node._mjs_outro) && !tick(t1)) return;
-    // </retour-sortie>
+    // </exit-reverse>
     raf                        = requestAnimationFrame(frame);
   });
 };
@@ -536,11 +536,11 @@ var _txRunCss = function(node, cfg, t1, t2, direction, txId) {
   var state;
   var p;
   var t;
-  // <retour-sortie>
+  // <exit-reverse>
   // sortie d'une balise de bloc demandée à sa fin : son image de fin est posée et tenue par un remplissage (plus bas, cf. `_txRunTick`)
   var end = Math.abs(delta) < 1e-4 && direction === 'out' && node._mjs_outro;
   if (!end)
-  // </retour-sortie>
+  // </exit-reverse>
   if (Math.abs(delta) < 1e-4) return Promise.resolve();
   dur   = Math.abs(delta) * (cfg.duration ?? 400);
   delay = Math.max(cfg.delay ?? 0, 0);
@@ -559,10 +559,10 @@ var _txRunCss = function(node, cfg, t1, t2, direction, txId) {
     µ.warn('[mjs-tx] ' + µ._mjs_txt('txCssThrew', { direction: direction, txId: txId }, 'cfg.css() a levé (transition {direction} #{txId}) — transition close proprement :'), err);
     return Promise.resolve(direction);
   }
-  // <retour-sortie>
+  // <exit-reverse>
   // de durée nulle, cette animation est finie d'emblée : elle n'attend aucune heure de départ, le remplissage vers l'avant suffit
   if (end) return _txHold(node, µ._mjs_animate(node, [start, start], { duration: 0, fill: 'forwards' }));
-  // </retour-sortie>
+  // </exit-reverse>
   state = {
     direction: direction,
     t1: t1,
@@ -610,10 +610,10 @@ var _txRunCss = function(node, cfg, t1, t2, direction, txId) {
             _txCancel(real);
             node._mjs_pendingFillRelease = null;
           };
-          // <retour-sortie>
+          // <exit-reverse>
           // sortie de bloc allée au bout : finie et retenue (cf. `_txHold`)
           if (node._mjs_outro) _txHold(node, real);
-          // </retour-sortie>
+          // </exit-reverse>
         }
         else {
           _txCancel(real);
@@ -664,16 +664,16 @@ var _txRunCss = function(node, cfg, t1, t2, direction, txId) {
     cfg = ref;
   }
   if (!cfg) return Promise.resolve();
-  // <retour-sortie>
+  // <exit-reverse>
   _txAt = prev && prev.cfg === cfg ? t1 : 1;
-  // </retour-sortie>
+  // </exit-reverse>
   if (typeof cfg.tick === 'function') return _txRunTick(node, cfg, t1, t2, direction, txId);
   if (!cfg.css) return Promise.resolve();
-  // <retour-sortie>
+  // <exit-reverse>
   // transition partagée reprise en cours (balise remise pendant sa sortie) : elle part de là où en était la précédente, l'animation commencée
   // à mi-course par un retard négatif ; mêmes images clés, la position se lit sans la courbe
   if (prev && node._mjs_anim_mode === 'shared') return _txRunShared(node, { ...cfg, delay: -(direction === 'in' ? t1 : 1 - t1) * (cfg.duration ?? 400) }, direction, txId);
-  // </retour-sortie>
+  // </exit-reverse>
   if (node._mjs_anim_mode === 'shared') return _txRunShared(node, cfg, direction, txId);
   return _txRunCss(node, cfg, t1, t2, direction, txId);
 };
@@ -682,7 +682,7 @@ var _txRunCss = function(node, cfg, t1, t2, direction, txId) {
 µ._mjs_playTransition = function(node, ref, direction) {
   var res;
   if (!ref) return Promise.resolve();
-  // <retour-sortie>
+  // <exit-reverse>
   if (direction === 'in') {
     // entrée différée d'une balise de bloc (microtâche de `µ._mjs_whenLayouted`), retirée de nouveau entre-temps : elle ne se joue pas,
     // sa sortie garde la balise
@@ -692,7 +692,7 @@ var _txRunCss = function(node, cfg, t1, t2, direction, txId) {
     var hook = node._mjs_pendingFillRelease;
     if (hook && !(node._mjs_tick_cfgs && (node._mjs_tick_cfgs.get(ref) || 0).cleanup === hook)) hook();
   }
-  // </retour-sortie>
+  // </exit-reverse>
   if (µ.debug) µ.log('[mjs-tx] play', direction);
   if (typeof ref === 'function') {
     if (ref._isCfgFactory) return µ._mjs_runTransition(node, ref, direction);
@@ -711,7 +711,7 @@ var _txRunCss = function(node, cfg, t1, t2, direction, txId) {
   return Promise.resolve();
 };
 
-// <retour-sortie>
+// <exit-reverse>
 // entrée d'une balise intérieure qui revient avec sa ligne : `@introstart`, puis `@introend` à sa fin, sauf si la ligne repart entre-temps
 var _txIntro = function(n, row) {
   try {
@@ -754,7 +754,7 @@ var _txIntro = function(n, row) {
     else µ._mjs_runTransition(n, n._mjs_outro._cfgFactory || n._mjs_outro, 'in');
   }
 };
-// </retour-sortie>
+// </exit-reverse>
 
 //EPINGLAGE : fige un nœud sortant d'une liste là où il était, avant que la remise en ordre ne le déplace
 // left/top et margin 0, jamais un transform (le fondu croisé anime le transform)

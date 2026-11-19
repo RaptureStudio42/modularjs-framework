@@ -132,7 +132,7 @@ describe('bundler — build honnête quand un composant .mjs tombe', function ()
   // (cli.ts exécute son run() top-level avec process.exit() dès l'import : le
   // même choix — lecture de source ciblée plutôt qu'exécution — est déjà établi
   // dans ce dépôt, cf. tests/cli-context-alias-wiring.test.ts).
-  it("cli.ts — printBuildReport loggue la clé 'cli.build-rapport-echecs' AVANT 'cli.build-rapport', sous condition stats.errors.length > 0", function () {
+  it("cli.ts — printBuildReport loggue la clé 'cli.build-report-failures' AVANT 'cli.build-report', sous condition stats.errors.length > 0", function () {
     const cliSrc = readFileSync(join(__dirname, '..', 'src', 'cli.ts'), 'utf-8')
     const fnStart = cliSrc.indexOf('function printBuildReport')
     assert.ok(fnStart >= 0, 'printBuildReport introuvable dans cli.ts (structure a changé ?)')
@@ -140,21 +140,21 @@ describe('bundler — build honnête quand un composant .mjs tombe', function ()
     assert.ok(fnEnd > fnStart, 'fin de printBuildReport introuvable (structure de cli.ts a changé ?)')
     const fnBody = cliSrc.slice(fnStart, fnEnd)
 
-    const idxEchecs = fnBody.indexOf("t('cli.build-rapport-echecs'")
-    const idxRapport = fnBody.indexOf("t('cli.build-rapport'")
-    assert.ok(idxEchecs >= 0, "appel à la clé 'cli.build-rapport-echecs' introuvable dans printBuildReport")
-    assert.ok(idxRapport >= 0, "appel à la clé 'cli.build-rapport' introuvable dans printBuildReport")
+    const idxEchecs = fnBody.indexOf("t('cli.build-report-failures'")
+    const idxRapport = fnBody.indexOf("t('cli.build-report'")
+    assert.ok(idxEchecs >= 0, "appel à la clé 'cli.build-report-failures' introuvable dans printBuildReport")
+    assert.ok(idxRapport >= 0, "appel à la clé 'cli.build-report' introuvable dans printBuildReport")
     assert.ok(idxEchecs < idxRapport,
-      "AVANT le fix : la ligne ✅ ('cli.build-rapport') s'affichait même avec des erreurs, sans ligne ✗ avant elle")
+      "AVANT le fix : la ligne ✅ ('cli.build-report') s'affichait même avec des erreurs, sans ligne ✗ avant elle")
     assert.match(fnBody.slice(0, idxEchecs), /stats\.errors\.length\s*>\s*0/,
       'la ligne ✗ doit être conditionnée à stats.errors.length > 0')
   })
 
-  it("clé catalogue 'cli.build-rapport-echecs' — fr/en, forme « ✗ N … »", function () {
-    assert.equal(t('cli.build-rapport-echecs', { nb: 3 }), '✗ 3 en échec')
+  it("clé catalogue 'cli.build-report-failures' — fr/en, forme « ✗ N … »", function () {
+    assert.equal(t('cli.build-report-failures', { count: 3, components: 2 }), '✗ 3 erreurs (listées plus bas) — 2 composants en échec')
     setMessagesLang('en')
     try {
-      assert.equal(t('cli.build-rapport-echecs', { nb: 3 }), '✗ 3 failed')
+      assert.equal(t('cli.build-report-failures', { count: 3, components: 2 }), '✗ 3 errors (listed below) — 2 components failed')
     } finally {
       setMessagesLang('fr') // restaure — LANG est un état global partagé entre fichiers de test
     }
@@ -209,7 +209,7 @@ describe('bundler — build honnête quand un composant .mjs tombe', function ()
     const avertissements = stats2.warnings.join('\n')
     assert.ok(!avertissements.includes('reste servie'), "plus de message « ancienne version reste servie »")
     assert.match(avertissements, /broken/, 'le composant en échec reste nommé')
-    assert.ok(stats2.warnings.some(w => w.includes(t('bundler.index.composant-echec-non-repeche', { nom: 'broken' }))), `message dédié attendu, reçu :\n${avertissements}`)
+    assert.ok(stats2.warnings.some(w => w.includes(t('bundler.index.component-failed-not-recovered', { name: 'broken' }))), `message dédié attendu, reçu :\n${avertissements}`)
 
     await strict.close()
   })
@@ -232,11 +232,11 @@ describe('bundler — build honnête quand un composant .mjs tombe', function ()
     assert.match(source, /keepFailedComponents:\s*[^,\n]*(dev|serve)/, "cli.ts doit transmettre l'option au Bundler en fonction de la commande")
   })
 
-  it("clé catalogue 'bundler.index.composant-echec-non-repeche' présente en fr ET en", function () {
+  it("clé catalogue 'bundler.index.component-failed-not-recovered' présente en fr ET en", function () {
     setMessagesLang('fr')
-    const fr = t('bundler.index.composant-echec-non-repeche', { nom: 'x' })
+    const fr = t('bundler.index.component-failed-not-recovered', { name: 'x' })
     setMessagesLang('en')
-    const en = t('bundler.index.composant-echec-non-repeche', { nom: 'x' })
+    const en = t('bundler.index.component-failed-not-recovered', { name: 'x' })
     setMessagesLang('fr')
     assert.ok(fr.includes('x') && fr.length > 20, `fr inattendu : ${fr}`)
     assert.ok(en.includes('x') && en.length > 20, `en inattendu : ${en}`)

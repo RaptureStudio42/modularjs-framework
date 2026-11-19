@@ -25,7 +25,7 @@ describe('messages du générateur : la ligne du fichier', () => {
     await assert.rejects(T('<table><div>{$a}</div></table>'), /<div> \(ligne 5\)[^]*le retire du tableau/)
     setMessagesLang('en')
     try {
-      assert.match(t('generator.hors-tableau-form', { parent: 'table', ligne: 3 }), /line 3\)[^]*empty <form>/)
+      assert.match(t('generator.outside-table-form', { parent: 'table', line: 3 }), /line 3\)[^]*empty <form>/)
     }
     finally { setMessagesLang('fr') }
   })

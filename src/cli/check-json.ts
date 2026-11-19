@@ -146,9 +146,9 @@ export function filesOf(raw: string, root: string): string[] {
 const MODEL_FILE_RE = /^([a-z][a-z0-9-]*)\.([a-z][a-z0-9-]*)$/
 
 /** le modèle en fichier que nomme `nom` (`carte.compacte.mjs` : composant `carte`, modèle `compacte`), `null` pour tout autre */
-export function fileModel(nom: string): { base: string, model: string } | null {
-  if (isThemeFile(nom) || isTypesFile(nom) || isEffectsFile(nom) || isClassFile(nom) || isModuleFile(nom)) return null
-  const m = MODEL_FILE_RE.exec(basename(nom, '.mjs').replace(/\.page$/, ''))
+export function fileModel(name: string): { base: string, model: string } | null {
+  if (isThemeFile(name) || isTypesFile(name) || isEffectsFile(name) || isClassFile(name) || isModuleFile(name)) return null
+  const m = MODEL_FILE_RE.exec(basename(name, '.mjs').replace(/\.page$/, ''))
   return m !== null && m[2] !== 'page' ? { base: m[1], model: m[2] } : null
 }
 
@@ -158,34 +158,34 @@ export function fileModel(nom: string): { base: string, model: string } | null {
  *  (`*.theme.mjs`, `*.types.mjs`, `*.effects.mjs`, `Nom.class.mjs`, `*.civet.mjs`…) ne sont pas des composants. Même parcours
  *  que le constructeur : liens suivis, cycles fermés, fichiers cachés et `node_modules` sautés */
 export function componentFiles(sourceDir: string): Map<string, string | null> {
-  const out  = new Map<string, string | null>()
-  const base = new Map<string, string>()
-  const pile = [sourceDir]
-  const vus  = new Set<string>()
-  while (pile.length > 0) {
-    const dir = pile.pop()!
-    let reel: string
-    try { reel = realpathSync(dir) } catch { continue }
-    if (vus.has(reel)) continue
-    vus.add(reel)
-    let noms: string[]
-    try { noms = readdirSync(dir) } catch { continue }
-    for (const nom of noms.sort()) {
-      if (nom.startsWith('.') || nom === 'node_modules') continue
-      const chemin   = join(dir, nom)
-      let estDossier = false
-      try { estDossier = statSync(chemin).isDirectory() } catch { continue }
-      if (estDossier) { pile.push(chemin); continue }
-      if (!nom.endsWith('.mjs')) continue
-      const model = fileModel(nom)
-      const name  = model !== null ? `${model.base}--${model.model}` : basename(nom, '.mjs').replace(/\.page$/, '')
+  const out   = new Map<string, string | null>()
+  const base  = new Map<string, string>()
+  const stack = [sourceDir]
+  const seen  = new Set<string>()
+  while (stack.length > 0) {
+    const dir = stack.pop()!
+    let real: string
+    try { real = realpathSync(dir) } catch { continue }
+    if (seen.has(real)) continue
+    seen.add(real)
+    let names: string[]
+    try { names = readdirSync(dir) } catch { continue }
+    for (const entry of names.sort()) {
+      if (entry.startsWith('.') || entry === 'node_modules') continue
+      const path = join(dir, entry)
+      let isDir  = false
+      try { isDir = statSync(path).isDirectory() } catch { continue }
+      if (isDir) { stack.push(path); continue }
+      if (!entry.endsWith('.mjs')) continue
+      const model = fileModel(entry)
+      const name  = model !== null ? `${model.base}--${model.model}` : basename(entry, '.mjs').replace(/\.page$/, '')
       if (name === '' || name.includes('.') || model?.model === 'default') continue
       if (model !== null) base.set(name, model.base)
-      out.set(name, out.has(name) ? null : chemin)
+      out.set(name, out.has(name) ? null : path)
     }
   }
   // un modèle sans son composant n'est pas un composant du projet
-  for (const [name, composant] of base) if (!out.has(composant)) out.delete(name)
+  for (const [name, component] of base) if (!out.has(component)) out.delete(name)
   return out
 }
 
@@ -199,8 +199,8 @@ export function captureOutput(): { lines: CapturedLine[], restore: () => void } 
   const lines = [] as CapturedLine[]
   const saved = { log: console.log, info: console.info, debug: console.debug, warn: console.warn, error: console.error, out: process.stdout.write, err: process.stderr.write }
   // une exception donne son message, pas sa pile (`format` les écrirait toutes deux)
-  const texte = (a: unknown) => (a instanceof Error ? (a.name === 'Error' ? a.message : `${a.name}: ${a.message}`) : a)
-  const push  = (stream: 'out' | 'err') => (...args: unknown[]) => { lines.push({ stream, text: format(...args.map(texte)) }) }
+  const text  = (a: unknown) => (a instanceof Error ? (a.name === 'Error' ? a.message : `${a.name}: ${a.message}`) : a)
+  const push  = (stream: 'out' | 'err') => (...args: unknown[]) => { lines.push({ stream, text: format(...args.map(text)) }) }
   const write = (stream: 'out' | 'err') => ((chunk: unknown, ...rest: unknown[]) => {
     lines.push({ stream, text: textOf(chunk) })
     const done = rest.find((r) => typeof r === 'function') as (() => void) | undefined
@@ -246,12 +246,12 @@ function givesWarning(text: string): boolean {
 export function diagnosticsOf(captured: CapturedLine[], ctx: DiagnosticContext, extra: { errors?: string[], warnings?: string[] } = {}): { errors: Diagnostic[], warnings: Diagnostic[] } {
   const errors   = [] as Diagnostic[]
   const warnings = [] as Diagnostic[]
-  const meme     = (a: Diagnostic, b: Diagnostic) => a.message === b.message && (a.file === b.file || a.file === null || b.file === null) && (a.line === b.line || a.line === null || b.line === null)
+  const same     = (a: Diagnostic, b: Diagnostic) => a.message === b.message && (a.file === b.file || a.file === null || b.file === null) && (a.line === b.line || a.line === null || b.line === null)
   const add      = (raw: string, severity: 'error' | 'warning', unique = false) => {
-    const d     = toDiagnostic(raw, severity, ctx)
-    const liste = severity === 'error' ? errors : warnings
-    if (d.message === '' || (unique && liste.some((x) => meme(x, d)))) return
-    liste.push(d)
+    const d    = toDiagnostic(raw, severity, ctx)
+    const list = severity === 'error' ? errors : warnings
+    if (d.message === '' || (unique && list.some((x) => same(x, d)))) return
+    list.push(d)
   }
   for (const e of extra.errors ?? []) add(e, 'error')
   for (const w of extra.warnings ?? []) add(w, 'warning')
@@ -282,9 +282,9 @@ export function countWarningLines(): { count: () => number, stop: () => void } {
 function writeAllSync(fd: number, text: string): void {
   const buf   = Buffer.from(text, 'utf-8')
   const pause = new Int32Array(new SharedArrayBuffer(4))
-  let fait    = 0
-  while (fait < buf.length) {
-    try { fait += writeSync(fd, buf, fait, buf.length - fait) }
+  let done    = 0
+  while (done < buf.length) {
+    try { done += writeSync(fd, buf, done, buf.length - done) }
     catch (e: any) {
       if (e?.code === 'EPIPE') return
       if (e?.code !== 'EAGAIN') throw e
@@ -298,6 +298,10 @@ export interface CheckResult {
   errors:     string[]
   warnings:   string[]
   derived?:   { file: string, name: string, class: string, reasons: { code: string, name: string, by?: string }[] }[]
+  /** la place de chaque erreur, dans l'ordre de `errors`, quand la liste des fautes la sait (cf. cli/check-faults.ts) */
+  places?:    { file: string | null, line: number | null, column: number | null }[]
+  /** les passes de compilation de la liste des fautes, et la fin de la liste de chaque fichier */
+  listing?:   { passes: number, files: { file: string | null, faults: number, stop: string | null }[] }
 }
 
 /** `mjs check --json` : capture posée tout de suite, document écrit à la sortie du processus (un `process.exit` d'une
@@ -314,11 +318,15 @@ export function startCheckJson(version: string | null): { setProject: (root: str
     capture.restore()
     const ctx   = { root, files: sourceDir === null ? new Map<string, string | null>() : componentFiles(sourceDir) }
     const diags = diagnosticsOf(capture.lines, ctx, result === null ? {} : { errors: result.errors, warnings: result.warnings })
+    // la place sûre d'une faute (sa correction) quand son message ne la cite pas, pour le même fichier
+    const places = result?.places
+    if (places && places.length === diags.errors.length) diags.errors.forEach((d, i) => { if (places[i].line !== null && d.file === places[i].file) Object.assign(d, { line: places[i].line, column: places[i].column }) })
     // échec sans un mot sur la sortie d'erreur : dit quand même, jamais un « ok » faux
     if (code !== 0 && diags.errors.length === 0) diags.errors.push({ severity: 'error', type: null, file: null, line: null, column: null, message: `mjs check : code ${code}`, fix: null })
     // `components` : les composants du projet seulement — le manifeste porte aussi les classes globales, les modules de script et les alias courts
     const report: Record<string, unknown> = { format: 1, mjs: version, ok: code === 0 && diags.errors.length === 0, root, components: (result?.components ?? []).filter((c) => ctx.files.has(c) && !c.startsWith('_')), errors: diags.errors, warnings: diags.warnings }
     if (result?.derived) report.derived = result.derived
+    if (result?.listing) report.listing = result.listing
     writeAllSync(1, JSON.stringify(report, null, 2) + '\n')
   })
   return {

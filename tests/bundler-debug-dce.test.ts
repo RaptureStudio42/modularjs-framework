@@ -86,14 +86,14 @@ describe('bundleRuntime() — cœur RÉEL, MJS_DEBUG jamais visible, lectures .d
   })
 })
 
-// les accroches des avertissements du développement (blocs `// <developpement>` de mjs_element.ts : la marque des objets venus d'une prop,
+// les accroches des avertissements du développement (blocs `// <development>` de mjs_element.ts : la marque des objets venus d'une prop,
 // la définition par `Object.defineProperty`), que seul mjs_debug.ts lit : un cœur de production, même non minifié (les noms restent
 // lisibles), n'en garde rien ; un cœur de développement les garde, avec mjs_debug.ts qui les sert
 describe('bundleRuntime() — accroches des avertissements du développement, retirées de la production', function () {
   this.timeout(60000)
   after(async () => { await terminateSharedWorkerPool() })
 
-  const ACCROCHES = ['// <developpement>', '_mjs_devLu', '_mjs_devCree', '_mjs_devDefini', '_mjs_dv']
+  const ACCROCHES = ['// <development>', '_mjs_devRead', '_mjs_devCreate', '_mjs_devDefined', '_mjs_dv']
 
   it('cœur de PROD non minifié : aucune accroche', async () => {
     const { outDir } = await buildProject('prod', { 'hop.mjs': '<p>x</p>\n' }, { minify: false })
@@ -106,6 +106,6 @@ describe('bundleRuntime() — accroches des avertissements du développement, re
     const { outDir } = await buildProject('dev', { 'hop.mjs': '<p>x</p>\n' })
     const core = coreContent(outDir)
     for (const a of ACCROCHES) assert.ok(core.includes(a), `« ${a} » attendu en développement`)
-    assert.ok(core.includes('µ._mjs_devLu = function'), 'mjs_debug.ts pose ce que les accroches appellent')
+    assert.ok(core.includes('µ._mjs_devRead = function'), 'mjs_debug.ts pose ce que les accroches appellent')
   })
 })

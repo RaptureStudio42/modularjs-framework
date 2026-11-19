@@ -24,8 +24,8 @@ describe('MJS-Server — FilePersistAdapter : une copie de sauvegarde laissée d
       const lus = await adaptateur.load()
       assert.deepEqual(lus.map(e => e.id + ':' + (e.data.state as any).n).sort(), ['game7:2', 'game8:5'])
       assert.deepEqual(journal.sort(), [
-        ['warn', t('serveur.persist-file-copie-ignoree', { fichier: 'a-game7.json', id: 'game7' })],
-        ['warn', t('serveur.persist-file-copie-ignoree', { fichier: 'game7 - copie.json', id: 'game7' })],
+        ['warn', t('mjs-server.persist-file-copy-ignored', { file: 'a-game7.json', id: 'game7' })],
+        ['warn', t('mjs-server.persist-file-copy-ignored', { file: 'game7 - copie.json', id: 'game7' })],
       ].sort())
       assert.ok(existsSync(join(dossier, 'game7 - copie.json')) && existsSync(join(dossier, 'a-game7.json')), 'les copies restent sur le disque')
     }

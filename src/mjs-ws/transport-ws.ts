@@ -55,7 +55,7 @@ function loadWs(): Promise<typeof import('ws')> {
     // vraiment ce module (import paresseux, cf. commentaire de tête) : c'est ICI,
     // et ICI SEULEMENT, que l'absence se révèle — message clair, en français.
     wsModulePromise = import('ws').catch((err) => {
-      throw new Error(t('ws.transport-ws.paquet-requis'), { cause: err })
+      throw new Error(t('ws.transport-ws.package-required'), { cause: err })
     })
   }
   return wsModulePromise
@@ -71,13 +71,30 @@ const READY_STATE_OPEN = 1
 // volontairement proches (2000/2500) sans être couplées en dur.
 const STOP_TIMEOUT_MS = 2500
 
+// raison d'une trame de fermeture : 123 octets au plus (125 de charge, dont 2 pour le code — RFC 6455), au-delà `ws` lève
+const CLOSE_REASON_MAX = 123
+
+// raison bornée à CLOSE_REASON_MAX octets UTF-8, coupée entre deux caractères, jamais au milieu d'un caractère de plusieurs octets
+function boundedCloseReason(reason: string | undefined): string | undefined {
+  if (reason === undefined || Buffer.byteLength(reason, 'utf8') <= CLOSE_REASON_MAX) return reason
+  let out  = ''
+  let size = 0
+  for (const ch of reason) {
+    const n = Buffer.byteLength(ch, 'utf8')
+    if (size + n > CLOSE_REASON_MAX) break
+    out  += ch
+    size += n
+  }
+  return out
+}
+
 class WsConnection implements MjsWsConnection {
   onMessage: ((data: string | Uint8Array) => void) | null = null
   onClose: ((code: number, reason: string) => void) | null = null
   // trame coupée par maxPayload : `ws` ferme en 1009 mais rapporte 1006 dans son 'close' (le pair
   // n'a pas renvoyé la trame de fermeture) — l'erreur qui précède donne la vraie raison, transmise
   // au cœur (la mise au banc la compte comme un abus)
-  private _codeCoupure: number | null = null
+  private _closeCode: number | null = null
 
   constructor(private _ws: WsSocket, public readonly remoteInfo: MjsWsRemoteInfo) {
     this._ws.on('message', (data: Buffer, isBinary: boolean) => {
@@ -89,13 +106,13 @@ class WsConnection implements MjsWsConnection {
       if (this.onMessage) this.onMessage(data.toString('utf8'))
     })
     this._ws.on('close', (code: number, reason: Buffer) => {
-      if (this.onClose) this.onClose(this._codeCoupure ?? code, reason ? reason.toString('utf8') : '')
+      if (this.onClose) this.onClose(this._closeCode ?? code, reason ? reason.toString('utf8') : '')
     })
     // une erreur socket sans 'close' associé laisserait une connexion fantôme
     // côté core (jamais nettoyée) — `ws` émet TOUJOURS 'close' après 'error',
     // ce listener évite aussi un crash process sur 'error' sans écouteur.
     this._ws.on('error', (err: { code?: string }) => {
-      if (err && err.code === 'WS_ERR_UNSUPPORTED_MESSAGE_LENGTH') this._codeCoupure = 1009
+      if (err && err.code === 'WS_ERR_UNSUPPORTED_MESSAGE_LENGTH') this._closeCode = 1009
     })
   }
 
@@ -111,8 +128,12 @@ class WsConnection implements MjsWsConnection {
   }
 
   close(code?: number, reason?: string): void {
-    try { this._ws.close(code, reason) }
-    catch { /* déjà fermée */ }
+    try { this._ws.close(code, boundedCloseReason(reason)) }
+    catch {
+      // code refusé par `ws`, ou autre refus : la fermeture décidée a lieu quand même, sans trame de fermeture
+      try { this._ws.terminate() }
+      catch { /* déjà fermée */ }
+    }
   }
 }
 

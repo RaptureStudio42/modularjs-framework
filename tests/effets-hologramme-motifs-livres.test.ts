@@ -295,7 +295,7 @@ describe('*hologram livre les images de ses motifs', function () {
         style.textContent = css
         document.head.appendChild(style)
         const site = document.createElement('div')
-        site.innerHTML = '<span mjs-fx-layer="hologram" mjs-fx-hologram-card mjs-fx-hologram-style="night-sky" mjs-fx-hologram-nu mjs-fx-hologram-open><b></b><i></i></span>'
+        site.innerHTML = '<span mjs-fx-layer="hologram" mjs-fx-hologram-card mjs-fx-hologram-style="night-sky" mjs-fx-hologram-bare mjs-fx-hologram-open><b></b><i></i></span>'
         document.body.appendChild(site)
         const fond = () => getComputedStyle(site.querySelector('i') as Element).backgroundImage
         const sans = fond()
@@ -333,7 +333,7 @@ describe('*hologram livre les images de ses motifs', function () {
           style.textContent = css
           document.head.appendChild(style)
           const site = document.createElement('div')
-          site.innerHTML = '<span mjs-fx-layer="hologram" mjs-fx-hologram-card mjs-fx-hologram-style="night-sky" mjs-fx-hologram-nu mjs-fx-hologram-open><b></b><i></i></span>'
+          site.innerHTML = '<span mjs-fx-layer="hologram" mjs-fx-hologram-card mjs-fx-hologram-style="night-sky" mjs-fx-hologram-bare mjs-fx-hologram-open><b></b><i></i></span>'
           document.body.appendChild(site)
           const fond = getComputedStyle(site.querySelector('i') as Element).backgroundImage
           const url  = /url\("([^"]*mjs_hologram_sky-far-[^"]+)"\)/.exec(fond)?.[1] ?? null

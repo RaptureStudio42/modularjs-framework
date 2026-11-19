@@ -102,7 +102,7 @@ for (const nom of NAVIGATEURS) for (const prod of [false, true]) describe(`menu 
   // la boîte de la page défilée jusqu'à cacher le bouton du menu sous son bord haut, le bouton restant dans la fenêtre
   const cacherBouton = () => lire(`const f = __f(), k = __r(__o().querySelector('.picker')); f.scrollTop += Math.ceil(k.b - __r(f).t) + 2; return f.scrollTop`)
   // après coup : le menu fermé, ouvert un instant (cf. le menu ouvert par un script), le bouton caché par la boîte et dans la fenêtre, le focus, le défilement
-  const apres = () => lire(`const o = __o(), k = __r(o.querySelector('.picker')), d = __r(__f()); return { ferme: !o.querySelector('.menu'), vu: !!window.__vu, cache: k.b <= d.t && k.t >= 0, focus: o.activeElement === o.querySelector('button.pick'), defile: __f().scrollTop, k, d }`)
+  const apres = () => lire(`const o = __o(), k = __r(o.querySelector('.picker')), d = __r(__f()); return { ferme: !o.querySelector('.menu'), vu: !!window.__seenMark, cache: k.b <= d.t && k.t >= 0, focus: o.activeElement === o.querySelector('button.pick'), defile: __f().scrollTop, k, d }`)
 
   // la bulle montrée par le focus sur son élément : la boîte fixe fausse l'ancre, le script la place
   async function montrerBulle() {
@@ -145,7 +145,7 @@ for (const nom of NAVIGATEURS) for (const prod of [false, true]) describe(`menu 
     if (!present || !page) return
     await page.keyboard.press('Escape')
     await page.mouse.click(990, 790)
-    await lire(`window.__mo && window.__mo.disconnect(); window.__vu = false; __f().scrollTop = 0; __h().querySelector('.defile').scrollTop = 0; for (const r of [__o(), __h(), document]) { const a = r.activeElement; if (a && a.blur) a.blur() }`)
+    await lire(`window.__mo && window.__mo.disconnect(); window.__seenMark = false; __f().scrollTop = 0; __h().querySelector('.defile').scrollTop = 0; for (const r of [__o(), __h(), document]) { const a = r.activeElement; if (a && a.blur) a.blur() }`)
     await attendre(`!__o().querySelector('.menu') && !__bulle()`)
   })
 
@@ -176,7 +176,7 @@ for (const nom of NAVIGATEURS) for (const prod of [false, true]) describe(`menu 
   it('le menu ouvert par un script, son bouton caché : il se ferme aussitôt, le focus sur le bouton', async function () {
     if (!present) { this.skip(); return }
     const avant = await cacherBouton()
-    await lire(`const o = __o(); window.__mo = new MutationObserver(() => { if (o.querySelector('.menu')) window.__vu = true }); window.__mo.observe(o, { childList: true, subtree: true }); o.querySelector('button.pick').click()`)
+    await lire(`const o = __o(); window.__mo = new MutationObserver(() => { if (o.querySelector('.menu')) window.__seenMark = true }); window.__mo.observe(o, { childList: true, subtree: true }); o.querySelector('button.pick').click()`)
     await repos()
     const r = await apres()
     assert.ok(r.cache && r.vu, `le menu s'est ouvert, son bouton caché par la boîte, dans la fenêtre : ${JSON.stringify(r)}`)

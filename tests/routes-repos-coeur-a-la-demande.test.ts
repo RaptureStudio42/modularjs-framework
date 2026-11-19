@@ -1,4 +1,4 @@
-// Construction : le chargement au repos des pages d'une table de routes (bloc balisé `<routes-repos>` de runtime/mjs_router.ts et
+// Construction : le chargement au repos des pages d'une table de routes (bloc balisé `<routes-idle>` de runtime/mjs_router.ts et
 // runtime/mjs_autoloader.ts — `µ._mjs_routesIdle`, `µ._mjs_routesQuiet`) n'entre au cœur que si un composant le demande : une table
 // sous "idle" (défaut), "on" ou "off" (sous "on", la demande de la page montée et la reprise d'un fichier raté en dépendent). Une
 // appli sans table ne paie pas un octet de ce code
@@ -55,7 +55,7 @@ describe('chargement au repos des pages — seulement quand une table le demande
         assert.equal(c.includes('_mjs_routesIdle'), false, `${cas} : ni la file au repos`)
         assert.equal(c.includes('µ._idle = function'), false, `${cas} : ni l'attente commune des files du repos`)
         assert.equal(c.includes('_mjs_busy'), false, `${cas} : ni le compte des demandes en vol`)
-        assert.equal(c.includes('<routes-repos>'), false, `${cas} : le bloc balisé est retiré`)
+        assert.equal(c.includes('<routes-idle>'), false, `${cas} : le bloc balisé est retiré`)
       }
       for (const [cas, c] of [['défaut', await coeur('defaut', AVEC, env)], ['"on"', await coeur('on', AVEC, env, 'on')], ['"off"', await coeur('off', AVEC, env, 'off')]] as const) {
         assert.equal(c.includes('µ._mjs_routesIdle = function'), true, `${cas} : la file au repos est au cœur`)

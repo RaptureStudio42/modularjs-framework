@@ -69,9 +69,13 @@ Vous pouvez : `$$surface` n'est qu'une écriture plus courte de la même chose, 
 
 </details>
 
+> ⚠️ Une variable `$$` ne s'écrit pas dans la condition d'un `@media` : elle y devient `var(--mjs-…)`, que le navigateur ne lit pas à cet endroit, et la règle ne s'applique jamais. Écrivez la valeur elle-même (`@media (min-width: 600px)`).
+
+> ⚠️ Un tiret collé continue le nom : `calc($$gap-2px)` lit la variable `gap-2px`. Mettez une espace de chaque côté du signe : `calc($$gap - 2px)`.
+
 ## Déclarer : le bloc `<theme>`
 
-Une variable se **déclare** avec un `$$nom` en tête de ligne — rien d'autre que du blanc avant lui sur la ligne, et un `:` juste après ; partout ailleurs sur la ligne, c'est une lecture, ce qui permet de dériver une variable d'une autre. Ça vaut dans **tous** les contextes de style : un bloc `<theme>`, un bloc `<style>` (nommé ou non), un fichier `*.theme.mjs`. Le sens est celui du CSS : déclarer dans un sélecteur pose la variable sur ce qui matche ce sélecteur, et ça cascade vers le bas.
+Une variable se **déclare** avec un `$$nom` en tête de ligne — rien d'autre que du blanc avant lui sur la ligne, et un `:` juste après ; partout ailleurs sur la ligne, c'est une lecture, ce qui permet de dériver une variable d'une autre. Ça vaut dans **tous** les contextes de style : un bloc `<theme>`, un bloc `<style>` (nommé ou non), un fichier `*.theme.mjs`. Dans un `<style>`, un `$$nom:` écrit après un autre code sur sa ligne (`:host { $$brand: red; }`) ne déclare rien : la construction le refuse, avec le nom et la ligne ; passez-le au début de sa ligne. Le sens est celui du CSS : déclarer dans un sélecteur pose la variable sur ce qui matche ce sélecteur, et ça cascade vers le bas.
 
 Le bloc `<theme>` est l'endroit naturel pour les valeurs de base d'un composant :
 
@@ -95,6 +99,8 @@ Le bloc `<theme>` est l'endroit naturel pour les valeurs de base d'un composant 
 Le bloc sans nom est le thème **de base** du composant : ses variables sont posées sur l'hôte, donc valables pour lui **et pour toute sa descendance**. Un composant enfant qui lit `$$brand` sans jamais l'avoir déclaré recevra celui-ci.
 
 > ℹ️ Le CSS d'un `<theme>` sort **avant** celui du `<style>` du même composant, sur un sélecteur de spécificité nulle : vous pouvez surcharger sans jamais vous battre contre lui.
+
+> ⚠️ Dans un `<theme lang="scss">` ou un `<theme lang="css">`, terminez chaque déclaration par un point-virgule : sans lui, la première variable avale les suivantes (`--a: red --b: blue`). Le `<theme>` sans `lang`, en SASS, s'en passe.
 
 ### Surcharger depuis `<style>`
 
@@ -156,7 +162,7 @@ Quatre bornes, toutes voulues :
 >
 > **Pourquoi l'encapsulation ne protège pas ici.** La balise `<mjs-carte>` **appartient au document** — le Shadow DOM ne contient que son *contenu*. Une règle de la page peut donc toujours viser l'hôte (`mjs-carte { … }`, `[theme='gold'] { … }`), et c'est exactement ce que fait un thème de document. Le `:host(…)` du composant vise le **même élément**, mais depuis l'arbre intérieur : entre les deux, le navigateur départage par contexte d'arbre, pas par précision. Mesuré Chromium et Firefox sur cinq formes de sélecteur : `:where()`, sélecteur nu, spécificité triplée, `@layer` — le document gagne les quatre ; seul `!important` renverse. La feuille des thèmes de document est bien adoptée *aussi* dans chaque Shadow DOM (c'est ce qui fait marcher un `<div theme="sombre">` **écrit à l'intérieur** d'un composant), mais cette copie-là ne peut pas viser l'hôte : un sélecteur de shadow ne franchit jamais la frontière vers le haut. Et si la variable finit quand même par descendre dans le shadow, c'est par **héritage** — une variable CSS se transmet de parent à enfant, frontière comprise.
 
-> Le nom peut être **dynamique** : `theme={$x}` posé en prop par le parent est reflété sur l'attribut de l'hôte, exactement comme `layout={$x}` l'est sur le variant de forme. Une valeur vide retire l'attribut et rend la main au bloc sans nom. Un composant qui déclare lui-même un état `$theme` (un usage métier, sans rapport avec le style) garde la main : rien n'est reflété.
+> Le nom peut être **dynamique** : `theme={$x}` posé en prop par le parent est reflété sur l'attribut de l'hôte, exactement comme `layout={$x}` l'est sur le variant de forme. Une valeur vide retire l'attribut et rend la main au bloc sans nom. Un composant qui déclare lui-même un état `$theme` (un usage métier, sans rapport avec le style) garde la main : rien n'est reflété. De même, un composant qui déclare son propre `$layout` garde ce nom pour lui : `layout="grid"` écrit en clair donne la valeur `'grid'` à sa variable, sans appliquer son modèle `<style name="grid">` et sans avertissement. Pour choisir le modèle d'un tel composant, donnez un autre nom à sa variable.
 
 Un composant peut déclarer des paquets alternatifs, activés par l'attribut `theme` sur l'instance :
 

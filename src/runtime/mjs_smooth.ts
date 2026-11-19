@@ -2,13 +2,13 @@
 //
 // µ.smooth(source, opts) prend un store de positions BRUTES (mises à jour par
 // à-coups, ex. reçues toutes les ~100ms par µ.socket) et renvoie un store
-// réactif FLUIDE : à chaque frame on affiche la position « il y a `retard` ms »
+// réactif FLUIDE : à chaque frame on affiche la position « il y a `delay` ms »
 // en interpolant linéairement entre les deux échantillons horodatés qui
 // l'encadrent. Le petit retard garantit qu'on a toujours un échantillon
 // « futur » vers lequel glisser → mouvement continu malgré le réseau saccadé.
 //
 //   $$brut   = sock.stream 'positions'
-//   $$fluide = µ.smooth $$brut, { retard: 100, owner: @ }
+//   $$fluide = µ.smooth $$brut, { delay: 100, owner: @ }
 //   {for id, p in $$fluide}<mjs-entity {...p} />{end}
 //
 // NB : ≠ µ.interpolate (qui anime UNE valeur vers une cible sur une durée).
@@ -91,7 +91,7 @@ var _smoothOwn = Object.prototype.hasOwnProperty;
 // store affiché) : jamais retenu dans le tampon, averti UNE SEULE fois PAR FLUX (pas par échantillon
 // perdu) — le drapeau `_smoothWarnedNonFinite` vit désormais dans µ.smooth (var de CLOSURE, pas de
 // module).
-function _smoothEstFini(pos) {
+function _smoothIsDone(pos) {
   var k;
   for (k in pos) { if (typeof pos[k] === 'number' && !isFinite(pos[k])) { return false; } }
   return true;
@@ -101,9 +101,7 @@ function _smoothEstFini(pos) {
 
 µ.smooth = function(source, opts) {
   opts = opts || {};
-  var delay = (opts.retard != null) ? opts.retard
-            : (opts.delay != null) ? opts.delay
-            : 100;
+  var delay = (opts.delay != null) ? opts.delay : 100;
   var maxSamples = opts.maxSamples || 30;
   var out = µ.state({});
   // sans prototype : une entité nommée `toString` ou `constructor` n'y trouve rien d'hérité
@@ -127,7 +125,7 @@ function _smoothEstFini(pos) {
         if (pos == null || typeof pos !== 'object') { continue; }
         // échantillon corrompu (Infinity/NaN, ex. 1e309 côté réseau) : jamais retenu,
         // sinon _mjs_smoothLerp propage un NaN dans le store affiché — averti UNE fois, pas par trame
-        if (!_smoothEstFini(pos)) {
+        if (!_smoothIsDone(pos)) {
           if (!_smoothWarnedNonFinite) { _smoothWarnedNonFinite = true; µ.warn('[µ.smooth] ' + µ._mjs_txt('smoothNonFinite', { id: id }, 'échantillon non fini (Infinity/NaN) ignoré pour \'{id}\'')); }
           continue;
         }

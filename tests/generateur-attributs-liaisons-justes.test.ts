@@ -82,7 +82,7 @@ const VIVANTS: Record<string, string> = {
     '{for x in $xs by id}{const nom = x.id + "!"}<button class="x{x.id}" @click={window.__clic = [x.id, nom]}>x</button>{end}',
     '{await $p}<i>attente</i>{success d}<button class="aw" @click={window.__aw = d.n}>a</button>{end}',
     '<mjs-g-fils class="fils" valeur.number=!{$m}></mjs-g-fils>',
-    '<button class="lire" @click={window.__lu = [__val, __grp_v, __grp_arr, __arr_0, __idx_0, __cst_1, __aw_0, __mjsCast]}>l</button>',
+    '<button class="lire" @click={window.__read = [__val, __grp_v, __grp_arr, __arr_0, __idx_0, __cst_1, __aw_0, __mjsCast]}>l</button>',
   ].join('\n'),
   'g-classes': [
     '<script>',
@@ -175,7 +175,7 @@ describe('générateur — attributs, liaisons et gestionnaires justes', functio
     egal(app.window.__clic, [2, '2!'], 'le clic de la ligne lit sa ligne et son {const}')
     assert.equal(app.window.__aw, 7, 'le clic de la branche lit la valeur chargée')
     await c.click('.lire')
-    egal(app.window.__lu, ['auteur-val', 'auteur-gv', 'auteur-ga', 'auteur-arr', 'auteur-idx', 'auteur-cst', 'auteur-aw', 'auteur-cast'])
+    egal(app.window.__read, ['auteur-val', 'auteur-gv', 'auteur-ga', 'auteur-arr', 'auteur-idx', 'auteur-cst', 'auteur-aw', 'auteur-cast'])
   })
 
   it('deux bascules de la même classe : la classe ne dépend que de l\'état', async () => {

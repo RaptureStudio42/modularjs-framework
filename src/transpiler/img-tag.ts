@@ -4,7 +4,7 @@
 // aucun accès disque ici (seul le bundler l'a, via resolveOneImage) et aucun import de
 // bundler (le bundler importe CE module ; un retour créerait un cycle).
 
-import { balisesDe, composantLu, nomDe } from './template-tree.js'
+import { tagsOf, readComponent, nameOf } from './template-tree.js'
 
 export interface ImgTagAttr {
   name: string
@@ -19,7 +19,7 @@ export interface ImgTag {
   src: string | null
   srcQuote: string
   widthsRaw: string | null
-  widthsDynamique: string | null
+  dynamicWidths: string | null
   attrs: ImgTagAttr[]
 }
 
@@ -41,7 +41,7 @@ function extractQuotedValue(attrRaw: string, name: string): { value: string; quo
 }
 
 // ni le contenu d'un exemple (<pre>, <code>), ni un script ou un style écrits dans le gabarit ; lu aussi par le repli d'un <@failed> (macros.ts)
-export const HORS_BALISAGE = new Set(['pre', 'code', 'script', 'style'])
+export const OUTSIDE_MARKUP = new Set(['pre', 'code', 'script', 'style'])
 
 // scanImgTags — chaque balise `<@@img …>` d'un gabarit ou d'un composant entier, lue par le lecteur unique
 // (template-tree.ts) : jamais dans un exemple affiché dans <pre>/<code>, un script, un style, un commentaire, une
@@ -53,12 +53,12 @@ export const HORS_BALISAGE = new Set(['pre', 'code', 'script', 'style'])
 // traverser tout le build sans un mot. Le nom écrit est conservé (`tagOpen`) : la balise
 // ressort telle que l'auteur l'a tapée, sa fermeture `</@@IMG>` reste appariée. `langue` : celle d'un <script> sans `lang`, que
 // reçoit le compilateur : chaque section se referme où il la referme.
-export function scanImgTags(text: string, langue?: string): ImgTag[] {
+export function scanImgTags(text: string, lang?: string): ImgTag[] {
   const tags: ImgTag[] = []
-  for (const b of balisesDe(composantLu(text, langue).enfants, HORS_BALISAGE)) {
-    if (nomDe(b) !== '@@img') continue
-    const attrs = b.attributs.map(a => {
-      const raw = text.slice(a.debut, a.fin)
+  for (const b of tagsOf(readComponent(text, lang).children, OUTSIDE_MARKUP)) {
+    if (nameOf(b) !== '@@img') continue
+    const attrs = b.attrs.map(a => {
+      const raw = text.slice(a.start, a.end)
       return { name: /^[^\s=/]*/.exec(raw)![0], raw }
     })
 
@@ -70,18 +70,18 @@ export function scanImgTags(text: string, langue?: string): ImgTag[] {
       if (q && !q.value.includes('{')) { src = q.value; srcQuote = q.quote }
     }
 
-    let widthsRaw: string | null       = null
-    let widthsDynamique: string | null = null
-    const widthsAttr = attrs.find(a => a.name === 'widths')
+    let widthsRaw: string | null     = null
+    let dynamicWidths: string | null = null
+    const widthsAttr                 = attrs.find(a => a.name === 'widths')
     if (widthsAttr) {
       const q = extractQuotedValue(widthsAttr.raw, 'widths')
       // forme non littérale (`widths={$w}`, `widths=320`) : jamais consommée au build, et
       // jamais retirée en silence non plus — l'appelant lève
       if (q) widthsRaw = q.value
-      else widthsDynamique = widthsAttr.raw.slice('widths'.length).replace(/^\s*=\s*/, '') || widthsAttr.raw
+      else dynamicWidths = widthsAttr.raw.slice('widths'.length).replace(/^\s*=\s*/, '') || widthsAttr.raw
     }
 
-    tags.push({ text: text.slice(b.debut, b.finOuvrante), tagOpen: text.slice(b.debut, b.debut + 1 + b.nom.length), start: b.debut, end: b.finOuvrante, src, srcQuote, widthsRaw, widthsDynamique, attrs })
+    tags.push({ text: text.slice(b.start, b.openingEnd), tagOpen: text.slice(b.start, b.start + 1 + b.name.length), start: b.start, end: b.openingEnd, src, srcQuote, widthsRaw, dynamicWidths, attrs })
   }
   return tags
 }
@@ -139,5 +139,8 @@ export function rewriteImgTag(tag: ImgTag, resolved: ResolvedImage): string {
   if (!present.has('sizes') && resolved.sizes) kept.push(`sizes="${resolved.sizes}"`)
   if (!present.has('width') && resolved.width !== null) kept.push(`width="${resolved.width}"`)
   if (!present.has('height') && resolved.height !== null) kept.push(`height="${resolved.height}"`)
-  return `${tag.tagOpen} ${kept.join(' ')}${selfClosing ? ' /' : ''}>`
+  // la balise garde son nombre de lignes : écrite sur plusieurs, elle ne décale pas les lignes citées après elle (avertissements, refus)
+  const written = `${tag.tagOpen} ${kept.join(' ')}`
+  const missing = (tag.text.match(/\n/g)?.length ?? 0) - (written.match(/\n/g)?.length ?? 0)
+  return `${written}${missing > 0 ? '\n'.repeat(missing) : ''}${selfClosing ? ' /' : ''}>`
 }

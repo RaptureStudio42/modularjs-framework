@@ -73,12 +73,12 @@ Le socle de MJS-Server reste **tour par tour événementiel** — un coup, une r
 <a id="demarrer"></a>
 ## 2. Démarrer
 
-La commande déclarative `mjs serveur` (commande **sœur** de [`mjs ws`](23-mjs-ws.md#mjs-ws), même contrat) évite d'écrire vous-même le script qui construit l'app et l'écoute : elle charge un **fichier d'entry**, y branche `mjsServer()`, le rechargement à chaud et l'arrêt propre, puis démarre.
+La commande déclarative `mjs server` (commande **sœur** de [`mjs ws`](23-mjs-ws.md#mjs-ws), même contrat) évite d'écrire vous-même le script qui construit l'app et l'écoute : elle charge un **fichier d'entry**, y branche `mjsServer()`, le rechargement à chaud et l'arrêt propre, puis démarre.
 
 ```bash
-mjs serveur                        # serveur.server.mjs ou serveur.js (résolution complète : §2.2), port 4001 par défaut
-mjs serveur --entry arene.server.mjs --port 4110
-mjs serveur --root chemin/vers/le/projet
+mjs server                        # game.server.mjs ou game.js (résolution complète : §2.2), port 4001 par défaut
+mjs server --entry arene.server.mjs --port 4110
+mjs server --root chemin/vers/le/projet
 ```
 
 ### 2.1 Le fichier d'entry
@@ -106,30 +106,30 @@ export default {
 
 Les accolades explicites du hash **racine** sont nécessaires ici : deux clés fratries (`auth`, `setup`) dont une à corps multi-lignes, sans elles, compilent en un objet **appelé** comme une fonction (« `{(intermediate value)} is not a function` » au chargement) plutôt qu'en un seul objet — même piège que l'exemple `.server.mjs` de [23 · MJS-WS §6.1](23-mjs-ws.md#mjs-ws).
 
-Si le default export est absent ou n'est pas un objet, `mjs serveur` refuse de démarrer avec une erreur claire. Si **aucun** fichier d'entry n'est trouvé, l'erreur imprime directement un squelette minimal à copier-coller.
+Si le default export est absent ou n'est pas un objet, `mjs server` refuse de démarrer avec une erreur claire. Si **aucun** fichier d'entry n'est trouvé, l'erreur imprime directement un squelette minimal à copier-coller.
 
 ### 2.2 Résolution de l'entry
 
 | Source | Priorité |
 |---|---|
 | `--entry <chemin>` | 1 — toujours respecté tel quel ; erreur immédiate si le fichier n'existe pas |
-| `serveur.entry` (mjs.config.json) | 2 — même règle : erreur immédiate si absent |
-| `serveur.server.mjs` (racine du projet) | 3 — format **recommandé** |
-| `server/serveur.server.mjs` | 4 |
-| `serveur.js` (racine du projet) | 5 |
-| `serveur.civet` (racine du projet) | 6 |
-| `server/serveur.js` | 7 |
-| `server/serveur.civet` | 8 |
+| `server.entry` (mjs.config.json) | 2 — même règle : erreur immédiate si absent |
+| `game.server.mjs` (racine du projet) | 3 — format **recommandé** |
+| `server/game.server.mjs` | 4 |
+| `game.js` (racine du projet) | 5 |
+| `game.civet` (racine du projet) | 6 |
+| `server/game.js` | 7 |
+| `server/game.civet` | 8 |
 
 Ces défauts ne recoupent **jamais** ceux de `mjs ws` (`ws.server.mjs`/`ws.js`/…) — les deux commandes coexistent sans collision dans un même projet (ex. un chat MJS-WS sur un port, une salle de jeu MJS-Server sur un autre).
 
-### 2.3 Configuration — section `serveur` de mjs.config.json
+### 2.3 Configuration — section `server` de mjs.config.json
 
 **Mêmes** clés que `ws` ([23 · MJS-WS §6.3](23-mjs-ws.md#mjs-ws)) — `mjsServer()` accepte **exactement** les mêmes options que `mjsWs()` — plus `antiCheat` ([§9](#configuration)) :
 
 ```json
 {
-  "serveur": {
+  "server": {
     "entry": "server/arene.server.mjs",
     "port": 4110,
     "antiCheat": { "movesPerIdentity": [40, 1000], "codePerIp": [10, 60000] }
@@ -137,13 +137,13 @@ Ces défauts ne recoupent **jamais** ceux de `mjs ws` (`ws.server.mjs`/`ws.js`/�
 }
 ```
 
-Port : priorité `--port` > `serveur.port` > `4001` (**distinct** du `4000` de `mjs ws`). Hôte d'écoute : `127.0.0.1` par défaut, `--host ::` pour exposer sur toutes les interfaces. Chaque clé partagée avec `ws` (transport/codec/heartbeat/limits/token/bridge/resume/adapter/stats/sessionExclusive/verifyOrigin/ban), ainsi qu'`antiCheat`, est définissable **ici** **ou** dans l'entry — en cas de doublon, l'**entry prime EN bloc**, avec un avertissement (**même** règle que §6.4 doc 23). `persist` ([§8](#persistance)) reste **entry-only** : ses adaptateurs exposent des fonctions (`load`/`save`/`remove`), non représentables en JSON.
+Port : priorité `--port` > `server.port` > `4001` (**distinct** du `4000` de `mjs ws`). Hôte d'écoute : `127.0.0.1` par défaut, `--host ::` pour exposer sur toutes les interfaces ; `server.host` vide ou fait de blancs est refusé à la lecture de `mjs.config.json`, comme `dev.host`. Chaque clé partagée avec `ws` (transport/codec/heartbeat/limits/token/bridge/resume/adapter/stats/sessionExclusive/verifyOrigin/ban), ainsi qu'`antiCheat`, est définissable **ici** **ou** dans l'entry — en cas de doublon, l'**entry prime EN bloc**, avec un avertissement (**même** règle que §6.4 doc 23). `persist` ([§8](#persistance)) reste **entry-only** : ses adaptateurs exposent des fonctions (`load`/`save`/`remove`), non représentables en JSON.
 
 Rechargement à chaud et arrêt propre : **même** comportement que `mjs ws` ([23 · MJS-WS §6.5-§6.6](23-mjs-ws.md#mjs-ws)).
 
 ### 2.4 Lancement programmatique
 
-Le fichier d'entry ci-dessus reste un module ordinaire — rien n'empêche de construire et d'écouter l'app vous-même, sans passer par `mjs serveur` (utile en dehors du CLI, ou pour composer avec un serveur HTTP existant) :
+Le fichier d'entry ci-dessus reste un module ordinaire — rien n'empêche de construire et d'écouter l'app vous-même, sans passer par `mjs server` (utile en dehors du CLI, ou pour composer avec un serveur HTTP existant) :
 
 ```civet
 import { mjsServer } from 'modularjs-framework/mjs-server'
@@ -216,11 +216,11 @@ app.game('morpion', {
 | `seatTtl` | nombre > 0 (ms) | `10000` | fenêtre de confirmation des sièges issus de la **file** (§6) |
 | `tick` | nombre ≥ 0 | `0` | `0` = tour par tour événementiel (§4) ; de `1` à `60` = mode **action**, boucle à tick (§10) |
 | `state` | `(game)-> état` | — (requis) | état initial, appelé une fois à la création |
-| `moves` | `{ nom: (game, player, p)-> résultat }` | — (requis) | les coups déclarés (§4) |
+| `moves` | `{ name: (game, player, p)-> result }` | — (requis) | les coups déclarés (§4) |
 | `view` | `(game, player)-> view` | état entier, non filtré | vue par joueur (§5) |
 | `phases` | `{ phase: [moves permis] }` | aucune restriction | coups autorisés par phase (§4) |
 | `turns` | `{ order?, timeout? }` | pas de tour suivi ; `timeout` : `30000` | ordre + minuterie de tour (§4) — `timeout: null` n'arme aucune minuterie de tour (partie par correspondance) |
-| `timers` | `{ nom: (game)-> void }` | `{}` | minuteries **nommées** (§4) |
+| `timers` | `{ name: (game)-> void }` | `{}` | minuteries **nommées** (§4) |
 | `limits` | `{ moves?: [n, fenêtreMs], moveWaitMs?: ms }` | `[30, 1000]` (30 coups/s), `moveWaitMs` : `10000` | anti-abus par siège (réutilise le seau à jetons de MJS-WS) — mettre `null` pour un jeu action haute fréquence ; `n` entier ≥ 1 et `fenêtreMs` nombre fini > 0, sinon refus à la déclaration (un nombre seul, une fenêtre `NaN` — variable d'environnement absente — ou `Infinity` ne désactivent ni ne figent jamais le quota en silence) ; `moveWaitMs` : délai de garde d'un coup asynchrone qui ne se règle pas — passé ce délai, sa requête reçoit une erreur et les coups suivants du joueur sont refusés jusqu'à sa fin ([§4](#les-coups)) —, un nombre > 0 et au plus 2 147 483 647 (environ 24,8 jours, le plus long délai d'une minuterie Node), sinon refus à la déclaration |
 | `emptyTtl` | nombre > 0 (ms) | `60000` | grâce avant destruction d'une partie **commencée** sans plus aucun siège connecté, le temps que ses joueurs reviennent ; une table jamais complète, ou dont plus aucun siège n'est occupé, est fermée dès le départ de son dernier joueur (§6) |
 | `endTtl` | nombre > 0 (ms) | = `emptyTtl` | grâce avant destruction d'une partie **finie** (`game.end()`), qu'il reste des sièges connectés ou non — `emptyTtl` ne règle plus que la vie d'une partie vide non finie (§6) |
@@ -228,7 +228,7 @@ app.game('morpion', {
 
 > 🔤 **Vocabulaire.** `game` est l'instance vivante (état, sièges, phase, tour…) ; `player` est un **siège** (`{ seat, id, connected }` — `id` = identité stable, cf. [§7](#le-client) sur la reconnexion) ; `p` est la charge libre envoyée par le client avec son coup.
 
-> ⏱ **Durées.** `emptyTtl`, `endTtl`, `seatTtl`, `turns.timeout` et le délai de `game.timer()` sont en millisecondes : tout nombre fini > 0 est accepté, y compris au-delà de 24,8 jours (2³¹−1 ms, le plafond d'un `setTimeout` Node) — MJS-Server attend alors par tranches jusqu'à l'échéance, la minuterie ne part jamais avant. `turns.timeout` vaut `30000` quand vous ne le déclarez pas, et accepte en plus `null`, qui n'arme aucune minuterie de tour (§4). `Infinity` est refusé à la déclaration (`emptyTtl`, `endTtl`, `seatTtl`, `turns.timeout`), comme `NaN` et toute valeur qui n'est pas un nombre fini > 0 (hormis `null` pour `turns.timeout`) : l'erreur nomme l'option et dit la valeur reçue telle quelle (`game('morpion').endTtl doit être un nombre > 0 (ms), reçu : Infinity`) ; `game.timer(nom, Infinity)`, qui n'est pas validé, arme une attente sans fin — la sauvegarde (§8) la garde sous la forme d'une échéance finie, très lointaine. `limits.moveWaitMs` fait exception : au-delà de 2 147 483 647 ms, il est refusé à la déclaration (une minuterie Node plus longue partirait au bout d'1 ms et la garde des coups tomberait).
+> ⏱ **Durées.** `emptyTtl`, `endTtl`, `seatTtl`, `turns.timeout` et le délai de `game.timer()` sont en millisecondes : tout nombre fini > 0 est accepté, y compris au-delà de 24,8 jours (2³¹−1 ms, le plafond d'un `setTimeout` Node) — MJS-Server attend alors par tranches jusqu'à l'échéance, la minuterie ne part jamais avant. `turns.timeout` vaut `30000` quand vous ne le déclarez pas, et accepte en plus `null`, qui n'arme aucune minuterie de tour (§4). `Infinity` est refusé à la déclaration (`emptyTtl`, `endTtl`, `seatTtl`, `turns.timeout`), comme `NaN` et toute valeur qui n'est pas un nombre fini > 0 (hormis `null` pour `turns.timeout`) : l'erreur nomme l'option et dit la valeur reçue telle quelle (`game('morpion').endTtl doit être un nombre > 0 (ms), reçu : Infinity`) ; `game.timer(name, Infinity)`, qui n'est pas validé, arme une attente sans fin — la sauvegarde (§8) la garde sous la forme d'une échéance finie, très lointaine. `limits.moveWaitMs` fait exception : au-delà de 2 147 483 647 ms, il est refusé à la déclaration (une minuterie Node plus longue partirait au bout d'1 ms et la garde des coups tomberait).
 
 ---
 
@@ -250,7 +250,7 @@ Un coup **accepté** est journalisé (`{ move, player, at }`, borné à 200 entr
 
 ### Tour par tour — `turns` + `.next()`
 
-`game.next()` fait tourner `game.turn` : `turns.order === 'roundrobin'` (défaut) prend le siège occupé suivant dans l'ordre des places (connecté ou non — v1 ne saute **jamais** un absent automatiquement, cf. [§14](#limites)) — quand le joueur qui a la main quitte la partie (départ, entrée refusée après coup), le tour passe au siège occupé qui suit le sien, en bouclant, jamais au premier ; une fonction `(game)-> player|id|null` calcule le tour vous-même. `.next()` sans `def.turns` déclaré ne fait rien. Chaque appel réarme aussi la minuterie de tour (`turns.timeout`, réservée en interne sous le nom `'µturn'`) : à l'échéance, `hooks.onTurnTimeout(game)` s'exécute si fourni (ce qu'il change dans `game.state` est diffusé et sauvegardé comme après un coup), sinon MJS-Server appelle `.next()` lui-même (le tour passe simplement au suivant). Sans `turns.timeout` déclaré, cette minuterie vaut 30 secondes (`30000`). `turns.timeout: null` n'en arme aucune : c'est la partie par correspondance, où le tour attend son joueur aussi longtemps qu'il faut, des jours au besoin, et où `hooks.onTurnTimeout` ne tourne jamais — un siège qui ne joue jamais son tour bloque alors la partie pour tous, sans filet automatique. Une minuterie de tour que porte une sauvegarde ([§8](#persistance)) est réarmée à la restauration : elle part normalement tant que votre définition arme une minuterie de tour, et ne fait rien à son échéance quand elle n'en arme plus (`turns.timeout: null`, ou `turns` retiré).
+`game.next()` fait tourner `game.turn` : `turns.order === 'roundrobin'` (défaut) prend le siège occupé suivant dans l'ordre des places (connecté ou non — v1 ne saute **jamais** un absent automatiquement, cf. [§14](#limites)) — quand le joueur qui a la main quitte la partie (départ, entrée refusée après coup), le tour passe au siège occupé qui suit le sien, en bouclant, jamais au premier ; tant qu'aucun tour n'est établi, le premier `next()` donne la main au siège qui suit celui qui vient de jouer — appelé pendant le coup ou après un `await`, et la main reste la même après un rechargement de la partie ; après un changement de phase (`game.to(…)` vers une autre phase que celle en cours), elle revient au premier siège (le siège 0 quand il est occupé) ; une fonction `(game)-> player|id|null` calcule le tour vous-même. `.next()` sans `def.turns` déclaré ne fait rien. Chaque appel réarme aussi la minuterie de tour (`turns.timeout`, réservée en interne sous le nom `'µturn'`) : à l'échéance, `hooks.onTurnTimeout(game)` s'exécute si fourni (ce qu'il change dans `game.state` est diffusé et sauvegardé comme après un coup), sinon MJS-Server appelle `.next()` lui-même (le tour passe simplement au suivant). Sans `turns.timeout` déclaré, cette minuterie vaut 30 secondes (`30000`). `turns.timeout: null` n'en arme aucune : c'est la partie par correspondance, où le tour attend son joueur aussi longtemps qu'il faut, des jours au besoin, et où `hooks.onTurnTimeout` ne tourne jamais — un siège qui ne joue jamais son tour bloque alors la partie pour tous, sans filet automatique. Une minuterie de tour que porte une sauvegarde ([§8](#persistance)) est réarmée à la restauration : elle part normalement tant que votre définition arme une minuterie de tour, et ne fait rien à son échéance quand elle n'en arme plus (`turns.timeout: null`, ou `turns` retiré).
 
 ### Minuteries **nommées** — `timers` + `.timer()`
 
@@ -369,6 +369,8 @@ Chaque type a sa propre file FIFO. Un ticket s'ajoute à chaque `µgame:play` sa
 
 Une **même connexion n'est jamais en file que pour un SEUL type à la fois** : retenter `µgame:play` sans code pour un **autre** type retire d'abord son ticket du premier (choix conservateur — une connexion ne peut viser qu'une file, jamais deux en parallèle).
 
+**Un compte n'a qu'un ticket par file**, quel que soit le nombre de ses onglets : un deuxième onglet qui demande la même file reçoit la même place (`{ queue: n }`), sans nouveau ticket. Ce ticket appartient à la connexion qui a lancé la recherche : quand elle se ferme, il part avec elle, même si un autre onglet attend encore. Si la connexion qui a lancé la recherche se ferme, relancez la recherche. Un compte assis à une table privée du même type qui demande la file est rassis à sa table, pas mis en file. Quittez votre table privée avant de rejoindre la file.
+
 ### Les parties privées — `code: true`
 
 `def.code: true` autorise deux usages : `opts.code: true` crée une partie **neuve** avec un code court généré (5 caractères, alphabet sans `0`/`O`/`1`/`I` — ambiguïté typographique — porté par la réponse) ; `opts.code: "ABCDE"` rejoint cette partie. Le fondateur d'une partie par code est confirmé par SA **propre** requête (rien à surveiller via `seatTtl` tant qu'il reste connecté) — un fondateur qui repart sans jamais recevoir personne (départ, onglet fermé ou rechargé) voit sa table fermée tout de suite, son code oublié. Rejouer `µgame:play` avec le même code depuis la **même** connexion déjà assise est **idempotent** (renvoie le siège existant, ne throw pas). Le **type** demandé doit correspondre à celui de la partie visée par ce code — un code valide pour un AUTRE type rend la même erreur `code inconnu` (jamais de confirmation qu'un code existe pour un type différent).
@@ -470,7 +472,7 @@ catch e
   µ.error 'coup refusé :', e
 ```
 
-`.move(nom, p)` renvoie une **Promise**, résolue par le `result` du move côté serveur, rejetée par le motif de refus (chaîne = refus applicatif du serveur ; objet `{code,message}` = refus transport, même contrat que `sock.request()`). Rejette aussi `{code:'not-seated'}` si appelée avant tout siège connu.
+`.move(name, p)` renvoie une **Promise**, résolue par le `result` du move côté serveur, rejetée par le motif de refus (chaîne = refus applicatif du serveur ; objet `{code,message}` = refus transport, même contrat que `sock.request()`). Rejette aussi `{code:'not-seated'}` si appelée avant tout siège connu.
 
 ### Les 7 événements — `.on()`
 
@@ -556,7 +558,8 @@ Côté composant — `sock.game()` reste identique, `asTypedGame` ne fait que ca
 {end}
 ```
 ```civet
-result = await game.move('jouer', { i: 4 })   # résultat inféré boolean
+jouer = ->
+  result = await game.move('jouer', { i: 4 })   # résultat inféré boolean
 ```
 
 Un `game.move('jouer', { j: 4 })` (mauvaise clé) ou un `game.state.gril` (typo) sont des erreurs
@@ -642,7 +645,7 @@ SECRET = ENV.fetch('MJS_SERVEUR_PERSIST_SECRET')                # même secret q
 
 def verifie!(ts, corps)                                      # halt 401 si signature/horodatage invalides
   halt 401 if ts.nil? || (Time.now.to_i - ts.to_i).abs > 300
-  attendue = OpenSSL::HMAC.hexdigest('SHA256', SECRET, "#{ts}.#{request.request_method}.#{request.fullpath}.#{corps}")   # fullpath : le chemin avec sa requête (?…)
+  attendue = OpenSSL::HMAC.hexdigest('SHA256', SECRET, "#{ts}.#{request.request_method}.#{request.fullpath}.#{body}")   # fullpath : le chemin avec sa requête (?…)
   halt 401 unless Rack::Utils.secure_compare(attendue, request.env['HTTP_X_MJS_WS_SIGNATURE'].to_s)
 end
 
@@ -662,7 +665,7 @@ get('/mjs-server/persist') do
 end
 ```
 
-La vérification ci-dessus suit la **même** recette que le pont MJS-WS (en-têtes `x-mjs-ws-timestamp`/`x-mjs-ws-signature`, chaîne canonique `${ts}.${MÉTHODE}.${chemin}.${corps}`, anti-rejeu ± 300 s) — cf. [23 · MJS-WS §7.5](23-mjs-ws.md#pont) pour le webhook (Node) et §7.11 pour la même vérification côté Rails. Copier le bloc ci-dessus **sans** `verifie!` expose save/remove/load de n'importe quelle partie à qui sait faire un POST.
+La vérification ci-dessus suit la **même** recette que le pont MJS-WS (en-têtes `x-mjs-ws-timestamp`/`x-mjs-ws-signature`, chaîne canonique `${ts}.${METHOD}.${path}.${body}`, anti-rejeu ± 300 s) — cf. [23 · MJS-WS §7.5](23-mjs-ws.md#pont) pour le webhook (Node) et §7.11 pour la même vérification côté Rails. Copier le bloc ci-dessus **sans** `verifie!` expose save/remove/load de n'importe quelle partie à qui sait faire un POST.
 
 ### Redis et SQL
 
@@ -702,7 +705,7 @@ app = mjsServer({ persist: new SqlPersistAdapter({ query, dialect: '$' }) })
 `SqlPersistAdapter` crée sa table (`CREATE TABLE IF NOT EXISTS <table> (id VARCHAR(64) PRIMARY KEY, data LONGTEXT, updated_at BIGINT)` en `?`, `data TEXT` en `$`) une seule fois à la construction — `LONGTEXT` parce qu'un `TEXT` MySQL/MariaDB s'arrête à 64 Ko alors qu'un journal lockstep peut atteindre 16 Mo ([§13](#netcode)). **SQLite n'est pas pris en charge** : la table s'y crée, mais l'upsert du dialecte `?` est celui de MySQL (`ON DUPLICATE KEY UPDATE`), que SQLite refuse — chaque `save()` échoue, et le journal le signale une fois en clair. Une table créée par une version antérieure garde son `TEXT` : passez-la en `LONGTEXT` (`ALTER TABLE mjs_server_games MODIFY data LONGTEXT`) avant d'y sauver de gros journaux, et vérifiez que le `max_allowed_packet` de votre serveur laisse passer leur taille. `save()` est un **upsert** en un aller-retour (`ON DUPLICATE KEY UPDATE` en `?`, `ON CONFLICT … DO UPDATE` en `$`). `updated_at` est posé à chaque `save()` (horodatage ms) et n'est jamais relu par le serveur : il est là pour vous, pour trier ou diagnostiquer.
 
 > ⚠️ **Trois pièges à connaître avant de câbler l'un ou l'autre.**
-> - **`opts.query` doit renvoyer un tableau de lignes pour un `SELECT`** (`rows`, jamais `{rows}` ni la paire `[rows, fields]` brute d'un pilote — désenveloppez-le vous-même dans votre fonction `query`, cf. les deux recettes ci-dessus qui le font déjà) : `load()` fait `Array.isArray(lignes) ? lignes : []` — un mauvais format ne throw **pas**, le serveur démarre juste **sans** restauration, silencieusement.
+> - **`opts.query` doit renvoyer un tableau de lignes pour un `SELECT`** (`rows`, jamais `{rows}` ni la paire `[rows, fields]` brute d'un pilote — désenveloppez-le vous-même dans votre fonction `query`, cf. les deux recettes ci-dessus qui le font déjà) : `load()` fait `Array.isArray(rows) ? rows : []` — un mauvais format ne throw **pas**, le serveur démarre juste **sans** restauration, silencieusement.
 > - **`flush()` ferme la connexion Redis.** Appelé une seule fois par `app.stop()`, `RedisPersistAdapter.flush()` attend la file en vol **puis** coupe le socket — au-delà de ce qu'exige le contrat `MjsServerPersistAdapter` minimal, mais nécessaire : sans cette fermeture, le cycle de reconnexion à backoff de la connexion RESP tournerait indéfiniment après l'arrêt du serveur. Ne réutilisez jamais un `RedisPersistAdapter` après `app.stop()`.
 > - **Redis injoignable → 5 s puis abandon, jamais un blocage.** Toute attente de connexion (au boot comme en cours de vie) est bornée à 5 s : passé ce délai, `save()`/`remove()` abandonnent avec un `warn` (« le prochain `save()` rattrapera l'état »), et `load()` démarre **sans** restauration plutôt que de geler `app.listen()` indéfiniment.
 
@@ -806,7 +809,7 @@ location /jeu {
 Avec ces deux lignes, nginx écrit les deux en-têtes, et ils désignent le même joueur : c'est lui que l'on retient. Un joueur qui écrit lui-même un `X-Forwarded-For` voit sa ligne complétée par nginx : l'entrée retenue est la plus à **droite** qui n'est pas elle-même un proxy de confiance, et son adresse forgée reste à gauche, ignorée ; le `X-Real-IP` qu'il enverrait est remplacé. Gardez **les deux** lignes : `X-Real-IP` n'est cru que si `X-Forwarded-For` est absent ou désigne le même joueur. Quand les deux se contredisent (votre proxy n'en écrit qu'un, l'autre vient du joueur), le joueur prend l'adresse du proxy, jamais celle qu'il a forgée, et un avertissement unique part sur la console. Toutes les règles (liste d'adresses ou de plages à la place de `'loopback'`, chaîne de plusieurs proxies, CDN devant nginx, en-tête malformé, `true` et plages trop larges refusés) sont au [chapitre 23 §3.5](23-mjs-ws.md#proxy-inverse).
 
 - **Listez vos proxies, pas un morceau d'Internet.** Une plage plus large que `/8` en IPv4 (`10.0.0.0/7`, `0.0.0.0/1`…) ou que `/16` en IPv6 (`2000::/3`, `fc00::/7`…) est refusée au démarrage, avec un message qui le dit : elle contiendrait des visiteurs directs, crus sur parole, qui choisiraient l'adresse qu'ils veulent dans `X-Forwarded-For` et contourneraient le verrou des codes de partie. Deux plages `/1` qui se partagent tout IPv4 reviennent à `true` : elles sont refusées aussi. Nommez les proxies eux-mêmes (`'10.0.0.0/8'`, `'192.168.1.5'`, `'fd12:3456:789a::/48'`).
-- Avec `mjs serveur`, `trustProxy` n'est pas une clé de `mjs.config.json` : posez-la dans l'entry, `export default { trustProxy: 'loopback', … }`.
+- Avec `mjs server`, `trustProxy` n'est pas une clé de `mjs.config.json` : posez-la dans l'entry, `export default { trustProxy: 'loopback', … }`.
 - Sur une socket unix (transport `'uws'` avec `socketPath`), le pair n'a aucune adresse : `'loopback'` le tient pour local. Le transport étant alors une **instance**, posez l'option sur lui : `new UwsTransport({ socketPath, trustProxy: 'loopback' })`.
 - **Pour vérifier le réglage**, journalisez l'adresse retenue dans `auth` : `auth: (hello, meta) => { console.log('adresse retenue :', meta.address); return hello.auth }`. Vous devez y lire l'adresse de chaque joueur, jamais `127.0.0.1` pour tous.
 - Sans le réglage, un avertissement unique au journal vous prévient dès que des en-têtes de proxy arrivent d'une adresse locale.
@@ -987,7 +990,7 @@ $view   = µ.interp(game, { fields: ['entites'], delay: 2 })   # 2 périodes de 
 {end}
 ```
 
-`fields` liste les clés de `game.state` qui sont des **dicts** `{id: entité}` (la forme de `def.view`, cf. [§5](#la-vue)) — **seules** ces clés sont interpolées ; le reste (statut, phase, tour…) se lit directement sur `game.state`. `delay` (en **périodes**, défaut 2) fixe l'ancienneté affichée : `µ.interp` mesure **lui-même** la période réseau (moyenne glissante des écarts d'arrivée) — rien à deviner en millisecondes. Un trou d'arrivée (paquet perdu, `def.deltas` sans changement) **extrapole** sur la vélocité mesurée pendant ~1 période, puis **gèle** plutôt que de projeter indéfiniment. Seuls les champs **numériques** sont lissés (lerp) ; le reste (chaînes, booléens…) recopie la valeur la plus récente — v1 volontairement simple, pas d'angles (cf. [§14](#limites)).
+`fields` liste les clés de `game.state` qui sont des **dicts** `{id: entity}` (la forme de `def.view`, cf. [§5](#la-vue)) — **seules** ces clés sont interpolées ; le reste (statut, phase, tour…) se lit directement sur `game.state`. `delay` (en **périodes**, défaut 2) fixe l'ancienneté affichée : `µ.interp` mesure **lui-même** la période réseau (moyenne glissante des écarts d'arrivée) — rien à deviner en millisecondes. Un trou d'arrivée (paquet perdu, `def.deltas` sans changement) **extrapole** sur la vélocité mesurée pendant ~1 période, puis **gèle** plutôt que de projeter indéfiniment. Seuls les champs **numériques** sont lissés (lerp) ; le reste (chaînes, booléens…) recopie la valeur la plus récente — v1 volontairement simple, pas d'angles (cf. [§14](#limites)).
 
 Écrit dans un composant, `µ.interp` s'arrête seul à la destruction de ce composant (sa boucle d'images et ses abonnements à la partie) et repart s'il revient dans la page. Ailleurs (un module, un magasin), appelez `$view.stop()` quand le miroir ne sert plus ; arrêté ainsi, il ne repart jamais.
 
@@ -1067,7 +1070,7 @@ Liste **fermée** d'interdits avec `mode: 'lockstep'` : `state`/`view`/`deltas`/
 `lockstepJournal`, même contrainte de mode, borne le journal d'ordres — renvoyé **en entier** à chaque `µgame:start`/`resync` et à chaque sauvegarde, depuis le dernier instantané gardé s'il y en a un (cf. « Instantanés » plus bas). Quatre clés facultatives, chacune un entier ≥ 1, les tailles en octets du JSON ; une autre valeur qu'un objet, une clé inconnue ou une valeur qui n'est pas un entier ≥ 1 lève une erreur claire à l'`app.game(...)` :
 
 - `maxOrderBytes` — **2 048 octets** (2 Ko) par défaut : un ordre (`{ player, move, p }`) plus gros est refusé au joueur (`µ:ack` d'erreur « ordre trop volumineux ») et n'entre pas dans le journal ;
-- `maxBytes` — **16 777 216 octets** (16 Mo) par défaut : quand le tick suivant ferait dépasser cette taille au journal (instantané compris), la partie **se termine** — `µgame:end` avec `result: { ended: true, reason: 'journal-full' }` pour tous les joueurs, `hooks.onEnd` reçoit le même résultat. Ce dernier tick n'est ni journalisé ni diffusé : chaque joueur garde l'état du dernier tick reçu, le journal n'est jamais tronqué. Repère : un tick vide pèse de 22 à 29 octets — sans aucun ordre, 16 Mo durent environ 8 h à 20 Hz et un peu moins de 3 h à 60 Hz ; chaque ordre ajoute sa propre taille. Une partie qui doit durer plus longtemps déclare `snapshotEvery`, ou relève `maxBytes` ;
+- `maxBytes` — **16 777 216 octets** (16 Mo) par défaut : quand le tick suivant ferait dépasser cette taille au journal (instantané compris), la partie **se termine** — `µgame:end` avec `result: { ended: true, reason: 'journal-full' }` pour tous les joueurs, `hooks.onEnd` reçoit le même résultat. Ce dernier tick n'est ni journalisé ni diffusé : chaque joueur garde l'état du dernier tick reçu, le journal n'est jamais tronqué. Repère : un tick vide pèse de 22 à 29 octets — sans aucun ordre, 16 Mo durent environ 8 h à 20 Hz et un peu moins de 3 h à 60 Hz ; chaque ordre ajoute sa propre taille. Une partie qui doit durer plus longtemps déclare `snapshotEvery`, ou relève `maxBytes`. Un seul joueur peut aussi remplir le journal avec ses ordres, et terminer ainsi la partie pour tous : seuls `maxOrderBytes`, le débit des coups (`limits.moves`, un ordre compte comme un coup) et celui des trames de chaque connexion (`limits.rate`, dans les options du serveur) le ralentissent ;
 - `maxTicks` — aucun par défaut : anneau qui ne garde que les `maxTicks` derniers ticks (cf. « Limites v1 — honnêtement (netcode) » plus bas) ; avec `snapshotEvery`, il doit couvrir la fenêtre des propositions (cf. ci-dessous : deux secondes de ticks, ou la cadence si elle est plus longue) — plus court, la déclaration lève une erreur, car l'anneau aurait déjà purgé les ticks qui suivent un instantané accordé en fin de fenêtre ;
 - `snapshotEvery` — aucun par défaut : cadence des **instantanés**, en ticks (cf. ci-dessous).
 
@@ -1113,7 +1116,7 @@ rayon = Math.sqrt(dx * dx + dy * dy)   # sqrt reste NATIF — déjà déterminis
 
 `µ.det.sin/cos/atan2` n'utilisent que `+`/`-`/`×`/`÷`/`Math.imul`/`Math.floor` — déjà déterministes IEEE 754 — pour une précision **mesurée** d'environ 0,16 % d'erreur absolue max (sin/cos) et 0,086° (atan2) : largement suffisant pour une visée ou une orientation de jeu, pas pour un calcul scientifique. `Math.sqrt` (et les opérateurs `+ - × ÷`) restent volontairement **natifs** — déjà déterministes, aucune raison de les réapprocher.
 
-**Détecter la divergence.** Toutes les `every` ticks (60 par défaut), chaque client hache son état (FNV-1a de `JSON.stringify(state)`) et l'annonce en `µgame:hash` — **fire-and-forget**, jamais de `µ:ack`. Le serveur ne retient **pas** le premier hash vu comme référence — durcissement anti-triche par **quorum** : la référence d'un tick ne se fige **que** quand un hash atteint la majorité absolue des sièges courants, un siège qui rapporte deux hash différents pour le même tick est en plus flaggé suspect immédiatement (auto-contradiction). Limite assumée du quorum à **deux** sièges exactement : la majorité absolue vaut 2, un désaccord 1 contre 1 ne fige donc jamais de référence — en duel, seule l'auto-contradiction d'un siège est détectable (à 3 sièges et plus, le quorum tranche). Un écart identifié déclenche `def.onDivergence(game, {tick, suspects, reason})` côté serveur ET diffuse `µgame:event` de type `'divergence'` à tous les clients — jamais deux fois pour le même siège/tick. Le jeu **décide** de la suite (log, resync forcé en renvoyant le journal, fin de partie) — rien d'automatique n'est imposé.
+**Détecter la divergence.** Toutes les `every` ticks (60 par défaut), chaque client hache son état (FNV-1a de `JSON.stringify(state)`) et l'annonce en `µgame:hash` — **fire-and-forget**, jamais de `µ:ack`. Un hash de plus de 64 caractères est refusé : le serveur ne le retient pas et l'écrit une fois par joueur dans son journal (µ.lockstep en écrit 8). Le serveur ne retient **pas** le premier hash vu comme référence — durcissement anti-triche par **quorum** : la référence d'un tick ne se fige **que** quand un hash atteint la majorité absolue des sièges courants, un siège qui rapporte deux hash différents pour le même tick est en plus flaggé suspect immédiatement (`reason: 'self-contradiction'`). Limite assumée du quorum à **deux** sièges exactement : la majorité absolue vaut 2, un désaccord 1 contre 1 ne fige donc jamais de référence — en duel, seule l'auto-contradiction d'un siège est détectable (à 3 sièges et plus, le quorum tranche). Un écart identifié déclenche `def.onDivergence(game, {tick, suspects, reason})` (`reason` vaut `'self-contradiction'` ou `'quorum'`) côté serveur ET diffuse `µgame:event` de type `'divergence'` à tous les clients — jamais deux fois pour le même siège/tick. Le jeu **décide** de la suite (log, resync forcé en renvoyant le journal, fin de partie) — rien d'automatique n'est imposé.
 
 ### Les chiffres de la démo
 

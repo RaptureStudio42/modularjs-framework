@@ -248,7 +248,7 @@ describe('trustProxy : l\'avertissement des en-têtes contradictoires', function
     setMessagesLang('fr')
     const out = freshProcess('fr', 'collect')
     assert.equal(out.before, 0, 'en-têtes cohérents : rien à signaler')
-    assert.deepEqual(out.warnings, [t('ws.trust-proxy.en-tetes-contradictoires')])
+    assert.deepEqual(out.warnings, [t('ws.trust-proxy.headers-conflicting')])
     assert.deepEqual(out.seen, [VISITOR, VISITOR, VISITOR, '127.0.0.1', '127.0.0.1', '127.0.0.1'])
   })
 
@@ -257,7 +257,7 @@ describe('trustProxy : l\'avertissement des en-têtes contradictoires', function
     for (const lang of ['fr', 'en'] as const) {
       setMessagesLang(lang)
       const out = freshProcess(lang, 'collect')
-      assert.deepEqual(out.warnings, [t('ws.trust-proxy.en-tetes-contradictoires')], lang)
+      assert.deepEqual(out.warnings, [t('ws.trust-proxy.headers-conflicting')], lang)
       assert.match(out.warnings[0], /X-Real-IP/, lang)
       assert.match(out.warnings[0], /X-Forwarded-For/, lang)
       texts.push(out.warnings[0])

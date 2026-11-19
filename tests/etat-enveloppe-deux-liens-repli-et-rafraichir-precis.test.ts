@@ -120,7 +120,7 @@ for (const [nom, opts, enveloppe] of REGLAGES) describe(`état : deux liens vers
 
     it('le nom pris avant que le premier composant de la page reçoive un objet : l\'enfant monté ensuite suit', async () => {
       const { win, el, enfants, juste } = await appli('ld-avant')
-      assert.equal(win.µ._mjs_milieu, false)
+      assert.equal(win.µ._mjs_middle, false)
       el.montrer()
       await tic()
       el.ecrire(5)

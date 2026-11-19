@@ -15,7 +15,7 @@ export const jsAdapter: LanguageAdapter = {
       if (!err?.loc) throw err
       const fileName = opts.fileName ?? 'inline.js'
       const detail   = String(err.message).replace(/\s*\(\d+:\d+\)$/, '')
-      throw new Error(`${fileName}:${err.loc.line}:${err.loc.column + 1}: ${t('languages.js-erreur-syntaxe', { detail })}`)
+      throw new Error(`${fileName}:${err.loc.line}:${err.loc.column + 1}: ${t('languages.js-error-syntax', { detail })}`)
     }
     return { code: source }
   },

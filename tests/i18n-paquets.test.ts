@@ -284,10 +284,10 @@ describe('plusieurs paquets par module — exécution', function () {
   })
 
   it('signal de construction : seul un module à plusieurs paquets le pose', async () => {
-    const multi = (await transpile("@i18n 'a' 'b'\n<p>{µt('x')}</p>", { moduleName: 'mjs-signal-multi' })).output
-    const seul  = (await transpile("@i18n 'a'\n<p>{µt('x')}</p>", { moduleName: 'mjs-signal-seul' })).output
-    const rien  = (await transpile('<p>{1 + 1}</p>', { moduleName: 'mjs-signal-rien' })).output
-    const signal = features.I18N_PAQUETS
+    const multi  = (await transpile("@i18n 'a' 'b'\n<p>{µt('x')}</p>", { moduleName: 'mjs-signal-multi' })).output
+    const seul   = (await transpile("@i18n 'a'\n<p>{µt('x')}</p>", { moduleName: 'mjs-signal-seul' })).output
+    const rien   = (await transpile('<p>{1 + 1}</p>', { moduleName: 'mjs-signal-rien' })).output
+    const signal = features.I18N_PACKS
     assert.equal(typeof signal, 'string', 'le signal est publié par le module des signaux')
     assert.equal(features.scanCompiledFeatures(multi).has(signal), true)
     assert.equal(features.scanCompiledFeatures(seul).has(signal), false)
@@ -298,8 +298,8 @@ describe('plusieurs paquets par module — exécution', function () {
     const sans = await projet({ sources: { pagepaq: PAGE("@i18n 'panier'"), enfantpaq: ENFANT } })
     const avec = await projet({ sources: { pagepaq: PAGE("@i18n 'panier' 'ailleurs'"), enfantpaq: ENFANT } })
     const coeur = (p: any) => readFileSync(join(p.outDir, readdirSync(p.outDir).find((f: string) => /^mjs_core-/.test(f))!), 'utf-8')
-    assert.equal(coeur(sans).includes('i18n-paquets'), false, 'aucun module à plusieurs paquets : le bloc est retiré du cœur')
-    assert.equal(coeur(avec).includes('i18n-paquets'), true, 'un module à plusieurs paquets : le bloc est dans le cœur')
+    assert.equal(coeur(sans).includes('i18n-packs'), false, 'aucun module à plusieurs paquets : le bloc est retiré du cœur')
+    assert.equal(coeur(avec).includes('i18n-packs'), true, 'un module à plusieurs paquets : le bloc est dans le cœur')
   })
 })
 

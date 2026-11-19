@@ -4,16 +4,16 @@
 // lourdes, ont chacune leur fichier et leur signal : écrire µraw ne les tire plus.
 // µminmax n'existe plus : les types du bloc <vars> le remplacent (mjs_types.ts).
 
-// <sans-lignes-brutes>
+// <no-raw-lines>
 // µ.raw = function(target) {
-// </sans-lignes-brutes>
-// <lignes-brutes>
+// </no-raw-lines>
+// <raw-lines>
 // `µraw(liste, true)` : la liste est marquée, et notée « toutes ses lignes sont brutes » (µ._mjs_rawRows, mjs_init.ts) sans qu'aucune ligne soit
 // marquée ni lue. `true` seul compte : l'indice que `map` donne en second argument (`listes.map(µraw)`) ne note rien
 µ.raw = function(target, rows) {
-// </lignes-brutes>
+// </raw-lines>
   if (target !== null && typeof target === 'object') {
-    // <faibles>
+    // <weak>
     // enveloppe d'une `WeakMap`, d'un `WeakSet` de l'état (`µraw($vus)`, `µraw(st.vus)`) : la vraie collection, qu'exigent ses méthodes
     // natives (`WeakMap.prototype.get.call(µraw($vus), k)`, une bibliothèque), rendue sans être marquée — `$vus` garde son enveloppe,
     // et ses écritures redessinent. Lue dans le carnet de ces enveloppes (µ._mjs_weakRaw, mjs_init.ts) : rien n'est lu sur l'objet
@@ -25,18 +25,18 @@
       µ._mjs_weakRaw.set(r, r);
       return r;
     }
-    // </faibles>
-    // <lignes-brutes>
+    // </weak>
+    // <raw-lines>
     if (rows === true) µ._mjs_rawRows.add(target);
-    // </lignes-brutes>
+    // </raw-lines>
     // Marqueur dans µ._mjs_rawSet (cf. mjs_init.ts) — pas de prop string sur
     // l'objet user (mangle-safe + sans pollution `for...in`/`Object.keys`).
     µ._mjs_rawSet.add(target);
     // <precision>
-    // <derivees>
+    // <derived-values>
     // objet devenu brut : une valeur précise d'un composant qui le tient doute (mjs_element.ts)
-    µ._mjs_mefiance?.(target);
-    // </derivees>
+    µ._mjs_distrust?.(target);
+    // </derived-values>
     // </precision>
   }
   return target;

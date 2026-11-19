@@ -23,8 +23,8 @@
 function _mjsFxCurve(v) {
   if (typeof v !== 'string' || v === '') return void 0;
   if (/^(?:linear|ease|ease-in|ease-out|ease-in-out)$/.test(v) || /^cubic-bezier\(/.test(v)) return v;
-  var nom = v.replace(/-(\w)/g, function(_, c) { return c.toUpperCase(); });
-  return µ.easing && typeof µ.easing[nom] === 'function' ? µ.easing[nom] : void 0;
+  var name = v.replace(/-(\w)/g, function(_, c) { return c.toUpperCase(); });
+  return µ.easing && typeof µ.easing[name] === 'function' ? µ.easing[name] : void 0;
 }
 
 // les réglages d'une transition → les options de son animation, sans prototype : une option que les réglages ne donnent pas reste
@@ -96,7 +96,7 @@ function _mjsFxCurve(v) {
       if (s.count !== void 0) o.count = s.count;
       if (s.direction) o.dir = s.direction;
       break;
-    case 'volet':
+    case 'cover':
     case 'reveal':
     case 'flip':
     case 'cube':
@@ -220,18 +220,18 @@ function _mjsFxStill() {
   var o   = {};
   for (var k in all) o[k] = all[k];
   o.on = 'load';
-  var pose = function(node) {
+  var sets = function(node) {
     var off = node._mjs_fxOff && node._mjs_fxOff[name];
     if (off) off();
     µ._mjs_fx(comp, node, name, o);
   };
   return {
     intro: function(node) {
-      pose(node);
+      sets(node);
       return Promise.resolve();
     },
     outro: function(node) {
-      pose(node);
+      sets(node);
       return _mjsFxDone(node, name, o);
     }
   };
@@ -276,8 +276,8 @@ function _mjsFxHold(el, factory, watched) {
   }
   if (!cfg.css || typeof el.animate !== 'function') return;
   var f0   = cfg.css(0, 1);
-  // tenue sous un observateur de visibilité (`watched`, on: view) : une première image découpée (*iris, *volet, *bars,
-  // *blocks) ou déplacée (*fly, *scale, *volet…) se tient par la seule opacité — l'observateur juge la balise à sa place :
+  // tenue sous un observateur de visibilité (`watched`, on: view) : une première image découpée (*iris, *cover, *bars,
+  // *blocks) ou déplacée (*fly, *scale, *cover…) se tient par la seule opacité — l'observateur juge la balise à sa place :
   // Chromium compte la découpe de la balise elle-même dans ce qu'il voit, une découpe d'aire nulle ne serait jamais « vue » ;
   // une translation sortirait de l'écran la boîte observée d'une balise posée tout en haut, ou la sortirait d'un parent qui
   // rogne (`overflow: hidden`) : jamais vue, elle restait invisible pour toujours. Rien ne se voit davantage : la balise attend
@@ -379,10 +379,10 @@ function _mjsFxScrub(el, factory, s) {
     }
     // deux bornes (la forme vérifiée à la compilation) ; une plage tenue par une variable et
     // malformée n'en est pas une : le passage à l'écran, comme sans plage
-    var bouts = s.range ? /^(-?\d*\.?\d+(?:px|vh)?) (-?\d*\.?\d+(?:px|vh)?)$/.exec(String(s.range)) : null;
-    if (bouts) {
+    var ends = s.range ? /^(-?\d*\.?\d+(?:px|vh)?) (-?\d*\.?\d+(?:px|vh)?)$/.exec(String(s.range)) : null;
+    if (ends) {
       var px = function(x) { return /vh$/.test(x) ? parseFloat(x) * (port ? port.clientHeight : window.innerHeight) / 100 : parseFloat(x); };
-      range = [px(bouts[1]), px(bouts[2])];
+      range = [px(ends[1]), px(ends[2])];
     }
   };
   var update = function() {
@@ -837,14 +837,14 @@ function _mjsFxAppear(el, name, s, comp) {
     // `visible: 60%` règle cette part (µ._mjs_fxSight)
     var io = µ._mjs_fxSight(function(entries) {
     // </visible>
-    // <sans-visible>
+    // <no-visible>
     // var io = new IntersectionObserver(function(entries) {
-    // </sans-visible>
+    // </no-visible>
       for (var i = 0; i < entries.length; i++) {
         if (entries[i].target !== el) continue;
         // `busy` : une balise tenue par l'opacité est jugée à sa place, jamais pendant qu'elle bouge. Son entrée part d'une découpe
         // d'aire nulle (que Chromium compte dans ce que voit l'observateur) ou d'une boîte déplacée ; la sortie d'une balise déplacée
-        // (`moved`) la ramène vers l'écran quand elle est juste au-delà d'un bord (*fly sorti par le haut redescend de 40 px ; *volet
+        // (`moved`) la ramène vers l'écran quand elle est juste au-delà d'un bord (*fly sorti par le haut redescend de 40 px ; *cover
         // aussi sous Firefox, qui ne compte pas la découpe) : l'observateur qui l'entendait la faisait rentrer, ressortir, et ainsi
         // sans fin. Tant qu'une entrée, ou la sortie d'une balise déplacée, joue il est sourd ; elle finie, la balise est à sa place
         // (entière, ou tenue de nouveau) et il est interrogé de nouveau. La sortie d'une découpe seule (*iris, *bars) reste écoutée :
@@ -919,7 +919,7 @@ function _mjsFxAppear(el, name, s, comp) {
 }
 
 [
-  'fade', 'fly', 'slide', 'scale', 'rotate', 'blur', 'draw', 'iris', 'wheel', 'volet', 'reveal', 'flip', 'cube', 'turn', 'swipe', 'bars', 'blocks', 'shatter',
+  'fade', 'fly', 'slide', 'scale', 'rotate', 'blur', 'draw', 'iris', 'wheel', 'cover', 'reveal', 'flip', 'cube', 'turn', 'swipe', 'bars', 'blocks', 'shatter',
   'pixelate', // @@ *pixelate
   'ink', 'typewriter'
 ].forEach(function(n) {

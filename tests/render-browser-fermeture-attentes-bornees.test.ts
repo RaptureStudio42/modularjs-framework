@@ -1,6 +1,6 @@
 // render-browser — les TROIS attentes de fermeture qui restaient non bornées dans `close()` et
 // dans le rattrapage de `bootSlot()` : la promesse de navigateur mémoïsée (`browserPromise`) peut ne
-// jamais se régler (sa résolution de moteur n'est PAS sous `borne`), `bundler.close()` termine le
+// jamais se régler (sa résolution de moteur n'est PAS sous `boundedStart`), `bundler.close()` termine le
 // réservoir de travailleurs partagé (dont la terminaison peut ne jamais aboutir), et le
 // `context.close()` de rattrapage d'un `bootSlot()` en échec n'était ni borné ni signalé (le contexte
 // restait en vol à vie, sans le moindre message).

@@ -23,6 +23,7 @@
   hs      = new Float64Array(0)
   off     = new Float64Array(1)
   ro      = null
+  watched = new Set()
   # la place de la ligne qui a le focus ou l'aura, le nœud qui le tient, le focus rangé sur la liste quand sa ligne sort de la fenêtre
   focusAt = -1
   holder  = null
@@ -61,7 +62,7 @@
   # les neuves, et une hauteur qui fondrait entre les deux ramènerait le défilement plus haut
   pad = ->
     n = count()
-    $before = off[Math.min($start, n)]
+    $before = off[Math.min(µread($start), n)]
     $total  = off[n]
 
   rowOf = (t)=>
@@ -86,12 +87,12 @@
     park() if inside and not parked and holder?.parentNode is @ and at.has(holder) and (at.get(holder) < s or at.get(holder) >= e)
     # la page redessine entre deux écritures : en remontant, `end` d'abord, sinon `start` d'abord ; la fenêtre intermédiaire est toujours
     # comprise dans l'ancienne ou la nouvelle (jamais `slice(0, 100000)` après un saut du bas vers le haut)
-    if s < $start
-      $end   = e if e isnt $end
+    if s < µread($start)
+      $end   = e if e isnt µread($end)
       $start = s
     else
-      $start = s if s isnt $start
-      $end   = e if e isnt $end
+      $start = s if s isnt µread($start)
+      $end   = e if e isnt µread($end)
     pad()
 
   # rôle, place et arrêt de tabulation de chaque ligne dessinée
@@ -114,15 +115,20 @@
   refresh = =>
     return unless slotRef
     rows = slotRef.assignedElements()
-    base = Math.min($start, count())
+    base = Math.min(µread($start), count())
     # la page pose une fenêtre neuve en deux temps (`start` puis `end`, ou l'inverse) : entre les deux, ses lignes ne sont pas celles de la
     # fenêtre, leurs places attendent la pose suivante
-    return if rows.length isnt Math.min($end, count()) - base
+    return if rows.length isnt Math.min(µread($end), count()) - base
+    # à mesurer : les lignes neuves et celles posées à une autre place (une liste sans clé recycle ses éléments) ; une ligne restée à sa
+    # place ne se réobserve pas, sa taille changée se dit d'elle-même ; une ligne sortie de la fenêtre n'est plus suivie
+    shifted = new Set(rows.filter((el, k)-> at.get(el) isnt base + k))
     at.set(el, base + k) for el, k in rows
     label()
     if ro
-      ro.disconnect()
-      ro.observe(el) for el in rows
+      kept = new Set(rows)
+      watched.forEach((el)-> ro.unobserve(el) unless kept.has(el))
+      ro.observe(el) for el in rows.filter((el)-> shifted.has(el) or not watched.has(el))
+      watched = kept
     if parked and vp?.matches(':focus')
       el = rows.find((r)-> at.get(r) is focusAt)
       if el
@@ -136,14 +142,14 @@
   measure = (entries)=>
     low = Infinity
     moved = new Set()
-    for en in entries
-      el = en.target
+    for ent in entries
+      el = ent.target
       continue unless at.has(el) and el.parentNode is @
       i = at.get(el)
       seen.set(el, i)
       continue if i >= count()
       cs = getComputedStyle(el)
-      h = (en.borderBoxSize?[0]?.blockSize ?? el.offsetHeight) + (parseFloat(cs.marginTop) or 0) + (parseFloat(cs.marginBottom) or 0)
+      h = (ent.borderBoxSize?[0]?.blockSize ?? el.offsetHeight) + (parseFloat(cs.marginTop) or 0) + (parseFloat(cs.marginBottom) or 0)
       continue if Math.abs(hs[i] - h) < .01 and sizes.has(keys[i])
       sizes.set(keys[i], h)
       hs[i] = h
@@ -327,9 +333,12 @@
       @removeEventListener('keydown', onKey)
       ro?.disconnect()
       host?.disconnect()
-      ro = null
+      ro      = null
+      watched = new Set()
       done(null)
 
+  # la fenêtre (`start`, `end`) se lit partout par `µread` : écrite à chaque pas de défilement, elle ne doit pas rejouer ce reffet, qui
+  # refait les tables de la liste entière (une clé, une hauteur et un début par élément)
   µeffect ->
     list = $items
     $size

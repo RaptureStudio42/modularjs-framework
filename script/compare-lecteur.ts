@@ -57,11 +57,11 @@ import { fileURLToPath } from 'node:url'
 import { comparerLints } from './compare-lecteur-lints.js'
 import * as acorn from 'acorn'
 import ts from 'typescript'
-import { compteursLectureDuScript, tokenizeDuScript } from '../src/reader/script.js'
+import { scriptReadCounters, tokenizeScript } from '../src/reader/script.js'
 import { tokenize, type TokenizeOpts } from '../src/lexer/index.js'
 import { withEffectLines } from '../src/bundler/transpile-msg.js'
 import { cleanJsExpr } from '../src/generator/utils.js'
-import { compteursCode, debutsDeLigne, formaterPosition, lireFichier, parcourir, situer, viderCacheCode, type Balise, type Fichier } from '../src/reader/index.js'
+import { codeCounters, lineStarts, formatPosition, readFile, traverse, locate, clearCodeCache, type Tag, type File } from '../src/reader/index.js'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -148,7 +148,7 @@ async function compiler(transpile: Transpile, s: Source, src: string): Promise<{
   console.log = console.warn = console.error = () => { messages++ }
   try {
     const r = await transpile(src, optionsDe(s))
-    return { balises: new Set(r.data.tagRefs.filter((x) => x.kind === 'raccourci-coeur' || x.kind === 'litteral-coeur').map((x) => x.name.toLowerCase())), console: messages }
+    return { balises: new Set(r.data.tagRefs.filter((x) => x.kind === 'shortcut-core' || x.kind === 'literal-core').map((x) => x.name.toLowerCase())), console: messages }
   }
   catch (e) {
     return { erreur: String((e as Error).message ?? e).split('\n')[0].slice(0, 240), console: messages }
@@ -160,11 +160,11 @@ async function compiler(transpile: Transpile, s: Source, src: string): Promise<{
 
 // ---------------------------------------------------------------- lectures de l'arbre
 
-const lus = new Map<string, Fichier>()
-function lire(fichier: string, module = false): Fichier {
+const lus = new Map<string, File>()
+function lire(fichier: string, module = false): File {
   let f = lus.get(fichier)
   if (!f) {
-    f = lireFichier(readFileSync(fichier, 'utf-8'), { fichier, module })
+    f = readFile(readFileSync(fichier, 'utf-8'), { file: fichier, module })
     lus.set(fichier, f)
   }
   return f
@@ -174,16 +174,16 @@ type Resoudre = (nom: string, baseDir: string, sourceDir: string) => { path: str
 let resoudrePartiel: Resoudre | null = null
 
 // balises du cœur du gabarit, partiels compris (le compilateur d'aujourd'hui les verse avant de lire)
-function balisesDuCoeur(f: Fichier, s: Source, vus = new Set<string>([f.chemin])): Set<string> {
+function balisesDuCoeur(f: File, s: Source, vus = new Set<string>([f.path])): Set<string> {
   const noms = new Set<string>()
-  parcourir(f, (n) => {
-    if (n.sorte !== 'balise') return
-    const b = n as Balise
-    if (b.forme === 'coeur') noms.add(b.nom.slice(2).toLowerCase())
-    else if (b.forme === 'coeur-litteral') noms.add(b.nom.slice('mjs-core-'.length).toLowerCase())
-    else if (b.nom.toLowerCase() === '@include') {
-      const m = /^<@include\s+([./\w-]+?)\s*\/?>/i.exec(f.source.slice(b.debut, b.fin))
-      const p = m && resoudrePartiel(m[1], dirname(f.chemin), s.racine)
+  traverse(f, (n) => {
+    if (n.kind !== 'balise') return
+    const b = n as Tag
+    if (b.shape === 'coeur') noms.add(b.name.slice(2).toLowerCase())
+    else if (b.shape === 'coeur-litteral') noms.add(b.name.slice('mjs-core-'.length).toLowerCase())
+    else if (b.name.toLowerCase() === '@include') {
+      const m = /^<@include\s+([./\w-]+?)\s*\/?>/i.exec(f.source.slice(b.start, b.end))
+      const p = m && resoudrePartiel(m[1], dirname(f.path), s.racine)
       if (p && !vus.has(p.path)) {
         vus.add(p.path)
         for (const x of balisesDuCoeur(lire(p.path), s, vus)) noms.add(x)
@@ -194,46 +194,46 @@ function balisesDuCoeur(f: Fichier, s: Source, vus = new Set<string>([f.chemin])
 }
 
 // où l'arbre voit-il une balise du cœur que seul le compilateur d'aujourd'hui compte ? (la raison d'un écart)
-function raison(f: Fichier, nom: string, seul: 'actuel' | 'arbre'): string {
+function raison(f: File, nom: string, seul: 'actuel' | 'arbre'): string {
   if (seul === 'arbre') {
     let ou = ''
-    parcourir(f, (n) => {
-      if (!ou && n.sorte === 'balise' && [`@@${nom}`, `mjs-core-${nom}`].includes((n as Balise).nom.toLowerCase())) ou = formaterPosition(f, n.debut)
+    traverse(f, (n) => {
+      if (!ou && n.kind === 'balise' && [`@@${nom}`, `mjs-core-${nom}`].includes((n as Tag).name.toLowerCase())) ou = formatPosition(f, n.start)
     })
     return `balise lue par l'arbre seul${ou ? ' (' + ou + ')' : ''} : inexpliqué`
   }
   const re = new RegExp(`(?:@@|mjs-core-)${nom}(?![\\w-])`, 'i')
   const dans: string[] = []
-  const textesDuCode = f.codes.flatMap((c) => c.textes)
-  if (textesDuCode.some((t) => t.sorte === 'commentaire' && re.test(t.valeur))) dans.push('un commentaire du code')
-  if (textesDuCode.some((t) => t.sorte !== 'commentaire' && t.sorte !== 'regex' && re.test(t.valeur))) dans.push('une chaîne du code')
-  parcourir(f, (n) => {
-    const texte = f.source.slice(n.debut, n.fin)
-    if (n.sorte === 'commentaireHtml' && re.test(texte) && !dans.includes('un commentaire HTML')) dans.push('un commentaire HTML')
-    if (n.sorte === 'commentaireHtml' && /<@include\b/i.test(texte) && !dans.includes('un partiel cité en commentaire HTML')) dans.push('un partiel cité en commentaire HTML')
-    if (n.sorte === 'texte' && re.test(texte) && !dans.includes('le texte du gabarit')) dans.push('le texte du gabarit')
+  const textesDuCode = f.codes.flatMap((c) => c.texts)
+  if (textesDuCode.some((t) => t.kind === 'commentaire' && re.test(t.value))) dans.push('un commentaire du code')
+  if (textesDuCode.some((t) => t.kind !== 'commentaire' && t.kind !== 'regex' && re.test(t.value))) dans.push('une chaîne du code')
+  traverse(f, (n) => {
+    const texte = f.source.slice(n.start, n.end)
+    if (n.kind === 'commentaireHtml' && re.test(texte) && !dans.includes('un commentaire HTML')) dans.push('un commentaire HTML')
+    if (n.kind === 'commentaireHtml' && /<@include\b/i.test(texte) && !dans.includes('un partiel cité en commentaire HTML')) dans.push('un partiel cité en commentaire HTML')
+    if (n.kind === 'texte' && re.test(texte) && !dans.includes('le texte du gabarit')) dans.push('le texte du gabarit')
   })
   return dans.length ? `citée seulement dans ${dans.join(', ')} : le compilateur d'aujourd'hui la compte, l'arbre non` : 'inexpliqué'
 }
 
 // positions de l'arbre vérifiées contre le texte : le caractère du fichier sous chaque position ouvre bien la
 // chaîne, la regex ou le commentaire, et chaque nom de code s'y lit tel quel
-function verifierPositions(f: Fichier, bilan: { justes: number, fausses: string[], sansPosition: number }): void {
+function verifierPositions(f: File, bilan: { justes: number, fausses: string[], sansPosition: number }): void {
   for (const c of f.codes) {
-    for (const t of c.textes) {
-      if (t.sorte === 'gabarit') continue
-      if (t.debut === null) {
+    for (const t of c.texts) {
+      if (t.kind === 'gabarit') continue
+      if (t.start === null) {
         bilan.sansPosition++
         continue
       }
-      const ouvre = t.sorte === 'chaine' ? '\'"' : t.sorte === 'regex' ? '/' : '#/'
-      if (ouvre.includes(f.source[t.debut])) bilan.justes++
-      else bilan.fausses.push(`${formaterPosition(f, t.debut)} ${t.sorte} ${JSON.stringify(t.valeur.slice(0, 30))}`)
+      const ouvre = t.kind === 'chaine' ? '\'"' : t.kind === 'regex' ? '/' : '#/'
+      if (ouvre.includes(f.source[t.start])) bilan.justes++
+      else bilan.fausses.push(`${formatPosition(f, t.start)} ${t.kind} ${JSON.stringify(t.value.slice(0, 30))}`)
     }
-    for (const n of c.noms) {
-      if (n.debut === null) bilan.sansPosition++
-      else if (f.source.startsWith(n.nom, n.debut)) bilan.justes++
-      else bilan.fausses.push(`${formaterPosition(f, n.debut)} nom ${n.nom}`)
+    for (const n of c.names) {
+      if (n.start === null) bilan.sansPosition++
+      else if (f.source.startsWith(n.name, n.start)) bilan.justes++
+      else bilan.fausses.push(`${formatPosition(f, n.start)} nom ${n.name}`)
     }
   }
 }
@@ -254,11 +254,11 @@ async function mesurer(temoin: string): Promise<void> {
       for (let k = 0; k < composants.length; k++) if ((await compiler(transpile, composants[k], textes[k])).erreur) echecs++
     }
     else {
-      viderCacheCode()
-      for (let k = 0; k < composants.length; k++) if (lireFichier(textes[k], { fichier: composants[k].fichier }).diagnostics.length) echecs++
+      clearCodeCache()
+      for (let k = 0; k < composants.length; k++) if (readFile(textes[k], { file: composants[k].fichier }).diagnostics.length) echecs++
     }
     const ms = performance.now() - t0
-    const detail = tour === 'B' ? ` ; Civet ${Math.round(compteursCode.civetMs)} ms (${compteursCode.compilations} compilations, ${compteursCode.reprises} reprises du cache), acorn ${Math.round(compteursCode.acornMs)} ms` : ''
+    const detail = tour === 'B' ? ` ; Civet ${Math.round(codeCounters.civetMs)} ms (${codeCounters.compilations} compilations, ${codeCounters.retries} reprises du cache), acorn ${Math.round(codeCounters.acornMs)} ms` : ''
     console.log(`tour ${tour} : ${Math.round(ms)} ms, ${echecs} en échec${detail} — avant : ${avant} ; après : ${charge()}`)
   }
 }
@@ -303,7 +303,7 @@ async function comparer(): Promise<number> {
   }
   const parCorpus = [...new Set(liste.map((s) => s.nom))].map((n) => `${n} ${liste.filter((s) => s.nom === n).length}`).join(', ')
   console.log(`corpus : ${liste.length} fichiers (${parCorpus}) — ${compte.composants} composants comparés, ${compte.modules} modules lus par l'arbre seul`)
-  console.log(`arbre : ${liste.length - new Set(fautes.map((x) => x.split(' : ')[0])).size} fichiers lus sans faute sur ${liste.length} ; ${compteursCode.compilations} compilations de Civet, ${compteursCode.reprises} reprises du cache`)
+  console.log(`arbre : ${liste.length - new Set(fautes.map((x) => x.split(' : ')[0])).size} fichiers lus sans faute sur ${liste.length} ; ${codeCounters.compilations} compilations de Civet, ${codeCounters.retries} reprises du cache`)
   console.log(`positions vérifiées contre le texte : ${bilan.justes} justes, ${bilan.fausses.length} fausses, ${bilan.sansPosition} sans position`)
   for (const x of bilan.fausses.slice(0, 20)) console.log(`  position fausse : ${x}`)
   console.log(`compilateur d'aujourd'hui en échec (non comparés) : ${nonCompares.length} ; messages de console pendant ses compilations : ${compte.messagesConsole}`)
@@ -400,18 +400,18 @@ function etenduesDesCommentaires(src: string, file: string): [number, number][] 
     return etendues
   }
   if (!/\.(?:mjs|civet|coffee)$/i.test(file)) return null
-  const arbre = lireFichier(src, { fichier: file, ...(estComposant(file) ? {} : { module: true }) })
+  const arbre = readFile(src, { file: file, ...(estComposant(file) ? {} : { module: true }) })
   if (arbre.diagnostics.length > 0 || arbre.source !== src) return null
   const etendues: [number, number][] = []
-  parcourir(arbre, (n) => {
-    if (n.sorte === 'commentaireHtml') etendues.push([n.debut, n.fin])
+  traverse(arbre, (n) => {
+    if (n.kind === 'commentaireHtml') etendues.push([n.start, n.fin])
   })
   for (const code of arbre.codes) {
-    for (const t of code.textes) {
-      if (t.sorte !== 'commentaire' || t.debut === null) continue
-      const marque = src.startsWith('###', t.debut) ? '###' : src.startsWith('/*', t.debut) ? '*/' : ''
-      const fin    = marque ? src.indexOf(marque, t.debut + marque.length) : src.indexOf('\n', t.debut)
-      etendues.push([t.debut, fin < 0 ? code.fin : fin + marque.length])
+    for (const t of code.texts) {
+      if (t.kind !== 'commentaire' || t.start === null) continue
+      const marque = src.startsWith('###', t.start) ? '###' : src.startsWith('/*', t.start) ? '*/' : ''
+      const fin    = marque ? src.indexOf(marque, t.start + marque.length) : src.indexOf('\n', t.start)
+      etendues.push([t.start, fin < 0 ? code.end : fin + marque.length])
     }
   }
   return etendues
@@ -453,9 +453,9 @@ async function comparerBundler(): Promise<number> {
     const etendues = etenduesDesCommentaires(src, file)
     return places.map((at) => {
       const e = etendues?.find(([de, a]) => at >= de && at < a)
-      const { ligne, colonne } = situer(debutsDeLigne(src), at)
-      if (!e) return `${ligne}:${colonne} ${JSON.stringify(src.slice(at, at + 40))}`
-      return `${src.startsWith('<!--', e[0]) ? 'commentaire HTML' : 'commentaire du code'} ${ligne}:${colonne}`
+      const { line, column } = locate(lineStarts(src), at)
+      if (!e) return `${line}:${column} ${JSON.stringify(src.slice(at, at + 40))}`
+      return `${src.startsWith('<!--', e[0]) ? 'commentaire HTML' : 'commentaire du code'} ${line}:${column}`
     })
   }
   const horsCommentaire = (vue: string): boolean => !vue.startsWith('commentaire')
@@ -625,11 +625,11 @@ async function comparerScripts(): Promise<number> {
     for (const bloc of blocsDeScript(s, readFileSync(s.fichier, 'utf-8'))) {
       blocs++
       const a     = texteDuScript(p, bloc, tokenize)
-      const lus   = compteursLectureDuScript.arbre
-      const relu0 = compteursLectureDuScript.relus
-      const b     = texteDuScript(p, bloc, tokenizeDuScript)
-      if (compteursLectureDuScript.relus > relu0) relus.set(compteursLectureDuScript.derniere ?? '?', [...(relus.get(compteursLectureDuScript.derniere ?? '?') ?? []), nomCourt(s)])
-      else if (compteursLectureDuScript.arbre > lus) parArbre++
+      const lus   = scriptReadCounters.tree
+      const relu0 = scriptReadCounters.reread
+      const b     = texteDuScript(p, bloc, tokenizeScript)
+      if (scriptReadCounters.reread > relu0) relus.set(scriptReadCounters.last ?? '?', [...(relus.get(scriptReadCounters.last ?? '?') ?? []), nomCourt(s)])
+      else if (scriptReadCounters.tree > lus) parArbre++
       if (a === b) {
         pareils++
         if (a.startsWith('--- erreur')) erreurs++

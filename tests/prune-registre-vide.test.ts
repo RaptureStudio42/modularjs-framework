@@ -84,16 +84,16 @@ describe('bundler — pruneOrphans() muet sur un registre {extensions:[]}', func
   })
 
   it("message CLI catalogué (fr/en) pour chaque raison de purge sautée intéressante (registre illisible, registre vide, cache)", function () {
-    assert.match(t('cli.build-purge-registre-illisible', { dossier: 'out' }), /registre/i,
+    assert.match(t('cli.build-purge-registry-unreadable', { dir: 'out' }), /registre/i,
       "le message fr doit nommer le registre — AVANT le fix cette clé n'existait pas, skipped n'était jamais affiché")
-    assert.match(t('cli.build-purge-registre-vide', { dossier: 'out' }), /registre/i)
-    assert.match(t('cli.build-purge-cache', { dossier: 'out' }), /cache/i)
+    assert.match(t('cli.build-purge-registry-empty', { dir: 'out' }), /registre/i)
+    assert.match(t('cli.build-purge-cache', { dir: 'out' }), /cache/i)
 
     setMessagesLang('en')
     try {
-      assert.match(t('cli.build-purge-registre-illisible', { dossier: 'out' }), /registry/i)
-      assert.match(t('cli.build-purge-registre-vide', { dossier: 'out' }), /registry/i)
-      assert.match(t('cli.build-purge-cache', { dossier: 'out' }), /cache/i)
+      assert.match(t('cli.build-purge-registry-unreadable', { dir: 'out' }), /registry/i)
+      assert.match(t('cli.build-purge-registry-empty', { dir: 'out' }), /registry/i)
+      assert.match(t('cli.build-purge-cache', { dir: 'out' }), /cache/i)
     } finally {
       setMessagesLang('fr') // restaure — LANG est un état global partagé entre fichiers de test
     }
@@ -101,10 +101,10 @@ describe('bundler — pruneOrphans() muet sur un registre {extensions:[]}', func
 
   it("cli.ts (case 'build') consulte bien `skipped` (déstructuration + dispatch), pas seulement { removed, failed }", function () {
     const src = readFileSync(join(repoRoot, 'src', 'cli.ts'), 'utf-8')
-    assert.match(src, /const \{ removed, failed, skipped \} = (?:bundler|dernier)\.pruneOrphans\(\)/,
+    assert.match(src, /const \{ removed, failed, skipped \} = (?:bundler|last)\.pruneOrphans\(\)/,
       "AVANT le fix : seuls { removed, failed } étaient déstructurés — `skipped` (registre illisible, cache) n'atteignait jamais l'affichage")
-    assert.match(src, /cli\.build-purge-registre-illisible/)
-    assert.match(src, /cli\.build-purge-registre-vide/)
+    assert.match(src, /cli\.build-purge-registry-unreadable/)
+    assert.match(src, /cli\.build-purge-registry-empty/)
     assert.match(src, /cli\.build-purge-cache/)
   })
 

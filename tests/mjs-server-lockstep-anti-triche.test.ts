@@ -91,7 +91,7 @@ describe("MJS-Server — anti-triche (lockstep : détection de divergence PAR QU
     it('un même siège qui rapporte 2 hash DIFFÉRENTS pour le MÊME tick est flaggé suspect IMMÉDIATEMENT — jamais 2 fois pour le même tick ensuite', () => {
       const ls = createLockstep('p7')
       assert.equal(ls.receiveHash('a', 1, 'h1', ABCDE), null, '1er rapport — rien à signaler')
-      assert.deepEqual(ls.receiveHash('a', 1, 'h2', ABCDE), { tick: 1, suspects: ['a'], reason: 'auto-contradiction' }, 'MÊME siège, hash DIFFÉRENT, MÊME tick — suspect immédiat, 5 sièges mais AUCUN quorum requis')
+      assert.deepEqual(ls.receiveHash('a', 1, 'h2', ABCDE), { tick: 1, suspects: ['a'], reason: 'self-contradiction' }, 'MÊME siège, hash DIFFÉRENT, MÊME tick — suspect immédiat, 5 sièges mais AUCUN quorum requis')
       assert.equal(ls.receiveHash('a', 1, 'h3', ABCDE), null, 'déjà signalé pour ce tick — jamais 2 fois')
       assert.equal(ls.receiveHash('a', 1, 'h1', ABCDE), null, 'même le 1er hash (revu) ne re-signale pas — a reste flaggé une fois pour toutes sur ce tick')
     })
@@ -180,7 +180,7 @@ describe("MJS-Server — anti-triche (lockstep : détection de divergence PAR QU
       game._receiveHash(c1, 1, 'h1')
       game._receiveHash(c1, 1, 'h2')
       assert.equal(divergences.length, 1)
-      assert.deepEqual(divergences[0], { tick: 1, suspects: ['j1'], reason: 'auto-contradiction' })
+      assert.deepEqual(divergences[0], { tick: 1, suspects: ['j1'], reason: 'self-contradiction' })
       game._destroy()
     })
 

@@ -94,8 +94,8 @@ describe('mjs_devpanel — branches, stores et µconsole', function () {
   })
 
   const racine     = () => window.document.querySelector('[data-mjs-devpanel]')?.shadowRoot
-  const texteArbre = () => racine().querySelector('.arbre').textContent as string
-  const ligne      = (motif: RegExp) => Array.from(racine().querySelectorAll('.ligne') as ArrayLike<any>).find((b: any) => motif.test(b.textContent))
+  const texteArbre = () => racine().querySelector('.tree').textContent as string
+  const ligne      = (motif: RegExp) => Array.from(racine().querySelectorAll('.line') as ArrayLike<any>).find((b: any) => motif.test(b.textContent))
   const clic       = (el: any) => el.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
   const doubleClic = (el: any) => el.dispatchEvent(new window.MouseEvent('dblclick', { bubbles: true }))
 
@@ -112,7 +112,7 @@ describe('mjs_devpanel — branches, stores et µconsole', function () {
     doubleClic(ligne(/dpx-parent/))
     assert.doesNotMatch(texteArbre(), /dpx-enfant/, 'double-clic : la branche se ferme')
     assert.equal(ligne(/dpx-parent/).getAttribute('aria-selected'), 'true', 'et le composant reste sélectionné')
-    assert.equal(racine().querySelector('.repli[data-uid]').getAttribute('aria-expanded'), 'false', 'la flèche suit')
+    assert.equal(racine().querySelector('.fold[data-uid]').getAttribute('aria-expanded'), 'false', 'la flèche suit')
 
     doubleClic(ligne(/dpx-parent/))
     assert.match(texteArbre(), /dpx-enfant/, 'second double-clic : elle se rouvre')
@@ -146,7 +146,7 @@ describe('mjs_devpanel — branches, stores et µconsole', function () {
     await attendre(() => el._shadow?.querySelector('.c')?.textContent === '5')
     window.µ.console(true)
     clic(ligne(/stores/))
-    const champ = racine().querySelector('input.di-valeur[data-di-key="compteur"]')
+    const champ = racine().querySelector('input.di-value[data-di-key="compteur"]')
     assert.ok(champ, 'le compteur doit être modifiable')
     champ.value = '9'
     champ.dispatchEvent(new window.Event('change', { bubbles: true }))
@@ -161,10 +161,10 @@ describe('mjs_devpanel — branches, stores et µconsole', function () {
     await attendre(() => el._shadow?.querySelector('.q')?.textContent === '2')
     window.µ.console(true)
     clic(ligne(/stores/))
-    const chevron = Array.from(racine().querySelectorAll('.di-ligne') as ArrayLike<any>).find((l: any) => /panier/.test(l.textContent))?.querySelector('.di-chevron')
+    const chevron = Array.from(racine().querySelectorAll('.di-line') as ArrayLike<any>).find((l: any) => /panier/.test(l.textContent))?.querySelector('.di-chevron')
     assert.ok(chevron, 'le panier doit se déplier')
     clic(chevron)
-    const champ = racine().querySelector('input.di-valeur[data-di-key="quantite"]')
+    const champ = racine().querySelector('input.di-value[data-di-key="quantite"]')
     assert.ok(champ, 'la quantité doit être modifiable une fois le panier déplié')
     champ.value = '7'
     champ.dispatchEvent(new window.Event('change', { bubbles: true }))
@@ -180,15 +180,15 @@ describe('mjs_devpanel — branches, stores et µconsole', function () {
     window.µ.console(true)
     clic(ligne(/stores/))
     clic(ligne(/dpx-store/))
-    assert.ok(racine().querySelector('.onglets'), 'les onglets du composant reviennent')
+    assert.ok(racine().querySelector('.tabs'), 'les onglets du composant reviennent')
   })
 
   it('µconsole écrit dans le code ouvre le panneau sur CE composant', async () => {
     window.document.body.innerHTML = '<p>page</p><mjs-dpx-console></mjs-dpx-console>'
     await attendre(() => !!racine())
     assert.ok(racine(), 'le panneau doit s’ouvrir')
-    await attendre(() => /dpx-console/.test(racine().querySelector('.di-entete')?.textContent ?? ''))
-    assert.match(racine().querySelector('.di-entete').textContent, /dpx-console/, 'le composant qui a écrit µconsole est sélectionné')
+    await attendre(() => /dpx-console/.test(racine().querySelector('.di-header')?.textContent ?? ''))
+    assert.match(racine().querySelector('.di-header').textContent, /dpx-console/, 'le composant qui a écrit µconsole est sélectionné')
   })
 
   it('µconsole tapé dans la console du navigateur ouvre le panneau', () => {
@@ -202,8 +202,8 @@ describe('mjs_devpanel — branches, stores et µconsole', function () {
     for (const hote of ['mjs-dpx-vise', 'mjs-dpx-vise-nu']) {
       window.µ.console(false)
       window.document.body.innerHTML = `<${hote}></${hote}>`
-      await attendre(() => /dpx-enfant/.test(racine()?.querySelector('.di-entete')?.textContent ?? ''))
-      assert.match(racine()?.querySelector('.di-entete')?.textContent ?? '', /dpx-enfant/, `${hote} : le composant désigné est sélectionné`)
+      await attendre(() => /dpx-enfant/.test(racine()?.querySelector('.di-header')?.textContent ?? ''))
+      assert.match(racine()?.querySelector('.di-header')?.textContent ?? '', /dpx-enfant/, `${hote} : le composant désigné est sélectionné`)
     }
   })
 
@@ -211,7 +211,7 @@ describe('mjs_devpanel — branches, stores et µconsole', function () {
     window.document.body.innerHTML = '<mjs-dpx-parent></mjs-dpx-parent>'
     await attendre(() => !!window.document.querySelector('mjs-dpx-parent')?._shadow?.querySelector('mjs-dpx-enfant'))
     const retour = window.eval("µconsole('mjs-dpx-parent')")
-    assert.match(racine().querySelector('.di-entete').textContent, /dpx-parent/)
+    assert.match(racine().querySelector('.di-header').textContent, /dpx-parent/)
     assert.match(String(retour), /panneau/, 'la console affiche une phrase')
   })
 
@@ -220,27 +220,27 @@ describe('mjs_devpanel — branches, stores et µconsole', function () {
     const parent: any = window.document.querySelector('mjs-dpx-parent')
     await attendre(() => !!parent._shadow?.querySelector('mjs-dpx-enfant')?._shadow?.querySelector('.e'))
     window.µ.console(true)
-    const bouton = racine().querySelector('[data-action="cibler"]')
+    const bouton = racine().querySelector('[data-action="target"]')
     assert.ok(bouton, 'le bouton « cibler » est dans le bandeau')
     clic(bouton)
-    assert.equal(racine().querySelector('[data-action="cibler"]').getAttribute('aria-pressed'), 'true', 'le mode cible est visible')
+    assert.equal(racine().querySelector('[data-action="target"]').getAttribute('aria-pressed'), 'true', 'le mode cible est visible')
 
     let pageTouchee = false
     const cible = parent._shadow.querySelector('mjs-dpx-enfant')._shadow.querySelector('.e')
     cible.addEventListener('click', () => { pageTouchee = true })
     cible.dispatchEvent(new window.MouseEvent('click', { bubbles: true, composed: true }))
-    assert.match(racine().querySelector('.di-entete').textContent, /dpx-enfant/, 'le composant qui contient l’élément cliqué est sélectionné')
+    assert.match(racine().querySelector('.di-header').textContent, /dpx-enfant/, 'le composant qui contient l’élément cliqué est sélectionné')
     assert.equal(pageTouchee, false, 'le clic de ciblage ne déclenche rien dans la page')
-    assert.equal(racine().querySelector('[data-action="cibler"]').getAttribute('aria-pressed'), 'false', 'un clic suffit : le mode cible se referme')
+    assert.equal(racine().querySelector('[data-action="target"]').getAttribute('aria-pressed'), 'false', 'un clic suffit : le mode cible se referme')
   })
 
   it('bouton « cibler » : Échap annule la visée sans fermer le panneau', () => {
     window.document.body.innerHTML = '<mjs-dpx-parent></mjs-dpx-parent>'
     window.µ.console(true)
-    clic(racine().querySelector('[data-action="cibler"]'))
+    clic(racine().querySelector('[data-action="target"]'))
     window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }))
     assert.ok(racine(), 'le panneau reste ouvert')
-    assert.equal(racine().querySelector('[data-action="cibler"]').getAttribute('aria-pressed'), 'false', 'la visée est annulée')
+    assert.equal(racine().querySelector('[data-action="target"]').getAttribute('aria-pressed'), 'false', 'la visée est annulée')
   })
 
   it('µconsole n’est pas une propriété énumérable de la fenêtre', () => {

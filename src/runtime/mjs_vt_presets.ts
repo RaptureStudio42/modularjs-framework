@@ -1,4 +1,4 @@
-// mjs_vt_presets.coffee
+// mjs_vt_presets.ts
 
 // BIBLIOTHÈQUE DE PRÉRÉGLAGES @viewTransition — dictionnaire nom → CSS (ou fabrique
 // directionnelle) + RIDEAUX « à travers le noir » (vrai DOM). Cascade
@@ -24,8 +24,8 @@
 // (µ._mjs_vtDirDefaults).
 
 µ._mjs_vtDirs = ['left', 'right', 'up', 'down'];
-µ._mjs_vtDirDefaults = { slide: 'left', volet: 'down', reveal: 'up', flip: 'left', cube: 'left', turn: 'left', swipe: 'right', bars: 'down' };
-µ._mjs_vtDirectionalBases = ['slide', 'volet', 'reveal', 'flip', 'cube', 'turn', 'swipe', 'bars'];
+µ._mjs_vtDirDefaults = { slide: 'left', cover: 'down', reveal: 'up', flip: 'left', cube: 'left', turn: 'left', swipe: 'right', bars: 'down' };
+µ._mjs_vtDirectionalBases = ['slide', 'cover', 'reveal', 'flip', 'cube', 'turn', 'swipe', 'bars'];
 µ._mjs_vtOptionKeys = ['direction', 'duration', 'priority'];
 µ._mjs_vtOptionShort = { direction: 'dir', duration: 'dur', priority: 'p' };
 µ._mjs_vtOptionKeyAliases = { direction: 'direction', dir: 'direction', duration: 'duration', dur: 'duration', priority: 'priority', p: 'priority' };
@@ -116,7 +116,7 @@
 // — facteur = durationMs demandé / défaut de la base — cf. µ._mjs_vtScaleCss,
 // µ._mjs_vtApplyPreset, µ._mjs_vtCurtainRun.
 µ._mjs_vtDefaultMs = {
-  fade: 500, zoom: 450, 'zoom-out': 450, slide: 260, volet: 380, reveal: 380,
+  fade: 500, zoom: 450, 'zoom-out': 450, slide: 260, cover: 380, reveal: 380,
   flip: 550, cube: 600, turn: 600,
   iris: 720, swipe: 620, bars: 1260, blocks: 1220,
 };
@@ -176,15 +176,15 @@
 @keyframes mjs-vt-slide-in{from{transform:translate${t[0]}(${t[2]})}}
 `;
   },
-  // Volet : la nouvelle recouvre en arrivant DEPUIS le côté opposé à `dir`
-  // (volet:down = un store qui DESCEND), l'ancienne immobile dessous.
-  volet: function(dir) {
+  // Cover : la nouvelle recouvre en arrivant DEPUIS le côté opposé à `dir`
+  // (cover:down = un store qui DESCEND), l'ancienne immobile dessous.
+  cover: function(dir) {
     var from = { down: 'translateY(-100%)', up: 'translateY(100%)', left: 'translateX(100%)', right: 'translateX(-100%)' }[dir];
     return `
 ::view-transition-old(root),::view-transition-new(root){mix-blend-mode:normal}
 ::view-transition-old(root){animation:none}
-::view-transition-new(root){animation:mjs-vt-volet-in .38s ease-out both}
-@keyframes mjs-vt-volet-in{from{transform:${from}}to{transform:translate(0,0)}}
+::view-transition-new(root){animation:mjs-vt-cover-in .38s ease-out both}
+@keyframes mjs-vt-cover-in{from{transform:${from}}to{transform:translate(0,0)}}
 `;
   },
   // Reveal : l'ancienne sort vers `dir` (au-dessus, z-index:1) ; la nouvelle

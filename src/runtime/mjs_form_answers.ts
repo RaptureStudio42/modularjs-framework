@@ -64,11 +64,11 @@ function _mjsAnsBox(f) {
     if (!m) _mjsAnsIds.set(o, m = new Map());
     if (m.has(id)) b = m.get(id);
     else m.set(id, b);
-    // <formulaires-avis>
+    // <forms-notice>
     // deux formulaires présents ensemble au même id dans un composant : un seul formulaire pour le framework, dit en développement
     if (b.f && b.f !== f && b.f.isConnected && f.isConnected) µ.warn(µ._mjs_msg('dev.formIdTwice', { id: id }, 'deux formulaires de ce composant portent l\'id « {id} » : le framework les tient pour un seul formulaire, qui partage ses réponses. Donnez-leur des id distincts, ou aucun id.'));
     b.f = f;
-    // </formulaires-avis>
+    // </forms-notice>
   }
   _mjsAnsOwn.set(f, { id: id, b: b });
   return b;

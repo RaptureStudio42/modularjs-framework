@@ -305,7 +305,7 @@ describe('MJS-WS — pont universel : nonce anti-rejeu (ws.bridge.nonce, actif p
     assert.equal(first.status, 200)
     const replay = await req(bridgePort, 'POST', '/broadcast', { type: 'x' }, { ts, nonce })
     assert.equal(replay.status, 401)
-    assert.equal(replay.json.error, 'nonce-rejoué')
+    assert.equal(replay.json.error, 'nonce-replayed')
     await app.stop()
   })
 
@@ -345,7 +345,7 @@ describe('MJS-WS — pont universel : nonce anti-rejeu (ws.bridge.nonce, actif p
     const replay2 = await req(bridgePort, 'POST', '/broadcast', { type: 'x' }, { ts, nonce })
     assert.equal(first.status, 200)
     assert.equal(replay1.status, 401, 'seau-échecs capacité 1 : le rejeu CONSOMME le seul jeton, encore 401 cette fois (même sémantique que la signature invalide)')
-    assert.equal(replay1.json.error, 'nonce-rejoué')
+    assert.equal(replay1.json.error, 'nonce-replayed')
     assert.equal(replay2.status, 429, 'seau-échecs déjà déchargé par le rejeu précédent → 429, sans même revérifier la signature')
     await app.stop()
   })

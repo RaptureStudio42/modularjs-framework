@@ -11,6 +11,7 @@ import { mjsTmp } from './helpers/tmp.js'
 import { libellesDuManifeste } from './helpers/libelles-manifeste.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox'): Promise<boolean> {
   try {
@@ -276,7 +277,7 @@ const enVol = (images: Image[]) => images.filter((f) => f.rows.some((r) => r.op 
 
 for (const prod of [false, true]) {
   for (const nom of ['chromium', 'firefox'] as const) {
-    describe(`<@@sortable> avec *crossfade sur les lignes (${nom} réel, ${prod ? 'production' : 'développement'})`, function () {
+    playTogether(describe(`<@@sortable> avec *crossfade sur les lignes (${nom} réel, ${prod ? 'production' : 'développement'})`, function () {
       this.timeout(240000)
       let present = false
       let groupes: Build = { root: '', script: '' }
@@ -698,6 +699,6 @@ for (const prod of [false, true]) {
           }, { tag: 'mjs-fn-page', listes: 4 })
         })
       })
-    })
+    }))
   }
 }

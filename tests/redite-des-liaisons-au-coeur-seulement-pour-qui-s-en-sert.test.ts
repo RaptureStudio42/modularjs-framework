@@ -43,7 +43,7 @@ describe('redite des liaisons : au cœur de production seulement pour l\'appli q
     const rang  = (f: string) => f.startsWith('mjs_core') ? 0 : f.startsWith('mjs_') ? 1 : 2
     const files = readdirSync(outDir).filter((f) => f.endsWith('.js')).sort((a, b) => rang(a) - rang(b))
     const code  = files.map((f) => stripEsm(readFileSync(join(outDir, f), 'utf-8'))).join('\n')
-    assert.equal(/function _mjsRedit\(|function _mjsRedire\(|_mjs_redit\b|_mjs_rdp\b/.test(code), attendue, attendue ? 'la redite manque au cœur' : 'la redite est restée au cœur')
+    assert.equal(/function _mjsRetold\(|function _mjsRetell\(|_mjs_retold\b|_mjs_rdp\b/.test(code), attendue, attendue ? 'la redite manque au cœur' : 'la redite est restée au cœur')
     const win: any = new Window({ url: 'http://localhost/' })
     fenetres.push(win)
     win.eval(`${code}\nglobalThis.µ = µ;`)

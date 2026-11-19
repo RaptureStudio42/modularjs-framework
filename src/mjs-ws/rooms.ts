@@ -84,11 +84,11 @@ export interface MjsWsRoomsOptions {
  * jamais bornée). `undefined` (absent, défaut) = MÊME valeur que `maxRoomsPerClient` (conservateur) ;
  * `null` EXPLICITE = illimité, comme les autres plafonds de cette famille.
  *
- * `presenceGlobale` — INTERNE comme les deux autres : posé par core.ts depuis l'option `presence` de mjsWs(). `'public'`
+ * `globalPresence` — INTERNE comme les deux autres : posé par core.ts depuis l'option `presence` de mjsWs(). `'public'`
  * ouvre la présence GLOBALE à tous les clients ; absente, elle n'est servie à personne (cf. handleSubPresence).
  */
 export type MjsWsRoomsEngineOptions =
-  Omit<MjsWsRoomsOptions, 'join'> & { join?: MjsWsJoinFn; maxRoomsPerClient?: number | null; maxPresencePerClient?: number | null; presenceGlobale?: 'public' }
+  Omit<MjsWsRoomsOptions, 'join'> & { join?: MjsWsJoinFn; maxRoomsPerClient?: number | null; maxPresencePerClient?: number | null; globalPresence?: 'public' }
 
 export interface MjsWsRoomsClusterOptions {
   /** MÊME instance que core.ts opts.adapter — référence PARTAGÉE, jamais une 2e résolution (cf. index.ts) */
@@ -237,12 +237,12 @@ export function createRoomsEngine(opts: MjsWsRoomsEngineOptions, rawSend: MjsWsR
 
   // salons dont la présence est ouverte à tous (app.room(nom, { presence: 'public' })) — les autres la réservent à
   // leurs membres, ou à la garde canSeePresence
-  const presencesPubliques = new Set<string>()
+  const publicPresences = new Set<string>()
 
   function metaOf(client: MjsWsClient): unknown {
     if (!opts.meta) return {}
     try { return opts.meta(client) ?? {} }
-    catch (err) { log('error', t('ws.rooms.meta-a-leve'), { err }); return {} }
+    catch (err) { log('error', t('ws.rooms.meta-threw'), { err }); return {} }
   }
 
   // fusionne LOCAL + DISTANT (dédoublonné par peerId — un même peerId présent sur 2 process ne
@@ -321,8 +321,8 @@ export function createRoomsEngine(opts: MjsWsRoomsEngineOptions, rawSend: MjsWsR
     presenceSubsGlobal.delete(client)
     // seulement les salons que CETTE connexion suivait (index tenu avec presenceSubsByRoom, cf.
     // handleSubPresence), jamais tous les salons suivis du serveur
-    const suivis = clientPresenceSubs.get(client)
-    if (suivis) for (const room of suivis) {
+    const tracked = clientPresenceSubs.get(client)
+    if (tracked) for (const room of tracked) {
       const subs = presenceSubsByRoom.get(room)
       if (subs) { subs.delete(client); if (subs.size === 0) presenceSubsByRoom.delete(room) }
     }
@@ -333,7 +333,7 @@ export function createRoomsEngine(opts: MjsWsRoomsEngineOptions, rawSend: MjsWsR
 
   // --- µ:join — garde async, dédup silencieuse, delta 'join' ssi 1re connexion du peer ---
   async function handleJoin(client: MjsWsClient, room: string): Promise<void> {
-    if (room.length > MAX_ROOM_NAME) { refuseJoin(client, t('ws.rooms.nom-trop-long', { max: MAX_ROOM_NAME }), room); return }
+    if (room.length > MAX_ROOM_NAME) { refuseJoin(client, t('ws.rooms.name-too-long', { max: MAX_ROOM_NAME }), room); return }
     const already = clientRooms.get(client)
     if (already && already.has(room)) return   // dédup silencieuse — déjà membre
 
@@ -345,7 +345,7 @@ export function createRoomsEngine(opts: MjsWsRoomsEngineOptions, rawSend: MjsWsR
     // plafond n'a pas à déclencher un aller-retour réseau pour un join de toute façon refusé.
     // `null`/absent = illimité (opt-in explicite, cf. MjsWsLimits.maxRoomsPerClient, core.ts).
     if (opts.maxRoomsPerClient != null && (already?.size ?? 0) >= opts.maxRoomsPerClient) {
-      refuseJoin(client, t('ws.rooms.trop-de-salons'), room)
+      refuseJoin(client, t('ws.rooms.too-many-rooms'), room)
       return
     }
 
@@ -355,8 +355,8 @@ export function createRoomsEngine(opts: MjsWsRoomsEngineOptions, rawSend: MjsWsR
       // le détail d'une exception applicative (ex. échec DB, timeout) reste au journal serveur,
       // JAMAIS renvoyé verbatim au client — même message générique que le refus explicite (false).
       try { allowed = await opts.join(room, client) }
-      catch (err) { log('error', t('ws.rooms.join-a-leve'), { err }); refuseJoin(client, t('ws.rooms.acces-salon-refuse'), room); return }
-      if (allowed === false) { refuseJoin(client, t('ws.rooms.acces-salon-refuse'), room); return }
+      catch (err) { log('error', t('ws.rooms.join-threw'), { err }); refuseJoin(client, t('ws.rooms.access-room-refused'), room); return }
+      if (allowed === false) { refuseJoin(client, t('ws.rooms.access-room-refused'), room); return }
       // cf. le commentaire de MjsWsRoomsHooks.isAlive : abandon silencieux si la
       // connexion est tombée PENDANT cette garde async (onDisconnect a déjà tout purgé)
       if (hooks.isAlive && !hooks.isAlive(client)) return
@@ -454,13 +454,13 @@ export function createRoomsEngine(opts: MjsWsRoomsEngineOptions, rawSend: MjsWsR
       if (agg.size === 0) roomPeers.delete(room)
     }
     // présence réservée aux membres (ni ouverte, ni gardée) : qui part cesse de la voir
-    if (!opts.canSeePresence && !presencesPubliques.has(room)) oublierPresence(client, room)
+    if (!opts.canSeePresence && !publicPresences.has(room)) forgetPresence(client, room)
 
     if (left) rawSend(client, { t: 'µ:left', p: { room, reason: left.reason } })
   }
 
   // retire l'abonnement de cette connexion à la présence de ce salon (cf. leaveRoom, room())
-  function oublierPresence(client: MjsWsClient, room: string): void {
+  function forgetPresence(client: MjsWsClient, room: string): void {
     const subs = presenceSubsByRoom.get(room)
     if (subs) { subs.delete(client); if (subs.size === 0) presenceSubsByRoom.delete(room) }
     const mine = clientPresenceSubs.get(client)
@@ -475,12 +475,12 @@ export function createRoomsEngine(opts: MjsWsRoomsEngineOptions, rawSend: MjsWsR
   // réellement, le reste s'exécute dans le même tour synchrone — ZÉRO changement observable.
   async function handleSubPresence(client: MjsWsClient, room: string | undefined): Promise<void> {
     if (room == null) {
-      if (opts.presenceGlobale !== 'public') { refuse(client, { message: t('ws.rooms.presence-globale-fermee'), code: 'presence-denied' }); return }
+      if (opts.globalPresence !== 'public') { refuse(client, { message: t('ws.rooms.presence-global-closed'), code: 'presence-denied' }); return }
       presenceSubsGlobal.add(client)
       rawSend(client, { t: 'µ:presence', p: { room: undefined, op: 'reset', peers: mergedSnapshot(undefined) } })
       return
     }
-    if (room.length > MAX_ROOM_NAME) { refuseJoin(client, t('ws.rooms.nom-trop-long', { max: MAX_ROOM_NAME })); return }
+    if (room.length > MAX_ROOM_NAME) { refuseJoin(client, t('ws.rooms.name-too-long', { max: MAX_ROOM_NAME })); return }
 
     // Faille comblée — plafond d'abonnements de présence par client (cf. MjsWsRoomsEngineOptions.
     // maxPresencePerClient) : SANS lui, un client pouvait s'abonner à la présence d'un nombre
@@ -488,29 +488,29 @@ export function createRoomsEngine(opts: MjsWsRoomsEngineOptions, rawSend: MjsWsR
     // canSeePresence (potentiellement async/HTTP) — MÊME raison que maxRoomsPerClient (handleJoin) :
     // un client déjà au plafond n'a pas à déclencher un aller-retour réseau pour un abonnement de
     // toute façon refusé. Ré-abonnement à un salon DÉJÀ suivi : jamais compté deux fois, jamais refusé.
-    // 0 doit refuser DÈS le premier abonnement — `dejaSuivis` vaut `undefined` à ce moment-là, un
-    // court-circuit sur son existence (`dejaSuivis && …`) sauterait la comparaison numérique avant
+    // 0 doit refuser DÈS le premier abonnement — `alreadyTracked` vaut `undefined` à ce moment-là, un
+    // court-circuit sur son existence (`alreadyTracked && …`) sauterait la comparaison numérique avant
     // même de l'atteindre, MÊME piège que maxRoomsPerClient évite déjà via `already?.size ?? 0`.
-    const dejaSuivis = clientPresenceSubs.get(client)
-    if (maxPresencePerClient != null && !dejaSuivis?.has(room) && (dejaSuivis?.size ?? 0) >= maxPresencePerClient) {
-      refuseJoin(client, t('ws.rooms.trop-de-salons'))
+    const alreadyTracked = clientPresenceSubs.get(client)
+    if (maxPresencePerClient != null && !alreadyTracked?.has(room) && (alreadyTracked?.size ?? 0) >= maxPresencePerClient) {
+      refuseJoin(client, t('ws.rooms.too-many-rooms'))
       return
     }
 
-    const publique = presencesPubliques.has(room)
-    if (!publique && opts.canSeePresence) {
+    const isPublic = publicPresences.has(room)
+    if (!isPublic && opts.canSeePresence) {
       let allowed: boolean
       // canSeePresence qui LÈVE — MÊME garde que opts.join ci-dessus
       try { allowed = await opts.canSeePresence(room, client) }
-      catch (err) { log('error', t('ws.rooms.can-see-presence-a-leve'), { err }); refuseJoin(client, t('ws.rooms.acces-presence-refuse'), room, 'presence-denied'); return }
-      if (allowed === false) { refuseJoin(client, t('ws.rooms.acces-presence-refuse'), room, 'presence-denied'); return }
+      catch (err) { log('error', t('ws.rooms.can-see-presence-threw'), { err }); refuseJoin(client, t('ws.rooms.access-presence-refused'), room, 'presence-denied'); return }
+      if (allowed === false) { refuseJoin(client, t('ws.rooms.access-presence-refused'), room, 'presence-denied'); return }
       // même course que handleJoin (cf. le commentaire de MjsWsRoomsHooks.isAlive) :
       // abandon silencieux si la connexion est tombée PENDANT cette garde async (onDisconnect a
       // déjà tout purgé) — sinon un abonné FANTÔME resterait inscrit à vie dans presenceSubsByRoom.
       if (hooks.isAlive && !hooks.isAlive(client)) return
-    } else if (!publique && !isMember(client, room)) {
+    } else if (!isPublic && !isMember(client, room)) {
       // sans garde, la présence d'un salon est à ses seuls membres (cf. MjsWsRoomOptions)
-      refuseJoin(client, t('ws.rooms.presence-reservee-aux-membres'), room, 'presence-denied')
+      refuseJoin(client, t('ws.rooms.presence-members-only'), room, 'presence-denied')
       return
     }
 
@@ -539,11 +539,11 @@ export function createRoomsEngine(opts: MjsWsRoomsEngineOptions, rawSend: MjsWsR
 
   // --- API applicative — app.room(nom, opts?) ---
   function room(name: string, roomOpts?: MjsWsRoomOptions): MjsWsRoomHandle {
-    if (roomOpts?.presence === 'public') presencesPubliques.add(name)
-    else if (roomOpts?.presence === 'members' && presencesPubliques.delete(name) && !opts.canSeePresence) {
+    if (roomOpts?.presence === 'public') publicPresences.add(name)
+    else if (roomOpts?.presence === 'members' && publicPresences.delete(name) && !opts.canSeePresence) {
       // refermée : ses abonnés qui n'en sont pas membres cessent de la voir
       const subs = presenceSubsByRoom.get(name)
-      if (subs) for (const c of Array.from(subs)) if (!isMember(c, name)) oublierPresence(c, name)
+      if (subs) for (const c of Array.from(subs)) if (!isMember(c, name)) forgetPresence(c, name)
     }
     return {
       send(type, p, sOpts) {
@@ -609,7 +609,9 @@ export function createRoomsEngine(opts: MjsWsRoomsEngineOptions, rawSend: MjsWsR
   }
 
   function applyRemotePresence(room: string | undefined, processId: string, op: 'join' | 'leave', id: string, meta?: unknown): void {
-    const byProcess = room === undefined ? remoteGlobalPeers : remoteRoomBucket(room)
+    // un départ ne crée jamais la table d'un salon, et la retire avec son dernier processus : sinon une entrée par nom de salon vu
+    // sur un autre processus restait à vie (un salon par partie)
+    const byProcess = room === undefined ? remoteGlobalPeers : op === 'join' ? remoteRoomBucket(room) : remoteRoomPeers.get(room)
     const subs = room === undefined ? presenceSubsGlobal : presenceSubsByRoom.get(room)
     // Faille HAUTE comblée — état AVANT/APRÈS la mutation de CETTE SEULE source (processId) :
     // n'émet join/leave qu'à la transition RÉELLE 0↔1 de la présence FUSIONNÉE (local + tous les
@@ -617,13 +619,14 @@ export function createRoomsEngine(opts: MjsWsRoomsEngineOptions, rawSend: MjsWsR
     // « parti » alors que l'identité reste là ailleurs (autre process, ou même localement).
     const wasPresent = presentAnywhere(room, id)
     if (op === 'join') {
-      let peers = byProcess.get(processId)
-      if (!peers) { peers = new Map(); byProcess.set(processId, peers) }
+      let peers = byProcess!.get(processId)
+      if (!peers) { peers = new Map(); byProcess!.set(processId, peers) }
       peers.set(id, meta)
-    } else {
+    } else if (byProcess) {
       const peers = byProcess.get(processId)
       peers?.delete(id)
       if (peers && peers.size === 0) byProcess.delete(processId)
+      if (room !== undefined && byProcess.size === 0) remoteRoomPeers.delete(room)
     }
     const isPresent = presentAnywhere(room, id)
     if (!wasPresent && isPresent) broadcastPresence(subs, { room, op: 'join', id, meta })
@@ -720,14 +723,14 @@ export function createRoomsEngine(opts: MjsWsRoomsEngineOptions, rawSend: MjsWsR
 
   // état/métriques (stats.ts) — GAUGES lues EN DIRECT à la demande (app.stats(), core.ts) :
   // jamais accumulées à part, jamais de drift avec roomMembers/presenceSubs* (source unique).
-  // `membresTotal` compte les ADHÉSIONS (un client dans 2 salons compte 2 fois), pas les clients
-  // distincts ; `abonnesPresence` = globale + toutes les présences de salon confondues.
-  function statsSnapshot(): { nombre: number; membresTotal: number; abonnesPresence: number } {
-    let membresTotal = 0
-    for (const members of roomMembers.values()) membresTotal += members.size
-    let abonnesPresence = presenceSubsGlobal.size
-    for (const subs of presenceSubsByRoom.values()) abonnesPresence += subs.size
-    return { nombre: roomMembers.size, membresTotal, abonnesPresence }
+  // `membersTotal` compte les ADHÉSIONS (un client dans 2 salons compte 2 fois), pas les clients
+  // distincts ; `presenceSubscribers` = globale + toutes les présences de salon confondues.
+  function statsSnapshot(): { count: number; membersTotal: number; presenceSubscribers: number } {
+    let membersTotal = 0
+    for (const members of roomMembers.values()) membersTotal += members.size
+    let presenceSubscribers = presenceSubsGlobal.size
+    for (const subs of presenceSubsByRoom.values()) presenceSubscribers += subs.size
+    return { count: roomMembers.size, membersTotal, presenceSubscribers }
   }
 
   // appartenance sans notification (cf. MjsWsRoomsHooks.onMembershipRead) — contrôle du moteur lui-même, à chaque envoi

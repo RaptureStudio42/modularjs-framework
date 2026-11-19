@@ -14,8 +14,9 @@
 // hook — jusqu'à DEBOUNCE_MS (1s) d'erreurs fraîchement enregistrées perdues à CHAQUE
 // redéploiement. `ensureSigtermHook()` comble ce trou : `process.once('SIGTERM', …)` flush puis
 // SE RÉ-ENVOIE le signal (`process.kill(process.pid, 'SIGTERM')`) — `once` s'étant auto-retiré
-// dès le premier appel, ce 2e SIGTERM ne trouve plus aucun listener et Node reprend son
-// comportement PAR DÉFAUT (terminaison, code de sortie 143 préservé pour l'appelant, ex. systemd).
+// dès le premier appel, ce 2e SIGTERM ne trouve plus CE listener : sans autre listener, Node reprend
+// son comportement PAR DÉFAUT (terminaison, code de sortie 143 pour l'appelant, ex. systemd) ;
+// `mjs serve` et `mjs dev` posent le leur (cli.ts, cli/dev-lock.ts), qui ferme le serveur puis sort lui-même.
 //
 // COROLLAIRE à connaître, et c'est la raison d'être de `close()` : une écriture encore en attente
 // au moment du hook 'exit' passe par `writeAtomic`, qui RECRÉE le dossier cible s'il a disparu
@@ -33,15 +34,16 @@
 // jamais un par instance), évite tout MaxListenersExceededWarning au fil des nombreux
 // `createJournal()` d'une suite de tests.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { t } from '../messages/index.js'
+import { writeFileAtomicAlways } from '../bundler/outputs.js'
 
 export type JournalSource = 'server' | 'client'
 
 export interface JournalEntryInput {
   message: string
-  pile?: string
+  stack?: string
   url?: string
   version?: string | null
   ua?: string
@@ -52,13 +54,13 @@ export interface JournalEntry {
   source: JournalSource
   signature: string
   message: string
-  pile: string
+  stack: string
   url: string
   version: string | null
   ua?: string
   n: number
-  premier: number
-  dernier: number
+  first: number
+  last: number
 }
 
 export interface JournalOptions {
@@ -85,7 +87,7 @@ export interface Journal {
  *  5 points de capture serveur — `source` et `version` sont posés par l'appelant (startRenderServer),
  *  chaque point ne fournit que ce qu'il connaît. INERTE (no-op) si l'étage serveur est désactivé —
  *  aucun des call-sites n'a besoin de tester la config lui-même. */
-export type RecordServerFn = (entry: { message: string, pile?: string, url?: string }) => void
+export type RecordServerFn = (entry: { message: string, stack?: string, url?: string }) => void
 
 const DEFAULT_MAX_ENTRIES = 200
 const DEFAULT_MAX_BYTES   = 1_048_576
@@ -99,7 +101,7 @@ const MAX_MESSAGE_CHARS       = 2048
 // Extrait utilisé UNIQUEMENT pour la clé de GROUPEMENT (signature) — cf. le JSDoc de `record()` :
 // « message (1re ligne, ≤300 c.) » qualifie la signature, PAS le champ stocké.
 const MAX_SIGNATURE_MSG_CHARS = 300
-const MAX_PILE_CHARS          = 8192
+const MAX_STACK_CHARS         = 8192
 // même plafond pour l'adresse d'une entrée serveur que celui que l'endpoint POST pose déjà à celle d'une entrée client
 const MAX_URL_CHARS           = 2048
 
@@ -138,8 +140,8 @@ const SEGMENT_RE           = /(?<=\/)([A-Za-z0-9_-]{16,})(\.[A-Za-z0-9]{1,8})?(?
 
 // une partie de segment (entre `-` et `_`) qui se lit : un nombre de 4 chiffres au plus, un court repère (`s24`, `mp3`, `1080p`), ou
 // un mot — une voyelle au moins, jamais 6 consonnes de suite, et dès 16 lettres une voyelle sur quatre
-function seLit(partie: string): boolean {
-  const p = partie.toLowerCase()
+function isReadable(part: string): boolean {
+  const p = part.toLowerCase()
   if (/^(?:\d{0,4}|[a-z]{1,4}\d{1,4}|\d{1,4}[a-z]{1,3})$/.test(p)) return true
   if (!/^[a-z]+$/.test(p) || !/[aeiouy]/.test(p) || /[^aeiouy]{6}/.test(p)) return false
   return p.length < 16 || p.replace(/[^aeiouy]/g, '').length * 4 >= p.length
@@ -147,10 +149,10 @@ function seLit(partie: string): boolean {
 
 // les segments du chemin d'une adresse qui ne se lisent pas comme des mots (jeton, UUID, empreinte) deviennent `***`, extension
 // gardée ; l'hôte n'est jamais touché, un slug lisible (`mon-article-2024`) reste en clair
-function maskUrlPath(adresse: string): string {
-  const debut = adresse.startsWith('/') ? 0 : adresse.indexOf('/', adresse.indexOf('//') + 2)
-  if (debut === -1) return adresse
-  return adresse.slice(0, debut) + adresse.slice(debut).replace(SEGMENT_RE, (seg, nom: string, ext?: string) => nom.split(/[-_]/).every(seLit) ? seg : '***' + (ext ?? ''))
+function maskUrlPath(address: string): string {
+  const start = address.startsWith('/') ? 0 : address.indexOf('/', address.indexOf('//') + 2)
+  if (start === -1) return address
+  return address.slice(0, start) + address.slice(start).replace(SEGMENT_RE, (seg, name: string, ext?: string) => name.split(/[-_]/).every(isReadable) ? seg : '***' + (ext ?? ''))
 }
 
 /** Masque jetons et identifiants : paramètres d'adresse au nom de secret, valeur des en-têtes `Cookie`, `Set-Cookie`,
@@ -160,10 +162,10 @@ export function maskSecrets(text: string): string {
   return text.slice(0, MAX_MASK_INPUT_CHARS)
     .replace(PARAM_RE, (all, sep: string, name: string) => SECRET_PARAM_NAME.test(name.toLowerCase().replace(/[^a-z]/g, '')) ? `${sep}${name}=***` : all)
     .replace(COOKIE_RE, '$1$2***')
-    .replace(AUTH_HEADER_RE, (_all, nom: string, sep: string, schema?: string) => `${nom}${sep}${schema ? schema + ' ' : ''}***`)
+    .replace(AUTH_HEADER_RE, (_all, name: string, sep: string, schema?: string) => `${name}${sep}${schema ? schema + ' ' : ''}***`)
     .replace(BEARER_RE, 'Bearer ***')
     .replace(BASIC_RE, 'Basic ***')
-    .replace(JSON_PAIR_RE, (all, nom: string, sep: string) => SECRET_JSON_NAME.test(nom.toLowerCase().replace(/[^a-z]/g, '')) ? `"${nom}"${sep}"***"` : all)
+    .replace(JSON_PAIR_RE, (all, name: string, sep: string) => SECRET_JSON_NAME.test(name.toLowerCase().replace(/[^a-z]/g, '')) ? `"${name}"${sep}"***"` : all)
     .replace(JWT_RE, '***')
     .replace(EMAIL_RE, '***$1$2')
     .replace(URL_RE, maskUrlPath)
@@ -183,24 +185,24 @@ function firstLine(s: string): string {
   return i === -1 ? s : s.slice(0, i)
 }
 
-// `message`/`pile` reçus ICI sont déjà les valeurs STOCKÉES (post-troncature MAX_MESSAGE_CHARS/
+// `message`/`stack` reçus ICI sont déjà les valeurs STOCKÉES (post-troncature MAX_MESSAGE_CHARS/
 // MAX_PILE_CHARS, cf. record()) — la signature en dérive un extrait PLUS ÉTROIT (1re ligne, ≤300 c.
 // pour le message ; 1re ligne seule pour la pile), sans jamais réduire ce qui est écrit sur disque.
-function signatureOf(message: string, pile: string, url: string): string {
-  return truncate(firstLine(message), MAX_SIGNATURE_MSG_CHARS) + '\n' + firstLine(pile) + '\n' + url
+function signatureOf(message: string, stack: string, url: string): string {
+  return truncate(firstLine(message), MAX_SIGNATURE_MSG_CHARS) + '\n' + firstLine(stack) + '\n' + url
 }
 
 function serialize(entries: JournalEntry[]): string {
   return entries.map((e) => JSON.stringify(e)).join('\n') + (entries.length ? '\n' : '')
 }
 
-// retire l'entrée au `dernier` le plus ANCIEN (purge FIFO) — recherche linéaire, journaux bornés
+// retire l'entrée au `last` le plus ANCIEN (purge FIFO) — recherche linéaire, journaux bornés
 // (≤ quelques centaines d'entrées par défaut), pas besoin d'une structure plus élaborée.
 function removeOldest(entries: JournalEntry[]): void {
   if (entries.length === 0) return
   let idx = 0
   for (let i = 1; i < entries.length; i++) {
-    if (entries[i].dernier < entries[idx].dernier) idx = i
+    if (entries[i].last < entries[idx].last) idx = i
   }
   entries.splice(idx, 1)
 }
@@ -220,7 +222,7 @@ function entrySize(e: JournalEntry): number {
 function removeOldestSized(entries: JournalEntry[]): number {
   let idx = 0
   for (let i = 1; i < entries.length; i++) {
-    if (entries[i].dernier < entries[idx].dernier) idx = i
+    if (entries[i].last < entries[idx].last) idx = i
   }
   return entrySize(entries.splice(idx, 1)[0])
 }
@@ -232,19 +234,12 @@ function enforceCaps(entries: JournalEntry[], maxEntries: number, maxBytes: numb
   while (entries.length > 0 && total > maxBytes) total -= removeOldestSized(entries)
 }
 
-// écriture atomique (tmp + renameSync, même patron que Bundler.writeFileAtomicAlways) — dossier
+// écriture atomique (tmp + renameSync, par l'aide commune writeFileAtomicAlways) — dossier
 // créé PARESSEUSEMENT ici (jamais avant le tout premier write réel).
 function writeAtomic(target: string, content: string): void {
   const dir = dirname(target)
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  const tmp = `${target}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`
-  writeFileSync(tmp, content, 'utf-8')
-  try {
-    renameSync(tmp, target)
-  } catch (e) {
-    try { unlinkSync(tmp) } catch { /* best-effort */ }
-    throw e
-  }
+  writeFileAtomicAlways(target, content)
 }
 
 // chargement paresseux d'un fichier NDJSON existant — une ligne invalide (JSON cassé, vide, pas
@@ -285,8 +280,8 @@ function ensureExitHook(): void {
 
 // listener 'SIGTERM' UNIQUE, même garde que ensureExitHook — `once` (jamais `on`) : le
 // flush tourne UNE fois puis le listener s'auto-retire, ensuite le process SE RÉ-ENVOIE le même
-// signal ; au 2e passage plus aucun listener n'est en place, Node reprend sa terminaison PAR
-// DÉFAUT (cf. commentaire d'en-tête).
+// signal ; au 2e passage ce listener n'est plus là : sans autre listener, terminaison par défaut ;
+// `mjs serve` et `mjs dev` ont le leur, qui ferme puis sort (cf. commentaire d'en-tête).
 let sigtermHookInstalled = false
 function ensureSigtermHook(): void {
   if (sigtermHookInstalled) return
@@ -316,8 +311,8 @@ export function createJournal(opts: JournalOptions): Journal {
   const warnOnce = (e: unknown): void => {
     if (warned) return
     warned = true
-    const erreur = e instanceof Error ? e.message : String(e)
-    console.warn(t('server.journal-ecriture-echec', { erreur }))
+    const error = e instanceof Error ? e.message : String(e)
+    console.warn(t('server.journal-write-failed', { error: error }))
   }
 
   const pathFor = (source: JournalSource): string => join(opts.dir, FILE_BY_SOURCE[source])
@@ -326,9 +321,9 @@ export function createJournal(opts: JournalOptions): Journal {
     const table = tables[source]
     if (table.entries === null) table.entries = loadFile(pathFor(source))
     // durée de vie : une entrée sans nouvelle occurrence depuis `maxDays` jours est oubliée, sur le disque aussi (date illisible comprise)
-    const limite = Date.now() - maxAgeMs
-    if (table.entries.some((e) => !(e.dernier >= limite))) {
-      table.entries = table.entries.filter((e) => e.dernier >= limite)
+    const limit = Date.now() - maxAgeMs
+    if (table.entries.some((e) => !(e.last >= limit))) {
+      table.entries = table.entries.filter((e) => e.last >= limit)
       scheduleFlush(source)
     }
     return table.entries
@@ -371,23 +366,23 @@ export function createJournal(opts: JournalOptions): Journal {
   return {
     record(source, input) {
       try {
-        const message = maskThenTruncate(String(input.message ?? ''), MAX_MESSAGE_CHARS)
-        const pile     = maskThenTruncate(String(input.pile ?? ''), MAX_PILE_CHARS)
-        const url      = maskThenTruncate(String(input.url ?? ''), MAX_URL_CHARS)
-        const signature = signatureOf(message, pile, url)
-        const now = Date.now()
-        const entries = getEntries(source)
-        const existing = entries.find((e) => e.signature === signature)
+        const message   = maskThenTruncate(String(input.message ?? ''), MAX_MESSAGE_CHARS)
+        const stack     = maskThenTruncate(String(input.stack ?? ''), MAX_STACK_CHARS)
+        const url       = maskThenTruncate(String(input.url ?? ''), MAX_URL_CHARS)
+        const signature = signatureOf(message, stack, url)
+        const now       = Date.now()
+        const entries   = getEntries(source)
+        const existing  = entries.find((e) => e.signature === signature)
         if (existing) {
           entrySizes.delete(existing)   // compteur, date, version : sa taille change
           existing.n++
-          existing.dernier = now
+          existing.last = now
           if (input.version !== undefined) existing.version = input.version
           if (input.ua !== undefined) existing.ua = input.ua
         } else {
           const entry: JournalEntry = {
-            ts: now, source, signature, message, pile, url,
-            version: input.version ?? null, n: 1, premier: now, dernier: now,
+            ts: now, source, signature, message, stack, url,
+            version: input.version ?? null, n: 1, first: now, last: now,
           }
           if (input.ua !== undefined) entry.ua = input.ua
           entries.push(entry)
@@ -400,7 +395,7 @@ export function createJournal(opts: JournalOptions): Journal {
     },
     list() {
       try {
-        return [...getEntries('server'), ...getEntries('client')].sort((a, b) => b.dernier - a.dernier)
+        return [...getEntries('server'), ...getEntries('client')].sort((a, b) => b.last - a.last)
       } catch (e) {
         warnOnce(e)
         return []

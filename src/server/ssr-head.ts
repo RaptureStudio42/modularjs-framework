@@ -17,13 +17,13 @@
 // PAR DÉFAUT de la configuration. Un utilisateur qui a basculé peut donc encore voir un flash au
 // tout premier paint SSR — seulement lui, seulement le temps de ce paint.
 
-import { readFileSync, existsSync, statSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
+import { readFileSync, existsSync, statSync, readdirSync, unlinkSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
 import type { MjsConfig } from '../bundler/config.js'
 import { compileCss } from '../transpiler/css.js'
 import { FONT_SIZE_SHEET, fontSizeSettings, rewriteFontSizes, type FontSizeSettings } from '../transpiler/font-size.js'
-import { MARQUE_SORTIE } from '../bundler/outputs.js'
+import { OUTPUT_MARK, writeFileAtomicAlways } from '../bundler/outputs.js'
 import { deriveUrlPrefix } from '../bundler/index.js'
 import { t } from '../messages/index.js'
 
@@ -43,7 +43,7 @@ export function writeHashedAsset(outputDir: string, urlPrefix: string, baseName:
   const hash     = createHash('md5').update(content).digest('hex').slice(0, 8)
   const filename = `${baseName}-${hash}${ext}`
   const target   = join(outputDir, filename)
-  const attendu  = Buffer.byteLength(content, 'utf-8')
+  const expected = Buffer.byteLength(content, 'utf-8')
   // ÉCRITURE ATOMIQUE — `writeFileSync` DIRECTEMENT sur le chemin final, doublé d'un
   // `if (!existsSync)`, laissait un fichier TRONQUÉ derrière n'importe quelle interruption
   // (disque plein, processus tué en plein rendu) : le `existsSync` du coup d'après le trouvait
@@ -53,12 +53,10 @@ export function writeHashedAsset(outputDir: string, urlPrefix: string, baseName:
   // La taille sert de sonde de complétude : le nom porte le hash du contenu ATTENDU, donc une
   // taille qui ne colle pas dénonce à coup sûr un reliquat tronqué — réécrit, cette fois pour de
   // bon. Un `stat` remplace le `existsSync` : même coût, une information de plus.
-  let complet = false
-  try { complet = statSync(target).size === attendu } catch { complet = false }
-  if (!complet) {
-    const tmp = `${target}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`
-    writeFileSync(tmp, content, 'utf-8')
-    try { renameSync(tmp, target) } catch (e) { try { unlinkSync(tmp) } catch {} ; throw e }
+  let full = false
+  try { full = statSync(target).size === expected } catch { full = false }
+  if (!full) {
+    writeFileAtomicAlways(target, content)
   }
   return `${urlPrefix}/${filename}`
 }
@@ -159,7 +157,7 @@ let headExtraErrorLogged = false
 function logHeadExtraFailureOnce(e: any): void {
   if (headExtraErrorLogged) return
   headExtraErrorLogged = true
-  console.error(t('server.ssr-head-echec', { erreur: e && e.message ? e.message : String(e) }))
+  console.error(t('server.ssr-head-failed', { error: e && e.message ? e.message : String(e) }))
 }
 
 // thème d'app ACTIF = celui par défaut de la configuration (cf. limite connue en tête de fichier).
@@ -222,7 +220,7 @@ function readFontSizeBlock(manifestPath: string | null): string {
   if (cached && cached.mtimeMs === mtimeMs) return cached.css
   const text    = readFileSync(path, 'utf-8')
   // construction dans le dossier des sources : la marque en première ligne (cf. bundler/outputs.ts), hors du CSS
-  const css     = text.startsWith(`${MARQUE_SORTIE}\n`) ? text.slice(MARQUE_SORTIE.length + 1) : text
+  const css     = text.startsWith(`${OUTPUT_MARK}\n`) ? text.slice(OUTPUT_MARK.length + 1) : text
   fontSizeCache.set(path, { mtimeMs, css })
   return css
 }
@@ -245,6 +243,27 @@ function escapeHtmlSensitiveSequences(css: string): string {
     .replace(/-->/g, '--\\>')
 }
 
+// mode `csp` : la feuille hachée du bloc des tailles d'un fragment change de nom quand le bloc change ; l'ancienne, que plus aucun
+// fragment ne lie, quitte le dossier de sortie (la purge de la construction épargne cette famille, écrite par le rendu). Seule une feuille
+// qui ne porte QUE le bloc des tailles est retirée : la tête complète du rendu serveur, qui commence par le thème, reste ; un fichier
+// illisible reste aussi
+const ONLY_SIZES_RE = /^:root\{--mjs-fs-[^{}]*\}@media \(min-width:[^()]*\)\{:root\{--mjs-fs-[^{}]*\}\}\s*$/
+// la feuille gardée au dernier passage, par dossier de sortie : le dossier n'est relu que quand elle change (chaque page prérendue et
+// chaque requête rendue liaient la même feuille, et chacune relisait le dossier et chaque feuille de la famille)
+const keptSize = new Map<string, string>()
+
+function removeOldSizes(outputDir: string, guard: string): void {
+  if (keptSize.get(outputDir) === guard) return
+  keptSize.set(outputDir, guard)
+  for (const name of readdirSync(outputDir)) {
+    if (name === guard || !/^mjs_ssr_head-[0-9a-f]{8}\.css$/.test(name)) continue
+    try {
+      if (ONLY_SIZES_RE.test(readFileSync(join(outputDir, name), 'utf-8'))) unlinkSync(join(outputDir, name))
+    }
+    catch {}
+  }
+}
+
 /** bloc :root des tailles du texte pour un fragment prérendu ou un corps rendu par requête qu'un hôte pose dans SA page, sans la tête du serveur : le `<style>`
  *  (en mode `csp`, le `<link>`) écrit en tête du fragment ; '' quand la conversion est coupée ou qu'aucune taille n'est convertie */
 export function fontSizeFragmentHead(config: MjsConfig, outputDir: string, manifestPath: string | null): string {
@@ -252,7 +271,11 @@ export function fontSizeFragmentHead(config: MjsConfig, outputDir: string, manif
     if (!fontSizeSettings(config.responsiveFontSize)) return ''
     const css = readFontSizeBlock(manifestPath)
     if (css === '') return ''
-    if (config.csp === true) return `<link rel="stylesheet" href="${writeHashedAsset(outputDir, config.urlPrefix ?? deriveUrlPrefix(outputDir), 'mjs_ssr_head', '.css', css)}">\n`
+    if (config.csp === true) {
+      const url = writeHashedAsset(outputDir, config.urlPrefix ?? deriveUrlPrefix(outputDir), 'mjs_ssr_head', '.css', css)
+      removeOldSizes(outputDir, url.slice(url.lastIndexOf('/') + 1))
+      return `<link rel="stylesheet" href="${url}">\n`
+    }
     return `<style data-mjs-font-sizes>${escapeHtmlSensitiveSequences(css)}</style>\n`
   } catch (e: any) {
     logHeadExtraFailureOnce(e)
@@ -289,8 +312,8 @@ export function buildSsrHead(config: MjsConfig, configDir: string, manifestPath:
       // dossier de sortie (même convention, même fonction). Un préfixe vide composait
       // `/mjs_ssr_head-….css` — 404 derrière un back qui sert `public/`, donc une page sans thème
       // alors que le fichier existait bel et bien, une ligne plus bas dans l'arborescence.
-      const prefixe    = config.urlPrefix ?? deriveUrlPrefix(outputDir)
-      const url        = writeHashedAsset(outputDir, prefixe, 'mjs_ssr_head', '.css', parts.join('\n'))
+      const prefix = config.urlPrefix ?? deriveUrlPrefix(outputDir)
+      const url    = writeHashedAsset(outputDir, prefix, 'mjs_ssr_head', '.css', parts.join('\n'))
       return `<link rel="stylesheet" href="${url}">`
     }
     return '<style data-mjs-ssr-head>' + escapeHtmlSensitiveSequences(parts.join('\n')) + '</style>'

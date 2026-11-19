@@ -98,6 +98,8 @@ export interface Page {
   fermer: () => Promise<void>
   // les chemins demandés au serveur depuis le dernier `poser`
   requetes: string[]
+  // le dossier de sortie de la construction
+  sortie: string
 }
 
 export async function construire(o: Options): Promise<Page> {
@@ -218,7 +220,7 @@ export async function construire(o: Options): Promise<Page> {
     server.close(() => resolve())
     server.closeAllConnections()
   })
-  return { base: `http://127.0.0.1:${(server.address() as any).port}`, poser, fermer, requetes }
+  return { base: `http://127.0.0.1:${(server.address() as any).port}`, poser, fermer, requetes, sortie }
 }
 
 // une sonde : le chemin des hôtes (préfixe `light:` : un enfant du DOM léger de l'hôte précédent), puis le sélecteur du texte

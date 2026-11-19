@@ -70,7 +70,7 @@ import type { MjsWsApp, MjsWsLimits, MjsWsLogFn, MjsWsOptions, MjsWsTokenOptions
 import type { MjsConfig, WsConfig } from '../bundler/config.js'
 import { compileServerFile, compileRawCivetFile } from './server-entry.js'
 import { t } from '../messages/index.js'
-import { gardeArret, SHUTDOWN_GRACE_MS } from './dev-lock.js'
+import { stopGuard, SHUTDOWN_GRACE_MS } from './dev-lock.js'
 
 // --- squelette imprimé quand aucune entry n'est trouvée ---------------------
 
@@ -91,26 +91,26 @@ export default
 const ENTRY_DEFAULTS = ['ws.server.mjs', 'server/ws.server.mjs', 'ws.js', 'ws.civet', 'server/ws.js', 'server/ws.civet']
 
 function entryNotFoundMessage(reason: string): string {
-  return t('cli.ws.entry-introuvable', { raison: reason, squelette: ENTRY_SKELETON })
+  return t('cli.ws.entry-not-found', { reason, skeleton: ENTRY_SKELETON })
 }
 
 /** Résout le chemin ABSOLU de l'entry — --entry > ws.entry (config) > ws.server.mjs > server/ws.server.mjs > ws.js > ws.civet > server/ws.js > server/ws.civet. */
 export function resolveEntryPath(root: string, cliEntry: string | undefined, configEntry: string | undefined): string {
   if (cliEntry !== undefined) {
     const p = resolve(root, cliEntry)
-    if (!existsSync(p)) throw new Error(entryNotFoundMessage(t('cli.entry-cli-introuvable', { cliEntry, chemin: p })))
+    if (!existsSync(p)) throw new Error(entryNotFoundMessage(t('cli.entry-cli-not-found', { cliEntry, path: p })))
     return p
   }
   if (configEntry !== undefined) {
     const p = resolve(root, configEntry)
-    if (!existsSync(p)) throw new Error(entryNotFoundMessage(t('cli.entry-config-introuvable', { champ: 'ws.entry', valeur: configEntry, chemin: p })))
+    if (!existsSync(p)) throw new Error(entryNotFoundMessage(t('cli.entry-config-not-found', { field: 'ws.entry', value: configEntry, path: p })))
     return p
   }
   for (const rel of ENTRY_DEFAULTS) {
     const p = resolve(root, rel)
     if (existsSync(p)) return p
   }
-  throw new Error(entryNotFoundMessage(t('cli.entry-aucun-trouve', { liste: ENTRY_DEFAULTS.join(', '), racine: root })))
+  throw new Error(entryNotFoundMessage(t('cli.entry-none-found', { list: ENTRY_DEFAULTS.join(', '), root })))
 }
 
 // --- contrat de l'entry : export default = objet, clés mjsWs() + setup(app) ---
@@ -120,7 +120,7 @@ export function resolveEntryPath(root: string, cliEntry: string | undefined, con
 // la chaîne ws.transport de la config, cf. buildRunPlan ci-dessous) — seules port/host/onLog
 // restent réservées au CLI (contrôlées par --port/ws.host/le logger interne, jamais par l'app).
 /** clés RÉSERVÉES au CLI — présentes dans l'entry : warn + ignorées (jamais transmises à mjsWs()).
- *  EXPORTÉE — réutilisée telle quelle par cli/server.ts (`mjs serveur`, MÊME règle réservée). */
+ *  Lues par readEntryContractOf : la même règle vaut pour `mjs server`, dont cli/server.ts passe par elle. */
 export const RESERVED_ENTRY_KEYS = ['port', 'host', 'onLog']
 
 export interface EntryContract {
@@ -128,27 +128,27 @@ export interface EntryContract {
   setup?: (app: MjsWsApp) => unknown
 }
 
-/** Valide + isole le contrat d'un module d'entry déjà importé (`mod` = namespace ES) — partagé par `mjs ws` et `mjs serveur`
+/** Valide + isole le contrat d'un module d'entry déjà importé (`mod` = namespace ES) — partagé par `mjs ws` et `mjs server`
  *  (`produit`, pour les messages) : export default objet, clés réservées ignorées avec un avertissement, `setup` fonction si
  *  présent. */
-export function readEntryContractOf<O, A>(produit: string, mod: any, entryPath: string, warn: (message: string) => void): { options: O, setup?: (app: A) => unknown } {
+export function readEntryContractOf<O, A>(produced: string, mod: any, entryPath: string, warn: (message: string) => void): { options: O, setup?: (app: A) => unknown } {
   const dflt = mod ? mod.default : undefined
   if (dflt === undefined || dflt === null || typeof dflt !== 'object' || Array.isArray(dflt)) {
-    const got = dflt === undefined ? t('cli.aucun-export-defaut') : (Array.isArray(dflt) ? t('cli.un-tableau') : typeof dflt)
-    throw new Error(t('cli.entry-doit-export-default', { produit, entryPath, recu: got }))
+    const got = dflt === undefined ? t('cli.no-export-default') : (Array.isArray(dflt) ? t('cli.an-array') : typeof dflt)
+    throw new Error(t('cli.entry-must-export-default', { product: produced, entryPath, received: got }))
   }
 
   const options: Record<string, unknown> = {}
   for (const key of Object.keys(dflt)) {
     if (key === 'setup') continue   // traité séparément ci-dessous
-    if (RESERVED_ENTRY_KEYS.includes(key)) { warn(t('cli.entry-cle-ignoree', { cle: key })); continue }
+    if (RESERVED_ENTRY_KEYS.includes(key)) { warn(t('cli.entry-key-ignored', { key })); continue }
     options[key] = (dflt as any)[key]
   }
 
   let setup: ((app: A) => unknown) | undefined
   if (dflt.setup !== undefined) {
     if (typeof dflt.setup !== 'function') {
-      throw new Error(t('cli.entry-setup-doit-etre-fonction', { produit, entryPath, recu: typeof dflt.setup }))
+      throw new Error(t('cli.entry-setup-must-be-function', { product: produced, entryPath, received: typeof dflt.setup }))
     }
     setup = dflt.setup
   }
@@ -186,7 +186,7 @@ export function buildRunPlan(
   return buildRunPlanOf(contract, wsConfig, 'ws', SHARED_PLAN_KEYS, 4000, cliPort, warn, cliHost)
 }
 
-// clés que la section de configuration (`ws`, `serveur`) partage avec l'entry, dans l'ordre de leurs avertissements : transport
+// clés que la section de configuration (`ws`, `server`) partage avec l'entry, dans l'ordre de leurs avertissements : transport
 // (instance dans l'entry, chaîne seulement en JSON), codec (µschema), heartbeat, limits, token (expiration, rafraîchissement),
 // bridge (pont universel ; son `secret` est exigé au lancement par bridge.ts), resume (reprise de session, `false` explicite
 // compris), adapter (multi-processus), stats, sessionExclusive, verifyOrigin (forme fonction comprise), ban (`false` explicite
@@ -194,7 +194,7 @@ export function buildRunPlan(
 export const SHARED_PLAN_KEYS = ['transport', 'codec', 'heartbeat', 'limits', 'token', 'bridge', 'resume', 'adapter', 'stats', 'sessionExclusive', 'verifyOrigin', 'ban'] as const
 
 /** Fusionne le contrat de l'entry, la section `section` de la configuration et --port/--host — partagé par `mjs ws` et
- *  `mjs serveur`. Pour chaque clé de `keys`, l'ENTRY prime EN BLOC (pas de fusion clé à clé : le code de l'app passe avant la
+ *  `mjs server`. Pour chaque clé de `keys`, l'ENTRY prime EN BLOC (pas de fusion clé à clé : le code de l'app passe avant la
  *  configuration), avec un avertissement si les deux sont posées. Heartbeat et limites résolus ICI avec les MÊMES défauts que
  *  mjsWs() (passthrough) : la bannière affiche les valeurs effectives sans recopier les littéraux. Port borné comme `ws.port`
  *  (un --port hors plage retombait sur un RangeError brut de Node au moment de lier le transport) ; hôte local par défaut, comme
@@ -202,7 +202,7 @@ export const SHARED_PLAN_KEYS = ['transport', 'codec', 'heartbeat', 'limits', 't
 export function buildRunPlanOf<O extends object, A>(
   contract: { options: O, setup?: (app: A) => unknown },
   config: object | undefined,
-  section: 'ws' | 'serveur',
+  section: 'ws' | 'server',
   keys: readonly string[],
   defaultPort: number,
   cliPort: number | undefined,
@@ -211,17 +211,17 @@ export function buildRunPlanOf<O extends object, A>(
 ): { options: O, setup?: (app: A) => unknown, port: number, host: string, heartbeat: number, limits: MjsWsLimits } {
   const cfg: any     = config
   const options: any = { ...contract.options }
-  for (const cle of keys) {
-    if (cfg?.[cle] === undefined) continue
-    if (options[cle] !== undefined) warn(t('cli.entry-config-doublon', { champ: cle, chemin: `${section}.${cle}` }))
-    else options[cle] = cfg[cle]
+  for (const key of keys) {
+    if (cfg?.[key] === undefined) continue
+    if (options[key] !== undefined) warn(t('cli.entry-config-duplicate', { field: key, path: `${section}.${key}` }))
+    else options[key] = cfg[key]
   }
   const heartbeat = options.heartbeat ?? DEFAULT_HEARTBEAT
   const limits: MjsWsLimits = { ...DEFAULT_LIMITS, ...(options.limits ?? {}) }
   options.heartbeat = heartbeat
   options.limits    = limits
   const port = cliPort ?? cfg?.port ?? defaultPort
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(t(section === 'ws' ? 'cli.ws.port-hors-plage' : 'cli.serveur.port-hors-plage', { valeur: port }))
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(t(section === 'ws' ? 'cli.ws.port-out-of-range' : 'cli.server.port-out-of-range', { value: port }))
   const host = (cliHost ?? cfg?.host ?? '').trim() || '127.0.0.1'
   return { options, setup: contract.setup, port, host, heartbeat, limits }
 }
@@ -234,8 +234,8 @@ function timestamp(): string {
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
 }
 
-// EXPORTÉS — brique générique (aucune dépendance ws-spécifique), réutilisée telle quelle par
-// cli/server.ts (`mjs serveur`, MÊME format de log horodaté)
+// EXPORTÉS — brique générique (aucune dépendance ws-spécifique) : runEntryServer s'en sert pour `mjs ws` comme pour
+// `mjs server` (MÊME format de log horodaté) ; cli/server.ts n'en importe que le type
 export interface CliLogger {
   log: MjsWsLogFn
   info(message: string): void
@@ -262,28 +262,28 @@ export function createLogger(): CliLogger {
 // affichage de la bannière UNIQUEMENT — la RÉSOLUTION effective ('ws' par défaut si absent, ou
 // l'instance passée telle quelle) vit dans mjsWs()/resolveTransport (index.ts, source unique).
 // EXPORTÉE — pur formatage, aucune dépendance ws-spécifique au-delà du TYPE (MjsWsOptions['transport']
-// = MÊME forme que MjsServerOptions['transport'], héritée) — réutilisée par cli/server.ts.
+// = MÊME forme que MjsServerOptions['transport'], héritée) — appelée par printEntryBanner, donc aussi pour `mjs server`.
 export function describeTransport(transport: MjsWsOptions['transport']): string {
   if (transport === undefined || transport === 'ws') return t('cli.transport-ws')
   if (transport === 'uws') return 'uws (uWebSockets.js)'
-  return t('cli.transport-personnalise')
+  return t('cli.transport-custom')
 }
 
 // affiche « MJS-WS » (marque de produit) — PAS « MJS-Server » : `mjs ws`
 // construit TOUJOURS l'app via mjsWs() (ci-dessus, boot()/reload()), jamais via mjsServer() —
-// un entry qui déclare app.game(...) veut la commande SŒUR `mjs serveur` (cli/server.ts,
+// un entry qui déclare app.game(...) veut la commande SŒUR `mjs server` (cli/server.ts,
 // cf. docs/24-mjs-server.md §2 « Démarrer »), qui construit l'app via mjsServer() : aucune app
 // reçue ici n'a jamais de `.game`, donc rien de fiable à détecter — mention factuelle du transport seul.
 function printBanner(logger: CliLogger, entryPath: string, root: string, plan: WsRunPlan): void {
-  const hoteAffiche = (plan.host === '::' || plan.host === '0.0.0.0') ? `${t('cli.toutes-interfaces')} (${plan.host})` : plan.host
-  printEntryBanner(logger, 'MJS-WS', entryPath, root, plan, ` (${hoteAffiche})`)
+  const shownHost = (plan.host === '::' || plan.host === '0.0.0.0') ? `${t('cli.all-interfaces')} (${plan.host})` : plan.host
+  printEntryBanner(logger, 'MJS-WS', entryPath, root, plan, ` (${shownHost})`)
 }
 
-/** Bannière de démarrage — partagée par `mjs ws` et `mjs serveur` : `titre` (MJS-WS, MJS-Server), `hote` (texte qui suit le
+/** Bannière de démarrage — partagée par `mjs ws` et `mjs server` : `titre` (MJS-WS, MJS-Server), `hote` (texte qui suit le
  *  port), `extra` (lignes propres à la commande, juste avant le rappel de Ctrl+C). */
-export function printEntryBanner(logger: CliLogger, titre: string, entryPath: string, root: string, plan: { options: MjsWsOptions, port: number, heartbeat: number, limits: MjsWsLimits }, hote: string, extra?: () => void): void {
+export function printEntryBanner(logger: CliLogger, title: string, entryPath: string, root: string, plan: { options: MjsWsOptions, port: number, heartbeat: number, limits: MjsWsLimits }, host: string, extra?: () => void): void {
   const rel = relative(root, entryPath) || entryPath
-  logger.info(`${titre} — entry ${rel}`)
+  logger.info(`${title} — entry ${rel}`)
   logger.info(`transport : ${describeTransport(plan.options.transport)}`)
   // µschema — affiche le codec EFFECTIF (défaut 'auto' si jamais posé, ni entry ni
   // config) — jamais un silence sur un réglage qui change le FORMAT DE TRAME (contrairement à
@@ -293,11 +293,11 @@ export function printEntryBanner(logger: CliLogger, titre: string, entryPath: st
   // libellé « toutes les interfaces » ne s'affiche plus QUE si l'hôte
   // effectif l'expose vraiment ('::'/'0.0.0.0', demandé via --host ou ws.host) : le défaut est
   // désormais 127.0.0.1 (buildRunPlan), MÊME philosophie que le pont (bridge.ts).
-  logger.info(t('cli.banniere-port', { port: plan.port, hote }))
-  logger.info(t('cli.banniere-heartbeat', { etat: plan.heartbeat === 0 ? t('cli.desactive') : `${plan.heartbeat} ms` }))
+  logger.info(t('cli.banner-port', { port: plan.port, host: host }))
+  logger.info(t('cli.banner-heartbeat', { state: plan.heartbeat === 0 ? t('cli.disabled') : `${plan.heartbeat} ms` }))
   // plafonds de connexions — valeurs EFFECTIVES (plan.limits déjà
   // fusionnée avec DEFAULT_LIMITS, cf. buildRunPlan) ; `null` = illimité, affiché tel quel.
-  logger.info(t('cli.banniere-limites', { rate: plan.limits.rate, burst: plan.limits.burst, kickAfter: plan.limits.kickAfter, maxPayload: plan.limits.maxPayload, maxBuffered: plan.limits.maxBuffered, maxConnections: plan.limits.maxConnections ?? t('cli.illimite'), maxConnectionsPerIp: plan.limits.maxConnectionsPerIp ?? t('cli.illimite') }))
+  logger.info(t('cli.banner-limits', { rate: plan.limits.rate, burst: plan.limits.burst, kickAfter: plan.limits.kickAfter, maxPayload: plan.limits.maxPayload, maxBuffered: plan.limits.maxBuffered, maxConnections: plan.limits.maxConnections ?? t('cli.unlimited'), maxConnectionsPerIp: plan.limits.maxConnectionsPerIp ?? t('cli.unlimited') }))
   // proxy de décisions (proxy.ts) — mention SEULEMENT si auth et/ou rooms.join sont un
   // objet-proxy {url,...} (jamais pour la fonction historique, silence inchangé dans ce cas — même
   // philosophie que les autres blocs conditionnels ci-dessous). isProxyOptions = MÊME détection que
@@ -305,7 +305,7 @@ export function printEntryBanner(logger: CliLogger, titre: string, entryPath: st
   const authOpt = plan.options.auth
   const joinOpt = plan.options.rooms?.join
   if (isProxyOptions(authOpt)) logger.info(`auth : proxy ${authOpt.url}`)
-  if (isProxyOptions(joinOpt)) logger.info(t('cli.banniere-salons-proxy', { url: joinOpt.url }))
+  if (isProxyOptions(joinOpt)) logger.info(t('cli.banner-rooms-proxy', { url: joinOpt.url }))
   // suivi d'expiration du jeton — MÊME gate que bridge/
   // resume/adapter ci-dessous (plan.options.token n'est PAS auto-défauté dans buildRunPlan,
   // contrairement à heartbeat/limits — cf. son commentaire) : rien si ws.token n'a jamais été
@@ -315,32 +315,32 @@ export function printEntryBanner(logger: CliLogger, titre: string, entryPath: st
   // client qui présente une échéance `exp`), juste ce qui s'appliquerait le cas échéant.
   if (plan.options.token) {
     const token: MjsWsTokenOptions = { ...DEFAULT_TOKEN, ...plan.options.token }
-    logger.info(t('cli.banniere-jeton', { sweep: token.sweep / 1000, marge: token.slack / 1000 }))
+    logger.info(t('cli.banner-token', { sweep: token.sweep / 1000, margin: token.slack / 1000 }))
   }
   // pont universel — options déjà validées (mjsWs() les a résolues sans lever
   // AVANT cet appel, cf. boot()) : resolveBridgeOptions ici est un pur affichage, jamais un 2e essai
   if (plan.options.bridge) {
     const bridge = resolveBridgeOptions(plan.options.bridge, plan.port)
-    logger.info(t('cli.banniere-pont', { host: bridge.host, port: bridge.port }))
+    logger.info(t('cli.banner-bridge', { host: bridge.host, port: bridge.port }))
     logger.info(bridge.webhooks
-      ? t('cli.banniere-webhooks-actifs', { url: bridge.webhooks.url, evenements: Array.from(bridge.webhooks.events).join(', ') })
-      : t('cli.banniere-webhooks-desactives'))
+      ? t('cli.banner-webhooks-active', { url: bridge.webhooks.url, events: Array.from(bridge.webhooks.events).join(', ') })
+      : t('cli.banner-webhooks-disabled'))
     // limite de débit — valeurs EFFECTIVES via resolveBridgeOptions (source unique, bridge.ts)
     logger.info(bridge.rateLimit
-      ? t('cli.banniere-rate-limit-actif', { capacite: bridge.rateLimit.perIp.capacity, fenetre: bridge.rateLimit.perIp.windowMs / 1000, echecsCapacite: bridge.rateLimit.fails.capacity, echecsFenetre: bridge.rateLimit.fails.windowMs / 1000 })
-      : t('cli.banniere-rate-limit-desactive'))
+      ? t('cli.banner-rate-limit-active', { capacity: bridge.rateLimit.perIp.capacity, window: bridge.rateLimit.perIp.windowMs / 1000, capacityFailures: bridge.rateLimit.fails.capacity, windowFailures: bridge.rateLimit.fails.windowMs / 1000 })
+      : t('cli.banner-rate-limit-disabled'))
     // nonce anti-rejeu — valeur EFFECTIVE via resolveBridgeOptions (exigé sauf `nonce: false`)
-    logger.info(t(bridge.nonce ? 'cli.banniere-nonce-exige' : 'cli.banniere-nonce-coupe'))
+    logger.info(t(bridge.nonce ? 'cli.banner-nonce-required' : 'cli.banner-nonce-off'))
     // état/métriques — affichée seulement si active ET loopback : au-delà (host
     // distant), /state exige une requête signée comme le reste du pont — pas un lien à cliquer.
     if (plan.options.stats && isLoopbackHost(bridge.host)) {
-      logger.info(t('cli.banniere-etat', { host: bridge.host, port: bridge.port }))
+      logger.info(t('cli.banner-state', { host: bridge.host, port: bridge.port }))
     }
   }
   // reprise de session — valeurs EFFECTIVES via resolveResumeOptions (source unique, sessions.ts)
   if (plan.options.resume) {
     const resume = resolveResumeOptions(plan.options.resume)!
-    logger.info(t('cli.banniere-reprise-session', { grace: resume.grace / 1000, maxBuffered: resume.maxBuffered, maxBytes: resume.maxBytes }))
+    logger.info(t('cli.banner-resume-session', { grace: resume.grace / 1000, maxBuffered: resume.maxBuffered, maxBytes: resume.maxBytes }))
   }
   // adaptateur multi-processus — affiche l'URL si `adapter` est l'objet de config
   // {redis,prefix?} ; une instance MjsWsAdapter déjà construite (cf. index.ts) n'a pas d'URL
@@ -349,14 +349,14 @@ export function printEntryBanner(logger: CliLogger, titre: string, entryPath: st
     const a = plan.options.adapter as { redis?: string; prefix?: string }
     const prefix = a.prefix ?? 'mjs-ws'
     logger.info(typeof a.redis === 'string'
-      ? t('cli.banniere-multi-processus-redis', { redis: a.redis, prefixe: prefix })
-      : t('cli.banniere-multi-processus-custom', { prefixe: prefix }))
+      ? t('cli.banner-multi-process-redis', { redis: a.redis, prefix })
+      : t('cli.banner-multi-process-custom', { prefix }))
   }
   extra?.()
-  logger.info(t('cli.ctrl-c-arreter'))
+  logger.info(t('cli.ctrl-c-stop'))
 }
 
-// EXPORTÉE — pure, réutilisée par cli/server.ts
+// EXPORTÉE — pure, lue par ce seul fichier (cli/server-entry.ts et mjs-ws/heatmap.ts ont chacun la leur)
 export function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
@@ -407,7 +407,7 @@ export interface WsRunHandle {
   stop(): Promise<void>
 }
 
-// EXPORTÉES — réutilisées telles quelles par cli/server.ts (`mjs serveur`, MÊME rechargement à chaud)
+// EXPORTÉES — lues aussi par server/serve-entry.ts ; `mjs server` les reçoit par runEntryServer, ici même
 export const WATCHED_EXT = /\.(js|mjs|cjs|civet|json)$/
 export const RELOAD_DEBOUNCE_MS = 150
 
@@ -432,7 +432,7 @@ export async function runWsCommand(
   })
 }
 
-/** Ce qui distingue `mjs ws` de `mjs serveur` au lancement comme à chaque rechargement (cf. runEntryServer). */
+/** Ce qui distingue `mjs ws` de `mjs server` au lancement comme à chaque rechargement (cf. runEntryServer). */
 export interface EntryServerSpec<C, P, A> {
   readContract(mod: any, entryPath: string, warn: (message: string) => void): C
   buildPlan(contract: C, warn: (message: string) => void): P
@@ -440,7 +440,7 @@ export interface EntryServerSpec<C, P, A> {
   banner(logger: CliLogger, plan: P): void
 }
 
-/** Lancement d'une entry de `mjs ws` ou `mjs serveur`, rechargement à chaud et arrêt propre — partagé par les deux commandes. */
+/** Lancement d'une entry de `mjs ws` ou `mjs server`, rechargement à chaud et arrêt propre — partagé par les deux commandes. */
 export async function runEntryServer<C, P extends { setup?: (app: A) => unknown }, A extends { listen(): Promise<unknown>, stop(): Promise<unknown> }>(
   root: string,
   entryPath: string,
@@ -475,7 +475,8 @@ export async function runEntryServer<C, P extends { setup?: (app: A) => unknown 
   // fraîche AU MOMENT où il démarre). Un import qui résout APRÈS avoir été dépassé (une
   // génération plus récente existe déjà) est jeté SANS toucher currentApp — reloadPending
   // garantit qu'un rechargement frais suit de toute façon. Règle existante conservée : l'ancien
-  // serveur continue si le nouveau casse (try/catch inchangés ci-dessous).
+  // serveur continue si le nouveau casse avant de devoir écouter (try/catch ci-dessous) ; un `listen()` en échec, l'ancien
+  // déjà arrêté, arrête le processus avec un message.
   let reloadGeneration = 0
   let reloadRunning    = false
   let reloadPending    = false
@@ -515,7 +516,7 @@ export async function runEntryServer<C, P extends { setup?: (app: A) => unknown 
       // périmé : une génération plus fraîche est déjà en jeu (reloadPending la reprendra) —
       // l'erreur porte sur un contenu déjà dépassé, plus la peine d'en informer
       if (myGeneration === reloadGeneration) {
-        logger.error(t('cli.reload-import-echec', { erreur: errText(err) }))
+        logger.error(t('cli.reload-import-failed', { error: errText(err) }))
       }
       return
     }
@@ -524,7 +525,7 @@ export async function runEntryServer<C, P extends { setup?: (app: A) => unknown 
     try {
       contract = spec.readContract(mod, entryPath, logger.warn)
     } catch (err) {
-      logger.error(t('cli.reload-echec-generique', { erreur: errText(err) }))
+      logger.error(t('cli.reload-failed-generic', { error: errText(err) }))
       return
     }
     try {
@@ -537,21 +538,30 @@ export async function runEntryServer<C, P extends { setup?: (app: A) => unknown 
         if (plan.setup) await plan.setup(app)
       } catch (err) {
         await Promise.resolve().then(() => app.stop()).catch(() => {})
-        logger.error(t('cli.reload-setup-echec', { erreur: errText(err) }))
+        logger.error(t('cli.reload-setup-failed', { error: errText(err) }))
         return
       }
       await currentApp.stop()
-      await app.listen()
+      try {
+        await app.listen()
+      } catch (err) {
+        // l'ancien serveur est déjà arrêté (seul `listen()` exige le port) : un processus vivant qui n'écoute plus rien tromperait
+        // son superviseur et le développeur — le message dit pourquoi, puis le processus s'arrête (code 1), à relancer
+        await Promise.resolve().then(() => app.stop()).catch(() => {})
+        logger.error(t('cli.reload-listen-failed', { error: errText(err) }))
+        process.exit(1)
+        return
+      }
       // Un arrêt a été demandé PENDANT cet import/listen : ce nouveau serveur ne doit JAMAIS
       // devenir `currentApp` ni rester en écoute — refermé aussitôt (l'ancien est déjà arrêté par
       // le `currentApp.stop()` ci-dessus ou par shutdown() lui-même), sans le moindre message.
       if (shuttingDown) { await app.stop().catch(() => {}); return }
       currentApp = app
-      logger.info(t('cli.redemarre', { chemin: relative(root, entryPath) || entryPath }))
+      logger.info(t('cli.restarted', { path: relative(root, entryPath) || entryPath }))
     } catch (err) {
       // hors contrat explicite (§7.6 ne garantit le zéro-coupure QUE sur l'import)
       // — filet de sécurité : ne jamais planter le process en silence.
-      logger.error(t('cli.reload-echec-fatal', { erreur: errText(err) }))
+      logger.error(t('cli.reload-failed-fatal', { error: errText(err) }))
     }
   }
 
@@ -584,8 +594,8 @@ export async function runEntryServer<C, P extends { setup?: (app: A) => unknown 
     process.off('SIGTERM', onSignal)
   }
   // un seul arrêt ordonné (le même Ctrl+C reçu deux fois attend le premier), sortie bornée par
-  // SHUTDOWN_GRACE_MS ; un 2e Ctrl+C plus d'une seconde après sort aussitôt (cf. gardeArret)
-  const onSignal = gardeArret((): void => {
+  // SHUTDOWN_GRACE_MS ; un 2e Ctrl+C plus d'une seconde après sort aussitôt (cf. stopGuard)
+  const onSignal = stopGuard((): void => {
     setTimeout(() => process.exit(0), SHUTDOWN_GRACE_MS).unref()
     void shutdown().then(() => process.exit(0))
   }, () => process.exit(0))

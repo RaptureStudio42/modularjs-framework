@@ -31,7 +31,7 @@ function demarre(file: string, opts: Record<string, unknown> = {}) {
   const handlers: Record<string, (p: unknown, c: unknown) => void> = {}
   const app: any = { on(type: string, h: (p: unknown, c: unknown) => void) { handlers[type] = h }, stop: async () => {} }
   const pkg: any = heatmapPackage({ origins: [SITE], file, onLog: (niveau: string, message: string) => journal.push([niveau, message]), ...opts })
-  pkg.installer(app)
+  pkg.install(app)
   const recoit = (p: unknown) => handlers['heatmap:point'](p, { meta: { origin: SITE } })
   const urls = () => (app.heatmap().pages as Array<{ url: string }>).map((p) => p.url).sort()
   return { app, journal, recoit, urls, pkg }

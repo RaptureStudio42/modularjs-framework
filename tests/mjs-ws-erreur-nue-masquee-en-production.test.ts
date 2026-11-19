@@ -67,9 +67,9 @@ describe('MJS-WS — Error nue d’un serve()/on() : message générique en prod
       c.ws.send(JSON.stringify({ t: 'note', p: {} }))
       await tick(20)
       const erreur = c.trames.find(f => f.t === 'µ:error')
-      assert.equal(erreur?.p?.message, t('ws.core.erreur-interne-client'), JSON.stringify(erreur))
+      assert.equal(erreur?.p?.message, t('ws.core.error-internal-client'), JSON.stringify(erreur))
       assert.ok(!JSON.stringify(c.trames).includes('10.0.3.4'), 'ni hôte ni utilisateur de la base côté client')
-      assert.equal((await requete(c, 'tour')).p, t('ws.core.erreur-interne-client'), 'une phrase en Error nue : message générique')
+      assert.equal((await requete(c, 'tour')).p, t('ws.core.error-internal-client'), 'une phrase en Error nue : message générique')
     } finally {
       await app.stop()
     }

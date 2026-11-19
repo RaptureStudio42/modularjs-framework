@@ -8,7 +8,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseTypesBlock, compileAjaxTypes, compileAjaxCall, compileVars, type RuleAst } from '../src/transpiler/var-types.js'
 import { scanCompiledFeatures, TYPES_DEFAULTS, TYPES_STRICT, TYPES_HARD, AJAX_CALL } from '../src/bundler/features.js'
-import { projeterBlocs } from '../src/bundler/index.js'
+import { projectBlocks } from '../src/bundler/index.js'
 import { transpile } from '../src/transpiler/index.js'
 import { poserMessages } from './helpers/messages-stub.js'
 
@@ -192,8 +192,8 @@ describe('signal en production : typesReport', () => {
 })
 
 describe('les blocs du runtime : seulement chez qui s\'en sert', () => {
-  const RIEN    = { 'types-defaut': false, 'types-strict': false, 'types-dur': false, 'types-signal': false, 'types-ajax': false, 'ajax-appel': false }
-  const MARQUES = /\/\/ <\/?(?:sans-)?(?:types-(?:defaut|strict|dur|signal|ajax)|ajax-appel)>/
+  const RIEN    = { 'types-default': false, 'types-strict': false, 'types-hard': false, 'types-signal': false, 'types-ajax': false, 'ajax-call': false }
+  const MARQUES = /\/\/ <\/?(?:no-)?(?:types-(?:default|strict|hard|signal|ajax)|ajax-call)>/
 
   it('chaque fonction écrite est détectée dans le code compilé, et seulement elle', () => {
     assert.ok(scanCompiledFeatures("µ._mjs_types = {r: {t: 'o', f: {}, _mjs_z: {a: 0}}};").has(TYPES_DEFAULTS))
@@ -207,12 +207,12 @@ describe('les blocs du runtime : seulement chez qui s\'en sert', () => {
   it('sans elles, le runtime projeté n\'en garde aucune ligne, et contrôle comme avant', () => {
     // le code seul : les commentaires ne partent pas dans l'appli
     const code  = (s: string): string => s.replace(/^[ \t]*\/\/.*\n/gm, '')
-    const ajax  = code(projeterBlocs(AJAX_SRC, RIEN))
-    const types = code(projeterBlocs(TYPES_SRC, RIEN))
-    assert.ok(!/_mjs_ajax =|options\.type/.test(ajax) && !MARQUES.test(AJAX_SRC.replace(/^[ \t]*\/\/ <\/?(?:types-ajax|ajax-appel)>\n/gm, '')))
-    assert.ok(!/_mjs_z|_mjs_tstrict|TypeError|sendBeacon|_mjs_tonErr|_mjsTHard|µ\.types/.test(types) && !MARQUES.test(projeterBlocs(TYPES_SRC, RIEN)))
+    const ajax  = code(projectBlocks(AJAX_SRC, RIEN))
+    const types = code(projectBlocks(TYPES_SRC, RIEN))
+    assert.ok(!/_mjs_ajax =|options\.type/.test(ajax) && !MARQUES.test(AJAX_SRC.replace(/^[ \t]*\/\/ <\/?(?:types-ajax|ajax-call)>\n/gm, '')))
+    assert.ok(!/_mjs_z|_mjs_tstrict|TypeError|sendBeacon|_mjs_userTypeError|_mjsTHard|µ\.types/.test(types) && !MARQUES.test(projectBlocks(TYPES_SRC, RIEN)))
     assert.match(types, /^ {2}if \(n === void 0 \|\| !_mjsTDev\(\)\) return n;$/m)
-    assert.ok(!/sendBeacon|_mjsTSignal/.test(code(projeterBlocs(TAJAX_SRC, { ...RIEN, 'types-dur': true }))))
+    assert.ok(!/sendBeacon|_mjsTSignal/.test(code(projectBlocks(TAJAX_SRC, { ...RIEN, 'types-dur': true }))))
     const µ: any = { warn() {}, _mjs_toRaw: (x: any) => x, _mjs_interpolatorSet: new WeakSet(), _mjs_storeRaw: {} }
     poserMessages(µ)
     new Function('µ', types)(µ)

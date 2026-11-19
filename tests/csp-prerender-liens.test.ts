@@ -127,11 +127,11 @@ describe('csp: true × prérendu — aucune feuille en ligne dans le fragment', 
     const fragment = build(root)
     assert.ok(!/<style[\s>]/.test(fragment), `aucun <style> en ligne attendu, obtenu :\n${fragment}`)
     // le cœur de ce projet embarque le thème : chaque racine d'ombre porte aussi sa feuille (liée), écartée du décompte
-    const href = feuilles(fragment).filter(h => !/partagee-theme/.test(h))
+    const href = feuilles(fragment).filter(h => !/shared-theme/.test(h))
     // la racine déclare `:css="une deux"` : ses deux feuilles partagées partent elles aussi en `<link>`,
     // avant sa feuille propre ; la vignette légère n'en adopte pas
     assert.equal(href.length, 5, `deux feuilles partagées + une feuille par composant rendu (racine + carte à ombre + vignette légère), obtenues : ${href.join(', ')}`)
-    assert.ok(/partagee-une/.test(href[0]) && /partagee-deux/.test(href[1]), `les feuilles partagées viennent d'abord, dans l'ordre déclaré, obtenues : ${href.join(', ')}`)
+    assert.ok(/shared-une/.test(href[0]) && /shared-deux/.test(href[1]), `les feuilles partagées viennent d'abord, dans l'ordre déclaré, obtenues : ${href.join(', ')}`)
     for (const h of href) {
       assert.match(h, /^\/dist\/mjs_ssr_style_[a-z0-9-]+-[a-f0-9]{8}\.css$/, `chaque feuille est un fichier haché du dossier de sortie, obtenue : ${h}`)
       assert.ok(existsSync(join(root, 'dist', h.slice('/dist/'.length))), `le fichier visé par ${h} doit exister APRÈS le build (purge des orphelins comprise)`)
@@ -143,7 +143,7 @@ describe('csp: true × prérendu — aucune feuille en ligne dans le fragment', 
     const fragment = build(root)
     assert.ok(!/<style[\s>]/.test(fragment), `aucun <style> en ligne attendu, obtenu :\n${fragment}`)
     assert.match(fragment, /<mjs-app-home[^>]*\smjs-light[^>]*>/, 'la racine doit bien être rendue légère')
-    const href = feuilles(fragment).filter(h => !/partagee-theme/.test(h))
+    const href = feuilles(fragment).filter(h => !/shared-theme/.test(h))
     assert.equal(href.length, 3, `une feuille par composant rendu, obtenues : ${href.join(', ')}`)
     for (const h of href) assert.ok(existsSync(join(root, 'dist', h.slice('/dist/'.length))), `le fichier visé par ${h} doit exister après le build`)
   })

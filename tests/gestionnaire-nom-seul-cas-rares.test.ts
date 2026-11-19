@@ -1,8 +1,9 @@
 // `@click=nom` dans les cas rares : la ligne citée reste celle du fichier (sur `<@window>`, un événement écrit après un autre dont
 // il est le début, `@scroll` après `@scrollend` ; le texte `@keydown` dans un attribut précédent ; un commentaire qui cite une
 // balise du langage dans un `<@failed>` ; un `<@element>` écrit sur plusieurs lignes) ; garder ces lignes ne change aucune
-// sortie (`<textarea>`, `<title>`, valeur d'attribut, `<@head>`, fallback d'un `<@failed>` : la sortie est celle du même
-// gabarit sans le commentaire) ; dans un `<@failed>`, `@click=@nom` appelle la méthode avec le composant pour `this` ; un mot du
+// sortie (`<@head>`, fallback d'un `<@failed>` : la sortie est celle du même gabarit sans le commentaire) ; dans un `<textarea>`
+// ou un `<title>`, ce commentaire est un texte, gardé tel qu'écrit ; dans une valeur d'attribut, un `<!-- … -->` qui cite une balise n'est pas un commentaire (chapitre 2, « Les
+// commentaires ») : la valeur sort telle qu'écrite ; dans un `<@failed>`, `@click=@nom` appelle la méthode avec le composant pour `this` ; un mot du
 // langage, une valeur écrite comme un nom et une fonction du navigateur qui lève quand on l'appelle avec l'événement sont
 // refusés à la construction, avec la bonne écriture
 
@@ -76,9 +77,6 @@ describe('gestionnaire fait d\'un nom seul : cas rares', () => {
 
   describe('garder les lignes ne change aucune sortie : celle du même gabarit sans le commentaire', () => {
     const cas: Array<[string, string, string]> = [
-      ['<textarea>', `${S}<textarea>avant`, `après</textarea>\n<p>{$n}</p>\n`],
-      ['<title>', `${S}<title>t`, `u</title>\n<p>{$n}</p>\n`],
-      ['valeur d\'attribut', `${S}<div title="a`, `c">{$n}</div>\n`],
       ['<@head>', `${S}<@head>\n<title>x</title>\n`, `\n<meta name="a">\n</@head>\n<p>{$n}</p>\n`],
       ['fallback d\'un <@failed>', `${S}<@failed err reset>\n<p>x</p>\n`, `\n<button @click=@k>R</button>\n</@failed>\n<p>{$n}</p>\n`],
     ]
@@ -87,6 +85,18 @@ describe('gestionnaire fait d\'un nom seul : cas rares', () => {
         assert.equal(await sortie(`${avant}<!-- voir\n<@head>\n-->${apres}`), await sortie(`${avant}${apres}`))
       })
     }
+  })
+
+  it('<textarea>, <title> : le commentaire qui cite une balise y est un texte, gardé tel qu\'écrit (chapitre 2, « Les commentaires »)', async () => {
+    assert.ok((await sortie(`${S}<textarea>avant<!-- voir\n<@head>\n-->après</textarea>\n<p>{$n}</p>\n`)).includes('<textarea>avant<!-- voir\\n<@head>\\n-->après</textarea>'))
+    assert.ok((await sortie(`${S}<title>t<!-- voir\n<@head>\n-->u</title>\n<p>{$n}</p>\n`)).includes('<title>t<!-- voir\\n<@head>\\n-->u</title>'))
+  })
+
+  it('valeur d\'attribut : un `<!-- … -->` qui cite une balise n\'y est pas un commentaire, la valeur sort telle qu\'écrite, sans caractère NUL', async () => {
+    const out = await sortie(`${S}<div title="a<!-- voir\n<@head>\n-->c">{$n}</div>\n`)
+    // la valeur du gabarit, retours à la ligne compris (écrits \n dans la chaîne du code)
+    assert.ok(out.includes('<div title=\'a<!-- voir\\n<@head>\\n-->c\'>'), out.slice(out.indexOf('_mjs_cloneTpl'), out.indexOf('_mjs_cloneTpl') + 80))
+    assert.ok(!out.includes(String.fromCharCode(0)), 'caractère NUL dans le code')
   })
 
   it('<@failed> : @click=@k et @click={@k} appellent la méthode avec le composant pour this', async () => {

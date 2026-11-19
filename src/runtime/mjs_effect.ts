@@ -32,17 +32,17 @@
 µ.effect = function(fn, precomputedVars) {
   var comp, fnStr, key, staticVars, rxCache;
   comp = µ.activeComponent;
-  // <reffet-racine>
+  // <reffet-root>
   // pendant une racine (`µeffect.root`, plus bas) : le reffet est à elle
-  if (_mjsRacine) return _mjsRacineAdopte(_mjsRacine, fn, precomputedVars);
-  if (_mjsRacineC) comp = _mjsRacineC;
-  // </reffet-racine>
-  // <reffet-magasin>
+  if (_mjsRoot) return _mjsAdoptedRoot(_mjsRoot, fn, precomputedVars);
+  if (_mjsRootC) comp = _mjsRootC;
+  // </reffet-root>
+  // <reffet-store>
   // premier niveau d'un module (fichier d'un magasin compris), pendant qu'il s'exécute : le reffet appartient au module (plus bas). Le
   // corps d'un reffet de module (son abonné, `_mjs_mag`) n'est plus ce premier niveau : pas de propriétaire, refusé comme ailleurs
   if (comp && comp._mjs_mag) comp = null;
-  else if (!comp && _mjsMagasin) return _mjsReffetMagasin(_mjsMagasin, fn, precomputedVars);
-  // </reffet-magasin>
+  else if (!comp && _mjsStore) return _mjsReffetStore(_mjsStore, fn, precomputedVars);
+  // </reffet-store>
   if (!comp) {
     return µ.warn(µ._mjs_msg('effectInit', null, 'µeffect s\'écrit au premier niveau du <script> d\'un composant, ou au premier niveau d\'un module (fichier .civet ou .coffee, fichier d\'un magasin compris) : dans une fonction appelée plus tard, il n\'a pas de propriétaire et ne tourne pas. Écrivez-le au premier niveau, et faites-lui lire ce qui doit le relancer ; pour un reffet lancé à la demande (à l\'ouverture d\'un panneau, par exemple), écrivez-le dans µeffect.root -> …, qui rend la fonction qui l\'arrête.'));
   }
@@ -102,9 +102,9 @@
     fn,
     cleanup: null
   };
-  // <reffet-avant>
+  // <reffet-before>
   if (_mjsBefore) rec.before = comp._mjs_before = 1;
-  // </reffet-avant>
+  // </reffet-before>
   // graphe des signaux (mjs_signals.ts, toujours joint avec un reffet) : le reffet est un nœud mené par la passe de son composant, qui
   // le rejoue quand une variable ou une clé du magasin lue à son dernier passage a vraiment changé (lectures notées par le compilateur,
   // dans le reffet et les fonctions qu'il appelle ; celles du magasin par `µ.store`, mjs_store_globals.ts). Le relevé de la construction
@@ -112,10 +112,16 @@
   // il sert seul tant que le reffet n'a rien noté (code écrit à la main, lecture par une clé calculée `$[k]`)
   if (µ._mjs_sigHost) {
     rec.n   = µ._mjs_sigHost(comp, rec.before, _mjsEffWake);
-    rec.res = _mjsHorsGraphe(staticVars, comp._mjs_computedDeps, rec);
+    rec.res = _mjsOutsideGraph(staticVars, comp._mjs_computedDeps, rec);
     rec.fn  = function() {
       return µ._mjs_sigRunIn(rec.n, fn, this);
     };
+    // <reffets-state>
+    // doute dit par le relevé de la construction (3e argument : le code du reffet peut lire un état partagé après son passage, ou par un
+    // chemin que le passage ne note pas, generator/effect-deps.ts), ou reffet sans relevé (écrit à la main) : il passe à chaque rendu
+    // demandé par un état partagé, comme tous le faisaient (_mjsUGo, mjs_element.ts)
+    rec.d = precomputedVars == null || arguments[2] ? 1 : 0;
+    // </reffets-state>
   }
   comp._mjs_effects.push(rec);
   // rendue à l'appelant : retire le reffet. Le tableau est remplacé, jamais modifié en place : un passage en cours
@@ -144,7 +150,7 @@ function _mjsEffWake(n) {
 // reffet écrit lui-même pendant son passage (`$$x!` : seule une écriture faite hors de tout reffet le relance ; le graphe ne la note
 // pas, `bang`), variable ou clé lue après coup (`~x`, `~$$x` : après un `await`, dans un rappel, une minuterie, une promesse ; le graphe
 // ne voit que le passage), avec les racines d'une valeur dérivée
-function _mjsHorsGraphe(sv, cdeps, rec) {
+function _mjsOutsideGraph(sv, cdeps, rec) {
   var res = [], i, d, c, r;
   for (i = 0; i < sv.length; i++) {
     d = sv[i];
@@ -165,7 +171,7 @@ function _mjsHorsGraphe(sv, cdeps, rec) {
   }
   return res;
 }
-// <reffet-avant>
+// <reffet-before>
 
 // `µeffect.before ->` (sucre universel : `µ.effect.before`) : le reffet d'avant l'écran. Même enregistrement que `µ.effect`, marqué
 // `before` : le cœur le joue juste avant les blocs et les liaisons de son composant (`_mjs_runBefore`, mjs_element.ts), jamais avec
@@ -173,11 +179,16 @@ function _mjsHorsGraphe(sv, cdeps, rec) {
 var _mjsBefore = 0;
 µ.effect.before = function(fn, precomputedVars) {
   _mjsBefore = 1;
-  try { return µ.effect(fn, precomputedVars); }
+  // <reffets-state>
+  try { return µ.effect(fn, precomputedVars, arguments[2]); }
+  // </reffets-state>
+  // <no-reffets-state>
+  // try { return µ.effect(fn, precomputedVars); }
+  // </no-reffets-state>
   finally { _mjsBefore = 0; }
 };
-// </reffet-avant>
-// <reffet-magasin>
+// </reffet-before>
+// <reffet-store>
 
 // REFFET D'UN MODULE — `µeffect` au premier niveau d'un module (fichier .civet ou .coffee, fichier qui déclare un
 // magasin compris, `<script module>` d'un composant) : le compilateur encadre ce code de `µ._mjs_magOpen(nom)` et `µ._mjs_magClose()`
@@ -195,43 +206,43 @@ var _mjsBefore = 0;
 // - un module ne finit pas pendant la vie de la page : seul son fichier réexécuté (rechargement à chaud) nettoie d'abord les
 //   reffets de sa vie d'avant (nettoyage joué, abonnements défaits), et les racines ouvertes à son premier niveau ; un `µStore` créé
 //   à son premier niveau arrête ses reffets quand on le jette (`destroy()`, mjs_store.ts)
-var _mjsMagasin = null;
+var _mjsStore = null;
 µ._mjs_storeOwners ||= new Map();
 µ._mjs_magOpen = function(id) {
-  var avant = µ._mjs_storeOwners.get(id), m = { id: id, effs: [] };
-  if (avant) avant.effs.forEach(function(s) { s.stop(); });
-  µ._mjs_storeOwners.set(id, _mjsMagasin = m);
+  var before = µ._mjs_storeOwners.get(id), m = { id: id, effs: [] };
+  if (before) before.effs.forEach(function(s) { s.stop(); });
+  µ._mjs_storeOwners.set(id, _mjsStore = m);
   // un fichier qui lève avant sa fin n'atteint pas `µ._mjs_magClose()` : fermé quand même à la fin de la tâche en cours, un reffet
   // écrit ensuite n'y est jamais adopté
   queueMicrotask(function() {
-    if (_mjsMagasin === m) _mjsMagasin = null;
+    if (_mjsStore === m) _mjsStore = null;
   });
 };
 µ._mjs_magClose = function() {
-  _mjsMagasin = null;
+  _mjsStore = null;
 };
 
 // `deps` : liste du compilateur (generator/effect-deps.ts) ; seules ses clés `$$x` servent, abonnées une fois pour toutes —
 // µ.state et µStore notent, eux, chaque lecture du passage
-function _mjsReffetMagasin(m, fn, deps) {
-  var prevu = false, rafale = 0, tours = 0, cles = [], ab = null, s;
-  if (deps) for (var i = 0; i < deps.length; i++) if (deps[i].charCodeAt(0) === 36 && deps[i].charCodeAt(1) === 36) cles.push(deps[i].slice(2).replace(/!$/, ''));
+function _mjsReffetStore(m, fn, deps) {
+  var planned = false, burst = 0, rounds = 0, keys = [], ab = null, s;
+  if (deps) for (var i = 0; i < deps.length; i++) if (deps[i].charCodeAt(0) === 36 && deps[i].charCodeAt(1) === 36) keys.push(deps[i].slice(2).replace(/!$/, ''));
   // les abonnements d'un passage, que porte son abonné : défaits quand un passage suivant réussit, ou quand le reffet est retiré
-  function desabonne(o) {
+  function unsubscribe(o) {
     if (!o) return;
     if (o._mjs_store_unsubs) o._mjs_store_unsubs.forEach(function(f) { f(); });
     if (o._mjs_univ_targets) µ._mjs_cleanupUniversalDeps(o);
   }
-  function passe() {
+  function pass() {
     var c = s.cleanup, e = µ._mjs_mtT ||= setTimeout(function() { µ._mjs_mtT = 0; }), ok = false, o;
-    prevu = false;
+    planned = false;
     if (!s.fn) return;
-    if (rafale !== e) {
-      rafale = e;
-      tours  = 0;
+    if (burst !== e) {
+      burst = e;
+      rounds = 0;
     }
-    if (++tours > 10000) {
-      if (tours === 10001) µ.warn(µ._mjs_msg('elLoop', { tag: m.id }, 'Boucle réactive détectée sur <{tag}> : plus de 10 000 rendus dans la même rafale de microtasks. Un effet mute probablement sa propre dépendance ($x = $x + … dans un µeffect ?). Effets suspendus pour garder la page vivante.'));
+    if (++rounds > 10000) {
+      if (rounds === 10001) µ.warn(µ._mjs_msg('elLoop', { tag: m.id }, 'Boucle réactive détectée sur <{tag}> : plus de 10 000 rendus dans la même rafale de microtasks. Un effet mute probablement sa propre dépendance ($x = $x + … dans un µeffect ?). Effets suspendus pour garder la page vivante.'));
       return;
     }
     s.cleanup = null;
@@ -256,37 +267,37 @@ function _mjsReffetMagasin(m, fn, deps) {
     // passage réussi : ses lectures remplacent celles d'avant. Passage qui lève : il garde les abonnements de son dernier passage réussi
     // (s'il n'en a eu aucun, ce qu'il a lu avant l'erreur) et repart au changement suivant
     if (s.fn && (ok || !ab)) {
-      desabonne(ab);
+      unsubscribe(ab);
       ab = o;
     }
-    else desabonne(o);
+    else unsubscribe(o);
   }
   s = {
     fn: fn,
     cleanup: null,
     _mjs_invalidate: function() {
-      if (!s.fn || µ._mjs_magW === s || prevu) return;
-      prevu = true;
-      queueMicrotask(passe);
+      if (!s.fn || µ._mjs_magW === s || planned) return;
+      planned = true;
+      queueMicrotask(pass);
     },
     // rendue à l'appelant, jouée aussi quand le fichier repart : le nettoyage joue une fois, un deuxième appel ne fait rien
     stop: function() {
       var c = s.cleanup;
       if (!s.fn) return;
       s.fn = s.cleanup = null;
-      desabonne(ab);
+      unsubscribe(ab);
       ab = null;
-      if (cles.length) µ._mjs_storeUnsubscribe(s);
+      if (keys.length) µ._mjs_storeUnsubscribe(s);
       if (c) c.call(s);
     }
   };
   m.effs.push(s);
-  if (cles.length) µ._mjs_storeSubscribe(s, cles);
+  if (keys.length) µ._mjs_storeSubscribe(s, keys);
   s._mjs_invalidate();
   return s.stop;
 }
-// </reffet-magasin>
-// <reffet-racine>
+// </reffet-store>
+// <reffet-root>
 
 // RACINE — `µeffect.root -> …` (sucre universel : `µ.effect.root`) : les reffets écrits pendant `fn`, dans une fonction qu'elle appelle
 // comprise, sont à la racine ; la fonction rendue les arrête tous (nettoyage joué une fois ; un deuxième appel ne fait rien) :
@@ -294,12 +305,12 @@ function _mjsReffetMagasin(m, fn, deps) {
 //   generator/effect-deps.ts) : ses reffets sont ceux du composant, menés par sa passe, et finissent avec lui ; nés après son montage,
 //   leur premier passage part en microtâche
 // - ailleurs (module, fichier d'un magasin, `<script module>`, fichier `.js` importé), chacun est mené comme le reffet d'un module
-//   (blocs `<reffet-magasin>`, que le cœur de production ne garde qu'avec une telle racine ou un reffet de module, bundler/features.ts)
+//   (blocs `<reffet-store>`, que le cœur de production ne garde qu'avec une telle racine ou un reffet de module, bundler/features.ts)
 // - une racine ouverte pendant une autre s'arrête avec elle ; ouverte au premier niveau d'un module, avec la vie de ce module
 // - côté serveur, `fn` passe et aucun de ses reffets ne tourne
-var _mjsRacine = null, _mjsRacineC = null;
+var _mjsRoot = null, _mjsRootC = null;
 µ.effect.root = function(fn, comp) {
-  var avant = _mjsRacine, r = { id: 'µeffect.root', effs: [], c: comp || (avant ? avant.c : null), neufs: null }, off;
+  var before = _mjsRoot, r = { id: 'µeffect.root', effs: [], c: comp || (before ? before.c : null), fresh: null }, off;
   off = r.stop = function() {
     var l = r.effs, i;
     r.effs = [];
@@ -309,50 +320,54 @@ var _mjsRacine = null, _mjsRacineC = null;
   // (mjs_every.ts) : rendue par lui (`@click={µeffect.root -> …}`, `@click={@ouvrir()}`), le routeur ne l'appelle pas et la racine
   // reste ouverte ; rangée puis rendue par un clic suivant, elle l'arrête
   off._mjs_born = µ._mjs_evPass;
-  if (avant) avant.effs.push(r);
-  // <reffet-magasin>
-  else if (_mjsMagasin) _mjsMagasin.effs.push(r);
-  // </reffet-magasin>
-  _mjsRacine = r;
+  if (before) before.effs.push(r);
+  // <reffet-store>
+  else if (_mjsStore) _mjsStore.effs.push(r);
+  // </reffet-store>
+  _mjsRoot = r;
   try {
     fn();
   }
   finally {
-    _mjsRacine = avant;
+    _mjsRoot = before;
   }
   // nés pendant le montage du composant (son `<script>`, son premier rendu), ils passent avec ses autres reffets
-  if (r.neufs && !r.c._mjs_initial_render) queueMicrotask(_mjsRacinePremier.bind(null, r.c, r.neufs));
-  r.neufs = null;
+  if (r.fresh && !r.c._mjs_initial_render) queueMicrotask(_mjsRootFirst.bind(null, r.c, r.fresh));
+  r.fresh = null;
   return r.stop;
 };
 
 // un reffet écrit pendant la racine `r` : celui de son composant (enregistré comme au premier niveau du `<script>`), sinon mené comme le
 // reffet d'un module
-function _mjsRacineAdopte(r, fn, deps) {
-  var c = r.c, arret;
+function _mjsAdoptedRoot(r, fn, deps) {
+  var c = r.c, stop;
   if (µ._isServer || µ.server === true) return function() {};
-  // <reffet-magasin>
-  if (!c) return _mjsReffetMagasin(r, fn, deps);
-  // </reffet-magasin>
-  _mjsRacine  = null;
-  _mjsRacineC = c;
+  // <reffet-store>
+  if (!c) return _mjsReffetStore(r, fn, deps);
+  // </reffet-store>
+  _mjsRoot  = null;
+  _mjsRootC = c;
   try {
-    arret = µ.effect(fn, deps);
+    stop = µ.effect(fn, deps);
   }
   finally {
-    _mjsRacine  = r;
-    _mjsRacineC = null;
+    _mjsRoot  = r;
+    _mjsRootC = null;
   }
-  r.effs.push({ stop: arret });
-  (r.neufs ||= []).push(c._mjs_effects[c._mjs_effects.length - 1]);
-  return arret;
+  r.effs.push({ stop: stop });
+  (r.fresh ||= []).push(c._mjs_effects[c._mjs_effects.length - 1]);
+  // <reffets-state>
+  // reffet d'une racine : le doute de son relevé ne passe pas par ici, il passe à chaque rendu demandé par un état partagé
+  c._mjs_effects[c._mjs_effects.length - 1].d = 1;
+  // </reffets-state>
+  return stop;
 }
 
 // premier passage des reffets d'une racine dans un composant monté, ceux d'avant l'écran d'abord, comme une passe du composant
 // (_mjs_runEffectsV2, mjs_element.ts) ; un reffet qu'une passe a déjà pris (sources notées), retiré, ou d'un composant qui n'est pas
 // dans la page attend sa passe. Le composant est le composant actif le temps du passage, comme dans sa passe : un `µStore` et un `µ$$x`
 // lus l'abonnent (mjs_store.ts, mjs_runes.ts), le reffet repart à leur écriture comme un reffet du premier niveau
-function _mjsRacinePremier(c, l) {
+function _mjsRootFirst(c, l) {
   var prev = µ._mjs_effRun, ie = µ._mjs_inEffect, i, e, res;
   if (!c._mjs_is_mounted || c._mjs_has_crashed) return;
   l.sort(function(x, y) { return (y.before | 0) - (x.before | 0); });
@@ -380,24 +395,24 @@ function _mjsRacinePremier(c, l) {
     µ._mjs_inEffect   = ie;
   }
 }
-// <magasin-fin>
+// <store-fine-grained>
 
 // propriétaire d'un `µStore` créé maintenant (mjs_store.ts), dont les reffets s'arrêtent quand on le jette : la racine en cours, dans un
 // cœur sans reffet de module (le bloc suivant, gardé avec lui, pose celui qui dit aussi le module)
-µ._mjs_proprio = function() {
-  return _mjsRacine;
+µ._mjs_owner = function() {
+  return _mjsRoot;
 };
-// </magasin-fin>
-// </reffet-racine>
-// <reffet-magasin>
-// <magasin-fin>
+// </store-fine-grained>
+// </reffet-root>
+// <reffet-store>
+// <store-fine-grained>
 
 // propriétaire d'un `µStore` créé maintenant (mjs_store.ts), dont les reffets s'arrêtent quand on le jette : la racine en cours,
 // sinon le module dont le premier niveau s'exécute ; la racine déclarée ici aussi pour un cœur qui n'en a pas (bloc retiré)
 // eslint-disable-next-line no-redeclare
-var _mjsRacine;
-µ._mjs_proprio = function() {
-  return _mjsRacine || _mjsMagasin || null;
+var _mjsRoot;
+µ._mjs_owner = function() {
+  return _mjsRoot || _mjsStore || null;
 };
-// </magasin-fin>
-// </reffet-magasin>
+// </store-fine-grained>
+// </reffet-store>

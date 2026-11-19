@@ -103,7 +103,7 @@ describe('µload : µ échappé du code compilé (script TypeScript) et envelopp
       assert.deepEqual(stats.errors.map((e: any) => e.message), [])
       const lire = (d: string): string => readdirSync(d, { withFileTypes: true }).map((f) => f.isDirectory() ? lire(join(d, f.name)) : (f.name.endsWith('.js') ? readFileSync(join(d, f.name), 'utf-8') : '')).join('\n')
       const js   = lire(out) + (env === 'dev' ? lire(racine) : '')
-      assert.match(js, /_mjsLdEntrees|MjsLoad|_mjs_ldG|\.load=function/, 'module du magasin chargé absent')
+      assert.match(js, /_mjsLdEntries|MjsLoad|_mjs_ldG|\.load=function/, 'module du magasin chargé absent')
     })
   }
 })

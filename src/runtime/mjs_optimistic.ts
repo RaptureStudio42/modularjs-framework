@@ -96,7 +96,7 @@ function _mjoptRun(state, apply) {
 
 // réassigne le VRAI store (réactif) pour qu'il reflète `etat` — clé par clé, clés absentes
 // supprimées, sautée si inchangée (cf. tête de fichier).
-function _mjoptPublier(store, state) {
+function _mjoptPublish(store, state) {
   var k;
   for (k in store) { if (!_mjoptOwn.call(state, k)) { delete store[k]; } }
   for (k in state) { if (!_mjoptEq(store[k], state[k])) { store[k] = state[k]; } }
@@ -120,7 +120,7 @@ function _mjoptQueueFor(store) {
 // ci-dessous comme les autres, jamais perdue ni dupliquée.
 // une entrée dont l'`apply` (ou le `after`) lève sort de la file, son erreur notée (`entry.error`), et
 // le rejeu reprend sans elle : une entrée fautive ne bloque jamais la store ni les appels suivants
-function _mjoptRejouer(store, qs) {
+function _mjoptReplay(store, qs) {
   var entry;
   while (qs.entries.length && qs.entries[0].status === 'ok') {
     entry = qs.entries.shift();
@@ -129,9 +129,9 @@ function _mjoptRejouer(store, qs) {
   var state = _mjoptDeepClone(qs.base), i;
   for (i = 0; i < qs.entries.length; i++) {
     try { state = _mjoptRun(state, qs.entries[i].apply); }
-    catch (e) { qs.entries[i].error = e; qs.entries.splice(i, 1); return _mjoptRejouer(store, qs); }
+    catch (e) { qs.entries[i].error = e; qs.entries.splice(i, 1); return _mjoptReplay(store, qs); }
   }
-  _mjoptPublier(store, state);
+  _mjoptPublish(store, state);
 }
 
 // résolution d'une entrée — SUCCÈS : marquée 'ok' (jamais retirée directement, cf. compaction de
@@ -145,7 +145,7 @@ function _mjoptSettle(store, qs, entry, ok) {
   var idx = qs.entries.indexOf(entry);
   if (idx === -1) { return; }   // déjà sortie de la file : son apply a levé
   if (!ok) { qs.entries.splice(idx, 1); }
-  _mjoptRejouer(store, qs);
+  _mjoptReplay(store, qs);
 }
 
 // --- entrée publique -----------------------------------------------------------------------------
@@ -163,7 +163,7 @@ function _mjoptSettle(store, qs, entry, ok) {
   qs.entries.push(entry);
   // les mises à jour en vol, toutes stores confondues : *offline dit combien attendent le réseau
   µ._mjs_optPending = (µ._mjs_optPending || 0) + 1;
-  _mjoptRejouer(store, qs);   // application locale IMMÉDIATE, avant tout aller-retour réseau
+  _mjoptReplay(store, qs);   // application locale IMMÉDIATE, avant tout aller-retour réseau
   // `apply` qui lève : rien de publié ni d'envoyé, l'entrée est déjà sortie de la file
   if (entry.error) {
     _mjoptSettle(store, qs, entry, false);

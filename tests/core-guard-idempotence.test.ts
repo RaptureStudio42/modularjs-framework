@@ -47,7 +47,7 @@ describe('cœur MJS-WS : garde anti-répétition', () => {
     for (let i = 0; i < 60; i++) app.broadcast('spam', { i })
 
     assert.equal(closeCalls, 1, 'une SEULE fermeture physique demandée malgré 60 diffusions synchrones')
-    assert.equal(app.stats().garde.kicksEngorgement, 1, 'un SEUL kick compté (pas 10)')
+    assert.equal(app.stats().guard.kicksBackpressure, 1, 'un SEUL kick compté (pas 10)')
 
     ws.close()
     await tick(20)   // laisse la fermeture async se terminer avant stop()
@@ -66,14 +66,14 @@ describe('cœur MJS-WS : garde anti-répétition', () => {
     // coupure réseau (pas de µ:bye) — le serveur doit parquer le client (resume actif)
     ws.close(1006, 'coupure simulée')
     await tick(30)
-    assert.equal(app.stats().connexions.parquees, 1, 'le client doit être PARQUÉ (pas purgé) après la coupure')
+    assert.equal(app.stats().connections.parked, 1, 'le client doit être PARQUÉ (pas purgé) après la coupure')
 
     // largement plus que l'échéance du jeton (120ms) et plusieurs cycles de sweep (50ms), bien
     // moins que la grâce (5000ms) — AVANT le fix, sweepExpiredTokens re-« expirait » ce parqué à
     // CHAQUE cycle (state reste 'authenticated' pendant tout le parcage, cf. cleanupClient)
     await tick(400)
 
-    assert.equal(app.stats().garde.expirationsJeton, 0, 'un PARQUÉ n\'a plus de connexion physique à expirer : jamais compté')
+    assert.equal(app.stats().guard.tokenExpired, 0, 'un PARQUÉ n\'a plus de connexion physique à expirer : jamais compté')
 
     await app.stop()
   })
@@ -93,7 +93,7 @@ describe('cœur MJS-WS : garde anti-répétition', () => {
     await tick(30)
 
     assert.equal(closeCalls, 1, 'une SEULE fermeture physique demandée malgré la rafale')
-    assert.equal(app.stats().garde.kicksDebit, 1, 'un SEUL kick débit compté')
+    assert.equal(app.stats().guard.kicksRate, 1, 'un SEUL kick débit compté')
 
     await app.stop()
   })

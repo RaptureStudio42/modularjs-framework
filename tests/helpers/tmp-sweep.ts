@@ -165,7 +165,9 @@ export const mochaHooks = {
   },
   beforeEach: closeFinishedFiles,
   afterEach:  countFinishedTest,
-  afterAll() {
+  afterAll(this: Mocha.Context) {
+    // le ménage des dossiers temporaires de la suite peut passer les 2 s que mocha laisse à un crochet, sous la charge
+    this.timeout(120000)
     flushTestTrace(true)
     const engines = engineFilterReport()
     if (engines) console.log(engines)

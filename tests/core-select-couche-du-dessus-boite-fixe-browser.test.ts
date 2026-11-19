@@ -9,8 +9,8 @@
 // avant la liste, qui le garde ensuite pour elle ; dans la modale, Échap ferme la liste et pas la modale, le piège à Tab tient, un clic
 // dans la modale hors de la liste ferme la liste seule, la modale qui se ferme ferme la liste. Une liste détruite ouverte quitte le
 // registre des menus ouverts (`µ._mjs_menus`, lu en développement : la production raccourcit son nom). Hors de ces boîtes, rien ne
-// change : la liste ancrée par le CSS ; sans ancrage CSS (le test de fonction forcé à faux), celle de la page reste dans sa balise et
-// celle du panneau fixe passe dans la couche du dessus. Aucune erreur ni dans la page ni dans la console. Chromium, Firefox et WebKit
+// change : la liste ancrée par le CSS ; sans ancrage CSS (le test de fonction forcé à faux), celle de la page passe aussi dans la
+// couche du dessus, placée par le script, comme celle du panneau fixe. Aucune erreur ni dans la page ni dans la console. Chromium, Firefox et WebKit
 // réels, construction de développement et de production ; en production, `µ` n'est pas sur `window` : la scène l'y pose pour le test
 
 import assert from 'node:assert/strict'
@@ -451,12 +451,12 @@ for (const nom of MOTEURS) for (const mode of MODES) describe(`<@@select> dans u
     assert.ok(z.dessus && contre(z, 5, 2), `sous le zoom, contre son bouton (4 px × 1,25) : ${JSON.stringify(z)}`)
   })
 
-  it('sans ancrage CSS : la liste de la page dans sa balise, comme avant ; celle du panneau fixe dans la couche du dessus, placée par le script', async function () {
+  it('sans ancrage CSS : la liste de la page, comme celle du panneau fixe, dans la couche du dessus, placée par le script contre son bouton', async function () {
     await page.close()
     await charger(SANS_ANCRAGE)
     await ouvrir(`__q('.s-page')`)
     const l = await lire(`return __liste(__q('.s-page'))`)
-    assert.ok(!l.dessus && !l.ancree && l.position === 'absolute' && contre(l), `dans sa balise, contre son bouton : ${JSON.stringify(l)}`)
+    assert.ok(l.dessus && !l.ancree && l.position === 'fixed' && contre(l), `couche du dessus, placée par le script : ${JSON.stringify(l)}`)
     await page.keyboard.press('Escape')
     await ouvrir(`__q('.s-panneau')`)
     const p = await lire(`return __liste(__q('.s-panneau'))`)

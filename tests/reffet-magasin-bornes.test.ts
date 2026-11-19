@@ -14,7 +14,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { annotateEffectDeps } from '../src/generator/effect-deps.js'
-import { lintEffectTopLevel, lintEffectAncienNom } from '../src/transpiler/lint.js'
+import { lintEffectTopLevel, lintEffectOldName } from '../src/transpiler/lint.js'
 import { construire, charger } from './helpers/liaison-navigateur.js'
 import type { Cible, Mode } from './helpers/liaison-navigateur.js'
 
@@ -148,7 +148,7 @@ describe('µeffect.before et les bornes du reffet d\'un magasin — compilation 
   it('aucun reste de l\'ancien nom du reffet d\'avant dans le compilateur, le cœur et la doc', function () {
     const anciens = /µeffect\.pre\b|effect\.pre\b|\\s\*pre\\s\*|\\\.pre\)|property\?\.name === 'pre'|effect_pre|EFFECT_PRE|_mjs_pre(?:W|In|Vars)?\b|_mjsPre\b|_mjs_runPre\b/
     // seul le refus de l'ancien nom le cite
-    const restes  = [...fichiers(join(RACINE, 'src')), ...fichiers(join(RACINE, 'docs'))].filter((f) => readFileSync(f, 'utf-8').split('\n').some((l) => !l.includes('rune-effect-pre-renommee') && anciens.test(l)))
+    const restes  = [...fichiers(join(RACINE, 'src')), ...fichiers(join(RACINE, 'docs'))].filter((f) => readFileSync(f, 'utf-8').split('\n').some((l) => !l.includes('rune-effect-pre-renamed') && anciens.test(l)))
     assert.deepEqual(restes.map((f) => f.slice(RACINE.length)), [])
   })
 
@@ -167,11 +167,11 @@ describe('µeffect.before et les bornes du reffet d\'un magasin — compilation 
     const inertes = ['x = "a\n  µeffect.pre b"', 'x = "a #{"µeffect.pre"} b"', 'x = /µeffect.pre/', `x = ${a3}\n  µeffect.pre\n${a3}`, `x = ${q3}\n  #{y} µeffect.pre\n${q3}`, 'x = ///\n  µeffect.pre\n///', '### µeffect.pre ###', '# µeffect.pre', 'x = `a $' + '{"µeffect.pre"} b`', "x = 'a\n  µeffect.pre'"]
     for (const s of inertes) {
       assert.doesNotThrow(() => lintEffectTopLevel(s), `composant : ${s}`)
-      assert.doesNotThrow(() => lintEffectAncienNom(s, 1, 'coffee'), `magasin : ${s}`)
+      assert.doesNotThrow(() => lintEffectOldName(s, 1, 'coffee'), `magasin : ${s}`)
     }
     for (const s of ['µeffect.pre ->\n  $n', 'µ.effect.pre ->\n  $n', 'mjs.effect.pre ->\n  $n', 'x = "a #{µeffect.pre -> 1} b"', 'y = 1 / 2\nµeffect.pre ->\n  $n']) {
       assert.throws(() => lintEffectTopLevel(s), /« µeffect\.before »/, `composant : ${s}`)
-      assert.throws(() => lintEffectAncienNom(s, 1, 'coffee'), /« µeffect\.before »/, `magasin : ${s}`)
+      assert.throws(() => lintEffectOldName(s, 1, 'coffee'), /« µeffect\.before »/, `magasin : ${s}`)
     }
     assert.throws(() => lintEffectTopLevel('µeffect.pre ->\n  $n', true), /« µeffect\.before »/, '<script module>')
   })
@@ -180,9 +180,9 @@ describe('µeffect.before et les bornes du reffet d\'un magasin — compilation 
     for (const f of ['mjs_store.ts', 'mjs_effect.ts']) {
       let dedans = false
       for (const l of readFileSync(join(RACINE, 'src', 'runtime', f), 'utf-8').split('\n')) {
-        if (/^\s*\/\/ <reffet-magasin>$/.test(l)) dedans = true
-        else if (/^\s*\/\/ <\/reffet-magasin>$/.test(l)) dedans = false
-        else if (!dedans && /_mjs_magW|_mjs_auteurs|_mjsMagasin|_mjsReffetMagasin|_mjs_magOpen|_mjs_storeOwners/.test(l)) assert.fail(`${f} : code du reffet d'un magasin hors de son bloc balisé : ${l.trim()}`)
+        if (/^\s*\/\/ <reffet-store>$/.test(l)) dedans = true
+        else if (/^\s*\/\/ <\/reffet-store>$/.test(l)) dedans = false
+        else if (!dedans && /_mjs_magW|_mjs_authors|_mjsStore\b|_mjsReffetStore\b|_mjs_magOpen|_mjs_storeOwners/.test(l)) assert.fail(`${f} : code du reffet d'un magasin hors de son bloc balisé : ${l.trim()}`)
       }
     }
     const prod   = await cible('bundle', SANS, 'mjs-mb-sans')

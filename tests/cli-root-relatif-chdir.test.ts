@@ -1,6 +1,6 @@
-// `mjs ws --root <relatif>` / `mjs serveur --root <relatif>` : cli.ts fait chdir(args.root) puis
+// `mjs ws --root <relatif>` / `mjs server --root <relatif>` : cli.ts fait chdir(args.root) puis
 // repasse args.root TEL QUEL (chaîne relative brute, jamais ré-ancrée) à runWsCommand/
-// runServeurCommand — resolveEntryPath('child', ...) part alors du cwd DÉJÀ déplacé et cherche
+// runServerCommand — resolveEntryPath('child', ...) part alors du cwd DÉJÀ déplacé et cherche
 // <root>/child/child/…, un chemin qui n'existe jamais. Sous-processus RÉEL (cli.ts exécute
 // `run(process.argv)` à son chargement) sur un projet fixture, jamais dans le dépôt.
 
@@ -24,7 +24,7 @@ export default
     app.serve 'ping', pong
 `
 
-const SERVEUR_ENTRY_SKELETON = `export default
+const SERVER_ENTRY_SKELETON = `export default
   setup: (app) ->
     app.game 'morpion',
       seats: 2
@@ -35,10 +35,10 @@ const SERVEUR_ENTRY_SKELETON = `export default
           partie.next()
 `
 
-/** Lance `mjs ws`/`mjs serveur --root <root>` avec le process CLI démarré depuis `cwd` (`--root`
+/** Lance `mjs ws`/`mjs server --root <root>` avec le process CLI démarré depuis `cwd` (`--root`
  *  est résolu relativement à CE cwd, avant le chdir de cli.ts) et attend soit la bannière de
  *  démarrage, soit la sortie du process. Toujours refermé proprement. */
-async function lanceEtAttends(commande: 'ws' | 'serveur', cwd: string, root: string, port: number): Promise<{ sortie: string; demarre: boolean }> {
+async function lanceEtAttends(commande: 'ws' | 'server', cwd: string, root: string, port: number): Promise<{ sortie: string; demarre: boolean }> {
   const enfant = spawn(tsxBin, [cliPath, commande, '--root', root, '--port', String(port)], {
     cwd, stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -61,7 +61,7 @@ async function lanceEtAttends(commande: 'ws' | 'serveur', cwd: string, root: str
   return { sortie, demarre }
 }
 
-describe("cli.ts — '--root' relatif : mjs ws / mjs serveur ne doublent pas le dossier après chdir", function () {
+describe("cli.ts — '--root' relatif : mjs ws / mjs server ne doublent pas le dossier après chdir", function () {
   this.timeout(30000)
 
   it('mjs ws --root <relatif> démarre : entry trouvée à la racine du dossier ciblé, jamais <root>/<root>', async () => {
@@ -77,13 +77,13 @@ describe("cli.ts — '--root' relatif : mjs ws / mjs serveur ne doublent pas le 
     assert.doesNotMatch(sortie, /introuvable/, `BUG confirmé si l'entry est cherchée deux dossiers plus bas (app/app). Sortie :\n${sortie}`)
   })
 
-  it('mjs serveur --root <relatif> démarre : même correctif (chdir unique, root ré-ancré une fois)', async () => {
+  it('mjs server --root <relatif> démarre : même correctif (chdir unique, root ré-ancré une fois)', async () => {
     const parent = mjsTmp('root-relatif-serveur')
     const cible = join(parent, 'app')
     mkdirSync(cible, { recursive: true })
-    writeFileSync(join(cible, 'serveur.server.mjs'), SERVEUR_ENTRY_SKELETON)
-    const { sortie, demarre } = await lanceEtAttends('serveur', parent, 'app', randomPort())
-    assert.ok(demarre, `mjs serveur --root app (cwd=${parent}) doit démarrer (bannière MJS-Server). Sortie :\n${sortie}`)
+    writeFileSync(join(cible, 'game.server.mjs'), SERVER_ENTRY_SKELETON)
+    const { sortie, demarre } = await lanceEtAttends('server', parent, 'app', randomPort())
+    assert.ok(demarre, `mjs server --root app (cwd=${parent}) doit démarrer (bannière MJS-Server). Sortie :\n${sortie}`)
     assert.doesNotMatch(sortie, /introuvable/, `BUG confirmé si l'entry est cherchée deux dossiers plus bas (app/app). Sortie :\n${sortie}`)
   })
 

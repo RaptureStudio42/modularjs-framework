@@ -50,7 +50,7 @@ async function runtimeDeDeveloppement(): Promise<any> {
 // boucle chaude dans un Node à part (drapeaux de V8) : optimisée à la demande, sa trace dit si l'aide y est fondue
 function traceInlining(code: string): string {
   const banc = `
-    const µ = globalThis.µ = { _mjs_rawSet: new WeakSet(), _mjs_tenus: new WeakMap(), warn() {}, _mjs_msg: (k, p, f) => f };
+    const µ = globalThis.µ = { _mjs_rawSet: new WeakSet(), _mjs_holders: new WeakMap(), warn() {}, _mjs_msg: (k, p, f) => f };
     µ._mjs_toRaw = function(o) { return o; };
     µ._mjs_rawIn = function(v) { return v; };
     µ._mjs_bumpEpoch = function() { return 1; };
@@ -83,7 +83,7 @@ describe('écriture profonde : aide fondue dans la boucle qui l\'appelle, envelo
       const aide = sortie.split('\n').filter((l) => l.includes('<SharedFunctionInfo µ._mjs_deepSet>'))
       assert.ok(aide.length > 0, `la trace de V8 ne nomme pas µ._mjs_deepSet (${MOTEUR}) : le format de --trace-turbo-inlining a changé, le test est à mettre à jour — l'aide n'est pas en cause. Début de la trace :\n${sortie.split('\n').slice(0, 15).join('\n')}`)
       const refus = aide.find((l) => /reason: 5\b/.test(l))
-      assert.equal(refus, undefined, `µ._mjs_deepSet dépasse la taille au-dessus de laquelle V8 n'inline plus (--max-inlined-bytecode-size) : sortez de l'aide le code des cas rares (cf. _mjsDeepChemin)\n${refus}`)
+      assert.equal(refus, undefined, `µ._mjs_deepSet dépasse la taille au-dessus de laquelle V8 n'inline plus (--max-inlined-bytecode-size) : sortez de l'aide le code des cas rares (cf. _mjsDeepPath)\n${refus}`)
       assert.ok(aide.some((l) => /^Inlining .* into .*<SharedFunctionInfo boucle>/.test(l)), `V8 ne fond pas µ._mjs_deepSet dans la boucle (${MOTEUR}) :\n${aide.join('\n')}`)
     })
   }

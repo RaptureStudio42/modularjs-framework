@@ -60,8 +60,8 @@ function _mjsFxTravelEase(v) {
       return at((lo + hi) / 2, b[1], b[3]);
     };
   }
-  var nom = typeof v === 'string' ? v.replace(/-(\w)/g, function(_, c) { return c.toUpperCase(); }) : '';
-  if (nom && µ.easing && typeof µ.easing[nom] === 'function') return µ.easing[nom];
+  var name = typeof v === 'string' ? v.replace(/-(\w)/g, function(_, c) { return c.toUpperCase(); }) : '';
+  if (name && µ.easing && typeof µ.easing[name] === 'function') return µ.easing[name];
   return function(t) { return t; };
 }
 

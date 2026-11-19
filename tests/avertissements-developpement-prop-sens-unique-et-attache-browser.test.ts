@@ -18,6 +18,7 @@ import { RUNTIME_LABELS } from '../src/runtime-labels.js'
 import { construire, charger, graves } from './helpers/liaison-navigateur.js'
 import { mjsTmp } from './helpers/tmp.js'
 import type { Cible, Mode } from './helpers/liaison-navigateur.js'
+import { playTogether } from './helpers/engines-together.js'
 
 const ATTACHE = `<script>
   $rows = [1, 2, 3]
@@ -333,7 +334,7 @@ const jouerScenario = async (browser: any, c: Cible, mode: Mode, balise: string,
   }
 }
 
-for (const nav of NAVIGATEURS) for (const mode of MODES_JOUES[nav]) describe(`avertissements du développement : prop à sens unique écrite par l'enfant, :attach qui ne rend pas une fonction (${mode}, ${nav} réel)`, function () {
+for (const nav of NAVIGATEURS) for (const mode of MODES_JOUES[nav]) playTogether(describe(`avertissements du développement : prop à sens unique écrite par l'enfant, :attach qui ne rend pas une fonction (${mode}, ${nav} réel)`, function () {
   this.timeout(180000)
   let browser: any = null
   let present = false
@@ -359,7 +360,7 @@ for (const nav of NAVIGATEURS) for (const mode of MODES_JOUES[nav]) describe(`av
     if (!present) { this.skip(); return }
     await jouerScenario(browser, enAnglais(await cible(mode)), mode, balise, 'en')
   })
-})
+}))
 
 // les fichiers d'une sortie, lus en texte
 const lireTout = (dossier: string): string[] => readdirSync(dossier, { recursive: true }).map(String).filter((f) => /\.(js|json|html)$/.test(f)).map((f) => readFileSync(join(dossier, f), 'utf-8'))

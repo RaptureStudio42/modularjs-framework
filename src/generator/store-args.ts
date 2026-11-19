@@ -496,7 +496,7 @@ export function storeArgsToRawJsLint(clauses: string[], moduleName: string | und
         const key  = `${fn}\0${store}\0${line}`
         if (said.has(key)) return
         said.add(key)
-        const text = typedLine('reactivity', t('generator.magasin-vers-module-js', { moduleName: moduleName ?? '?', ligne: line, fonction: fn, fichier: imported.path, magasin: store, ligneJs: jsLine }), lint)
+        const text = typedLine('reactivity', t('generator.store-to-module-js', { moduleName: moduleName ?? '?', line, fn, file: imported.path, store, jsLine }), lint)
         if (text !== null) printDiagnostic(text, colorsEnabled)
       })
     }

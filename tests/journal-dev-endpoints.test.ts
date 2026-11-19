@@ -102,7 +102,7 @@ describe('POST /__mjs/errors (mjs dev) — étage 2, canal client', () => {
       const res = await fetch(`http://127.0.0.1:${dev.port}/__mjs/errors`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'user-agent': 'sonde-dev/1.0' },
-        body: JSON.stringify({ message: 'client boom (dev)', pile: 'Error: x\n  at y', url: '/page', version: 'deadbeef', source: 'server' }),
+        body: JSON.stringify({ message: 'client boom (dev)', stack: 'Error: x\n  at y', url: '/page', version: 'deadbeef', source: 'server' }),
       })
       assert.equal(res.status, 204)
       const entries = await (await fetch(`http://127.0.0.1:${dev.port}/__mjs/errors.json`)).json()
@@ -134,7 +134,7 @@ describe('POST /__mjs/errors (mjs dev) — étage 2, canal client', () => {
     }
   })
 
-  // NUANCE constatée en éprouvant ce test : `message` et `pile` sont tronqués DEUX fois (ici et
+  // NUANCE constatée en éprouvant ce test : `message` et `stack` sont tronqués DEUX fois (ici et
   // dans journal.ts, MAX_MESSAGE_CHARS/MAX_PILE_CHARS, mêmes plafonds) — retirer la troncature
   // d'ici ne change donc rien pour eux. Ce sont `url`, `version` et `ua` qui portent la garde :
   // journal.ts ne les borne PAS. Sabotage vérifié sur ces trois-là ⇒ ce test devient rouge.
@@ -147,12 +147,12 @@ describe('POST /__mjs/errors (mjs dev) — étage 2, canal client', () => {
       const res = await fetch(`http://127.0.0.1:${dev.port}/__mjs/errors`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'user-agent': 'u'.repeat(400) },
-        body: JSON.stringify({ message: 'm'.repeat(5000), pile: 'p'.repeat(20_000), url: '/' + 'u'.repeat(5000), version: 'v'.repeat(100) }),
+        body: JSON.stringify({ message: 'm'.repeat(5000), stack: 'p'.repeat(20_000), url: '/' + 'u'.repeat(5000), version: 'v'.repeat(100) }),
       })
       assert.equal(res.status, 204)
       const e = dev.journalStore.list()[0] as any
       assert.equal(e.message.length, 2048, 'message tronqué à 2048')
-      assert.equal(e.pile.length,    8192, 'pile tronquée à 8192')
+      assert.equal(e.stack.length,   8192, 'pile tronquée à 8192')
       assert.equal(e.url.length,     2048, 'url tronquée à 2048')
       assert.equal(e.version.length,   32, 'version tronquée à 32')
       assert.equal(e.ua.length,       256, "user-agent tronqué à 256 — il vient de l'en-tête, pas du corps")

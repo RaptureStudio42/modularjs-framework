@@ -1,4 +1,4 @@
-// mjs_interpolate.coffee
+// mjs_interpolate.ts
 var MjsInterpolator;
 
 MjsInterpolator = (function() {

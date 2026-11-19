@@ -17,7 +17,7 @@
   $draw          = true
   $iris          = true
   $iris_corner   = true
-  $volet         = true
+  $cover         = true
   $swipe         = true
   $swipe_angle   = true
   $bars          = true
@@ -130,9 +130,9 @@
     <p data-case="iris_corner" :transition=*iris(top-left, duration: 300ms)>iris depuis un coin</p>
   {end}
 
-  <button id="btn-volet" @click={$volet = not $volet}>volet</button>
-  {if $volet}
-    <p data-case="volet" :transition=*volet(down, duration: 300ms)>volet</p>
+  <button id="btn-cover" @click={$cover = not $cover}>cover</button>
+  {if $cover}
+    <p data-case="cover" :transition=*cover(down, duration: 300ms)>cover</p>
   {end}
 
   <button id="btn-swipe" @click={$swipe = not $swipe}>swipe</button>

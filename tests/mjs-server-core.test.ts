@@ -9,7 +9,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mjsServer, resolveGameDef, createGame, restoreGame } from '../src/mjs-server/index.js'
 import { MemoryTransport } from '../src/mjs-ws/transport.js'
-import { creerRegistre, defSchema, encode, decode } from '../src/schema/core.js'
+import { createRegistry, defineSchema, encode, decode } from '../src/schema/core.js'
 import type { MjsServerApp } from '../src/mjs-server/index.js'
 import type { MjsWsOptions } from '../src/mjs-ws/index.js'
 
@@ -468,10 +468,10 @@ describe('MJS-Server — cœur (sièges, phases, tour, vues, journal, serialize)
     // que ferait le moteur : un schéma déclaré sous 'µgame:state' + la trame telle que la construit
     // game.ts::_buildFrame (`view` est un OBJET). Si ce test ne voyait PAS la vue détruite, la garde
     // ci-dessous ne protégerait rien et le test serait aveugle.
-    const registre = creerRegistre()
+    const registre = createRegistry()
     const trame    = { game: 'g1', view: { hp: 100, gold: 42 }, phase: 'play', turn: 3, seq: 7 }
-    defSchema(registre, 'µgame:state', { game: 'str8', view: 'str16', phase: 'str8', turn: 'u16', seq: 'u32' })
-    const relu = decode(registre, encode(registre, 'µgame:state', trame)).objet
+    defineSchema(registre, 'µgame:state', { game: 'str8', view: 'str16', phase: 'str8', turn: 'u16', seq: 'u32' })
+    const relu = decode(registre, encode(registre, 'µgame:state', trame)).data
     assert.equal(relu.view, '[object Object]', 'CONTRE-PREUVE : la vue est DÉTRUITE en silence, aucune erreur levée')
     assert.equal(relu.turn, 3, 'CONTRE-PREUVE : le reste de la trame passe très bien — rien ne signale la perte')
 

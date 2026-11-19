@@ -43,7 +43,7 @@ describe('viewTransition — validation de config', () => {
   })
 
   it('les BASES sont exactement celles attendues (13, dont 8 directionnelles) — le suffixe :direction et les alias suffixés sont RETIRÉS de la validation', () => {
-    assert.deepEqual([...VT_PRESET_BASES].sort(), ['bars', 'blocks', 'cube', 'fade', 'flip', 'iris', 'reveal', 'slide', 'swipe', 'turn', 'volet', 'zoom', 'zoom-out'].sort())
+    assert.deepEqual([...VT_PRESET_BASES].sort(), ['bars', 'blocks', 'cube', 'fade', 'flip', 'iris', 'reveal', 'slide', 'swipe', 'turn', 'cover', 'zoom', 'zoom-out'].sort())
     for (const v of ['fade', 'cube', 'zoom-out']) assert.ok(isVtPresetValue(v), v)
     // 'cube:up'/'turn:right'/'bars:left'/'swipe:down' : le format `base:direction` est
     // encore compris en INTERNE (reconstruction post-parsing, cf. isVtPresetValue) —
@@ -313,7 +313,7 @@ describe('viewTransition — parseVtValue (grammaire objet, unitaire — bundler
     const r = parseVtValue('fade={ direction: left }')
     assert.equal(r.ok, false)
     assert.match((r as any).error, /directionnelle/)
-    for (const b of ['slide', 'volet', 'reveal', 'flip', 'cube', 'turn', 'swipe', 'bars']) assert.match((r as any).error, new RegExp(b))
+    for (const b of ['slide', 'cover', 'reveal', 'flip', 'cube', 'turn', 'swipe', 'bars']) assert.match((r as any).error, new RegExp(b))
     const r2 = parseVtValue('fade:left')
     assert.equal(r2.ok, false, 'un `:` dans le nom échoue désormais AVANT même la vérification de directionnalité')
   })
@@ -464,7 +464,7 @@ describe('viewTransition — rejets de compilation (migration : formes anciennes
     )
   })
 
-  // transpiler.vt-direction-plus-dans-nom est PARTAGÉ entre
+  // transpiler.vt-direction-no-longer-in-name est PARTAGÉ entre
   // @viewTransition (racine/<@view>/<style>/balise — forme à POINT) et @pageTransition (lien — pas
   // de forme à point, une CHAÎNE `nom={...}`) : le message DOIT proposer l'exemple propre à chacun,
   // pas le même pour les deux. Texte EXACT (égalité stricte sur .message), pas une simple regex.
@@ -559,7 +559,7 @@ describe('viewTransition — rejets de compilation (migration : formes anciennes
   })
 
   it('non-régression du durcissement — les 13 bases, none, la forme nue et le MORPH LIBRE passent toujours', async () => {
-    for (const base of ['fade', 'slide', 'zoom', 'zoom-out', 'volet', 'reveal', 'flip', 'cube', 'turn', 'iris', 'swipe', 'bars', 'blocks']) {
+    for (const base of ['fade', 'slide', 'zoom', 'zoom-out', 'cover', 'reveal', 'flip', 'cube', 'turn', 'iris', 'swipe', 'bars', 'blocks']) {
       await assert.doesNotReject(transpile(`<style :viewTransition.${base}></style>\n<p>x</p>`, { moduleName: `vt-base-ok-${base}` }), `base ${base} refusée à tort`)
     }
     await assert.doesNotReject(transpile('<style :viewTransition.none></style>\n<p>x</p>', { moduleName: 'vt-none-ok-2' }))
@@ -588,7 +588,7 @@ describe('viewTransition — rejets de compilation (migration : formes anciennes
   })
 })
 
-describe('viewTransition — résolution runtime du routeur (_mjs_vtResolve / _mjs_vtEnabled / navigate())', function () {
+describe('viewTransition — résolution runtime du routeur (_mjs_vtResolveWithPriority / _mjs_vtEnabled / navigate())', function () {
   // Globals posés/restaurés PAR TEST (même précaution que router-navigate-reentrance.test.ts :
   // Node fournit un CustomEvent natif incompatible avec les instances happy-dom, et un autre
   // fichier de test du même process Mocha peut avoir déjà posé sa propre Window avant celui-ci).
@@ -658,75 +658,75 @@ describe('viewTransition — résolution runtime du routeur (_mjs_vtResolve / _m
     assert.equal(µ.Router._mjs_vtEnabled(), false)
   })
 
-  it('_mjs_vtResolve : data-mjs-vt="off" sur la vue gagne sur @viewTransition="on" du composant ET sur µ.viewTransition=true → false', () => {
+  it('_mjs_vtResolveWithPriority : data-mjs-vt="off" sur la vue gagne sur @viewTransition="on" du composant ET sur µ.viewTransition=true → false', () => {
     const win: any = new Window({ url: 'http://localhost/' })
     const µ = loadRouter(win)
     µ.viewTransition = true
     const comp = { _mjs_viewTransition: 'on' }
     const node = { getAttribute: (n: string) => (n === 'data-mjs-vt' ? 'off' : null) }
-    assert.equal(µ.Router._mjs_vtResolve(comp, node), false)
+    assert.deepEqual(µ.Router._mjs_vtResolveWithPriority(comp, node), { value: false, priority: 1 })
   })
 
-  it('_mjs_vtResolve : data-mjs-vt="zoom" (nom de préréglage) sur la vue gagne sur tout le reste → "zoom" (chaîne, pas un booléen)', () => {
+  it('_mjs_vtResolveWithPriority : data-mjs-vt="zoom" (nom de préréglage) sur la vue gagne sur tout le reste → "zoom" (chaîne, pas un booléen)', () => {
     const win: any = new Window({ url: 'http://localhost/' })
     const µ = loadRouter(win)
     µ.viewTransition = true
     const comp = { _mjs_viewTransition: 'off' }
     const node = { getAttribute: (n: string) => (n === 'data-mjs-vt' ? 'zoom' : null) }
-    assert.equal(µ.Router._mjs_vtResolve(comp, node), 'zoom')
+    assert.deepEqual(µ.Router._mjs_vtResolveWithPriority(comp, node), { value: 'zoom', priority: 1 })
   })
 
-  it('_mjs_vtResolve : @viewTransition du composant gagne sur µ.viewTransition (défaut global) quand aucun attribut n\'est posé → true', () => {
+  it('_mjs_vtResolveWithPriority : @viewTransition du composant gagne sur µ.viewTransition (défaut global) quand aucun attribut n\'est posé → true', () => {
     const win: any = new Window({ url: 'http://localhost/' })
     const µ = loadRouter(win)
     µ.viewTransition = false
     const comp = { _mjs_viewTransition: 'on' }
     const node = { getAttribute: () => null }
-    assert.equal(µ.Router._mjs_vtResolve(comp, node), true, 'la directive racine du composant doit gagner même si le défaut global dit "off"')
+    assert.deepEqual(µ.Router._mjs_vtResolveWithPriority(comp, node), { value: true, priority: 1 }, 'la directive racine du composant doit gagner même si le défaut global dit "off"')
   })
 
-  it('_mjs_vtResolve : @viewTransition="slide-left" du composant (nom) gagne sur µ.viewTransition quand aucun attribut de vue n\'est posé → "slide-left"', () => {
+  it('_mjs_vtResolveWithPriority : @viewTransition="slide-left" du composant (nom) gagne sur µ.viewTransition quand aucun attribut de vue n\'est posé → "slide-left"', () => {
     const win: any = new Window({ url: 'http://localhost/' })
     const µ = loadRouter(win)
     µ.viewTransition = true
     const comp = { _mjs_viewTransition: 'slide-left' }
     const node = { getAttribute: () => null }
-    assert.equal(µ.Router._mjs_vtResolve(comp, node), 'slide-left')
+    assert.deepEqual(µ.Router._mjs_vtResolveWithPriority(comp, node), { value: 'slide-left', priority: 1 })
   })
 
-  it('_mjs_vtResolve : µ.viewTransition=true seul (aucun attribut, aucune directive module) → true', () => {
+  it('_mjs_vtResolveWithPriority : µ.viewTransition=true seul (aucun attribut, aucune directive module) → true', () => {
     const win: any = new Window({ url: 'http://localhost/' })
     const µ = loadRouter(win)
     µ.viewTransition = true
-    assert.equal(µ.Router._mjs_vtResolve(null, null), true)
+    assert.deepEqual(µ.Router._mjs_vtResolveWithPriority(null, null), { value: true, priority: 1 })
   })
 
-  it('_mjs_vtResolve : µ.viewTransition="fade" (config en CHAÎNE) seul → "fade"', () => {
+  it('_mjs_vtResolveWithPriority : µ.viewTransition="fade" (config en CHAÎNE) seul → "fade"', () => {
     const win: any = new Window({ url: 'http://localhost/' })
     const µ = loadRouter(win)
     µ.viewTransition = 'fade'
-    assert.equal(µ.Router._mjs_vtResolve(null, null), 'fade')
+    assert.deepEqual(µ.Router._mjs_vtResolveWithPriority(null, null), { value: 'fade', priority: 1 })
   })
 
-  it('_mjs_vtResolve : aucun niveau réglé → false (défaut)', () => {
+  it('_mjs_vtResolveWithPriority : aucun niveau réglé → null (ce côté ne participe pas au départage)', () => {
     const win: any = new Window({ url: 'http://localhost/' })
     const µ = loadRouter(win)
-    assert.equal(µ.Router._mjs_vtResolve(null, null), false)
+    assert.equal(µ.Router._mjs_vtResolveWithPriority(null, null), null)
   })
 
-  it('_mjs_vtResolve : µ.viewTransition="none" (valeur config « désactivé ») → false, jamais traité comme un nom', () => {
+  it('_mjs_vtResolveWithPriority : µ.viewTransition="none" (valeur config « désactivé ») → null, jamais traité comme un nom', () => {
     const win: any = new Window({ url: 'http://localhost/' })
     const µ = loadRouter(win)
     µ.viewTransition = 'none'
-    assert.equal(µ.Router._mjs_vtResolve(null, null), false)
+    assert.equal(µ.Router._mjs_vtResolveWithPriority(null, null), null)
   })
 
-  it('_mjs_vtResolve : data-mjs-vt="none" sur la vue ≡ "off" — coupe même si composant et config sont actifs', () => {
+  it('_mjs_vtResolveWithPriority : data-mjs-vt="none" sur la vue ≡ "off" — coupe même si composant et config sont actifs', () => {
     const win: any = new Window({ url: 'http://localhost/' })
     const µ = loadRouter(win)
     µ.viewTransition = 'fade'
     const node = { getAttribute: (n: string) => (n === 'data-mjs-vt' ? 'none' : null) }
-    assert.equal(µ.Router._mjs_vtResolve({ _mjs_viewTransition: 'zoom' }, node), false)
+    assert.deepEqual(µ.Router._mjs_vtResolveWithPriority({ _mjs_viewTransition: 'zoom' }, node), { value: false, priority: 1 })
   })
 
   function makeRoutedComponent(win: any, dataMjsVt: string) {

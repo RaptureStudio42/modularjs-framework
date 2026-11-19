@@ -201,7 +201,7 @@ for (const nom of MOTEURS) for (const mode of MODES) describe(`menus natifs : bu
     page.on('pageerror', (e: any) => erreurs.push(String(e.message ?? e).slice(0, 200)))
     page.on('console', (m: any) => { if (m.type() === 'error') erreurs.push('console : ' + m.text().slice(0, 200)) })
     // avant tout script : les boutons servis, pour vérifier que la reprise les garde
-    const avant = `<script>(() => { const h = document.querySelector('mjs-menus-ssr').shadowRoot; window.__avant = { liste: h.querySelector('.s-coupe').shadowRoot.querySelector('.select-btn'), pick: h.querySelector('.c').shadowRoot.querySelector('button.pick'), bulle: h.querySelector('.t-milieu') } })()</script>`
+    const avant = `<script>(() => { const h = document.querySelector('mjs-menus-ssr').shadowRoot; window.__before = { liste: h.querySelector('.s-coupe').shadowRoot.querySelector('.select-btn'), pick: h.querySelector('.c').shadowRoot.querySelector('button.pick'), bulle: h.querySelector('.t-milieu') } })()</script>`
     const contenu = `<!doctype html><html lang="fr"><head><meta charset="utf-8"></head><body style="margin:0">${fait.html}\n<div style="height:2600px"></div>\n${avant}\n${fait.hydrateScript}\n<script>${fait.bundle}</script></body></html>`
     // la page, et la feuille du thème qu'elle cite
     await page.route('http://menus.test/**', (route: any) => {
@@ -226,21 +226,19 @@ for (const nom of MOTEURS) for (const mode of MODES) describe(`menus natifs : bu
 
   it('page servie puis reprise : la liste et la bulle gardent les boutons servis, le menu des formes a le sien', async function () {
     if (!present) { this.skip(); return }
-    const garde = await lire(`const h = __h(); return { liste: __avant.liste === __o('.s-coupe').querySelector('.select-btn'), pick: !!__avant.pick && !!__o('.c').querySelector('button.pick'), bulle: __avant.bulle === h.querySelector('.t-milieu') }`)
+    const garde = await lire(`const h = __h(); return { liste: __before.liste === __o('.s-coupe').querySelector('.select-btn'), pick: !!__before.pick && !!__o('.c').querySelector('button.pick'), bulle: __before.bulle === h.querySelector('.t-milieu') }`)
     assert.deepEqual(garde, { liste: true, pick: true, bulle: true })
   })
 
-  it(natif ? 'la liste dans une carte qui coupe : couche du dessus, ancrée, rien de rogné' : 'la liste dans une carte qui coupe : dans le flux de sa balise, contre son bouton', async function () {
+  it(natif ? 'la liste dans une carte qui coupe : couche du dessus, ancrée, rien de rogné' : 'la liste dans une carte qui coupe : couche du dessus, placée par le script, rien de rogné', async function () {
     if (!present) { this.skip(); return }
     await ouvrirListe('s-coupe')
     const l = await liste('s-coupe')
     assert.ok(Math.abs(l.p.t - (l.b.b + 4)) <= 1.5 && Math.abs(l.p.l - l.b.l) <= 1.5, `4 px sous son bouton, bord gauche : ${JSON.stringify(l)}`)
-    if (natif) {
-      assert.ok(l.dessus && l.aire !== 'none', `couche du dessus, placée par l'ancrage : ${JSON.stringify(l)}`)
-      const v = await visibleHors('s-coupe', '.coupe')
-      assert.ok(v.dehors && v.vu, `le bas du panneau, hors de la carte, se voit : ${JSON.stringify(v)}`)
-    }
-    else assert.ok(!l.dessus && l.aire === 'none' && l.position === 'absolute', `le placement d'avant : ${JSON.stringify(l)}`)
+    if (natif) assert.ok(l.dessus && l.aire !== 'none', `couche du dessus, placée par l'ancrage : ${JSON.stringify(l)}`)
+    else assert.ok(l.dessus && l.aire === 'none' && l.position === 'fixed', `couche du dessus, placée par le script : ${JSON.stringify(l)}`)
+    const v = await visibleHors('s-coupe', '.coupe')
+    assert.ok(v.dehors && v.vu, `le bas du panneau, hors de la carte, se voit : ${JSON.stringify(v)}`)
   })
 
   // WebKit décale une ancre posée dans une boîte fixe de la longueur du défilement de la page : la liste et la bulle y sont placées par le script, dans la couche du dessus

@@ -210,7 +210,7 @@ describe('traces du runtime — aucune ne porte d\'effet de bord', () => {
 // sans effet (Math.ceil : l'attente en secondes de mjs_lockstep.ts), et des aides qui ne font que composer un texte
 // (mjs_fx_reflect.ts, mjs_i18n.ts, mjs_modal.ts, mjs_debug.ts : la balise telle que l'auteur l'écrit, `<@@select>` pour `mjs-core-select` ;
 // mjs_deep.ts et mjs_store_globals.ts : le chemin écrit dans une fonction du navigateur rangée dans l'état, et son nom)
-const CONSOLE_PERMIS = ['µ._mjs_txt', 'µ._mjs_msg', 'String', 'JSON.stringify', 'Object.keys', 'join', 'toLowerCase', 'slice', 'replace', 'getAttribute', 'test', 'map', 'Math.ceil', '_mjsFxReflectWarn', '_mjsSigName', '__i18nDelai', '__modalReason', '_mjsBaliseEcrite', '_mjsDeepNavVars', '_mjsStoreNavVars']
+const CONSOLE_PERMIS = ['µ._mjs_txt', 'µ._mjs_msg', 'String', 'JSON.stringify', 'Object.keys', 'join', 'toLowerCase', 'slice', 'replace', 'getAttribute', 'test', 'map', 'Math.ceil', '_mjsFxReflectWarn', '_mjsSigName', '__i18nDelay', '__modalReason', '_mjsWrittenTag', '_mjsDeepNavVars', '_mjsStoreNavVars']
 
 // la seule affectation : le temporaire `ref` de mjs_element.ts, local à _mjs_catchError et lu par le seul message
 const CONSOLE_EXCEPTIONS = [{ file: 'mjs_element.ts', fragment: '(ref = this.tagName)' }]

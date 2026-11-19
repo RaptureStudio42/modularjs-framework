@@ -61,8 +61,8 @@ describe('magasin — clé calculée `__proto__` vers un prototype au faux `cons
         assert.match(err, /^TypeError: Cannot set properties of undefined/, 'l\'erreur de JavaScript sur la clé refusée, comme sans MJS')
         if (!prod) assert.ok(avis.some((m) => m.includes('« __proto__ »')), `la clé refusée est avertie : ${JSON.stringify(avis)}`)
         let direct = ''
-        try { direct = String(window.eval('String(µ._mjs_storeCle(window.__objs[0], "__proto__"))')) } catch (e: any) { direct = `${e?.name}: ${e?.message}` }
-        assert.equal(direct, 'undefined', 'µ._mjs_storeCle refuse la clé sans lever')
+        try { direct = String(window.eval('String(µ._mjs_keyStore(window.__objs[0], "__proto__"))')) } catch (e: any) { direct = `${e?.name}: ${e?.message}` }
+        assert.equal(direct, 'undefined', 'µ._mjs_keyStore refuse la clé sans lever')
       }
       finally {
         window.close()

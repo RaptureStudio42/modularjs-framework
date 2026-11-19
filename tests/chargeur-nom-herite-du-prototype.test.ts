@@ -31,10 +31,10 @@ describe('chargeur — nom de balise hérité du prototype', function () {
   })
 
   it('<mjs-constructor> est rejetée comme absente du manifeste, sans recharger la page', async () => {
-    window.eval(`globalThis.__erreurs.length = 0; globalThis.__avant = µ.paths; µ.paths = { carte: 'carte.123.js' }; window.sessionStorage.removeItem('mjs-stale-reload'); µ.Autoloader.load('mjs-constructor'); µ.Autoloader.load('mjs-__proto__');`)
+    window.eval(`globalThis.__erreurs.length = 0; globalThis.__before = µ.paths; µ.paths = { carte: 'carte.123.js' }; window.sessionStorage.removeItem('mjs-stale-reload'); µ.Autoloader.load('mjs-constructor'); µ.Autoloader.load('mjs-__proto__');`)
     await pause(200)
     const erreurs: string[] = window.eval('globalThis.__erreurs')
-    window.eval('µ.paths = globalThis.__avant')
+    window.eval('µ.paths = globalThis.__before')
     assert.equal(erreurs.filter((e) => /absent du manifeste/.test(e)).length, 2, erreurs.join('\n'))
     assert.equal(erreurs.filter((e) => /Failed to import/.test(e)).length, 0, erreurs.join('\n'))
     assert.equal(window.sessionStorage.getItem('mjs-stale-reload'), null, 'aucun rechargement demandé')

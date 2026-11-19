@@ -134,10 +134,10 @@ async function bati(mode: Mode): Promise<Construction> {
 // à chaque image (lu dans la boucle d'images, avant son rendu) : l'instant où chaque élément suivi se voit pour la première fois
 // et chaque transition lancée (`transitionrun`), dans la page comme dans chaque ombre, fermées comprises (relevées à leur création)
 const SONDE = () => {
-  const w  = window as any
-  const t0 = performance.now()
-  w.__vu   = {}
-  w.__tr   = []
+  const w       = window as any
+  const t0      = performance.now()
+  w.__seenMark  = {}
+  w.__tr        = []
   const note    = (e: any) => w.__tr.push(e.target.localName + (e.target.className ? '.' + e.target.className : '') + (e.pseudoElement || '') + ' : ' + e.propertyName)
   const attache = Element.prototype.attachShadow
   document.addEventListener('transitionrun', note, true)
@@ -177,8 +177,8 @@ const SONDE = () => {
       const vu = !!el && el.getClientRects().length > 0 && el.checkVisibility({ visibilityProperty: true })
       if (vu && !vis[cle]) w.__fin[cle] = t
       vis[cle] = vu
-      if (!vu || w.__vu[cle] !== undefined) continue
-      w.__vu[cle] = t
+      if (!vu || w.__seenMark[cle] !== undefined) continue
+      w.__seenMark[cle] = t
       if (cle === 't') w.__titre = el.textContent
       if (cle === 'gx') w.__coche = w.__lireCoche()
     }
@@ -210,10 +210,10 @@ describe('bouclier du cœur : aucune transition pendant l\'attente ni à l\'appa
           await page.addInitScript(SONDE)
           try {
             await page.goto(c.base + '/retard', { waitUntil: 'load' })
-            await page.waitForFunction(() => (window as any).__vu.f !== undefined, null, { timeout: 20000 })
+            await page.waitForFunction(() => (window as any).__seenMark.f !== undefined, null, { timeout: 20000 })
             // le retard à mesurer serait de 300 ms : on attend au-delà
             await page.waitForTimeout(500)
-            const vu: any = await page.evaluate(() => (window as any).__vu)
+            const vu: any = await page.evaluate(() => (window as any).__seenMark)
             console.log(`      ${nom} ${mode} — première image visible : ${JSON.stringify(vu)}`)
             assert.ok(vu.v !== undefined, 'l\'élément en fondu de sortie finit par se voir')
             assert.equal(vu.v - vu.f, 0, `l'élément en fondu de sortie paraît à la même image que son composant (retard ${vu.v - vu.f} ms)`)
@@ -230,7 +230,7 @@ describe('bouclier du cœur : aucune transition pendant l\'attente ni à l\'appa
           await page.addInitScript(SONDE)
           try {
             await page.goto(c.base + '/slot', { waitUntil: 'load' })
-            await page.waitForFunction(() => (window as any).__vu.pb !== undefined, null, { timeout: 20000 })
+            await page.waitForFunction(() => (window as any).__seenMark.pb !== undefined, null, { timeout: 20000 })
             await page.waitForTimeout(500)
             const vu: any = await page.evaluate(() => (window as any).__fin)
             const tr: any = await page.evaluate(() => (window as any).__tr)
@@ -257,7 +257,7 @@ describe('bouclier du cœur : aucune transition pendant l\'attente ni à l\'appa
             await page.waitForFunction(() => !!customElements.get('mjs-glisse'), null, { timeout: 20000 })
             await page.waitForTimeout(150)
             c.retenues.splice(0).forEach(f => f())
-            await page.waitForFunction(() => (window as any).__vu.pb !== undefined, null, { timeout: 20000 })
+            await page.waitForFunction(() => (window as any).__seenMark.pb !== undefined, null, { timeout: 20000 })
             await page.waitForTimeout(500)
             const vu: any = await page.evaluate(() => (window as any).__fin)
             const tr: any = await page.evaluate(() => (window as any).__tr)
@@ -288,7 +288,7 @@ describe('bouclier du cœur : aucune transition pendant l\'attente ni à l\'appa
             // le gabarit gelé (interrupteur décoché, paragraphe sans `on`) reste quelques images sous le bouclier
             await page.waitForTimeout(150)
             c.retenues.splice(0).forEach(f => f())
-            await page.waitForFunction(() => (window as any).__vu.gx !== undefined, null, { timeout: 20000 })
+            await page.waitForFunction(() => (window as any).__seenMark.gx !== undefined, null, { timeout: 20000 })
             await page.waitForTimeout(800)
             const premiere: string = await page.evaluate(() => (window as any).__coche)
             const finale: string   = await page.evaluate(() => (window as any).__lireCoche())
@@ -366,11 +366,11 @@ describe('bouclier du cœur : aucune transition pendant l\'attente ni à l\'appa
           // le gabarit gelé reste quelques images sous le bouclier, puis les textes arrivent avant le délai de secours (400 ms)
           await page.waitForTimeout(150)
           c.retenues.splice(0).forEach(f => f())
-          await page.waitForFunction(() => (window as any).__vu.t !== undefined, null, { timeout: 20000 })
+          await page.waitForFunction(() => (window as any).__seenMark.t !== undefined, null, { timeout: 20000 })
           await page.waitForTimeout(500)
-          const vu: any    = await page.evaluate(() => (window as any).__vu)
-          const titre      = await page.evaluate(() => (window as any).__titre)
-          const enAttente  = await page.evaluate(() => { const e = document.querySelector('mjs-enfant'); return !!e && e.hasAttribute('mjs-loading') })
+          const vu: any   = await page.evaluate(() => (window as any).__seenMark)
+          const titre     = await page.evaluate(() => (window as any).__titre)
+          const enAttente = await page.evaluate(() => { const e = document.querySelector('mjs-enfant'); return !!e && e.hasAttribute('mjs-loading') })
           console.log(`      ${nom} arrivée — première image visible : ${JSON.stringify(vu)}, titre « ${titre} », enfant encore caché par son bouclier : ${enAttente}`)
           assert.equal(titre, 'Bonjour accueil', 'le module paraît avec ses vrais textes')
           assert.equal(enAttente, false, 'le composant glissé ne garde pas son bouclier')
@@ -392,11 +392,11 @@ describe('bouclier du cœur : aucune transition pendant l\'attente ni à l\'appa
         await page.addInitScript(SONDE)
         try {
           await page.goto(c.base + '/attente', { waitUntil: 'load' })
-          await page.waitForFunction(() => (window as any).__vu.t !== undefined, null, { timeout: 20000 })
+          await page.waitForFunction(() => (window as any).__seenMark.t !== undefined, null, { timeout: 20000 })
           await page.waitForTimeout(500)
-          const vu: any       = await page.evaluate(() => (window as any).__vu)
-          const enAttente     = await page.evaluate(() => { const e = document.querySelector('mjs-enfant'); return !!e && e.hasAttribute('mjs-loading') })
-          const enfantDefini  = await page.evaluate(() => !!customElements.get('mjs-enfant'))
+          const vu: any      = await page.evaluate(() => (window as any).__seenMark)
+          const enAttente    = await page.evaluate(() => { const e = document.querySelector('mjs-enfant'); return !!e && e.hasAttribute('mjs-loading') })
+          const enfantDefini = await page.evaluate(() => !!customElements.get('mjs-enfant'))
           console.log(`      ${nom} secours — première image visible : ${JSON.stringify(vu)}, enfant encore caché par son bouclier : ${enAttente}`)
           assert.ok(vu.t >= 350, `l'hôte attend le délai de secours (paru à ${vu.t} ms)`)
           assert.equal(enfantDefini, true, 'le composant glissé est défini pendant l\'attente')

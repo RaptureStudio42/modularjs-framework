@@ -27,7 +27,7 @@ import { compileServerFile } from '../src/cli/server-entry.js'
 import { applyMjsSugarToScript, singletonsDeclares } from '../src/transpiler/sugar.js'
 import { tokenize } from '../src/lexer/index.js'
 import { getAdapter } from '../src/languages/index.js'
-import { declarationsDeLaPasse, type DeclarationsDeLaPasse } from '../src/languages/civet-declarations.js'
+import { passDeclarations, type PassDeclarations } from '../src/languages/civet-declarations.js'
 
 const enLigne = (js: string) => 'data:text/javascript;base64,' + Buffer.from(js).toString('base64')
 const message = (e: any) => 'erreur : ' + String(e?.message ?? e).split('\n')[0]
@@ -135,9 +135,9 @@ describe('déclaration d\'une variable du script : lecture par l\'arbre de Civet
 // `f()`, ou le message de l'erreur
 const valeurModule = async (src: string): Promise<string> => {
   try {
-    const passe    = declarationsDeLaPasse()
+    const passe    = passDeclarations()
     const texte    = tokenize(applyMjsSugarToScript(src, 'civet', undefined, '<script module>', 1, undefined, passe), { moduleMode: true, singletons: singletonsDeclares(src), fileName: 'essai.civet.mjs', firstLine: 1 })
-    const { code } = await getAdapter('civet').compileToJs(texte, { fileName: 'essai.civet.mjs', bare: true, declarerAffectations: true, declarationsDeLaPasse: passe })
+    const { code } = await getAdapter('civet').compileToJs(texte, { fileName: 'essai.civet.mjs', bare: true, declareAssignments: true, passDeclarations: passe })
     const mod      = await import(enLigne('const µ = {state: (o) => o}\n' + code) + '#' + numero++)
     return JSON.stringify(await mod.f())
   }
@@ -147,11 +147,11 @@ const valeurModule = async (src: string): Promise<string> => {
 }
 
 // déclarations notées par la passe que leur ligne ne porte plus dans le texte remis à Civet (ligne 1 pour la première)
-const notesDecalees = (texte: string, passe: DeclarationsDeLaPasse): string[] => {
+const notesDecalees = (texte: string, passe: PassDeclarations): string[] => {
   const lignes         = texte.split('\n')
   const faux: string[] = []
-  for (const [l, noms] of passe.enPlace) for (const nom of noms) if (!lignes[l]?.includes(`${nom} .=`)) faux.push(`${l + 1}:${nom}`)
-  for (const [l, noms] of passe.hisses) for (const nom of noms) if (!lignes[l]?.includes(`${nom} .= undefined`)) faux.push(`${l + 1}:${nom}`)
+  for (const [l, noms] of passe.inPlace) for (const nom of noms) if (!lignes[l]?.includes(`${nom} .=`)) faux.push(`${l + 1}:${nom}`)
+  for (const [l, noms] of passe.hoisted) for (const nom of noms) if (!lignes[l]?.includes(`${nom} .= undefined`)) faux.push(`${l + 1}:${nom}`)
   return faux
 }
 
@@ -203,10 +203,10 @@ describe('déclaration d\'une variable du script : notes de la passe et portée 
   for (const [section, tete] of TETES) {
     it(`chaque déclaration notée reste à sa ligne jusqu'à Civet : ${section} ${JSON.stringify(tete)}`, () => {
       const src    = tete + 'a = 1\nf = ->\n  if a\n    o = 1\n  o\n'
-      const passe  = declarationsDeLaPasse()
+      const passe  = passDeclarations()
       const module = section === '<script module>'
       const texte  = tokenize(applyMjsSugarToScript(src, 'civet', undefined, section, 1, undefined, passe), module ? { moduleMode: true, singletons: singletonsDeclares(src), fileName: 'essai.module', firstLine: 1 } : { fileName: 'essai.script', firstLine: 1 })
-      assert.ok(passe.enPlace.size + passe.hisses.size >= 2, `notes : ${JSON.stringify([...passe.enPlace, ...passe.hisses])}`)
+      assert.ok(passe.inPlace.size + passe.hoisted.size >= 2, `notes : ${JSON.stringify([...passe.inPlace, ...passe.hoisted])}`)
       assert.deepEqual(notesDecalees(texte, passe), [], texte)
     })
   }

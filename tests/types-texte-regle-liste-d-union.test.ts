@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict'
 import { compileVars, parseRule, ruleText } from '../src/transpiler/var-types.js'
 
-const OU = { bloc: '<types>', ligne: 1 }
+const OU = { block: '<types>', line: 1 }
 const DEFS = {
   Mix:  parseRule('int | string', OU),
   Role: parseRule('\'admin\' | \'user\'', OU),

@@ -41,12 +41,24 @@
   // TCO fiable) et sautait le nettoyage des composants imbriqués au-delà —
   // une pile n'a pas cette limite, et rien ici ne peut boucler (chaque nœud
   // n'est empilé qu'une fois, via children/shadow, jamais un cycle DOM).
-  var stack = [root], node, kids, i, views;
+  var stack = [root], node, kids, i, views, set, td;
   while (stack.length > 0) {
     node = stack.pop();
     if (!node) continue;
     if (!node.isConnected && typeof node._mjs_runDestroyCallbacks === 'function') {
       node._mjs_runDestroyCallbacks();
+    }
+    // ce que la mise en mémoire a gardé (fin de disconnectedCallback, mjs_element.ts) : les références, vidées après la destruction
+    // qui les lit encore, et la marque de chaque balise, effacée comme au retrait d'une page
+    if (!node.isConnected) {
+      if (node._mjs_ref_td) node._mjs_ref_td = null;
+      if ((set = node._mjs_attachments)) {
+        for (td of set) {
+          if (!td._mjs_ref) continue;
+          set.delete(td);
+          try { td(); } catch (e) { µ.warn(µ._mjs_msg('elTeardown', null, ':attach/:this teardown en erreur :'), e); }
+        }
+      }
     }
     // un layout abandonné : les pages hibernées dans son propre cache de vues, hors de son DOM, partent avec lui — chaque
     // entrée purgée passe par la destruction de son arbre (`onEvict` du cache, mjs_router.ts) ; un layout encore dans la

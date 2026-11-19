@@ -9,8 +9,8 @@ import assert from 'node:assert/strict'
 import { transpile } from '../src/transpiler/index.js'
 import { parseRule, ruleText, compileVars } from '../src/transpiler/var-types.js'
 
-const W    = { bloc: '<vars>', ligne: 1 }
-const DEFS = { Percent: parseRule('int 0..100', { bloc: '<types>', ligne: 1 }) }
+const W    = { block: '<vars>', line: 1 }
+const DEFS = { Percent: parseRule('int 0..100', { block: '<types>', line: 1 }) }
 
 // la table émise d'un bloc <vars>, évaluée
 const table = (raw: string) => new Function(`return {${compileVars({ raw, startLine: 1 }, DEFS, true).vars.join(',')}}`)()

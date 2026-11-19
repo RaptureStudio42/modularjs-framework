@@ -56,8 +56,8 @@ describe('errors-viewer.mjs — distingue « aucune erreur » de « chargement i
       throw new Error('URL inattendue : ' + url)
     })
     try {
-      assert.match(c.text('.vide'), /Aucune erreur/)
-      assert.equal(c.find('.vide.echec'), null)
+      assert.match(c.text('.empty'), /Aucune erreur/)
+      assert.equal(c.find('.empty.failed'), null)
     } finally { await fermer() }
   })
 
@@ -67,8 +67,8 @@ describe('errors-viewer.mjs — distingue « aucune erreur » de « chargement i
       throw new Error('URL inattendue : ' + url)
     })
     try {
-      assert.ok(c.find('.vide.echec'), 'un message d\'échec doit apparaître')
-      assert.doesNotMatch(c.text('.vide.echec'), /tout va bien/, 'BUG confirmé si le message rassurant reste affiché malgré l\'échec')
+      assert.ok(c.find('.empty.failed'), 'un message d\'échec doit apparaître')
+      assert.doesNotMatch(c.text('.empty.failed'), /tout va bien/, 'BUG confirmé si le message rassurant reste affiché malgré l\'échec')
     } finally { await fermer() }
   })
 
@@ -78,7 +78,7 @@ describe('errors-viewer.mjs — distingue « aucune erreur » de « chargement i
       throw new Error('URL inattendue : ' + url)
     })
     try {
-      assert.ok(c.find('.vide.echec'))
+      assert.ok(c.find('.empty.failed'))
     } finally { await fermer() }
   })
 
@@ -92,11 +92,11 @@ describe('errors-viewer.mjs — distingue « aucune erreur » de « chargement i
       throw new Error('URL inattendue : ' + url)
     })
     try {
-      assert.ok(c.find('.vide.echec'), 'échec au premier chargement')
+      assert.ok(c.find('.empty.failed'), 'échec au premier chargement')
       echoue = false
       await c.click('.actions button')   // bouton « Rafraîchir », premier de la barre d'actions
-      assert.equal(c.find('.vide.echec'), null, 'le nouvel essai réussi doit effacer le message d\'échec')
-      assert.match(c.text('.vide'), /Aucune erreur/)
+      assert.equal(c.find('.empty.failed'), null, 'le nouvel essai réussi doit effacer le message d\'échec')
+      assert.match(c.text('.empty'), /Aucune erreur/)
     } finally { await fermer() }
   })
 })

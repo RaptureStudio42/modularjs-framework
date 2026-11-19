@@ -1,4 +1,4 @@
-// mjs_store.coffee
+// mjs_store.ts
 // Mutators set static module-level (1 alloc au lieu de N par store). `setInt8`…`setBigUint64` :
 // setters NOMMÉS d'une DataView (même famille que les `setX` de Date juste avant, énumérés
 // pareillement plutôt qu'un test de motif) — sans eux, muter par cette voie ne notifiait personne.
@@ -7,7 +7,7 @@ const MJS_STORE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
 // les pièges d'une enveloppe du magasin (`this`, sa fiche : cf. _mjs_buildProxy) — `e` le magasin, `r` la clé de départ, `c` vrai pour une
 // collection native, `x` l'enveloppe, `B` la `Map` clé → fiche de l'objet, `f` les relais de ses fonctions propres (au premier besoin), `h` la
 // fiche du premier couple de l'objet, qui porte `s` (les clés qui l'atteignent, posé à la deuxième) et ses liens vers ses conteneurs `a` `b`
-// `l` `v` (cf. _mjsLie, mjs_element.ts) ; le magasin sert d'objet de famille aux aides des liens (`_state`, `_mjs_rootsByTarget`,
+// `l` `v` (cf. _mjsBind, mjs_element.ts) ; le magasin sert d'objet de famille aux aides des liens (`_state`, `_mjs_rootsByTarget`,
 // `_mjs_bindEpochs` ; `_mjs_computeds`, `_mjs_wr` absents : aucune clé dérivée, tout détenteur est un autre)
 const MJS_STORE_TRAPS = (class {
   get(obj, prop, receiver) {
@@ -18,9 +18,9 @@ const MJS_STORE_TRAPS = (class {
     // valeur issue du store ne la reconnaît jamais comme une enveloppe
     // MJS et la ré-enveloppe (Proxy-de-Proxy, identité neuve).
     if (prop === µ._mjs_RAW) return obj;
-    // <familles>
-    if (prop === µ._mjs_FICHE) return this;
-    // </familles>
+    // <families>
+    if (prop === µ._mjs_HANDLER) return this;
+    // </families>
     // pollution de prototype (CWE-1321) : lire __proto__/constructor/prototype HÉRITÉ
     // (pas une donnée propre de la cible) enveloppait Object.prototype — écrire ensuite
     // une clé dessus pollue TOUS les objets du realm. Clé PROPRE (donnée métier, ex.
@@ -28,6 +28,10 @@ const MJS_STORE_TRAPS = (class {
     if (typeof prop === 'string' && !µ._mjs_safeKey(prop) && !Object.prototype.hasOwnProperty.call(obj, prop)) {
       return void 0;
     }
+    // <reffets-state>
+    // lecture notée pour le reffet qui passe, et pour la valeur dérivée qui se calcule (µ._mjs_uRead, mjs_signals.ts)
+    if (µ._mjs_sigCur != null || µ._mjs_computing != null) µ._mjs_uRead(st, this.r === null ? prop : this.r);
+    // </reffets-state>
     if (this.r === null && typeof prop === 'string' && µ._mjs_safeKey(prop)) {
       component = µ.activeComponent;
       if (component) {
@@ -81,18 +85,18 @@ const MJS_STORE_TRAPS = (class {
     // sans condition sur le conteneur qui la porte (this.c ne sert plus qu'à choisir le
     // traitement des MÉTHODES juste en dessous).
     if (typeof val === 'object' && val !== null) {
-      return st._mjs_buildProxy(val, this.r || prop, _mjsStoreVia(this, obj));
+      return st._mjs_buildProxy(val, this.r ?? prop, _mjsStoreVia(this, obj));
     }
     if (typeof val === 'function') {
       // fonction de l'appli propre à l'objet ou à la liste (`store.data.outil.format`) : son relais (µ._mjs_fnRelay, mjs_init.ts),
       // un par clé et par enveloppe — `this` reste l'enveloppe quand on l'appelle seule, un champ écrit par toute variable qui le
       // tient va à la fonction et prévient comme une écriture de la clé ; une fonction du navigateur reste liée sans lien
-      if ((!this.c || Array.isArray(obj)) && Object.prototype.hasOwnProperty.call(obj, prop) && !_mjsNatif(val)) {
+      if ((!this.c || Array.isArray(obj)) && Object.prototype.hasOwnProperty.call(obj, prop) && !_mjsNatFn(val)) {
         let r = (this.f ||= new Map()).get(prop);
         if (r === void 0 || r[µ._mjs_RAW] !== val) {
           this.f.set(prop, r = µ._mjs_fnRelay(val, this.x, () => {
             µ._mjs_bumpEpoch(obj);
-            _mjsStoreMonte(this, obj);
+            _mjsStoreMount(this, obj);
             st._mjs_notifyMutation(this.B, this.r, prop);
           }));
         }
@@ -111,26 +115,26 @@ const MJS_STORE_TRAPS = (class {
             // clé retirée, collection vidée : l'index de la collection l'oublie (cf. µ._mjs_keyDrop, mjs_init.ts)
             if (prop === 'delete' || prop === 'clear') µ._mjs_keyDrop(obj, prop === 'clear', x[0]);
             // </collections>
-            // <sans-collections>
+            // <no-collections>
             // // sans la part des collections : la donnée rangée reste brute, la clé d'une Map reste telle quelle (`get` la retrouve)
             // var result;
             // result = val.apply(obj, args.map((a, i) => i || !(obj instanceof Map) ? µ._mjs_toRaw(a) : a));
-            // </sans-collections>
+            // </no-collections>
             // époque de mutation du brut (cf. mjs_element.ts).
             µ._mjs_bumpEpoch(obj);
-            _mjsStoreMonte(this, obj);
+            _mjsStoreMount(this, obj);
             st._mjs_notifyMutation(this.B, this.r, prop);
             // Map.set/… rendent `this` (chaînage natif) : rendre la cible BRUTE cassait
             // la réactivité de la chaîne (`.set().set()` mutait en silence dès le 2ᵉ
             // maillon) — rendre le PROXY à la place.
-            // <familles>
+            // <families>
             // un prototype retiré (`pop`, `shift`, `splice` : un `Array.prototype` rangé par une clé venue de données) sort enveloppé, donc muré,
-            // comme par l'enveloppe d'un composant (µ._mjs_mur, mjs_element.ts) ; un objet ordinaire retiré sort brut, comme avant
+            // comme par l'enveloppe d'un composant (µ._mjs_wall, mjs_element.ts) ; un objet ordinaire retiré sort brut, comme avant
             // `c` déclaré ici : `x`, plus haut, n'existe que dans le bloc `<collections>`
             let c;
             if (prop === 'splice') result.forEach((e, i) => { if (e !== null && typeof e === 'object' && (c = e.constructor) && c.prototype === e) result[i] = st._mjs_buildProxy(e, this.r, _mjsStoreVia(this, obj)); });
             else if ((prop === 'pop' || prop === 'shift') && result !== null && typeof result === 'object' && (c = result.constructor) && c.prototype === result) return st._mjs_buildProxy(result, this.r, _mjsStoreVia(this, obj));
-            // </familles>
+            // </families>
             return result === obj ? this.x : result;
           };
         }
@@ -155,7 +159,8 @@ const MJS_STORE_TRAPS = (class {
     // donnée brute rangée, jamais une enveloppe (`store.data.list = store.data.list.filter(…)`)
     value = µ._mjs_rawIn(value);
     av = Reflect.get(obj, prop, receiver);
-    if (av === value) {
+    // `NaN` réécrit sur `NaN` : inchangé, comme toute autre valeur (cf. µ._storeSet, mjs_store_globals.ts)
+    if (av === value || (Number.isNaN(av) && Number.isNaN(value))) {
       return true;
     }
     // Clé racine AJOUTÉE (nouvelle own-prop) → l'énumération change de forme.
@@ -170,8 +175,8 @@ const MJS_STORE_TRAPS = (class {
       }
       // époque de mutation du brut (cf. mjs_element.ts).
       µ._mjs_bumpEpoch(obj);
-      _mjsStoreMonte(this, obj);
-      _mjsStoreSorti(this, obj, av);
+      _mjsStoreMount(this, obj);
+      _mjsStoreExited(this, obj, av);
       st._mjs_notifyMutation(this.B, this.r, prop);
       // énumération RACINE :
       // un lecteur de `{for k in store.data}` / `Object.keys` dépend de la
@@ -195,7 +200,7 @@ const MJS_STORE_TRAPS = (class {
     // symétrique du trap `set` ci-dessus.
     if (typeof prop === 'string' && !µ._mjs_safeKey(prop)) { µ.warn(µ._mjs_msg('storeKey', { prop: prop }, 'µ.Store : clé refusée (« {prop} ») — mutation ignorée.')); return true; }
     had = Object.prototype.hasOwnProperty.call(obj, prop);
-    av  = µ._mjs_milieu && this.h.v != null ? Reflect.getOwnPropertyDescriptor(obj, prop)?.value : void 0;
+    av  = µ._mjs_middle && this.h.v != null ? Reflect.getOwnPropertyDescriptor(obj, prop)?.value : void 0;
     success = Reflect.deleteProperty(obj, prop);
     if (success && had && !µ._mjs_rawSet.has(obj)) {
       if (this.r === null && typeof prop === 'string' && !st._mjs_subscribers.has(prop)) {
@@ -203,8 +208,8 @@ const MJS_STORE_TRAPS = (class {
       }
       // époque de mutation du brut (cf. mjs_element.ts).
       µ._mjs_bumpEpoch(obj);
-      _mjsStoreMonte(this, obj);
-      _mjsStoreSorti(this, obj, av);
+      _mjsStoreMount(this, obj);
+      _mjsStoreExited(this, obj, av);
       st._mjs_notifyMutation(this.B, this.r, prop);
       // Retrait d'une clé racine → réveiller les lecteurs d'énumération.
       if (this.r === null) {
@@ -213,10 +218,26 @@ const MJS_STORE_TRAPS = (class {
     }
     return success;
   }
+  // <reffets-state>
+  // présence d'une clé testée sans la lire (`k in magasin.data`, `Object.hasOwn(magasin.data, k)`) : notée comme une lecture de cette clé
+  // (de la clé racine, plus bas) pour le reffet qui passe
+  has(obj, prop) {
+    if (µ._mjs_sigCur != null || µ._mjs_computing != null) µ._mjs_uRead(this.e, this.r === null ? prop : this.r);
+    return Reflect.has(obj, prop);
+  }
+  getOwnPropertyDescriptor(obj, prop) {
+    if (µ._mjs_sigCur != null || µ._mjs_computing != null) µ._mjs_uRead(this.e, this.r === null ? prop : this.r);
+    return Reflect.getOwnPropertyDescriptor(obj, prop);
+  }
+  // </reffets-state>
   ownKeys(obj) {
     const st = this.e;
     // Énumération d'un sous-objet NICHÉ = dépendance sur la clé racine.
     var component = µ.activeComponent;
+    // <reffets-state>
+    // lecture notée pour le reffet qui passe, et pour la valeur dérivée qui se calcule (µ._mjs_uRead, mjs_signals.ts)
+    if (µ._mjs_sigCur != null || µ._mjs_computing != null) µ._mjs_uRead(st, this.r === null ? µ._mjs_STRUCT : this.r);
+    // </reffets-state>
     if (this.r === null) {
       // énumération RACINE
       // (`{for k in store.data}` / `Object.keys(store.data)`) : sans abonnement
@@ -262,52 +283,75 @@ const MJS_STORE_TRAPS = (class {
   }
 }).prototype;
 // les liens vers les conteneurs ne servent que si un composant peut tenir un objet du magasin : une appli de production sans prop
-// (`<milieu>` absent, bundler/index.ts) n'en porte que trois aides vides
-// <milieu>
+// (`<middle>` absent, bundler/index.ts) n'en porte que trois aides vides
+// <middle>
 // fiche du conteneur `obj` lu par l'enveloppe de la fiche `h` : sa référence faible, faite à son premier sous-objet lu, que ses sous-objets
-// gardent pour lien — seulement quand un composant peut tenir un objet du magasin (µ._mjs_milieu) et que le cœur porte les liens ; la racine
+// gardent pour lien — seulement quand un composant peut tenir un objet du magasin (µ._mjs_middle) et que le cœur porte les liens ; la racine
 // n'en donne pas (sa clé de départ dit déjà qui la tient)
 function _mjsStoreVia(h, obj) {
   const f = h.h;
   if (h.r === null) return void 0;
-  if (f.v === void 0 && µ._mjs_milieu && µ._mjs_lie !== void 0) f.v = µ._mjs_ref(obj);
+  if (f.v === void 0 && µ._mjs_middle && µ._mjs_bind !== void 0) f.v = µ._mjs_ref(obj);
   return f;
 }
 // écriture faite par l'enveloppe de la fiche `h` dans `obj` : elle remonte les liens de l'objet et fait avancer l'époque des conteneurs
-// qu'un composant tient (cf. _mjsMonte, mjs_element.ts) ; quand elle ne répond pas de tous les conteneurs, le magasin se replie
-function _mjsStoreMonte(h, obj) {
-  if (µ._mjs_milieu && µ._mjs_lie !== void 0 && µ._mjs_monte(h.h, obj)) _mjsStoreRepli(h);
+// qu'un composant tient (cf. _mjsLift, mjs_element.ts) ; quand elle ne répond pas de tous les conteneurs, le magasin se replie
+function _mjsStoreMount(h, obj) {
+  if (µ._mjs_middle && µ._mjs_bind !== void 0 && µ._mjs_lift(h.h, obj)) _mjsStoreFallback(h);
 }
-// LE REPLI, comme celui de `µ.state` (_mjsStateRepli, mjs_state.ts) : les abonnés des clés que l'écriture va prévenir (cf.
+// LE REPLI, comme celui de `µ.state` (_mjsStateFallback, mjs_state.ts) : les abonnés des clés que l'écriture va prévenir (cf.
 // _mjs_notifyMutation) redisent leurs liaisons à leur prochaine passe — jamais un écran figé
-function _mjsStoreRepli(h) {
-  // <redite>
-  const subs = h.e._mjs_subscribers, pose = (k) => {
+function _mjsStoreFallback(h) {
+  // <retell>
+  const subs = h.e._mjs_subscribers, sets = (k) => {
     const l = subs.get(k);
     if (l) l.forEach((c) => {
       (c._mjs_rdp ||= Object.create(null))._awaits_ = 2;
     });
   };
-  if (h.B.size > 1) h.B.forEach((f, k) => pose(k));
-  else pose(h.r);
-  // </redite>
+  if (h.B.size > 1) h.B.forEach((f, k) => sets(k));
+  else sets(h.r);
+  // </retell>
 }
-// objet `av` retiré du conteneur `obj` par une affectation ou une suppression : son lien vers lui devient douteux (cf. _mjsSorti, mjs_element.ts)
-function _mjsStoreSorti(h, obj, av) {
-  if (µ._mjs_milieu && h.h.v != null && av !== null && typeof av === 'object') µ._mjs_sorti(h.e._mjs_rootsByTarget, h.h.v, obj, av);
+// objet `av` retiré du conteneur `obj` par une affectation ou une suppression : son lien vers lui devient douteux (cf. _mjsExited, mjs_element.ts)
+function _mjsStoreExited(h, obj, av) {
+  if (µ._mjs_middle && h.h.v != null && av !== null && typeof av === 'object') µ._mjs_exited(h.e._mjs_rootsByTarget, h.h.v, obj, av);
 }
-// </milieu>
-// <sans-milieu>
-// const _mjsStoreVia = () => void 0, _mjsStoreMonte = _mjsStoreVia, _mjsStoreSorti = _mjsStoreVia;
-// </sans-milieu>
-// <familles>
+// </middle>
+// <no-middle>
+// const _mjsStoreVia = () => void 0, _mjsStoreMount = _mjsStoreVia, _mjsStoreExited = _mjsStoreVia;
+// </no-middle>
+// <families>
 // une variable d'un composant qui tient un objet de ce magasin (fiche `h`, notée par `_set`) l'a écrit, ou plus bas : le magasin est
-// prévenu comme après une écriture faite par son piège `set`, sans réécrire la donnée (cf. _mjsFil, mjs_element.ts)
-µ._mjs_storeFil = function(h) {
-  _mjsStoreMonte(h, µ._mjs_toRaw(h.x));
+// prévenu comme après une écriture faite par son piège `set`, sans réécrire la donnée (cf. _mjsTap, mjs_element.ts)
+µ._mjs_storeTap = function(h) {
+  _mjsStoreMount(h, µ._mjs_toRaw(h.x));
   h.e._mjs_notifyMutation(h.B, h.r, null);
 };
-// </familles>
+// </families>
+
+// <development>
+// magasin dérivé de `µ.Store` : ce que son constructeur range hors de `.data`, relu une fois ce constructeur fini (une microtâche). `.data`
+// vide et un champ public qui tient un objet ordinaire ou une liste (`this.state = { rows: [] }`) : MJS ne suit que `.data`, l'écran qui
+// lit ce champ ne suit pas ses changements — dit une fois par classe, dans toute appli de développement qui a un magasin. Un champ `_…`,
+// une enveloppe (`µ.state`, la `.data` d'un autre magasin : l'écran suit), une `Map`, l'objet d'une classe (un client, un cache) : rien
+const _mjsStoresTold = new WeakSet();
+function _mjsStoreFields(st) {
+  queueMicrotask(() => {
+    const c = st.constructor;
+    if (_mjsStoresTold.has(c) || Object.keys(st._state).length) return;
+    for (const k of Object.keys(st)) {
+      const v = st[k];
+      if (k === 'data' || k[0] === '_' || v === null || typeof v !== 'object' || µ._mjs_toRaw(v) !== v) continue;
+      const p = Object.getPrototypeOf(v);
+      if (!Array.isArray(v) && p !== Object.prototype && p !== null) continue;
+      _mjsStoresTold.add(c);
+      µ.warn(µ._mjs_msg('dev.storeOutsideData', { store: c.name || 'Store', field: k }, 'Le magasin {store} range sa donnée dans this.{field}, hors de .data : MJS ne suit que .data, et l\'écran qui lit ce champ ne suit pas ses changements. Passez cette donnée à super(…) dans le constructeur, puis lisez-la et écrivez-la par .data (magasin.data.x plutôt que magasin.{field}.x).'));
+      return;
+    }
+  });
+}
+// </development>
 
 µ.Store = class Store {
   constructor(initialState) {
@@ -316,10 +360,10 @@ function _mjsStoreSorti(h, obj, av) {
     µ._mjs_rawSet.add(this);
     // `|| {}` : `new µ.Store(null)` crashait sur Object.keys(null).
     this._state = initialState || {};
-    // <signaux>
+    // <signals>
     // boîtes du graphe des signaux (mjs_signals.ts), nées à la première lecture notée : déclarées ici pour garder la forme
     this._mjs_sigBoxes = null;
-    // </signaux>
+    // </signals>
     this._mjs_subscribers = new Map();
     Object.keys(this._state).forEach((key) => {
       return this._mjs_subscribers.set(key, new Set());
@@ -327,39 +371,48 @@ function _mjsStoreSorti(h, obj, av) {
     // objet brut → fiche de son premier couple (cf. _mjs_buildProxy) ; époques des clés, pour les aides des liens (mjs_element.ts)
     this._mjs_rootsByTarget = new WeakMap();
     this._mjs_bindEpochs    = {};
+    // <reffets-state>
+    // l'écriture en cours, puis la passe des avis en attente, touchent un objet qu'un composant tient aussi (cf. _mjs_notifyMutation)
+    this._mjs_uw = false;
+    this._mjs_ut = false;
+    // </reffets-state>
     this.data = this._mjs_buildProxy(this._state, null);
-    // <magasin-fin>
+    // <store-fine-grained>
     // propriétaire de ses reffets, arrêtés quand on le jette : la racine `µeffect.root` en cours, sinon le module dont le premier niveau
     // le crée (mjs_effect.ts)
-    this._mjs_proprio = µ._mjs_proprio ? µ._mjs_proprio() : null;
-    this._mjs_fin     = 0;
-    // </magasin-fin>
+    this._mjs_owner = µ._mjs_owner ? µ._mjs_owner() : null;
+    this._mjs_end   = 0;
+    // </store-fine-grained>
+    // <development>
+    // magasin dérivé : ce que son constructeur range hors de `.data` est relu une fois ce constructeur fini (cf. _mjsStoreFields)
+    if (this.constructor !== Store) _mjsStoreFields(this);
+    // </development>
   }
-  // <magasin-fin>
+  // <store-fine-grained>
 
   // `magasin.destroy()` : le magasin est jeté. Les reffets de son propriétaire s'arrêtent, ses abonnés (composants, reffets) ne sont
   // plus prévenus ; il reste lisible, une écriture y est rangée sans relancer personne (avertissement de développement, une fois). Un
   // composant affiché qui le lit encore garde ce qu'il montre (avertissement de développement). Un deuxième appel ne fait rien ; une
   // clé de données nommée `destroy` vit dans `.data`, sans rapport
   destroy() {
-    var p = this._mjs_proprio, lu = null, l;
-    if (this._mjs_fin) return;
-    this._mjs_fin     = 1;
-    this._mjs_proprio = null;
-    this._mjs_subscribers.forEach(function(abonnes) {
-      abonnes.forEach(function(c) {
-        if (!lu && c._mjs_is_mounted) lu = c;
+    var p = this._mjs_owner, read = null, l;
+    if (this._mjs_end) return;
+    this._mjs_end   = 1;
+    this._mjs_owner = null;
+    this._mjs_subscribers.forEach(function(subscribers) {
+      subscribers.forEach(function(c) {
+        if (!read && c._mjs_is_mounted) read = c;
       });
-      abonnes.clear();
+      subscribers.clear();
     });
-    if (lu) µ.warn(µ._mjs_msg('storeDestroyedRead', { tag: lu.localName }, 'Un magasin est jeté (destroy()) alors que <{tag}> le lit encore : ce composant garde ce qu\'il affiche et n\'est plus prévenu de ses changements. Jetez le magasin quand plus aucun composant affiché ne le lit (dans le µdestroy du dernier, par exemple).'));
+    if (read) µ.warn(µ._mjs_msg('storeDestroyedRead', { tag: read.localName }, 'Un magasin est jeté (destroy()) alors que <{tag}> le lit encore : ce composant garde ce qu\'il affiche et n\'est plus prévenu de ses changements. Jetez le magasin quand plus aucun composant affiché ne le lit (dans le µdestroy du dernier, par exemple).'));
     if (p) {
       l      = p.effs;
       p.effs = [];
       l.forEach(function(s) { s.stop(); });
     }
   }
-  // </magasin-fin>
+  // </store-fine-grained>
 
   _mjs_buildProxy(target, rootKey, via) {
     var f0, f, isBuiltIn;
@@ -379,10 +432,10 @@ function _mjsStoreSorti(h, obj, av) {
     // `_mjs_notifyMutation`, plus bas, pour la notification croisée entre alias
     // (chaque clé d'accès y crée forcément une entrée AVANT qu'on puisse muter à travers elle).
     // la fiche du premier couple de cet objet (`h` de chaque fiche) porte ses liens vers les conteneurs et la `Map` des couples (`B`) ;
-    // lu par un autre conteneur que la dernière fois, son lien est revu — une comparaison quand c'est le même (cf. _mjsLie, mjs_element.ts)
+    // lu par un autre conteneur que la dernière fois, son lien est revu — une comparaison quand c'est le même (cf. _mjsBind, mjs_element.ts)
     f0 = this._mjs_rootsByTarget.get(target);
     if (f0 !== void 0) {
-      if (via !== void 0 && via.v !== void 0 && f0.a !== via.v) µ._mjs_lie(f0, via.v, this);
+      if (via !== void 0 && via.v !== void 0 && f0.a !== via.v) µ._mjs_bind(f0, via.v, this);
       f = f0.B.get(rootKey);
       if (f !== void 0) return f.x;
     }
@@ -393,17 +446,17 @@ function _mjsStoreSorti(h, obj, av) {
     // `.byteLength` (accesseur) et `.slice()` (méthode) levaient la même erreur, mesuré.
     // `WeakMap`, `WeakSet` aussi : leurs méthodes exigent la vraie collection en `this`, comme celles d'une `Map`, d'un `Set`
     isBuiltIn = target instanceof Map || target instanceof Set || target instanceof WeakMap || target instanceof WeakSet || target instanceof Date || Array.isArray(target) || ArrayBuffer.isView(target) || target instanceof ArrayBuffer;
-    // <sans-collections>
-    // // <developpement>
+    // <no-collections>
+    // // <development>
     // // collection rangée par un cœur bâti sans la part des collections : le développement le dit (µ._mjs_collMissing, mjs_init.ts)
     // if (isBuiltIn) µ._mjs_collMissing(target);
-    // // </developpement>
-    // </sans-collections>
+    // // </development>
+    // </no-collections>
     // <precision>
-    // <derivees>
+    // <derived-values>
     // objet tenu par ce magasin : une valeur précise d'un composant qui le tient aussi doute (mjs_element.ts)
-    µ._mjs_detenu ? µ._mjs_detenu(target, 0) : (µ._mjs_detenusAvant ||= []).push(target);
-    // </derivees>
+    µ._mjs_isClaimed ? µ._mjs_isClaimed(target, 0) : (µ._mjs_claimedBefore ||= []).push(target);
+    // </derived-values>
     // </precision>
     f = {
       __proto__: MJS_STORE_TRAPS,
@@ -419,25 +472,38 @@ function _mjsStoreSorti(h, obj, av) {
       b:         void 0,
       v:         void 0
     };
-    // <familles>
-    // un prototype rangé (`Array.prototype`, par une clé venue de données) : le mur (µ._mjs_mur, mjs_element.ts) ; jamais une collection,
+    // <families>
+    // un prototype rangé (`Array.prototype`, par une clé venue de données) : le mur (µ._mjs_wall, mjs_element.ts) ; jamais une collection,
     // ses méthodes passent par l'enveloppe, qui refuse, au lieu d'être appliquées à l'objet brut
-    if (µ._mjs_mur(target, f, MJS_STORE_TRAPS)) f.c = false;
-    // </familles>
+    if (µ._mjs_wall(target, f, MJS_STORE_TRAPS)) f.c = false;
+    // </families>
     if (f0 === void 0) {
       f.h = f;
       this._mjs_rootsByTarget.set(target, f);
+      // <wrapper>
+      // ce magasin devient un détenteur de l'objet (registre des détenteurs, mjs_element.ts)
+      µ._mjs_claims?.(this, target);
+      // </wrapper>
     }
     // une clé de plus que celle du premier couple : l'ensemble des clés qui atteignent l'objet, que lisent les aides des liens
     else if (rootKey !== f0.r) (f0.s ||= new Set([f0.r])).add(rootKey);
     f.x = new Proxy(target, f);
-    // <faibles>
+    // <weak>
     // enveloppe d'une `WeakMap`, d'un `WeakSet` : notée pour µraw, qui en rend la vraie collection (µ._mjs_weakRaw, mjs_init.ts)
     if (target instanceof WeakMap || target instanceof WeakSet) µ._mjs_weakRaw.set(f.x, target);
-    // </faibles>
+    // </weak>
     f.B.set(rootKey, f);
     return f.x;
   }
+  // <wrapper>
+  // avis du registre des détenteurs (mjs_element.ts) : un composant a écrit l'objet brut `raw`, que ce magasin enveloppe — ses abonnés,
+  // par toutes les clés qui l'atteignent, en sont prévenus comme d'une écriture faite par lui (cf. µ._mjs_storeTap)
+  _mjs_claimNotice(raw) {
+    const f = this._mjs_rootsByTarget.get(raw);
+    if (f !== void 0) this._mjs_notifyMutation(f.B, f.r, null);
+    return f !== void 0;
+  }
+  // </wrapper>
   // notifie la mutation d'un sous-objet atteint par le proxy `rootKey`/`prop` — `byRoot`
   // (le cache (rootKey → proxy) DE CET OBJET, déjà en main dans la closure de l'appelant,
   // cf. `_mjs_buildProxy` : pas de second lookup WeakMap ici) donne aussi les clés qui
@@ -448,6 +514,16 @@ function _mjsStoreSorti(h, obj, av) {
   // pour une clé de premier niveau, comportement inchangé (`byRoot` vaut alors `void 0`,
   // jamais construit pour la racine elle-même).
   _mjs_notifyMutation(byRoot, rootKey, prop) {
+    // <reffets-state>
+    // l'objet écrit (celui des enveloppes de `byRoot`, sinon la racine) est-il tenu aussi par un composant (µ._mjs_uHeld, mjs_runes.ts) ?
+    // La passe des avis qui prévient pour lui fait alors passer tous les reffets des abonnés ; une lecture de table par écriture, aucune
+    // quand la passe est déjà marquée
+    if (this._mjs_ut) this._mjs_uw = true;
+    else {
+      const __f = rootKey === null || !byRoot ? void 0 : byRoot.values().next().value;
+      this._mjs_uw = µ._mjs_uHeld.has(__f ? µ._mjs_toRaw(__f.x || __f) : this._state);
+    }
+    // </reffets-state>
     if (rootKey === null) {
       this._mjs_notify(prop);
       return;
@@ -460,44 +536,52 @@ function _mjsStoreSorti(h, obj, av) {
   }
 
   _mjs_notify(rootKey) {
-    // <magasin-fin>
+    // <store-fine-grained>
     // magasin jeté : l'écriture est rangée, personne n'est prévenu
-    if (this._mjs_fin) {
-      if (this._mjs_fin++ === 1) µ.warn(µ._mjs_msg('storeDestroyed', { key: String(rootKey) }, 'Ce magasin est jeté (destroy()) : l\'écriture de « {key} » y est rangée, mais elle ne prévient plus personne, aucun composant ni reffet ne repart. Créez un nouveau magasin si la donnée doit encore vivre.'));
+    if (this._mjs_end) {
+      if (this._mjs_end++ === 1) µ.warn(µ._mjs_msg('storeDestroyed', { key: String(rootKey) }, 'Ce magasin est jeté (destroy()) : l\'écriture de « {key} » y est rangée, mais elle ne prévient plus personne, aucun composant ni reffet ne repart. Créez un nouveau magasin si la donnée doit encore vivre.'));
       return;
     }
-    // </magasin-fin>
-    // <signaux>
+    // </store-fine-grained>
+    // <signals>
     // graphe des signaux (mjs_signals.ts) : la boîte de la clé avance, qu'un composant soit abonné ou non (µ._mjs_STRUCT : la
     // structure) ; sans lecteur, une lecture et un test
     if (this._mjs_sigBoxes) µ._mjs_sigWrite(this, rootKey);
-    // </signaux>
-    if (!(rootKey && this._mjs_subscribers.has(rootKey))) {
+    // </signals>
+    // la clé vide `''` est une clé comme une autre
+    if (rootKey == null || !this._mjs_subscribers.has(rootKey)) {
       return;
     }
     if (this._mjs_pendingNotifs == null) {
       this._mjs_pendingNotifs = new Set();
     }
     this._mjs_pendingNotifs.add(rootKey);
-    // <reffet-magasin>
+    // <reffets-state>
+    if (this._mjs_uw) this._mjs_ut = true;
+    // </reffets-state>
+    // <reffet-store>
     // clé de la passe → son auteur : le reffet d'un magasin qui l'écrit pendant son passage (`µ._mjs_magW`, mjs_effect.ts) quand il est le
     // seul à l'écrire, sinon 0. La passe ne prévient pas ce reffet de sa propre écriture : il ne se relance pas en rafale ; les autres
     // abonnés, composants et reffets, sont prévenus comme toujours
-    var w = µ._mjs_magW || 0, a = this._mjs_auteurs ||= new Map();
+    var w = µ._mjs_magW || 0, a = this._mjs_authors ||= new Map();
     a.set(rootKey, a.has(rootKey) && a.get(rootKey) !== w ? 0 : w);
-    // </reffet-magasin>
+    // </reffet-store>
     // Event Debouncing (Coalescence)
     if (!this._mjs_is_notifying) {
       this._mjs_is_notifying = true;
       return queueMicrotask(() => {
         var i, key, len, notified, pending, results;
-        // <reffet-magasin>
-        var auteurs       = this._mjs_auteurs;
-        this._mjs_auteurs = null;
-        // </reffet-magasin>
+        // <reffet-store>
+        var authors       = this._mjs_authors;
+        this._mjs_authors = null;
+        // </reffet-store>
         this._mjs_is_notifying = false;
         pending = Array.from(this._mjs_pendingNotifs);
         this._mjs_pendingNotifs.clear();
+        // <reffets-state>
+        var held     = this._mjs_ut;
+        this._mjs_ut = false;
+        // </reffets-state>
         results = [];
         // un même composant abonné à PLUSIEURS clés de cette passe (fan-out
         // `_mjs_notifyMutation` sur un objet partagé entre plusieurs clés racines,
@@ -516,11 +600,16 @@ function _mjsStoreSorti(h, obj, av) {
           // acceptable.
           results.push(this._mjs_subscribers.get(key).forEach((comp) => {
             if (notified.has(comp)) return;
-            // <reffet-magasin>
-            if (comp._mjs_mag && comp._mjs_mag === auteurs.get(key)) return;
-            // </reffet-magasin>
+            // <reffet-store>
+            if (comp._mjs_mag && comp._mjs_mag === authors.get(key)) return;
+            // </reffet-store>
             notified.add(comp);
-            return typeof comp._mjs_invalidate === "function" ? comp._mjs_invalidate('_awaits_') : void 0;
+            // <reffets-state>
+            return typeof comp._mjs_invalidate === "function" ? µ._mjs_uNotice(comp, held) : void 0;
+            // </reffets-state>
+            // <no-reffets-state>
+            // return typeof comp._mjs_invalidate === "function" ? comp._mjs_invalidate('_awaits_') : void 0;
+            // </no-reffets-state>
           }));
         }
         return results;

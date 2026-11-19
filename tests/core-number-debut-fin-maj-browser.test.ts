@@ -18,7 +18,7 @@ const SOURCE = `<script>
 const ATTENTE = `!!document.querySelector('mjs-hote')?._shadow?.querySelector('.borne')?._shadow?.querySelector('.input')`
 const AIDES  = `
 window.__in = () => document.querySelector('mjs-hote')._shadow.querySelector('.borne')._shadow.querySelector('.input')
-window.__vu = () => { const i = __in(); const H = document.querySelector('mjs-hote')._shadow; return { texte: i.value, sel: [i.selectionStart, i.selectionEnd], b: H.querySelector('.b').textContent, chg: H.querySelector('.chg').textContent } }
+window.__seenMark = () => { const i = __in(); const H = document.querySelector('mjs-hote')._shadow; return { texte: i.value, sel: [i.selectionStart, i.selectionEnd], b: H.querySelector('.b').textContent, chg: H.querySelector('.chg').textContent } }
 window.__caret = (n) => { const i = __in(); i.focus(); i.setSelectionRange(n, n) }
 `
 
@@ -34,18 +34,18 @@ for (const moteur of ['chromium', 'firefox'] as const) {
         await s.page.evaluate(`__caret(1)`)
         await s.page.keyboard.press('Shift+Home')
         await s.page.waitForTimeout(80)
-        assert.deepEqual(await s.page.evaluate(`__vu()`), { texte: '5', sel: [0, 1], b: '5', chg: '0' }, 'Maj + Début')
+        assert.deepEqual(await s.page.evaluate(`__seenMark()`), { texte: '5', sel: [0, 1], b: '5', chg: '0' }, 'Maj + Début')
         await s.page.evaluate(`__caret(0)`)
         await s.page.keyboard.press('Control+Shift+End')
         await s.page.waitForTimeout(80)
-        assert.deepEqual(await s.page.evaluate(`__vu()`), { texte: '5', sel: [0, 1], b: '5', chg: '0' }, 'Ctrl + Maj + Fin')
+        assert.deepEqual(await s.page.evaluate(`__seenMark()`), { texte: '5', sel: [0, 1], b: '5', chg: '0' }, 'Ctrl + Maj + Fin')
         await s.page.evaluate(`__caret(1)`)
         await s.page.keyboard.press('Control+Home')
         await s.page.waitForTimeout(80)
-        assert.deepEqual(await s.page.evaluate(`__vu()`), { texte: '5', sel: [0, 0], b: '5', chg: '0' }, 'Ctrl + Début')
+        assert.deepEqual(await s.page.evaluate(`__seenMark()`), { texte: '5', sel: [0, 0], b: '5', chg: '0' }, 'Ctrl + Début')
         await s.page.keyboard.press('End')
         await s.page.waitForTimeout(80)
-        const fin = await s.page.evaluate(`__vu()`)
+        const fin = await s.page.evaluate(`__seenMark()`)
         assert.equal(fin.b, '10', 'Fin seul mène au max')
         assert.equal(fin.chg, '1')
         assert.deepEqual(s.logs.filter((l) => /PAGEERROR/.test(l)), [])

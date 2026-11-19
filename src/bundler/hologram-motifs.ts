@@ -13,11 +13,11 @@ export const HOLOGRAM_MOTIFS = ['sparkles', 'grain', 'sky-far', 'sky-mid', 'sky-
 export const HOLOGRAM_IMAGES_DECL = 'var _MJS_FX_HOLO_IMAGES = {};'
 
 // un motif lu par la feuille : `tex('sky-far')` ou `pat('grain')`
-const REGEX_MOTIF = /(?<![\w$.])(?:tex|pat)\('([a-z0-9-]+)'\)/g
+const REGEX_PATTERN = /(?<![\w$.])(?:tex|pat)\('([a-z0-9-]+)'\)/g
 
 /** les motifs que le texte d'un fichier d'effet (réduit aux styles demandés) lit, triés */
 export function hologramMotifsOf(text: string): string[] {
-  return [...new Set([...text.matchAll(REGEX_MOTIF)].map((m) => m[1]))].sort()
+  return [...new Set([...text.matchAll(REGEX_PATTERN)].map((m) => m[1]))].sort()
 }
 
 /** le fichier de l'effet avec, dans sa table, l'adresse de chaque image livrée (motif -> adresse) */

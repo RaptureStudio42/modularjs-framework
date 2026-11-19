@@ -16,14 +16,14 @@
     var a     = (typeof s.angle === 'number' ? s.angle : 45) * Math.PI / 180;
     var dx    = Math.cos(a);
     var dy    = Math.sin(a);
-    var pile = function(n) {
+    var stack = function(n) {
       var out = [];
       for (var i = 1; i <= n; i++) out.push((i * dx).toFixed(2) + 'px ' + (i * dy).toFixed(2) + 'px 0 var(--mjs-extrude-color,#2563eb)');
       out.push(((n + 1) * dx).toFixed(2) + 'px ' + ((n + 1) * dy).toFixed(2) + 'px ' + (n * 2) + 'px rgba(0,0,0,.55)');
       return out.join(',');
     };
-    el.style.setProperty('--mjs-fx-extrude', pile(depth));
-    el.style.setProperty('--mjs-fx-extrude-deep', pile(depth + grow));
+    el.style.setProperty('--mjs-fx-extrude', stack(depth));
+    el.style.setProperty('--mjs-fx-extrude-deep', stack(depth + grow));
     el.style.setProperty('--mjs-fx-extrude-dx', (-grow * dx * .75).toFixed(2) + 'px');
     el.style.setProperty('--mjs-fx-extrude-dy', (-grow * dy * .75).toFixed(2) + 'px');
     var tr      = µ._mjs_fxTransition(el, 'extrude', 'transform .3s ease,text-shadow .3s ease');

@@ -10,11 +10,11 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { transpile } from '../src/transpiler/index.js'
 import { getAdapter } from '../src/languages/index.js'
-import { parametreLuAutrement } from '../src/languages/civet-parametres.js'
+import { paramReadOtherwise } from '../src/languages/civet-params.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 import { compileServerFile } from '../src/cli/server-entry.js'
-import { ligneDuManifeste } from '../src/bundler/index.js'
+import { manifestLine } from '../src/bundler/index.js'
 
 const composant = (script: string) => `<script>\n$n = 0\n${script}\n</script>\n<p>{$n}</p>\n`
 const avecModule = (module: string) => `<script module>\nzz = 1\n${module}\n</script>\n<script>\n$n = 0\n</script>\n<p>{$n}</p>\n`
@@ -63,6 +63,7 @@ describe('paramètre que Civet lit autrement, sans erreur', function () {
 
   it('loop (boucle sans fin, typé, décomposé), undefined (nu, avec un défaut, en reste, dans un tableau), mots de Civet décomposés ou typés', async () => {
     await refuse(composant('@jouer = (son, loop) -> son'), 'loop', 3)
+    await assert.rejects(transpile(composant('f = (loop) -> 1'), { moduleName: 'mot-lu' }), /une boucle sans fin dès son exécution/)
     await refuse(composant('f = (loop) -> 1'), 'loop', 3)
     await refuse(composant('@jouer = (son, loop: boolean) -> son'), 'loop', 3)
     await refuse(composant('k = ({loop}) -> loop'), 'loop', 3)
@@ -133,7 +134,7 @@ describe('paramètre que Civet lit autrement, sans erreur', function () {
   it('une très longue chaîne : le contrôle se tait, il ne lève jamais', () => {
     for (const n of [3000, 6000, 12000, 25000]) {
       const js = "s = 'readonly'\nx = " + Array(n).fill('a').join(' + ') + '\n'
-      assert.doesNotThrow(() => parametreLuAutrement(js, () => null), `chaîne de ${n} termes`)
+      assert.doesNotThrow(() => paramReadOtherwise(js, () => null), `chaîne de ${n} termes`)
     }
   })
 
@@ -180,9 +181,9 @@ describe('paramètre que Civet lit autrement, sans erreur', function () {
 
   it('manifeste : la ligne du fichier, directives #= require et lignes vides de tête retirées du texte compilé', () => {
     const contenu = '#= require a\n\n#= require_tree ./b\nx = 1\nf = (t, readonly) -> t\n'
-    assert.equal(ligneDuManifeste(contenu, 1), 4)
-    assert.equal(ligneDuManifeste(contenu, 2), 5)
-    assert.equal(ligneDuManifeste('x = 1\n#= require a\nf = (t, readonly) -> t\n', 2), 3)
+    assert.equal(manifestLine(contenu, 1), 4)
+    assert.equal(manifestLine(contenu, 2), 5)
+    assert.equal(manifestLine('x = 1\n#= require a\nf = (t, readonly) -> t\n', 2), 3)
   })
 
   it('expression du gabarit : la ligne de l\'expression, pas celle d\'un commentaire, d\'un texte ou d\'un <pre> qui la recopient', async () => {

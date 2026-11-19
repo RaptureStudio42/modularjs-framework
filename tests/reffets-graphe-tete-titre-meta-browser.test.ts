@@ -20,7 +20,7 @@ changer = ->
   $desc = 'deux'
 µeffect ->
   window.__passages = (window.__passages or 0) + 1
-  window.__vu = $titre
+  window.__seenMark = $titre
 </script>
 <button class="change" @click={changer}>+</button>
 `
@@ -61,7 +61,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`<@head> 
     await page.waitForFunction(`(() => { const h = document.querySelector('mjs-hote'); return !!(h && h._shadow && h._shadow.querySelector('.change')) })()`, null, { timeout: 30000 })
   })
   after(async () => { if (browser) await browser.close() })
-  const lire = () => page.evaluate(`({ titre: document.title, desc: (document.head.querySelector('meta[name="description"]') || {}).content, passages: window.__passages, vu: window.__vu })`)
+  const lire = () => page.evaluate(`({ titre: document.title, desc: (document.head.querySelector('meta[name="description"]') || {}).content, passages: window.__passages, vu: window.__seenMark })`)
   it('au montage : titre et <meta> posés, le reffet passe une fois', async () => {
     await page.waitForFunction(`document.title === 'Premier'`, null, { timeout: 5000 }).catch(() => {})
     assert.deepEqual(await lire(), { titre: 'Premier', desc: 'un', passages: 1, vu: 'Premier' })

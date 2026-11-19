@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { creerProxyDecision } from '../src/mjs-ws/proxy.js'
+import { createProxyDecision } from '../src/mjs-ws/proxy.js'
 
 const SECRET = 'secret-de-test-proxy-panne-1234567890'
 
@@ -26,7 +26,7 @@ describe('MJS-WS — proxy de décisions : un refus de panne n\'est jamais gard�
     })
     await new Promise<void>(r => back.listen(0, '127.0.0.1', () => r()))
     const url     = 'http://127.0.0.1:'+ (back.address() as AddressInfo).port +'/decider'
-    const decider = creerProxyDecision({ url, secret: SECRET, timeout: 300, cache: { ttl: 60000 } }, 'connect', (json: any) => json?.allow === true, () => {})
+    const decider = createProxyDecision({ url, secret: SECRET, timeout: 300, cache: { ttl: 60000 } }, 'connect', (json: any) => json?.allow === true, () => {})
     try {
       assert.equal(await decider({ visiteur: 'a' }), false, 'back en panne : refus')
       mode = 'muet'

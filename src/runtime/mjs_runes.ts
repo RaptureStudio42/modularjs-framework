@@ -1,4 +1,4 @@
-// mjs_runes.coffee
+// mjs_runes.ts
 // ==========================================================
 // RÉACTIVITÉ UNIVERSELLE (Runes hors-composant)
 // ==========================================================
@@ -35,12 +35,40 @@
   return comp._mjs_univ_targets.add(target);
 };
 
+// <reffets-state>
+// AVIS D'UN ÉTAT PARTAGÉ à un composant abonné (`µ.state`, contexte `§§x`, `µStore`) : le rendu complet est demandé comme toujours, et marqué
+// « demandé par des états partagés seulement » (`_mjs_pending_full` vaut 2) tant qu'aucune autre cause — montage, retour dans la page,
+// attente résolue, changement de langue — n'en a demandé un dans le même lot : celle-là pose `true` (_mjs_invalidate, mjs_element.ts), que
+// rien ne ramène à 2. À ce rendu, un reffet qui a noté ses lectures ne passe que s'il a lu un état qui a changé, ou dans le doute
+// (_mjsUGo, mjs_element.ts) ; tout le reste du rendu est celui d'un rendu complet
+µ._mjs_uNotice = function(comp, held) {
+  const whole = comp._mjs_render_scheduled === true && comp._mjs_pending_full === true;
+  comp._mjs_invalidate('_awaits_');
+  if (!held && !whole && comp._mjs_render_scheduled === true && comp._mjs_pending_full === true) comp._mjs_pending_full = 2;
+};
+// OBJET TENU PAR UN COMPOSANT — `µ._mjs_uHeld` : les objets dont un composant a fait l'enveloppe (`_mjs_wrapDeep`, mjs_element.ts ; rien
+// n'en sort). Un composant lit un tel objet par sa propre enveloppe, sans passer par les pièges de l'état partagé qui le tient aussi
+// (`$lignes = µ$$compte.lignes`, une liste filtrée, une prop, un objet du composant rangé ensuite dans l'état) : aucune lecture n'est
+// notée pour ses reffets. L'écriture d'un état partagé DANS un tel objet prévient donc ses abonnés comme toujours, tous leurs reffets
+// passent (`tenu`, ci-dessus) : l'état le lit ici avant de prévenir (`µ._mjs_uT`, posé par mjs_state.ts ; mjs_store.ts garde le sien
+// jusqu'à sa passe des avis) — une lecture de table par écriture, rien par lecture ni par abonné
+µ._mjs_uHeld = new WeakSet();
+µ._mjs_uT    = false;
+// note d'une lecture pendant le passage d'un reffet : posée par mjs_signals.ts, qui accompagne tout reffet ; sans lui, rien à noter
+µ._mjs_uRead ||= function() {};
+
+// </reffets-state>
 µ._mjs_notifyUniversalChange = function(target, key) {
   // Cache local + early-return + simplify (skip ternary chain Coffee).
   const deps = µ._mjs_universalDeps.get(target);
   if (!deps) return;
   const subs = deps[key];
   if (!subs || subs.size === 0) return;
+  // <reffets-state>
+  // la boîte de la clé avance à chaque avis donné aux composants : un reffet qui l'a lue le verra au rendu (µ._mjs_uRead, mjs_signals.ts)
+  const g = µ._mjs_stateSig.get(target), held = µ._mjs_uT;
+  if (g !== void 0 && g._mjs_sigBoxes) µ._mjs_sigWrite(g, key);
+  // </reffets-state>
   // Le signal abstrait '_awaits_' est indispensable.
   // commentaire périmé corrigé :
   // décrivait encore la traduction V1 en bitmask (-1/-1n), retirée depuis.
@@ -50,7 +78,12 @@
     // `_u` : un {await} qui lit un état partagé ou un contexte (mjs_await.ts, marque posée par le générateur) est relu ;
     // `_awaits_`, que pose aussi la résolution d'une attente, ne relit aucune expression
     comp._mjs_chgd?.add('_u');
-    comp._mjs_invalidate('_awaits_');
+    // <reffets-state>
+    µ._mjs_uNotice(comp, held);
+    // </reffets-state>
+    // <no-reffets-state>
+    // comp._mjs_invalidate('_awaits_');
+    // </no-reffets-state>
   }
 };
 

@@ -1,6 +1,6 @@
 // Tests neufs — variable de thème unique --mjs-toast-color (mjs_modal.ts), posée par les classes de
 // type et consommé À LA FOIS par la bordure du toast et par la barre de progression
-// (.mjs-toast-barre) — corrige le bogue où la barre restait grise quel que soit le type (les
+// (.mjs-toast-bar) — corrige le bogue où la barre restait grise quel que soit le type (les
 // classes .mjs-toast-<type> ne posaient QUE border-color, jamais lu par la barre). Preuve par
 // getComputedStyle (happy-dom résout ici correctement la chaîne var() en jeu, vérifié à la main
 // avant écriture), en plus de la lecture du texte source
@@ -40,7 +40,7 @@ describe('mjs_modal — variable de thème --mjs-toast-color, bordure et barre t
       const { window, document, µ } = loadModal()
       µ.modal.notify('x', { type })
       const t = document.body.querySelector('.mjs-toast-' + type)
-      const barre = t.querySelector('.mjs-toast-barre')
+      const barre = t.querySelector('.mjs-toast-bar')
       assert.equal(window.getComputedStyle(t).getPropertyValue('--mjs-toast-color').trim(), hex, `--mjs-toast-color du toast ${type}`)
       assert.equal(window.getComputedStyle(barre).backgroundColor, hex, `la barre du type ${type} doit prendre sa couleur, pas rester grise`)
     })

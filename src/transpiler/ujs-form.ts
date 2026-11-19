@@ -16,19 +16,19 @@
 
 import { SIGN_RE } from '../parser/mjs-words.js'
 import { t } from '../messages/index.js'
-import type { Balise } from '../reader/index.js'
-import { attributDe, balisesDe, gabaritLu, ligneDe, nomDe, valeurDe } from './template-tree.js'
+import type { Tag } from '../reader/index.js'
+import { attrOf, tagsOf, readTemplate, lineOf, nameOf, valueOf } from './template-tree.js'
 
 // RÈGLE ZÉRO — ni le contenu d'un <pre>, ni celui d'un <code>
-const EXEMPLES = new Set(['pre', 'code'])
+const EXAMPLES = new Set(['pre', 'code'])
 
 // action="…" (littérale non vide) ou action={…} (dynamique) — action="" compte comme
 // ABSENTE : c'est exactement le piège, le navigateur y remet l'URL courante ; des blancs autour du `=`
 // (`action = ""`) n'y changent rien
-function hasAction(src: string, b: Balise): boolean {
-  const attr = attributDe(b, 'action')
+function hasAction(src: string, b: Tag): boolean {
+  const attr = attrOf(b, 'action')
   if (attr === undefined) return false
-  return attr.valeur !== 'texte' || valeurDe(src, attr) !== ''
+  return attr.value !== 'text' || valueOf(src, attr) !== ''
 }
 
 // verbe HTTP déclaré : :method (mot de MJS source, avant compilation) ou mjs-method
@@ -36,8 +36,8 @@ function hasAction(src: string, b: Balise): boolean {
 // method="post" NATIF ne compte volontairement PAS ici : la trappe reste entière
 // (l'action manque toujours) — seul le marqueur MJS vaut acquiescement délibéré
 const METHOD_RE = new RegExp('^(?:' + SIGN_RE + 'method|mjs-method)$', 'i')
-function hasMethodDirective(b: Balise): boolean {
-  return b.attributs.some(a => a.nom !== null && METHOD_RE.test(a.nom))
+function hasMethodDirective(b: Tag): boolean {
+  return b.attrs.some(a => a.name !== null && METHOD_RE.test(a.name))
 }
 
 // opt-out explicite — le mot `:noUJS`, du signe de la table (parser/mjs-words.ts), tiret optionnel, comme le reconnaît le transpiler pour la
@@ -46,16 +46,16 @@ function hasMethodDirective(b: Balise): boolean {
 // analysé porte donc déjà `mjs-no-ujs` — sans elle, tout formulaire correctement
 // opté dehors était signalé (prouvé au build du site : 3 faux positifs sur 3)
 const NO_UJS_RE = new RegExp('^(?:' + SIGN_RE + 'no-?ujs|mjs-no-ujs)$', 'i')
-function hasNoUjs(b: Balise): boolean {
-  return b.attributs.some(a => a.nom !== null && NO_UJS_RE.test(a.nom))
+function hasNoUjs(b: Tag): boolean {
+  return b.attrs.some(a => a.name !== null && NO_UJS_RE.test(a.name))
 }
 
 // envoi retenu par le composant : `@submit` porte `.prevent` parmi ses modificateurs — ceux d'avant
 // `.emit.<nom>`, qui clôt la liste (`@submit.emit.prevent` émet un événement nommé `prevent`). Seuls les noms
 // d'attributs se lisent : `title="astuce @submit.prevent ici"` n'est pas une directive
-function hasSubmitPrevent(b: Balise): boolean {
-  for (const a of b.attributs) {
-    const m = a.nom === null ? null : /^@submit((?:\.[\w-]+)+)/i.exec(a.nom)
+function hasSubmitPrevent(b: Tag): boolean {
+  for (const a of b.attrs) {
+    const m = a.name === null ? null : /^@submit((?:\.[\w-]+)+)/i.exec(a.name)
     if (m === null) continue
     const mods = m[1].slice(1).split('.')
     const end  = mods.indexOf('emit')
@@ -71,12 +71,12 @@ function hasSubmitPrevent(b: Balise): boolean {
  * sans le dialecte de Civet, comme par le compilateur.
  */
 // `firstLine` : cf. checkA11y (a11y.ts)
-export function checkUjsForm(html: string, file: string, firstLine: number | ((k: number) => number | string) = 1, dialecte = true): string[] {
-  const arbre              = gabaritLu(html, dialecte)
+export function checkUjsForm(html: string, file: string, firstLine: number | ((k: number) => number | string) = 1, dialect = true): string[] {
+  const tree               = readTemplate(html, dialect)
   const messages: string[] = []
-  for (const b of balisesDe(arbre.enfants, EXEMPLES)) {
-    if (nomDe(b) !== 'form' || hasAction(arbre.source, b) || hasMethodDirective(b) || hasNoUjs(b) || hasSubmitPrevent(b)) continue
-    messages.push(t('transpiler.lint.ujs-form', { file, ligne: typeof firstLine === 'number' ? ligneDe(arbre, b.debut, firstLine) : firstLine(ligneDe(arbre, b.debut, 0)) }))
+  for (const b of tagsOf(tree.children, EXAMPLES)) {
+    if (nameOf(b) !== 'form' || hasAction(tree.source, b) || hasMethodDirective(b) || hasNoUjs(b) || hasSubmitPrevent(b)) continue
+    messages.push(t('transpiler.lint.ujs-form', { file, line: typeof firstLine === 'number' ? lineOf(tree, b.start, firstLine) : firstLine(lineOf(tree, b.start, 0)) }))
   }
   return messages
 }

@@ -114,8 +114,8 @@ function makePayload(octetsCible: number): () => { n: number; pad: string } {
   return () => ({ n: n++, pad })
 }
 
-function totalKicks(garde: MjsWsStatsSnapshot['garde']): number {
-  return garde.kicksDebit + garde.kicksSilence + garde.kicksEngorgement + garde.kicksChargeUtile
+function totalKicks(guard: MjsWsStatsSnapshot['guard']): number {
+  return guard.kicksRate + guard.kicksSilence + guard.kicksBackpressure + guard.kicksPayload
 }
 
 // ============================================================================================
@@ -359,12 +359,12 @@ async function scenarioS1(args: BenchArgs): Promise<ScenarioResult> {
       { libelle: 'connexions ouvertes',   valeur: String(n),                                   unite: '' },
       { libelle: 'durée totale',          valeur: fmt(dureeS),                                 unite: 's' },
       { libelle: 'débit de connexion',    valeur: fmt(debitConnS),                             unite: 'conn/s' },
-      { libelle: 'accueillies (serveur)', valeur: String(apres.stats.connexions.accueillies),  unite: '' },
+      { libelle: 'accueillies (serveur)', valeur: String(apres.stats.connections.welcomed),  unite: '' },
       { libelle: 'RSS serveur après',     valeur: fmt(apres.rss / 1024 / 1024),                unite: 'Mio' },
     ]
 
     await Promise.all(clients.map((c) => c.close()))
-    return { nom: 's1', titre: 'S1 — connexions', lignes, donnees: { n, dureeS, debitConnS, welcomedTotal: apres.stats.connexions.accueillies, rssMio: apres.rss / 1024 / 1024 } }
+    return { nom: 's1', titre: 'S1 — connexions', lignes, donnees: { n, dureeS, debitConnS, welcomedTotal: apres.stats.connections.welcomed, rssMio: apres.rss / 1024 / 1024 } }
   } finally {
     await stopServer(handle)
   }
@@ -426,9 +426,9 @@ async function scenarioS3(args: BenchArgs): Promise<ScenarioResult> {
     await delay(GRACE_TAIL_MS)
     const apres = await statsRequest(handle)
 
-    const recusParSec   = (apres.stats.messages.recus - avant.stats.messages.recus) / d
+    const recusParSec   = (apres.stats.messages.received - avant.stats.messages.received) / d
     const envoyesParSec = envoyes / d
-    const rejetesDelta  = apres.stats.messages.rejetes - avant.stats.messages.rejetes
+    const rejetesDelta  = apres.stats.messages.dropped - avant.stats.messages.dropped
 
     const lignes: LigneResultat[] = [
       { libelle: 'clients',               valeur: String(c),            unite: '' },
@@ -483,8 +483,8 @@ async function runFanout(nom: string, titre: string, args: BenchArgs, limits: Pa
 
     const pct           = percentiles(latences)
     const livraisonsSec = livraisons / d
-    const rejetesDelta  = apres.stats.messages.rejetes - avant.stats.messages.rejetes
-    const kicksDelta    = totalKicks(apres.stats.garde) - totalKicks(avant.stats.garde)
+    const rejetesDelta  = apres.stats.messages.dropped - avant.stats.messages.dropped
+    const kicksDelta    = totalKicks(apres.stats.guard) - totalKicks(avant.stats.guard)
 
     const lignes: LigneResultat[] = [
       { libelle: 'membres du salon',         valeur: String(m),             unite: '' },

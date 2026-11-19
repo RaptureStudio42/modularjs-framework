@@ -9,7 +9,7 @@ import { mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Window } from 'happy-dom'
-import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
+import { Bundler, terminateSharedWorkerPool, projectBlocks } from '../src/bundler/index.js'
 import { stripMsgFallbacks } from '../src/bundler/minify.js'
 import { RUNTIME_LABELS, runtimeLabelsFor } from '../src/runtime-labels.js'
 import { TRACE_ONLY_MESSAGES, WARNING_ONLY_MESSAGES } from '../src/bundler/minify.js'
@@ -65,11 +65,18 @@ describe('retrait du texte de secours des appels _mjs_msg/_mjs_txt', () => {
 
   it('le runtime lui-même : chaque appel à 3 arguments littéraux perd son secours, le reste du code est intact', () => {
     let retires = 0
+    // le retrait ne touche pas au code en commentaire ; les blocs `// <sans-nom>` (écrits en commentaire) sont rouverts par la
+    // construction avant le retrait : chaque forme du fichier est vérifiée, lignes de commentaire ôtées
+    const sansCommentaires = (texte: string): string => texte.replace(/^[ \t]*\/\/.*$/gm, '')
     for (const f of readdirSync(RUNTIME_DIR).filter((n) => n.endsWith('.ts'))) {
-      const src = readFileSync(join(RUNTIME_DIR, f), 'utf-8')
-      const out = stripMsgFallbacks(src)
-      retires += src.length - out.length > 0 ? 1 : 0
-      assert.doesNotMatch(out, /µ\._mjs_(?:msg|txt)\(\s*'[A-Za-z.]+'\s*,\s*[^,()]*,\s*'/, `un secours reste dans ${f}`)
+      const src    = readFileSync(join(RUNTIME_DIR, f), 'utf-8')
+      const out    = stripMsgFallbacks(src)
+      retires     += src.length - out.length > 0 ? 1 : 0
+      const noms   = [...src.matchAll(/^[ \t]*\/\/ <sans-([\w-]+)>$/gm)].map((m) => m[1])
+      const formes = [src, ...noms.map((nom) => projectBlocks(src, { [nom]: false }))]
+      for (const forme of formes) {
+        assert.doesNotMatch(sansCommentaires(stripMsgFallbacks(forme)), /µ\._mjs_(?:msg|txt)\(\s*'[A-Za-z.]+'\s*,\s*[^,()]*,\s*'/, `un secours reste dans ${f}`)
+      }
     }
     assert.ok(retires > 20, `trop peu de fichiers touchés : ${retires}`)
   })

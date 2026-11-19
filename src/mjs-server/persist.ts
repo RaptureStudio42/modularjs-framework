@@ -62,7 +62,7 @@
 // adaptateur.
 //
 //   import { mjsServer, MemoryPersistAdapter } from 'modularjs-framework/mjs-server'
-//   app = mjsServer({ persist: { adaptateur: new MemoryPersistAdapter(), debounce: 150 } })
+//   app = mjsServer({ persist: { adapter: new MemoryPersistAdapter(), debounce: 150 } })
 
 import type { MjsWsLogFn } from '../mjs-ws/index.js'
 import type { Game, MjsServerGameSnapshot } from './game.js'
@@ -204,17 +204,17 @@ export function resolvePersistOption(raw: MjsServerPersistOption | undefined | n
   const prefix = '[MJS-Server] opts.persist'
   if (isAnAdapter(raw)) return { adapter: raw, debounce: DEFAULT_PERSIST_DEBOUNCE, snapshotEvery: 0 }
   if (typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error(t('serveur.persist-option-invalide', { prefix: prefix, received: JSON.stringify(raw) }))
+    throw new Error(t('mjs-server.persist-option-invalid', { prefix: prefix, received: JSON.stringify(raw) }))
   }
   for (const k of Object.keys(raw)) if (!KNOWN_PERSIST_KEYS.has(k)) throw keyUnknown(prefix, k, KNOWN_PERSIST_KEYS)
   if (!isAnAdapter(raw.adapter)) {
-    throw new Error(t('serveur.persist-adaptateur-invalide', { prefix: prefix, received: JSON.stringify(raw.adapter) }))
+    throw new Error(t('mjs-server.persist-adapter-invalid', { prefix: prefix, received: JSON.stringify(raw.adapter) }))
   }
   if (raw.debounce !== undefined && (typeof raw.debounce !== 'number' || !Number.isFinite(raw.debounce) || raw.debounce < 0)) {
-    throw new Error(t('serveur.persist-debounce-invalide', { prefix: prefix, received: JSON.stringify(raw.debounce) }))
+    throw new Error(t('mjs-server.persist-debounce-invalid', { prefix: prefix, received: JSON.stringify(raw.debounce) }))
   }
   if (raw.snapshotEvery !== undefined && (typeof raw.snapshotEvery !== 'number' || !Number.isFinite(raw.snapshotEvery) || raw.snapshotEvery < 0)) {
-    throw new Error(t('serveur.persist-snapshotevery-invalide', { prefix: prefix, received: JSON.stringify(raw.snapshotEvery) }))
+    throw new Error(t('mjs-server.persist-snapshotevery-invalid', { prefix: prefix, received: JSON.stringify(raw.snapshotEvery) }))
   }
   return {
     adapter:    raw.adapter,
@@ -403,7 +403,7 @@ export function createPersistEngine(resolved: MjsServerResolvedPersist | null, o
         try {
           data = e.game.serialize()
         } catch (err) {
-          onLog('error', t('serveur.persist-serialisation-echoue', { id: id }), { err: err instanceof Error ? err.message : String(err) })
+          onLog('error', t('mjs-server.persist-serialization-failed', { id: id }), { err: err instanceof Error ? err.message : String(err) })
           return undefined
         }
         const prepared = e.game._prepareSave?.()
@@ -424,12 +424,12 @@ export function createPersistEngine(resolved: MjsServerResolvedPersist | null, o
         silent     = true
         follow(done)
         const wait = e.saveQueued ? 0 : retryLater(e)
-        onLog('warn', t('serveur.persist-save-sans-reponse', { id: id, delai: writeSec, essai: wait / 1000 }))
+        onLog('warn', t('mjs-server.persist-save-no-response', { id: id, delay: writeSec, attempt: wait / 1000 }))
       }
       return boundedWrite(save, silence, writeMs, () => lateArrival(id, rank, 'save', life, correction, version))
         .catch(err => {
           const wait = retryLater(e)
-          onLog('warn', wait > 0 ? t('serveur.persist-save-echoue-nouvel-essai', { id: id, delai: wait / 1000 }) : t('serveur.persist-save-echoue', { id: id }), { err: err instanceof Error ? err.message : String(err) })
+          onLog('warn', wait > 0 ? t('mjs-server.persist-save-failed-retry', { id: id, delay: wait / 1000 }) : t('mjs-server.persist-save-failed', { id: id }), { err: err instanceof Error ? err.message : String(err) })
         })
     })
     return e.chain
@@ -464,12 +464,12 @@ export function createPersistEngine(resolved: MjsServerResolvedPersist | null, o
     const silence = (done: Promise<void>) => {
       follow(done)
       const wait = retryRemoveLater(id, life)
-      onLog('warn', t('serveur.persist-remove-sans-reponse', { id: id, delai: writeSec, essai: wait / 1000 }))
+      onLog('warn', t('mjs-server.persist-remove-no-response', { id: id, delay: writeSec, attempt: wait / 1000 }))
     }
     return boundedWrite(remove, silence, writeMs, () => lateArrival(id, rank, 'remove', life, false, -1))
       .catch(err => {
         const wait = retryRemoveLater(id, life)
-        onLog('warn', wait > 0 ? t('serveur.persist-remove-echoue-nouvel-essai', { id: id, delai: wait / 1000 }) : t('serveur.persist-remove-echoue', { id: id }), { err: err instanceof Error ? err.message : String(err) })
+        onLog('warn', wait > 0 ? t('mjs-server.persist-remove-failed-retry', { id: id, delay: wait / 1000 }) : t('mjs-server.persist-remove-failed', { id: id }), { err: err instanceof Error ? err.message : String(err) })
       })
   }
 
@@ -502,10 +502,10 @@ export function createPersistEngine(resolved: MjsServerResolvedPersist | null, o
   // avant qu'elle ne s'éteigne (partie recréée) — auto-nettoyage une fois éteinte, SAUF si un armGame() l'a déjà consommée
   // entre-temps (elle n'est alors plus la valeur courante de tailChains)
   function chainRemove(id: string, after: Promise<void>, life: number): Promise<void> {
-    const suite = after.then(() => runRemove(id, life))
-    tailChains.set(id, suite)
-    void suite.finally(() => { if (tailChains.get(id) === suite) tailChains.delete(id) })
-    return suite
+    const rest = after.then(() => runRemove(id, life))
+    tailChains.set(id, rest)
+    void rest.finally(() => { if (tailChains.get(id) === rest) tailChains.delete(id) })
+    return rest
   }
 
   // UNE ÉCRITURE ABANDONNÉE VIENT DE RÉPONDRE (`rank` : son rang, `life` : la vie de l'identifiant qui l'a lancée) — réussie ou non, on ne
@@ -530,9 +530,9 @@ export function createPersistEngine(resolved: MjsServerResolvedPersist | null, o
     const live = entries.get(id)
     if (!live) {
       if (kind === 'remove') return
-      if (burst) { onLog('warn', t('serveur.persist-ecriture-tardive-arret', { id: id })); return }
+      if (burst) { onLog('warn', t('mjs-server.persist-write-late-stop', { id: id })); return }
       chainRemove(id, tailChains.get(id) ?? Promise.resolve(), life)
-      onLog('warn', t('serveur.persist-save-tardive-partie-finie', { id: id }))
+      onLog('warn', t('mjs-server.persist-save-late-game-finished', { id: id }))
       return
     }
     // dépassée : une écriture plus récente a abouti, ou (sauf pour une réécriture de rattrapage) seulement été lancée — un stockage peut les exécuter
@@ -541,11 +541,11 @@ export function createPersistEngine(resolved: MjsServerResolvedPersist | null, o
     const ghost    = kind === 'save' && live.life !== life
     if (!exceeded && !ghost) return
     if (!ghost && kind === 'save' && version === live.launchedVersion) return
-    if (burst) { onLog('warn', t('serveur.persist-ecriture-tardive-arret', { id: id })); return }
+    if (burst) { onLog('warn', t('mjs-server.persist-write-late-stop', { id: id })); return }
     if (live.dirty || live.saveQueued) return
     if (stopped) live.rewrite = true
     else { live.correcting = true; void runSave(live) }
-    onLog('warn', t(kind === 'save' ? 'serveur.persist-save-tardive' : 'serveur.persist-remove-tardive', { id: id }))
+    onLog('warn', t(kind === 'save' ? 'mjs-server.persist-save-late' : 'mjs-server.persist-remove-late', { id: id }))
   }
 
   function scheduleSave(game: Game): void {
@@ -600,29 +600,29 @@ export function createPersistEngine(resolved: MjsServerResolvedPersist | null, o
     },
 
     async loadAtBoot(restore: (data: MjsServerGameSnapshot) => boolean): Promise<void> {
-      let brut: Array<{ id: string; data: MjsServerGameSnapshot }>
+      let raw: Array<{ id: string; data: MjsServerGameSnapshot }>
       try {
-        brut = await resolved.adapter.load()
+        raw = await resolved.adapter.load()
       } catch (err) {
-        onLog('warn', t('serveur.persist-load-echoue'), { err: err instanceof Error ? err.message : String(err) })
+        onLog('warn', t('mjs-server.persist-load-failed'), { err: err instanceof Error ? err.message : String(err) })
         return
       }
       // un adaptateur maison qui rend autre chose qu'un tableau ({}, null, une chaîne…) : même sort qu'un load() qui échoue — le
       // `for…of` ci-dessous levait (boot cassé) ou parcourait une chaîne caractère par caractère
-      if (!Array.isArray(brut)) {
-        onLog('warn', t('serveur.persist-load-pas-un-tableau', { recu: brut === null ? 'null' : typeof brut }))
+      if (!Array.isArray(raw)) {
+        onLog('warn', t('mjs-server.persist-load-not-an-array', { received: raw === null ? 'null' : typeof raw }))
         return
       }
-      for (const entry of brut) {
+      for (const entry of raw) {
         // entrée elle-même `null` (adaptateur maison) : même avertissement qu'une donnée illisible, jamais un boot cassé
         const data = entry?.data
         try {
           // `data` peut être `null` (colonne SQL NULL, fichier `null` JSON valide,
           // cf. decodeSnapshot) — `data?.id`/`data?.type` : sinon CETTE ligne lève à son tour, hors
           // de tout try, et fait fuir loadAtBoot() entier (boot cassé pour UNE seule entrée)
-          if (!restore(data)) onLog('warn', t('serveur.persist-partie-ignoree', { id: data?.id, type: data?.type }))
+          if (!restore(data)) onLog('warn', t('mjs-server.persist-game-ignored', { id: data?.id, type: data?.type }))
         } catch (err) {
-          onLog('warn', t('serveur.persist-restauration-echouee', { id: data?.id }), { err: err instanceof Error ? err.message : String(err) })
+          onLog('warn', t('mjs-server.persist-restore-failed', { id: data?.id }), { err: err instanceof Error ? err.message : String(err) })
         }
       }
     },
@@ -666,7 +666,7 @@ export function createPersistEngine(resolved: MjsServerResolvedPersist | null, o
         for (const chain of pending) awaited.add(chain)
         await Promise.allSettled(pending)
       } while (pending.length > 0)
-      await boundedWrite(() => resolved.adapter.flush?.(), () => { onLog('warn', t('serveur.persist-flush-sans-reponse', { delai: writeSec })) }, writeMs)
+      await boundedWrite(() => resolved.adapter.flush?.(), () => { onLog('warn', t('mjs-server.persist-flush-no-response', { delay: writeSec })) }, writeMs)
     },
   }
 }

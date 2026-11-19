@@ -5,7 +5,7 @@
 // ModularJS post-traite ensuite avec le sucre `$/§/§§/@@/@x`.
 
 import type { LintToggles } from '../diagnostics.js'
-import type { DeclarationsDeLaPasse } from './civet-declarations.js'
+import type { PassDeclarations } from './civet-declarations.js'
 
 export type SupportedLang = 'civet' | 'coffee' | 'ts' | 'js'
 
@@ -20,23 +20,27 @@ export interface CompileSourceOpts {
   colorsEnabled?: boolean
   /** refuse une variable nommée `eval`, `undefined`, d'un mot réservé… (Civet seulement) : le `<script>` et le
    *  `<script module>` d'un composant, jamais une expression du gabarit. */
-  nomsDeVariables?: boolean
+  variableNames?: boolean
   /** noms que la passe de déclaration de ModularJS déclare elle-même au-dessus d'une branche (`x .= undefined`) : cette
    *  déclaration n'est pas comptée par le contrôle des noms ; l'affectation du script l'est, à sa ligne. */
-  nomsDeclaresParMjs?: ReadonlySet<string>
+  mjsDeclaredNames?: ReadonlySet<string>
   /** déclare un nom qu'une affectation lie sans déclaration (`o =` suivi de la valeur à la ligne d'après, affectation dans
    *  une expression), lu dans l'arbre de Civet, comme la passe de déclaration de ModularJS déclare la forme sur une ligne
    *  (Civet seulement). */
-  declarerAffectations?: boolean
+  declareAssignments?: boolean
   /** noms déclarés hors du script (variables du `<script module>` pour le `<script>`) : jamais redéclarés. */
-  nomsConnus?: readonly string[]
+  knownNames?: readonly string[]
+  /** texte posé ensuite dans une fonction du composant (son `<script>`), où `this` désigne le composant : gardé tel quel, sans
+   *  conversion de module (sous `format: 'esm'`, esbuild lisait un `this` du premier niveau comme l'objet `exports` d'un module
+   *  CommonJS et posait un `export default` au milieu du composant) (TypeScript seulement). */
+  inComponent?: boolean
   /** déclarations que la passe de déclaration de ModularJS a posées (ligne, noms) : l'arbre de Civet défait celles qu'il
    *  contredit (champ de classe, bloc `do`, première affectation plus haut) (Civet seulement). */
-  declarationsDeLaPasse?: DeclarationsDeLaPasse
-  /** raccourcis de ModularJS posés dans l'arbre de Civet (reader/script.ts, preparerLeScript) : `verifier` sur la première
+  passDeclarations?: PassDeclarations
+  /** raccourcis de ModularJS posés dans l'arbre de Civet (reader/script.ts, prepareScript) : `verifier` sur la première
    *  lecture, `retoucher` juste avant la génération, qui rend le texte auquel la carte de source se rapporte ; `relire`
    *  rend l'erreur à lancer quand Civet refuse la première lecture (Civet seulement). */
-  retoucheArbre?: { verifier: (ast: unknown, texte: string) => void, retoucher: (ast: unknown, texte: string) => string, relire: (e: unknown) => Error }
+  treeFixup?: { check: (ast: unknown, text: string) => void, fixup: (ast: unknown, text: string) => string, reread: (e: unknown) => Error }
 }
 
 /** Retour d'un adapter : le JS, plus sa carte de source v3 (JSON stringifié) si le
@@ -70,7 +74,7 @@ export const adapters: Record<SupportedLang, LanguageAdapter> = {
 export function getAdapter(lang: SupportedLang | string): LanguageAdapter {
   const a = adapters[lang as SupportedLang]
   if (!a) {
-    throw new Error(t('languages.langage-inconnu', { lang, supportes: Object.keys(adapters).join(', ') }))
+    throw new Error(t('languages.language-unknown', { lang, supported: Object.keys(adapters).join(', ') }))
   }
   return a
 }

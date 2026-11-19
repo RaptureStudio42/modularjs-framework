@@ -38,7 +38,7 @@ async function vu(transport: MemoryTransport, flux: string): Promise<unknown[]> 
   return trames.filter(f => f.t === flux || f.t === 'µ:error').map(f => f.t === 'µ:error' ? f.p.message : f.p.values)
 }
 
-const REFUS = () => t('ws.streams.acces-flux-refuse')
+const REFUS = () => t('ws.streams.access-stream-refused')
 
 describe('MJS-WS — un flux est fermé par défaut, le programmeur l\'ouvre', function () {
   this.timeout(10000)
@@ -79,7 +79,7 @@ describe('MJS-WS — un flux est fermé par défaut, le programmeur l\'ouvre', f
     P.app.stream('tard')
     P.app.stream('tard', { public: true })
     await tick()
-    const ligne = t('ws.streams.flux-ferme-a-la-declaration', { name: 'ferme' })
+    const ligne = t('ws.streams.stream-closed-at-declaration', { name: 'ferme' })
     assert.ok(ligne.includes("app.stream('ferme', { public: true })"), ligne)
     assert.deepEqual(P.avertissements.filter(l => l.includes('public: true')), [ligne], JSON.stringify(P.avertissements))
     await P.app.stop()

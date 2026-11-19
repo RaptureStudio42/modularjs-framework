@@ -90,7 +90,7 @@ describe('@confirm / @title forme objet — compile', () => {
   it('messages fr et en : même texte de règle, µt(…) cité avec un exemple', async () => {
     const { fr } = await import('../src/messages/fr.js') as any
     const { en } = await import('../src/messages/en.js') as any
-    for (const cle of ['transpiler.confirm-objet-invalide', 'transpiler.title-objet-invalide']) {
+    for (const cle of ['transpiler.confirm-object-invalid', 'transpiler.title-object-invalid']) {
       for (const cat of [fr, en]) {
         const m = cat[cle]({ raw: 'R' })
         assert.match(m, /µt\('/, `${cle} doit donner un exemple µt('…')`)

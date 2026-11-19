@@ -73,13 +73,13 @@ export const RAW_WRITE_PAREN_OUT_OPEN = '('
 
 // Ancienne forme (RETIRÉE) : `µwrite $x = v` / `µwrite($x) = v`. Détectée à PART,
 // AVANT la garde générique ci-dessous, pour un message dédié qui donne la forme attendue —
-// sans ce corps, elle retomberait sur RAW_ACCESS_MALFORME_BODY (message générique, moins
+// sans ce corps, elle retomberait sur RAW_ACCESS_MALFORMED_BODY (message générique, moins
 // actionnable pour une faute aussi répandue auparavant). `(?!=|>)` exclut `==`/`=>`, même
 // garde que MU_DERIVED_BODY plus bas.
-export const RAW_WRITE_OLD_FORME_BODY = `µwrite[ \\t]+\\$(\\$?)(${SIGIL_ID})[ \\t]*=(?!=|>)`
-export const RAW_WRITE_OLD_FORME_PAREN_BODY = `µwrite[ \\t\\r\\n]*\\([ \\t\\r\\n]*\\$(\\$?)(${SIGIL_ID})[ \\t\\r\\n]*\\)[ \\t]*=(?!=|>)`
+export const RAW_WRITE_OLD_SHAPE_BODY = `µwrite[ \\t]+\\$(\\$?)(${SIGIL_ID})[ \\t]*=(?!=|>)`
+export const RAW_WRITE_OLD_SHAPE_PAREN_BODY = `µwrite[ \\t\\r\\n]*\\([ \\t\\r\\n]*\\$(\\$?)(${SIGIL_ID})[ \\t\\r\\n]*\\)[ \\t]*=(?!=|>)`
 
-export function rawWriteAncienneFormeError(): Error { return new Error(t('transpiler.rune-write-ancienne-forme')) }
+export function rawWriteOldShapeError(): Error { return new Error(t('transpiler.rune-write-old-shape')) }
 
 // Garde de forme : TOUT `µread`/`µwrite` qui a survécu aux corps ci-dessus est une faute — appel
 // malformé (`µread(x)` sans symbole, `µwrite(x, v)` sans `$`), référence nue (`f = µread`), ou
@@ -87,34 +87,34 @@ export function rawWriteAncienneFormeError(): Error { return new Error(t('transp
 // second cas de test). Toutes finissaient en identifiant littéral : ReferenceError
 // au navigateur, build vert. Frontière de mot : un `µreadme` utilisateur reste hors de portée.
 // Les chaînes sont déjà masquées en amont (mapCodeSegments côté cleanJs, zones inertes côté
-// lexer), les lignes de commentaire le sont par sansCommentaires — le mot CITÉ ne fait échouer
+// lexer), les lignes de commentaire le sont par noComments — le mot CITÉ ne fait échouer
 // aucun build. `:` collé immédiatement après (`{ µread: 1 }`, clé d'objet) est admis
 // : un simple caractère de lookahead, risque nul — le ternaire
 // `c ? µread : x` garde son espace avant le `:` et reste refusé tel quel.
-export const RAW_ACCESS_MALFORME_BODY = `µ(?:read|write)(?![a-zA-Z0-9_:])`
+export const RAW_ACCESS_MALFORMED_BODY = `µ(?:read|write)(?![a-zA-Z0-9_:])`
 
-export function rawAccessFormeError(): Error { return new Error(t('transpiler.rune-acces-brut-forme')) }
+export function rawAccessShapeError(): Error { return new Error(t('transpiler.rune-access-raw-shape')) }
 
 // µrefresh($x) / µrefresh $x → µ._mjs_refresh(_mjsThis, 'x') : le signal d'un changement fait hors de MJS dans ce que tient la
-// variable `$x` du composant (runtime/mjs_element.ts, bloc `<rafraichir>`), qui attend la CLÉ, jamais la valeur. Clé du magasin
+// variable `$x` du composant (runtime/mjs_element.ts, bloc `<refresh>`), qui attend la CLÉ, jamais la valeur. Clé du magasin
 // (`µrefresh($$x)`, groupe 1 = '$', comme `µread $$x`) → µ._mjs_storeRefresh("x") (MU_REFRESH_STORE_OUT) :
 // le signal d'un changement fait hors de MJS dans l'objet que tient la clé. Point
 // optionnel (`µ.refresh`) : un consommateur passé après son sucre universel la reconnaît encore. Tout autre argument (chemin
-// `$x.a` ou `$$x.a`, variable sans `$`, contexte `§§x`, aucun ou plusieurs arguments) est refusé à la construction (MU_REFRESH_RESTE_BODY ;
+// `$x.a` ou `$$x.a`, variable sans `$`, contexte `§§x`, aucun ou plusieurs arguments) est refusé à la construction (MU_REFRESH_REST_BODY ;
 // `µ$$x`, déjà réécrit `$x` par la pré-passe 0-bis, par le contrôle de transpiler/index.ts) ;
 // la forme nue s'arrête avant une virgule : `µrefresh $x, $y` passe deux arguments (appel implicite), refusé comme eux ; elle ne
 // s'admet que seule sur son instruction (fin de ligne, `;` ou commentaire après `$x`) : suivie d'un opérateur ou d'une autre
 // expression (`µrefresh $x or $y`), Civet la lirait `µrefresh($x or $y)` — refusée par un message qui conseille les parenthèses
 export const MU_REFRESH_PAREN_BODY = `µ\\.?refresh\\([ \\t]*\\$(\\$?)([a-zA-Z_][a-zA-Z0-9_]*)[ \\t]*\\)`
-export const MU_REFRESH_NUE_BODY   = `µ\\.?refresh[ \\t]+\\$(\\$?)([a-zA-Z_][a-zA-Z0-9_]*)(?![\\w$.\\[(]|[ \\t]*,)`
-export const MU_REFRESH_BODY       = `${MU_REFRESH_NUE_BODY}(?=[ \\t]*(?:$|[\\r\\n;#]|\\/\\/))`
-export const MU_REFRESH_RESTE_BODY = `µ\\.?refresh(?![a-zA-Z0-9_])`
-export const MU_REFRESH_OUT       = (nom: string): string => `µ._mjs_refresh(_mjsThis, '${nom}')`
-export const MU_REFRESH_STORE_OUT = (nom: string): string => `µ._mjs_storeRefresh(${JSON.stringify(nom)})`
-export function refreshFormeError(): Error { return new Error(t('transpiler.rune-refresh-forme')) }
-export function refreshNueError(nom: string): Error { return new Error(t('transpiler.rune-refresh-nue', { nom })) }
+export const MU_REFRESH_BARE_BODY  = `µ\\.?refresh[ \\t]+\\$(\\$?)([a-zA-Z_][a-zA-Z0-9_]*)(?![\\w$.\\[(]|[ \\t]*,)`
+export const MU_REFRESH_BODY       = `${MU_REFRESH_BARE_BODY}(?=[ \\t]*(?:$|[\\r\\n;#]|\\/\\/))`
+export const MU_REFRESH_REST_BODY  = `µ\\.?refresh(?![a-zA-Z0-9_])`
+export const MU_REFRESH_OUT        = (name: string): string => `µ._mjs_refresh(_mjsThis, '${name}')`
+export const MU_REFRESH_STORE_OUT  = (name: string): string => `µ._mjs_storeRefresh(${JSON.stringify(name)})`
+export function refreshShapeError(): Error { return new Error(t('transpiler.rune-refresh-shape')) }
+export function refreshBareError(name: string): Error { return new Error(t('transpiler.rune-refresh-bare', { name: name })) }
 // hors d'un composant (`<script module>`, module importé) : seule une clé du magasin s'y signale (lexer/index.ts)
-export function refreshHorsComposantError(moduleFile: boolean): Error { return new Error(t(moduleFile ? 'transpiler.rune-refresh-fichier-module' : 'transpiler.rune-refresh-script-module')) }
+export function refreshOutsideComponentError(moduleFile: boolean): Error { return new Error(t(moduleFile ? 'transpiler.rune-refresh-file-module' : 'transpiler.rune-refresh-script-module')) }
 
 // `$x = $x`, `$$x = $$x`, `µ$$x = µ$$x` : la variable, la clé du magasin ou l'état de module écrit avec sa propre valeur, exactement —
 // refusé à la construction, à sa place, par le lecteur (lexer/index.ts, selfWriteAt) ; les passes d'écriture le refusent de même
@@ -130,7 +130,7 @@ const SELF_WRITE_TOKEN = ['$', '$$', 'µ$$']
 export function selfWriteError(kind: number, name: string, outsideComponent = false, derived = false): Error {
   const token   = SELF_WRITE_TOKEN[kind] + name
   const written = token.replace(/\$/g, '\\$')
-  const message = derived ? t('transpiler.rune-refresh-derivee', { nom: name, forme: `${token} = ${token}` }) : t('transpiler.auto-affectation', { forme: `${token} = ${token}`, nom: name, sorte: kind, horsComposant: outsideComponent ? 'oui' : '' })
+  const message = derived ? t('transpiler.rune-refresh-derived', { name, shape: `${token} = ${token}` }) : t('transpiler.self-assignment', { shape: `${token} = ${token}`, name, kind, outsideComponent: outsideComponent ? 'yes' : '' })
   return Object.assign(new Error(message), { mjsSelfWrite: `(?<![\\w$.])(?:\\(\\s*)*${written}(?:\\s*\\))*\\s*=(?![=>~:])\\s*(?:\\(\\s*)*${written}(?![\\w$])`, mjsSelfWriteKind: kind, mjsSelfWriteName: name, mjsSelfWriteDerived: derived })
 }
 
@@ -147,7 +147,7 @@ export function selfWriteError(kind: number, name: string, outsideComponent = fa
 // (`§§count`) ne doit pas se faire gober par le `§` NU qui le précède.
 export const BARE_SECTION_BODY = '§§?(?![a-zA-Z_§])'
 
-export function bareSectionError(nom: string): Error { return new Error(t('transpiler.symbole-reserve-nu', { nom })) }
+export function bareSectionError(name: string): Error { return new Error(t('transpiler.symbol-reserved-bare', { name: name })) }
 
 // µXxx (PascalCase) → µ.Xxx : classes/objets framework sans le point
 export const MU_PASCAL_BODY = 'µ([A-Z][a-zA-Z0-9_]*)'
@@ -235,9 +235,16 @@ export const MU_LAYOUT_PREFIX_WRITE_BODY = `(?:\\+\\+|--[ \\t]*)µlayout(?![a-zA
 // hooks de cycle de vie en RUNES (µmount ->, µdestroy ->, µurlChange (p, a) ->…) :
 // la forme @mount -> est RETIRÉE (elle reposait sur un `=` fragile — piège nº1
 // historique — et squattait 6 noms de méthodes sur l'instance). `urlChange`
-// avant `url` : cosmétique (le lookahead de MU_SHORT_BODY désambiguïse déjà)
-export const MU_HOOKS      = 'urlChange|mount|awake|sleep|destroy|failed'
-export const MU_HOOKS_BODY = `µ(${MU_HOOKS})(?![a-zA-Z0-9_$])`
+// avant `url` : cosmétique (le lookahead de MU_SHORT_BODY désambiguïse déjà). `µfailed($x)` (une variable seule, sans flèche après)
+// n'est pas le crochet : c'est l'erreur de la valeur dérivée qui attend `$x` (transpiler/await-derived.ts), lue partout
+export const MU_HOOKS       = 'urlChange|mount|awake|sleep|destroy|failed'
+export const MU_FAILED_RUNE = `failed[ \\t]*\\([ \\t]*\\$\\.?[a-zA-Z_][a-zA-Z0-9_]*[ \\t]*\\)(?![ \\t]*[-=]>)`
+export const MU_HOOKS_BODY  = `µ(?!${MU_FAILED_RUNE})(${MU_HOOKS})(?![a-zA-Z0-9_$])`
+// `µfailed` suivi d'une variable mal écrite (`µfailed $r`, `µfailed($$r)`, `µfailed($r.message)`) ou de parenthèses vides : refusé à
+// la construction (lexer, generator/utils.ts), le message dit la forme juste ; `µfailed(gerer)` reste le crochet. `failedWritten` : ce
+// qui est écrit, cité par le message : la variable seule, jamais ce qui la suit (`µfailed $r]` dans une expression)
+export const MU_FAILED_MALFORMED = `µ(?!${MU_FAILED_RUNE})failed(?=[ \\t]*(?:\\(?[ \\t]*\\$|\\([ \\t]*\\)))`
+export const failedWritten = (text: string) => /^µfailed[ \t]*(?:\([^)\n]*\)?|\$[\w$.]*)/.exec(text)?.[0] ?? 'µfailed'
 
 // µderived $var = expr, $a, $b — dérivé À DÉPENDANCES FORCÉES. Reconnaissance du
 // mot-clé nu ; la grammaire complète (parsing $var/expr/liste de deps) vit dans
@@ -245,17 +252,17 @@ export const MU_HOOKS_BODY = `µ(${MU_HOOKS})(?![a-zA-Z0-9_$])`
 export const MU_DERIVED_BODY = `µderived(?![a-zA-Z0-9_$])`
 
 // µevery 2500, -> / µafter 2000, -> — MINUTERIES de composant (cf. runtime/mjs_every.ts). AUCUNE entrée dans
-// MU_SCRIPT_RUNES ci-dessous. Dans le <script> d'un composant et dans ses gestionnaires, minuterieDuComposant passe le
+// MU_SCRIPT_RUNES ci-dessous. Dans le <script> d'un composant et dans ses gestionnaires, componentTimer passe le
 // composant en tête de l'appel (`µevery 2500, ->` → `µ.every _mjsThis, 2500, ->`, `µafter(300)` → `µ.after(_mjsThis, 300)`) :
 // `_mjsThis`, posé à l'init de chaque instance et vu par fermeture, rattache la minuterie à SON composant quel que soit le
 // moment de l'appel (gestionnaire, méthode, µeffect, après un `await`). Ailleurs (module, magasin), le sucre universel
 // `µfoo → µ.foo` suffit : le composant est celui qui s'exécute à l'appel. Ce corps sert aussi au garde-fou de cleanJs :
 // dans une interpolation {…}, recalculée à chaque rendu, la rune poserait une minuterie par rendu — refusée.
 export const MU_EVERY_BODY = `µ(?:every|after)(?![a-zA-Z0-9_$])`
-const RE_MU_MINUTERIE_PAREN_G = /(?<![\w.µ$])µ(every|after)\s*\(/g
-const RE_MU_MINUTERIE_NUE_G   = /(?<![\w.µ$])µ(every|after)(?=[ \t]+[^\s=,;)\]}])/g
-export function minuterieDuComposant(code: string): string {
-  return code.replace(RE_MU_MINUTERIE_PAREN_G, 'µ.$1(_mjsThis, ').replace(RE_MU_MINUTERIE_NUE_G, 'µ.$1 _mjsThis,')
+const RE_MU_TIMER_PAREN_G  = /(?<![\w.µ$])µ(every|after)\s*\(/g
+const RE_MU_TIMER_BARE_G   = /(?<![\w.µ$])µ(every|after)(?=[ \t]+[^\s=,;)\]}])/g
+export function componentTimer(code: string): string {
+  return code.replace(RE_MU_TIMER_PAREN_G, 'µ.$1(_mjsThis, ').replace(RE_MU_TIMER_BARE_G, 'µ.$1 _mjsThis,')
 }
 
 // runes à COMPILATION LEXER (µread/µwrite → _state brut, hooks → _mjs_hook,
@@ -288,10 +295,10 @@ export const MU_IMPORT_BODY = `(?:µ|mjs)import(?![a-zA-Z0-9_])`
 const MU_IMPORT_EXTENSIONS = /\.(?:js|civet|coffee)(?:\.mjs)?$/
 
 // refus d'une cible de µimport qui n'est pas un module chargeable — null si la cible convient
-function muImportCibleRefusee(chemin: string, sectionLabel: string): Error | null {
-  if (MU_IMPORT_EXTENSIONS.test(chemin)) return null
-  if (chemin.endsWith('.mjs') && !chemin.endsWith('.js.mjs')) return new Error(t('transpiler.rune-import-composant', { section: sectionLabel, chemin }))
-  return new Error(t('transpiler.rune-import-extension', { section: sectionLabel, chemin }))
+function muImportTargetError(path: string, sectionLabel: string): Error | null {
+  if (MU_IMPORT_EXTENSIONS.test(path)) return null
+  if (path.endsWith('.mjs') && !path.endsWith('.js.mjs')) return new Error(t('transpiler.rune-import-component', { section: sectionLabel, path: path }))
+  return new Error(t('transpiler.rune-import-extension', { section: sectionLabel, path: path }))
 }
 
 // ancre + parenthèse ouvrante — garde de tête `(?<![\w.µ])` calquée sur les
@@ -314,7 +321,7 @@ const MU_IMPORT_CALL_RE = new RegExp(`(?<![\\w.µ])${MU_IMPORT_BODY}\\s*\\(`, 'y
 // MENTIONNE µimport reste, lui, intact — et reconnaît en plus le cas SPÉCIAL
 // où une chaîne suit IMMÉDIATEMENT l'ancre `µimport(`/`mjsimport(` : celle-là
 // seule est lue comme argument, jamais sautée. Même discipline partout.
-export function rewriteMuImport(src: string, sectionLabel: string, dialecte = false): string {
+export function rewriteMuImport(src: string, sectionLabel: string, dialect = false): string {
   let out = ''
   let i = 0
   const n = src.length
@@ -346,7 +353,7 @@ export function rewriteMuImport(src: string, sectionLabel: string, dialecte = fa
     }
     // commentaires, chaîne simple '…' et littéral regex /…/ : intacts (jamais
     // vus comme un appel réel) — source UNIQUE skipInertFrom
-    const inert = skipInertFrom(src, i, true, dialecte)
+    const inert = skipInertFrom(src, i, true, dialect)
     if (inert >= 0) { i = inert; continue }
     // ancre µimport(/mjsimport( — hors chaîne/commentaire/regex à ce point du scan
     MU_IMPORT_CALL_RE.lastIndex = i
@@ -356,20 +363,20 @@ export function rewriteMuImport(src: string, sectionLabel: string, dialecte = fa
       while (k < n && /\s/.test(src[k])) k++
       const quote = src[k]
       if (quote !== "'" && quote !== '"') {
-        throw new Error(t('transpiler.rune-import-litteral-requis', { section: sectionLabel }))
+        throw new Error(t('transpiler.rune-import-literal-required', { section: sectionLabel }))
       }
       const pathStart = k + 1
       const j = quoteClose(src, k)
-      const chemin = src.slice(pathStart, j)
+      const path = src.slice(pathStart, j)
       let e = j + 1
       while (e < n && /\s/.test(src[e])) e++
       if (src[e] !== ')') {
-        throw new Error(t('transpiler.rune-import-litteral-requis', { section: sectionLabel }))
+        throw new Error(t('transpiler.rune-import-literal-required', { section: sectionLabel }))
       }
-      const refus = muImportCibleRefusee(chemin, sectionLabel)
-      if (refus) throw refus
+      const reject = muImportTargetError(path, sectionLabel)
+      if (reject) throw reject
       // guillemet d'origine : `µimport("l'outil.js")` réécrit entre apostrophes cassait la chaîne
-      out += `µ._mjs_import(µasset(${quote}${chemin}${quote}))`
+      out += `µ._mjs_import(µasset(${quote}${path}${quote}))`
       i = e + 1
       codeStart = i
       continue
@@ -458,11 +465,11 @@ export function rewriteMuImportAst(js: string, sectionLabel: string): string {
       if (callee?.type !== 'Identifier' || (callee.name !== 'µimport' && callee.name !== 'mjsimport')) return
       const args = node.arguments ?? []
       if (args.length !== 1 || args[0].type !== 'Literal' || typeof args[0].value !== 'string') {
-        throw new Error(t('transpiler.rune-import-litteral-requis', { section: sectionLabel }))
+        throw new Error(t('transpiler.rune-import-literal-required', { section: sectionLabel }))
       }
       const arg = args[0]
-      const refus = muImportCibleRefusee(arg.value as string, sectionLabel)
-      if (refus) throw refus
+      const reject = muImportTargetError(arg.value as string, sectionLabel)
+      if (reject) throw reject
       // `arg.raw` VERBATIM (guillemets/échappements de l'auteur préservés) —
       // jamais une reconstruction (JSON.stringify etc.) qui reformaterait.
       ms.overwrite(node.start, node.end, `µ._mjs_import(µasset(${arg.raw}))`)
@@ -476,7 +483,7 @@ export function rewriteMuImportAst(js: string, sectionLabel: string): string {
       if (node.name !== 'µimport' && node.name !== 'mjsimport') return
       const parent = ancestors[ancestors.length - 2]
       if (parent && parent.type === 'CallExpression' && parent.callee === node) return
-      throw new Error(t('transpiler.rune-import-litteral-requis', { section: sectionLabel }))
+      throw new Error(t('transpiler.rune-import-literal-required', { section: sectionLabel }))
     },
   })
 
@@ -489,22 +496,22 @@ export function rewriteMuImportAst(js: string, sectionLabel: string): string {
 // l'extraction ; unifié sur la forme riche du lexer)
 
 // `&$x` : le sigil vault est retiré, fondu dans le store global `$$`
-export const vaultRemovedError = (name: string) => new Error(t('sigils.vault-retire', { nom: name }))
+export const vaultRemovedError = (name: string) => new Error(t('sigils.vault-removed', { name }))
 
 // `$$x` sur un singleton importé : il se consomme en `µ$$x`, pas en `$$x`
-export const importedSingletonError = (name: string) => new Error(t('sigils.singleton-importe', { nom: name }))
+export const importedSingletonError = (name: string) => new Error(t('sigils.singleton-imported', { name }))
 
 // `$$[k]` : une clé du magasin calculée n'est pas une syntaxe — `$$` se suit d'un nom écrit dans le code, et `$$` seul n'existe pas à
 // l'exécution. `debut` : l'indice qui suit le crochet ouvrant dans `code` ; le message cite le texte entre les crochets (crochets
-// imbriqués comptés). Marquée (`mjsCleCalculee`) : refusée dans le gabarit, où le lecteur ne connaît pas sa ligne, le transpileur la situe
-export const storeComputedKeyError = (code: string, debut: number) => {
-  let n = 1, k = debut
+// imbriqués comptés). Marquée (`mjsComputedKey`) : refusée dans le gabarit, où le lecteur ne connaît pas sa ligne, le transpileur la situe
+export const storeComputedKeyError = (code: string, start: number) => {
+  let n = 1, k = start
   while (k < code.length && n > 0) {
     if (code[k] === '[') n++
     else if (code[k] === ']') n--
     k++
   }
-  return Object.assign(new Error(t('transpiler.magasin-cle-calculee', { cle: code.slice(debut, n > 0 ? k : k - 1).trim() })), { mjsCleCalculee: true })
+  return Object.assign(new Error(t('transpiler.store-key-computed', { key: code.slice(start, n > 0 ? k : k - 1).trim() })), { mjsComputedKey: true })
 }
 
 // ============================================================================
@@ -559,7 +566,7 @@ const TOGGLE_TARGET_RE  = /^(?:µtheme|µlang|@[a-zA-Z_]\w*|\$\$?[a-zA-Z_]\w*|§
 // regex du nom nu et sortait un `null = …` — SyntaxError du navigateur, sans un mot ici.
 // Testée sur la RACINE, jamais sur la chaîne entière : `null.x` sortait sinon un
 // `null.x = …` tout aussi cassé (TypeError au premier clic) — trouvé en testant.
-const TOGGLE_MOTS_RESERVES = new Set(['true', 'false', 'null', 'undefined', 'this', 'NaN', 'Infinity', 'arguments', 'super', 'new', 'typeof', 'void', 'delete', 'in', 'of', 'instanceof'])
+const TOGGLE_RESERVED_WORDS = new Set(['true', 'false', 'null', 'undefined', 'this', 'NaN', 'Infinity', 'arguments', 'super', 'new', 'typeof', 'void', 'delete', 'in', 'of', 'instanceof'])
 const TOGGLE_LITERAL_RE = /^(?:'(?:\\.|[^\\'])*'|"(?:\\.|[^\\"])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null)$/
 
 // skipInertFrom — offset de FIN d'un littéral/commentaire commençant en `i`, ou
@@ -572,20 +579,20 @@ const TOGGLE_LITERAL_RE = /^(?:'(?:\\.|[^\\'])*'|"(?:\\.|[^\\"])*"|-?\d+(?:\.\d+
 // `}` fermant la fenêtre et corrompait la sortie (accolade dupliquée, panne silencieuse).
 // Les fenêtres appellent avec `diese=false` ; rewriteMuImport/rewriteMuToggle/splitToggleArgs
 // gardent `diese=true` (comportement inchangé, valeur par défaut).
-function skipInertFrom(src: string, i: number, diese = true, dialecte = false): number {
+function skipInertFrom(src: string, i: number, hash = true, dialect = false): number {
   const n  = src.length
   const ch = src[i]
   if (ch === '/' && src[i + 1] === '/') { const e = src.indexOf('\n', i); return e < 0 ? n : e }
   if (ch === '/' && src[i + 1] === '*') { const e = src.indexOf('*/', i + 2); return e < 0 ? n : e + 2 }
   // Littéral regex `/…/` : même zone inerte, heuristique PARTAGÉE
-  // avec le lexer (scanInertAt) et le générateur (mapCodeSegments), cf. ouvreUneRegex
+  // avec le lexer (scanInertAt) et le générateur (mapCodeSegments), cf. opensRegex
   // /scanRegexLiteral plus bas — une regex qui MENTIONNE µtoggle/µimport reste intacte
   if (ch === '/') {
-    // `dialecte` : code Civet ou CoffeeScript, où une regex se passe aussi sans parenthèses (`s.replace /"/g, 'R'`, regexEnArgument)
-    if (ouvreUneRegex(src.slice(0, i)) || (dialecte && regexEnArgument(src, i))) { const e = scanRegexLiteral(src, i); if (e >= 0) return e }
+    // `dialecte` : code Civet ou CoffeeScript, où une regex se passe aussi sans parenthèses (`s.replace /"/g, 'R'`, regexInArgument)
+    if (opensRegex(src.slice(0, i)) || (dialect && regexInArgument(src, i))) { const e = scanRegexLiteral(src, i); if (e >= 0) return e }
     return -1
   }
-  if (diese && ch === '#' && src[i + 1] !== undefined && !/[a-zA-Z_!]/.test(src[i + 1])) { const e = src.indexOf('\n', i); return e < 0 ? n : e }
+  if (hash && ch === '#' && src[i + 1] !== undefined && !/[a-zA-Z_!]/.test(src[i + 1])) { const e = src.indexOf('\n', i); return e < 0 ? n : e }
   if (ch === "'" || ch === '"' || ch === '`') return skipQuotedSpan(src, i)
   return -1
 }
@@ -626,21 +633,21 @@ function toggleKey(v: string): string {
 
 // buildToggle — le corps généré, commun aux deux moteurs.
 function buildToggle(args: string[], sectionLabel: string): string {
-  const cible = args[0] ?? ''
-  const racine = /^[^.[]*/.exec(cible)?.[0] ?? cible
-  if (!TOGGLE_TARGET_RE.test(cible) || TOGGLE_MOTS_RESERVES.has(racine)) throw new Error(t('transpiler.rune-toggle-cible', { section: sectionLabel, recu: cible }))
-  const valeurs = args.slice(1)
-  for (const v of valeurs) if (!TOGGLE_LITERAL_RE.test(v)) throw new Error(t('transpiler.rune-toggle-valeur', { section: sectionLabel, recu: v }))
+  const target = args[0] ?? ''
+  const root = /^[^.[]*/.exec(target)?.[0] ?? target
+  if (!TOGGLE_TARGET_RE.test(target) || TOGGLE_RESERVED_WORDS.has(root)) throw new Error(t('transpiler.rune-toggle-target', { section: sectionLabel, received: target }))
+  const values = args.slice(1)
+  for (const v of values) if (!TOGGLE_LITERAL_RE.test(v)) throw new Error(t('transpiler.rune-toggle-value', { section: sectionLabel, received: v }))
   // doublon comparé sur la VALEUR, jamais sur le texte source : `'a'` et `"a"` sont la même
   // chaîne, `1` et `1.0` le même nombre — laissés passer, ils tuaient tout le reste du cycle
   // en silence (`µtoggle($t, 1, 1.0, 2)` : l'état 2 devenait inatteignable). Trouvé en testant.
-  const cles = valeurs.map(toggleKey)
-  for (let k = 0; k < cles.length; k++) if (cles.indexOf(cles[k]) !== k) throw new Error(t('transpiler.rune-toggle-doublon', { section: sectionLabel, recu: valeurs[k] }))
+  const keys = values.map(toggleKey)
+  for (let k = 0; k < keys.length; k++) if (keys.indexOf(keys[k]) !== k) throw new Error(t('transpiler.rune-toggle-duplicate', { section: sectionLabel, received: values[k] }))
   // 0 valeur → booléen ; 1 valeur → présent/absent ; N → cycle fermé (chute = 1er état)
-  if (valeurs.length === 0) return `${cible} = !${cible}`
-  if (valeurs.length === 1) return `${cible} = (${cible} === ${valeurs[0]} ? '' : ${valeurs[0]})`
-  const tests = valeurs.slice(0, -1).map((v, k) => `${cible} === ${v} ? ${valeurs[k + 1]}`)
-  return `${cible} = (${tests.join(' : ')} : ${valeurs[0]})`
+  if (values.length === 0) return `${target} = !${target}`
+  if (values.length === 1) return `${target} = (${target} === ${values[0]} ? '' : ${values[0]})`
+  const tests = values.slice(0, -1).map((v, k) => `${target} === ${v} ? ${values[k + 1]}`)
+  return `${target} = (${tests.join(' : ')} : ${values[0]})`
 }
 
 // `$âge`, `$$été` : un nom d'état n'est lu que si sa PREMIÈRE lettre est sans accent (a-z, A-Z, `_`) ; la suite du
@@ -648,16 +655,16 @@ function buildToggle(args: string[], sectionLabel: string): string {
 // tombait au montage sur « $âge is not defined ». Appelée en tête de rewriteMuToggle, seule passe qui voit tout le
 // code MJS (script, gestionnaires, interpolations) avant la réécriture des `$x` ; chaînes, commentaires et
 // littéraux regex sautés (skipInertFrom)
-const ETAT_ACCENTUE_RAPIDE = /\$[^\x00-\x7F]/
-const SUITE_DU_NOM         = /[\p{L}\p{M}\p{N}_]*/uy
-function premiereLettreSansAccent(c: string): string {
+const FAST_ACCENTED_STATE = /\$[^\x00-\x7F]/
+const NAME_REST           = /[\p{L}\p{M}\p{N}_]*/uy
+function unaccentedFirstLetter(c: string): string {
   const base = c.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   if (/^[a-zA-Z]$/.test(base)) return base
   const ligatures: Record<string, string> = { 'œ': 'oe', 'Œ': 'Oe', 'æ': 'ae', 'Æ': 'Ae' }
   return ligatures[c] ?? '_' + c
 }
-function refuseEtatAccentue(src: string): void {
-  if (!ETAT_ACCENTUE_RAPIDE.test(src)) return
+function rejectAccentedState(src: string): void {
+  if (!FAST_ACCENTED_STATE.test(src)) return
   const n = src.length
   let i   = 0
   while (i < n) {
@@ -667,9 +674,9 @@ function refuseEtatAccentue(src: string): void {
       const sigil = src[i + 1] === '$' ? '$$' : '$'
       const c     = src[i + sigil.length] ?? ''
       if (c > '\x7F' && /\p{L}/u.test(c)) {
-        SUITE_DU_NOM.lastIndex = i + sigil.length + 1
-        const suite = SUITE_DU_NOM.exec(src)?.[0] ?? ''
-        throw new Error(t('transpiler.etat-premiere-lettre-accentuee', { nom: sigil + c + suite, suggestion: sigil + premiereLettreSansAccent(c) + suite }))
+        NAME_REST.lastIndex = i + sigil.length + 1
+        const rest = NAME_REST.exec(src)?.[0] ?? ''
+        throw new Error(t('transpiler.state-first-letter-accented', { name: sigil + c + rest, suggestion: sigil + unaccentedFirstLetter(c) + rest }))
       }
     }
     i++
@@ -684,7 +691,7 @@ function refuseEtatAccentue(src: string): void {
 // La sortie reste en syntaxe MJS (`$x`, `$$x` verbatim) : elle est destinée aux
 // passes du dessous, jamais au runtime directement.
 export function rewriteMuToggle(src: string, sectionLabel: string): string {
-  refuseEtatAccentue(src)
+  rejectAccentedState(src)
   if (!src.includes('µtoggle')) return src
   let out       = ''
   let i         = 0
@@ -702,8 +709,8 @@ export function rewriteMuToggle(src: string, sectionLabel: string): string {
     if (ch === '"' || ch === '`') {
       out += src.slice(codeStart, i)
       const j = quoteClose(src, i)
-      const contenu = src.slice(i + 1, j)
-      out += ch + rewriteMuToggleWindows(contenu, ch === '`' ? '$' : '#', sectionLabel) + ch
+      const content = src.slice(i + 1, j)
+      out += ch + rewriteMuToggleWindows(content, ch === '`' ? '$' : '#', sectionLabel) + ch
       i = Math.min(j + 1, n)
       codeStart = i
       continue
@@ -713,7 +720,7 @@ export function rewriteMuToggle(src: string, sectionLabel: string): string {
     MU_TOGGLE_CALL_RE.lastIndex = i
     if (MU_TOGGLE_CALL_RE.test(src)) {
       const parsed = splitToggleArgs(src, MU_TOGGLE_CALL_RE.lastIndex)
-      if (!parsed) throw new Error(t('transpiler.rune-toggle-appel', { section: sectionLabel }))
+      if (!parsed) throw new Error(t('transpiler.rune-toggle-call', { section: sectionLabel }))
       out += src.slice(codeStart, i) + buildToggle(parsed.args, sectionLabel)
       i = parsed.end + 1
       codeStart = i
@@ -723,7 +730,7 @@ export function rewriteMuToggle(src: string, sectionLabel: string): string {
     // sans parenthèses (`µtoggle $x, 'a'`). BRUYANT par construction — laissée
     // passer, elle finirait en ReferenceError au navigateur.
     MU_TOGGLE_BARE_RE.lastIndex = i
-    if (MU_TOGGLE_BARE_RE.test(src)) throw new Error(t('transpiler.rune-toggle-appel', { section: sectionLabel }))
+    if (MU_TOGGLE_BARE_RE.test(src)) throw new Error(t('transpiler.rune-toggle-call', { section: sectionLabel }))
     i++
   }
   return out + src.slice(codeStart)
@@ -734,30 +741,30 @@ export function rewriteMuToggle(src: string, sectionLabel: string): string {
 // Comptage d'accolades CONSCIENT des chaînes internes, des commentaires ET des littéraux
 // regex (skipInertFrom) : copie exacte de rewriteMuImportWindows ci-dessus.
 // La récursion couvre par construction une chaîne à backticks imbriquée.
-function rewriteMuToggleWindows(contenu: string, marqueur: string, sectionLabel: string): string {
+function rewriteMuToggleWindows(content: string, marker: string, sectionLabel: string): string {
   let out = ''
   let j   = 0
-  const n = contenu.length
+  const n = content.length
   while (j < n) {
-    if (contenu[j] === marqueur && contenu[j + 1] === '{' && contenu[j - 1] !== '\\') {
+    if (content[j] === marker && content[j + 1] === '{' && content[j - 1] !== '\\') {
       let depth = 1
       let k     = j + 2
       while (k < n && depth > 0) {
         // diese=false : cf. bandeau rewriteMuImportWindows
-        const inert = skipInertFrom(contenu, k, false)
+        const inert = skipInertFrom(content, k, false)
         if (inert >= 0) { k = inert; continue }
-        const c = contenu[k]
+        const c = content[k]
         if (c === '{') depth++
         else if (c === '}') { depth--; if (depth === 0) break }
         k++
       }
       // Fenêtre jamais refermée : même garde-fou que
       // rewriteMuImportWindows ci-dessus, pas de `}` synthétisé
-      if (depth > 0) { out += contenu.slice(j); return out }
-      out += marqueur + '{' + rewriteMuToggle(contenu.slice(j + 2, k), sectionLabel) + '}'
+      if (depth > 0) { out += content.slice(j); return out }
+      out += marker + '{' + rewriteMuToggle(content.slice(j + 2, k), sectionLabel) + '}'
       j = k + 1
     } else {
-      out += contenu[j]
+      out += content[j]
       j++
     }
   }
@@ -781,10 +788,12 @@ function rewriteMuToggleWindows(contenu: string, marqueur: string, sectionLabel:
 // partagée ; seul le corps de regex qui l'enveloppe manquait côté cleanJs — posé ici
 // pour que les deux moteurs partent du MÊME texte, jamais deux copies maintenues à la
 // main (cf. bandeau de tête de ce fichier).
-export const MU_UNIVERSAL_BODY = `µ(?!(?:${MU_SCRIPT_RUNES})\\b)([a-zA-Z]\\w*)`
+// `µfailed($x)` (MU_FAILED_RUNE), l'erreur d'une valeur dérivée qui attend, passe en `µ.failed($x)` comme toute rune ; le crochet
+// `µfailed (err, reset)->` reste au lexer
+export const MU_UNIVERSAL_BODY = `µ(?:(?!(?:${MU_SCRIPT_RUNES})\\b)|(?=${MU_FAILED_RUNE}))([a-zA-Z]\\w*)`
 
-// argTermineOuChemin — fragment de gabarit de µinspect : après `$nom`, soit
-// le prochain caractère utile (espaces ignorés) EST un des `terminateurs` attendus (fin réelle de
+// argEndOrPath — fragment de gabarit de µinspect : après `$nom`, soit
+// le prochain caractère utile (espaces ignorés) EST un des `terminators` attendus (fin réelle de
 // l'argument — rien à capturer), soit tout ce qui suit jusqu'au PROCHAIN terminateur est un chemin
 // REFUSÉ (capturé pour le message d'erreur). LISTE BLANCHE plutôt que liste noire de suffixes
 // interdits (point, appel, indexation…) énumérés un par un : une énumération manuelle rate
@@ -796,11 +805,11 @@ export const MU_UNIVERSAL_BODY = `µ(?!(?:${MU_SCRIPT_RUNES})\\b)([a-zA-Z]\\w*)`
 // au premier terminateur rencontré (imparfait sur un cas pathologique à virgule imbriquée, ex.
 // `$o(bar(1,2))` : ne capture que jusqu'à cette virgule interne — accepté, le message cite alors le
 // DÉBUT du chemin fautif plutôt que sa fin exacte, ce qui suffit à localiser la faute).
-function argTermineOuChemin(terminateurs: string): string {
-  return `(?:(?=[ \\t]*(?:${terminateurs}))|([\\s\\S]*?)(?=[ \\t]*(?:${terminateurs})))`
+function argEndOrPath(terminators: string): string {
+  return `(?:(?=[ \\t]*(?:${terminators}))|([\\s\\S]*?)(?=[ \\t]*(?:${terminators})))`
 }
 
-// cheminInspectPlat — filtre le chemin capturé par argTermineOuChemin (groupes 2/4 de
+// flatInspectPath — filtre le chemin capturé par argEndOrPath (groupes 2/4 de
 // MU_INSPECT_ARG_BODY juste en dessous, texte entre `$nom` et le terminateur) : liste blanche
 // d'accès FIXES uniquement, `.prop` (identifiant) ou `[littéral]` (entier `[0]` ou chaîne
 // `['clé']`/`["clé"]` — jamais un IDENTIFIANT nu entre crochets, ce serait un index CALCULÉ),
@@ -811,24 +820,24 @@ function argTermineOuChemin(terminateurs: string): string {
 // Segments valides → chemin PLAT joint par des points (`.a.b` → 'a.b', `[0]` → '0',
 // `.items[0]` → 'items.0', `['clé']` → 'clé') : c'est ce plat que le runtime (µ.inspect,
 // mjs_rare_runes.ts/mjs_element.ts) navigue tel quel via un simple split('.').
-const RE_CHEMIN_INSPECT_SEGMENT = /\.([a-zA-Z_][a-zA-Z0-9_]*)|\[\s*(\d+)\s*\]|\[\s*'([^']*)'\s*\]|\[\s*"([^"]*)"\s*\]/g
-export function cheminInspectPlat(chemin: string): string | undefined {
-  const segments = cheminSegments(chemin)
+const RE_INSPECT_PATH_SEGMENT = /\.([a-zA-Z_][a-zA-Z0-9_]*)|\[\s*(\d+)\s*\]|\[\s*'([^']*)'\s*\]|\[\s*"([^"]*)"\s*\]/g
+export function flatInspectPath(path: string): string | undefined {
+  const segments = pathSegments(path)
   return segments === undefined ? undefined : segments.join('.')
 }
 
-// cheminSegments — même liste blanche que cheminInspectPlat, segments gardés SÉPARÉS (une clé en
+// pathSegments — même liste blanche que flatInspectPath, segments gardés SÉPARÉS (une clé en
 // chaîne peut contenir un point, `$x['a.b']`, qu'un plat joint par des points confondrait avec un
 // sous-chemin)
-export function cheminSegments(chemin: string): string[] | undefined {
+export function pathSegments(path: string): string[] | undefined {
   const segments: string[] = []
   let pos = 0
-  for (const m of chemin.matchAll(RE_CHEMIN_INSPECT_SEGMENT)) {
+  for (const m of path.matchAll(RE_INSPECT_PATH_SEGMENT)) {
     if (m.index !== pos) return undefined
     segments.push(m[1] ?? m[2] ?? m[3] ?? m[4])
     pos += m[0].length
   }
-  return pos === chemin.length && segments.length > 0 ? segments : undefined
+  return pos === path.length && segments.length > 0 ? segments : undefined
 }
 
 // µ.inspect($x) → µ.inspect('x') — le runtime (mjs_rare_runes.ts) attend la CLÉ
@@ -842,8 +851,8 @@ export function cheminSegments(chemin: string): string[] | undefined {
 // SORTIE console à ce seul chemin (simple portée d'affichage, pas un
 // changement de ce que la rune observe) : `µ.inspect('x', 'foo')`. Un APPEL ou une INDEXATION
 // CALCULÉE derrière le symbole (`$x.foo()`, `$x[i]`, imbriqués ou non, espaces tolérés) n'a
-// toujours aucun sens documenté (cf. docs/18-pieges.md §8) — capturé par argTermineOuChemin
-// (groupes 2 et 4) puis rejeté par cheminInspectPlat ci-dessus pour lever une erreur de
+// toujours aucun sens documenté (cf. docs/18-pieges.md §8) — capturé par argEndOrPath
+// (groupes 2 et 4) puis rejeté par flatInspectPath ci-dessus pour lever une erreur de
 // compilation claire, plutôt qu'un réécrit à moitié (parenthèse orpheline qui cassait aussi le
 // code voisin) ou un résidu qui n'échouait qu'à l'exécution. Fonction plutôt que gabarit `$1` :
 // les deux groupes de nom sont MUTUELLEMENT EXCLUSIFS (un seul se remplit selon la forme
@@ -853,14 +862,14 @@ export function cheminSegments(chemin: string): string[] | undefined {
 // donc toujours présent — le rendre optionnel ne change rien pour eux. Nécessaire pour un
 // TROISIÈME usage (generator/utils.ts, garde AVANT mapCodeSegments) qui scanne le texte BRUT,
 // point pas encore posé.
-export const MU_INSPECT_ARG_BODY = `µ\\.?\\s*inspect(?:\\([ \\t]*\\$([a-zA-Z0-9_]+)${argTermineOuChemin('\\)')}[ \\t]*\\)|[ \\t]*\\$([a-zA-Z0-9_]+)${argTermineOuChemin('[,);]|\\n|$')})`
-export const MU_INSPECT_ARG_OUT = (_m: string, nomParen: string | undefined, cheminParen: string | undefined, nomNu: string | undefined, cheminNu: string | undefined): string => {
-  const nom    = nomParen ?? nomNu
-  const chemin = cheminParen || cheminNu
-  if (!chemin) return `µ.inspect('${nom}')`
-  const plat = cheminInspectPlat(chemin)
-  if (plat === undefined) throw new Error(t('transpiler.rune-inspect-chemin', { nom, chemin }))
-  return `µ.inspect('${nom}', '${plat}')`
+export const MU_INSPECT_ARG_BODY = `µ\\.?\\s*inspect(?:\\([ \\t]*\\$([a-zA-Z0-9_]+)${argEndOrPath('\\)')}[ \\t]*\\)|[ \\t]*\\$([a-zA-Z0-9_]+)${argEndOrPath('[,);]|\\n|$')})`
+export const MU_INSPECT_ARG_OUT = (_m: string, parenName: string | undefined, parenPath: string | undefined, bareName: string | undefined, barePath: string | undefined): string => {
+  const name = parenName ?? bareName
+  const path = parenPath || barePath
+  if (!path) return `µ.inspect('${name}')`
+  const flat = flatInspectPath(path)
+  if (flat === undefined) throw new Error(t('transpiler.rune-inspect-path', { name: name, path: path }))
+  return `µ.inspect('${name}', '${flat}')`
 }
 
 // µinspect sur un STORE (`$$x`) : la rune vise l'état d'UN composant — sur un store, le sucre
@@ -872,14 +881,14 @@ export const MU_RUNE_STORE_BODY = `(?<!µ\\.)µ\\.?(inspect)(?:\\s*\\(\\s*|[ \\t
 
 // µminmax n'existe plus (V3) : les types du bloc <vars> le remplacent. Toute trace dans le CODE
 // (commentaires et chaînes masqués par l'appelant) refuse la compilation avec la marche à suivre
-export const MU_MINMAX_RETIRE_BODY = `(?<![\\w.$])µ\\.?minmax\\b`
+export const MU_MINMAX_REMOVED_BODY = `(?<![\\w.$])µ\\.?minmax\\b`
 
 // ============================================================================
 // littéraux regex `/…/` — PARTAGÉS entre les TROIS moteurs de sucre (parser,
 // lexer, générateur)
 // ============================================================================
 //
-// Trou trouvé : le parser (Scanner.avaleRegex,
+// Trou trouvé : le parser (Scanner.swallowRegex,
 // extractBalanced, src/parser/index.ts) sait déjà reconnaître un littéral regex, mais le
 // lexer (scripts, scanner ET pré-passes §/§§) et le générateur (mapCodeSegments,
 // interpolations/handlers) l'ignoraient — un `§`/`µXxx`/`$x` À L'INTÉRIEUR d'une regex y
@@ -890,7 +899,7 @@ export const MU_MINMAX_RETIRE_BODY = `(?<![\\w.$])µ\\.?minmax\\b`
 // un `/` en position d'EXPRESSION ouvre une regex littérale ; en position de VALEUR il
 // divise. Heuristique JS classique : après une parenthèse/opérateur/virgule (ou en début), c'est
 // une regex ; après un identifiant, un nombre, `)` ou `]`, c'est une division.
-const REGEX_APRES_SIGNE   = /[({[,;:=!&|?+\-*%<>~^]$/
+const REGEX_AFTER_SIGN   = /[({[,;:=!&|?+\-*%<>~^]$/
 // `$` et `.` ne sont pas des `\w` : un simple `\b` laissait passer un ÉTAT dont le nom EST le
 // mot-clé (`{ $in / 2 }`, `{ $obj.of / 2 }`) — la division partait en regex et avalait le document
 // … ni `§`, `@`, `µ`, `&` : `@new / $total / 2` (propriété `new`, division) partait en regex, `$total`
@@ -898,80 +907,80 @@ const REGEX_APRES_SIGNE   = /[({[,;:=!&|?+\-*%<>~^]$/
 // … et les mots de Civet et Coffee après lesquels une expression commence (`v = 1 if /[\s,']/.test(v)`,
 // `a and /x/.test(b)`) : lu comme une division, le `/` laissait une apostrophe de la regex ouvrir une
 // fausse chaîne, qui avalait la suite du script
-const REGEX_APRES_MOT_CLE = /(?<![\w$.§@µ&])(?:return|typeof|instanceof|in|of|new|delete|void|case|do|else|yield|await|throw|if|unless|and|or|not|then|when|while|until|is|isnt)$/
+const REGEX_AFTER_KEYWORD = /(?<![\w$.§@µ&])(?:return|typeof|instanceof|in|of|new|delete|void|case|do|else|yield|await|throw|if|unless|and|or|not|then|when|while|until|is|isnt)$/
 // `)` d'une condition (`if (ok) /'/.test(s)`, `while (…) /x/.exec(l)`) : le `/` qui suit ouvre une regex — après toute
 // autre parenthèse il divise. Lu comme une division, l'apostrophe de la regex ouvrait une fausse chaîne qui avalait la
 // suite (un µtoggle placé après n'était plus réécrit). Appariement compté en arrière sur 400 caractères au plus : une
 // parenthèse écrite dans une chaîne fausse le compte, qui ne trouve alors rien (division, comme avant)
-const MOT_DE_CONDITION = /(?<![\w$.§@µ&])(?:if|while|for|with)\s*$/
-const PORTEE_CONDITION = 400
-// ce que lit ouvreUneRegex au plus, blancs de fin exclus : la portée de l'appariement et les 16 caractères du mot qui
+const CONDITION_WORD  = /(?<![\w$.§@µ&])(?:if|while|for|with)\s*$/
+const CONDITION_RANGE = 400
+// ce que lit opensRegex au plus, blancs de fin exclus : la portée de l'appariement et les 16 caractères du mot qui
 // précède la parenthèse. Un appelant qui ne garde que la queue de son texte (le lexeur) en garde au moins autant
-export const PORTEE_OUVRE_UNE_REGEX = PORTEE_CONDITION + 16
-function apresCondition(gauche: string, fin: number): boolean {
-  let profondeur = 0
-  const borne    = Math.max(0, fin - PORTEE_CONDITION)
-  for (let k = fin - 1; k >= borne; k--) {
-    const c = gauche[k]
-    if (c === ')') profondeur++
-    else if (c === '(' && --profondeur === 0) return MOT_DE_CONDITION.test(gauche.slice(Math.max(0, k - 16), k))
+export const SCOPE_OPENS_REGEX = CONDITION_RANGE + 16
+function afterCondition(left: string, end: number): boolean {
+  let depth   = 0
+  const bound = Math.max(0, end - CONDITION_RANGE)
+  for (let k = end - 1; k >= bound; k--) {
+    const c = left[k]
+    if (c === ')') depth++
+    else if (c === '(' && --depth === 0) return CONDITION_WORD.test(left.slice(Math.max(0, k - 16), k))
   }
   return false
 }
-// `++`/`--` PRODUISENT une valeur : le `/` qui suit divise (le `+`/`-` final de REGEX_APRES_SIGNE
+// `++`/`--` PRODUISENT une valeur : le `/` qui suit divise (le `+`/`-` final de REGEX_AFTER_SIGN
 // ne vise que la forme préfixe/binaire)
 const INCREMENT_FINAL     = /(?:\+\+|--)$/
 
-// ouvreUneRegex — vrai si le texte déjà émis (`gauche`) place le prochain `/` en position
+// opensRegex — vrai si le texte déjà émis (`left`) place le prochain `/` en position
 // d'EXPRESSION (regex) plutôt qu'en position de VALEUR (division). Consommée par le parser
-// (avaleRegex/extractBalanced), le lexer (scanInertAt + règle 3.1a) et le générateur
+// (swallowRegex/extractBalanced), le lexer (scanInertAt + règle 3.1a) et le générateur
 // (mapCodeSegments) — DÉPLACÉE ici depuis parser/index.ts, comportement
 // inchangé.
 // PERF : skipInertFrom (plus haut dans ce fichier) appelle
-// cette fonction à CHAQUE `/` du source via `ouvreUneRegex(src.slice(0, i))` ; l'ancienne forme
-// (`gauche.replace(/\s+$/, '')` sur la chaîne ENTIÈRE) coûtait O(i) par appel — O(n²) cumulé sur
+// cette fonction à CHAQUE `/` du source via `opensRegex(src.slice(0, i))` ; l'ancienne forme
+// (`left.replace(/\s+$/, '')` sur la chaîne ENTIÈRE) coûtait O(i) par appel — O(n²) cumulé sur
 // un fichier à O(n) divisions (mesuré 5-9 ms → 3,4 s sur 220 Ko/20 000 divisions synthétiques,
 // 1 ms → 30 ms sur le plus gros fichier réel du corpus). Tous les tests ci-dessous ne portent que
-// sur la QUEUE de `gauche` (espace final + 16 derniers caractères, marge ≥ `instanceof` (10) + 1
+// sur la QUEUE de `left` (espace final + 16 derniers caractères, marge ≥ `instanceof` (10) + 1
 // caractère de lookbehind) : ne regarder que cette queue rend chaque appel O(1), signature et
 // sémantique INCHANGÉES pour les appelants (équivalence vérifiée sur ~1100 fichiers .mjs réels).
-export function ouvreUneRegex(gauche: string): boolean {
-  let j = gauche.length
-  while (j > 0 && /\s/.test(gauche[j - 1])) j--
+export function opensRegex(left: string): boolean {
+  let j = left.length
+  while (j > 0 && /\s/.test(left[j - 1])) j--
   if (j === 0) return true
-  const net = gauche.slice(Math.max(0, j - 16), j)
+  const net = left.slice(Math.max(0, j - 16), j)
   if (INCREMENT_FINAL.test(net)) return false
   // `</…` = balise HTML FERMANTE, jamais une regex (`a < /re/` n'existe pas) — transformCodeOnly voit le source
   // ENTIER, template compris : sans cette garde `</script><p>…</p>` était avalé comme un littéral.
   if (net.endsWith('<')) return false
-  if (net.endsWith(')')) return apresCondition(gauche, j)
-  return REGEX_APRES_SIGNE.test(net) || REGEX_APRES_MOT_CLE.test(net)
+  if (net.endsWith(')')) return afterCondition(left, j)
+  return REGEX_AFTER_SIGN.test(net) || REGEX_AFTER_KEYWORD.test(net)
 }
 
 // noms qui sont des valeurs : la barre qui les suit divise toujours, comme après un nombre
-const NOM_VALEUR = /^(?:true|false|null|undefined|NaN|Infinity|yes|no|on|off)$/
+const VALUE_NAME = /^(?:true|false|null|undefined|NaN|Infinity|yes|no|on|off)$/
 
-// regexEnArgument — appel implicite de CoffeeScript et de Civet, règle de leurs lecteurs : après un nom suivi d'une
+// regexInArgument — appel implicite de CoffeeScript et de Civet, règle de leurs lecteurs : après un nom suivi d'une
 // espace, une barre suivie d'autre chose qu'une espace (ni d'un `=` puis d'une espace) ouvre une expression régulière
 // passée en argument (`s.split /@/`, `s.replace /'/g, 'X'`) ; `a / b`, `a /= 2`, `a/b` et une barre après une
 // parenthèse, un crochet ou un nombre divisent. `i` pointe sur la barre, que l'appelant n'a pas jugée par
-// ouvreUneRegex ; le littéral doit encore se refermer sur sa ligne (scanRegexLiteral), sinon c'est une division.
+// opensRegex ; le littéral doit encore se refermer sur sa ligne (scanRegexLiteral), sinon c'est une division.
 // Jamais pour JavaScript ni TypeScript, où `a /2 + b /4` divise
-export function regexEnArgument(src: string, i: number): boolean {
-  const suite = src[i + 1]
-  if (suite === undefined || /\s/.test(suite) || (suite === '=' && /\s/.test(src[i + 2] ?? ' '))) return false
+export function regexInArgument(src: string, i: number): boolean {
+  const rest = src[i + 1]
+  if (rest === undefined || /\s/.test(rest) || (rest === '=' && /\s/.test(src[i + 2] ?? ' '))) return false
   let j = i
   while (j > 0 && (src[j - 1] === ' ' || src[j - 1] === '\t')) j--
   let k = j
   while (k > 0 && /[\w$]/.test(src[k - 1])) k--
   if (j === i || k === j || /\d/.test(src[k])) return false
-  return !NOM_VALEUR.test(src.slice(k, j))
+  return !VALUE_NAME.test(src.slice(k, j))
 }
 
-// scanRegexLiteral — variante STRING de `avaleRegex` (parser/index.ts, Scanner) : MÊME
+// scanRegexLiteral — variante STRING de `swallowRegex` (parser/index.ts, Scanner) : MÊME
 // heuristique de fond (classe `[…]` protège le `/`, `\` échappe le caractère suivant,
 // drapeaux `[a-z]*` en queue), pour le lexer et le générateur — qui n'ont pas de Scanner à
-// position mutable. Coexistent plutôt que fusionnées : `avaleRegex` avance un `Scanner`,
+// position mutable. Coexistent plutôt que fusionnées : `swallowRegex` avance un `Scanner`,
 // `scanRegexLiteral` rend un INDEX sur une chaîne brute.
 // `i` pointe sur le `/` OUVRANT (pas encore consommé) ; rend l'index JUSTE APRÈS le
 // littéral (drapeaux compris), ou -1 si aucun `/` fermant n'apparaît avant la fin de LIGNE
@@ -979,20 +988,20 @@ export function regexEnArgument(src: string, i: number): boolean {
 // document.
 export function scanRegexLiteral(str: string, i: number): number {
   let j      = i + 1
-  let classe = false
-  let ferme  = false
+  let cls    = false
+  let closes = false
   while (j < str.length) {
     const c = str[j]
     if (c === '\n') break
     if (c === '\\') { j += 2; continue }
-    if (c === '[') { classe = true; j += 1; continue }
-    if (c === ']') { classe = false; j += 1; continue }
-    if (c === '/' && !classe) { j += 1; ferme = true; break }
+    if (c === '[') { cls = true; j += 1; continue }
+    if (c === ']') { cls = false; j += 1; continue }
+    if (c === '/' && !cls) { j += 1; closes = true; break }
     j += 1
   }
-  if (!ferme) return -1
-  const drapeaux = str.slice(j).match(/^[a-z]*/)
-  return j + (drapeaux ? drapeaux[0].length : 0)
+  if (!closes) return -1
+  const flags = str.slice(j).match(/^[a-z]*/)
+  return j + (flags ? flags[0].length : 0)
 }
 
 // ----------------------------------------------------------------------------
@@ -1004,19 +1013,19 @@ export function scanRegexLiteral(str: string, i: number): number {
 // referme sur sa ligne (sinon le `/` est une division). Aide commune de transformCodeOnly, maskStaticHtmlText et
 // maskInterpolations (transpileur) et de la fin de balise d'un composant auto-fermé (générateur), qui comptaient les
 // accolades chacune à sa façon, sans rien savoir des regex.
-// `sansFin` (facultatif) reçoit, quand l'accolade ne se referme pas, la position des accolades restées ouvertes : la
+// `noEnd` (facultatif) reçoit, quand l'accolade ne se referme pas, la position des accolades restées ouvertes : la
 // lecture depuis chacune serait la même et ne se refermerait pas non plus. Seule exception, une regex jugée sur la
-// parenthèse d'une condition (apresCondition), qui peut lire avant une accolade : celles qui étaient alors ouvertes
+// parenthèse d'une condition (afterCondition), qui peut lire avant une accolade : celles qui étaient alors ouvertes
 // ne sont pas retenues.
 // ----------------------------------------------------------------------------
-export function finExpression(src: string, i: number, sansFin?: Set<number>): number {
-  const n = src.length
-  let prof = 1
-  let j = i + 1
-  const ouvertes = sansFin ? [i] : null
-  let douteuses  = 0   // ouvertes[0 … douteuses[ ont vu une regex jugée sur une condition
-  const echec = (): number => {
-    if (ouvertes) for (let k = douteuses; k < ouvertes.length; k++) sansFin!.add(ouvertes[k])
+export function expressionEnd(src: string, i: number, noEnd?: Set<number>): number {
+  const n       = src.length
+  let depth      = 1
+  let j         = i + 1
+  const open    = noEnd ? [i] : null
+  let doubtful  = 0   // ouvertes[0 … douteuses[ ont vu une regex jugée sur une condition
+  const failure = (): number => {
+    if (open) for (let k = doubtful; k < open.length; k++) noEnd!.add(open[k])
     return -1
   }
   while (j < n) {
@@ -1024,7 +1033,7 @@ export function finExpression(src: string, i: number, sansFin?: Set<number>): nu
     if (c === '"' || c === "'") {
       let k = j + 1
       while (k < n && src[k] !== c) k += src[k] === '\\' ? 2 : 1
-      if (k >= n) return echec()
+      if (k >= n) return failure()
       j = k + 1
       continue
     }
@@ -1033,14 +1042,14 @@ export function finExpression(src: string, i: number, sansFin?: Set<number>): nu
       while (k < n && src[k] !== '`') {
         if (src[k] === '\\') { k += 2; continue }
         if (src[k] === '$' && src[k + 1] === '{') {
-          const e = finExpression(src, k + 1)
-          if (e < 0) return echec()
+          const e = expressionEnd(src, k + 1)
+          if (e < 0) return failure()
           k = e
           continue
         }
         k++
       }
-      if (k >= n) return echec()
+      if (k >= n) return failure()
       j = k + 1
       continue
     }
@@ -1050,31 +1059,31 @@ export function finExpression(src: string, i: number, sansFin?: Set<number>): nu
     }
     if (c === '/' && src[j + 1] === '*') {
       const e = src.indexOf('*/', j + 2)
-      if (e < 0) return echec()
+      if (e < 0) return failure()
       j = e + 2
       continue
     }
-    if (c === '/' && ouvertes) {
+    if (c === '/' && open) {
       let t = j
       while (t > i + 1 && /\s/.test(src[t - 1])) t--
-      if (t > i + 1 && src[t - 1] === ')') douteuses = ouvertes.length
+      if (t > i + 1 && src[t - 1] === ')') doubtful = open.length
     }
-    if (c === '/' && ouvreUneRegex(src.slice(i + 1, j))) {
+    if (c === '/' && opensRegex(src.slice(i + 1, j))) {
       const e = scanRegexLiteral(src, j)
       if (e !== -1) { j = e; continue }
     }
     if (c === '{') {
-      prof++
-      if (ouvertes) ouvertes.push(j)
+      depth++
+      if (open) open.push(j)
     }
     else if (c === '}') {
-      if (--prof === 0) return j + 1
-      if (ouvertes) {
-        ouvertes.pop()
-        douteuses = Math.min(douteuses, ouvertes.length)
+      if (--depth === 0) return j + 1
+      if (open) {
+        open.pop()
+        doubtful = Math.min(doubtful, open.length)
       }
     }
     j++
   }
-  return echec()
+  return failure()
 }

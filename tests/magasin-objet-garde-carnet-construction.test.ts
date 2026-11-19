@@ -2,12 +2,12 @@
 // module (`µ$$x`) là où une variable `$` d'un composant peut le prendre : affectation d'une variable ou d'une prop, nom qui le garde,
 // fonction qui le rend, boucle du script, fonction de l'appli qui le reçoit, ligne d'un `{for}` du magasin passée à un composant. Une
 // appli qui ne fait que lire le magasin pour l'écran et en écrire les champs, ou qui n'a pas de magasin, n'en reçoit rien, et ses
-// lignes d'avant reviennent à l'octet (blocs `<sans-carnet>`)
+// lignes d'avant reviennent à l'octet (blocs `<no-ledger>`)
 import assert from 'node:assert/strict'
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
-import { Bundler, projeterBlocs, terminateSharedWorkerPool } from '../src/bundler/index.js'
+import { Bundler, projectBlocks, terminateSharedWorkerPool } from '../src/bundler/index.js'
 
 const MAGASIN = "$$m = [{ id: 1, nom: 'a', adr: { ville: 'v' } }]\n"
 const ECRAN   = '<p>{$sel?.nom}</p>\n'
@@ -61,24 +61,24 @@ describe("magasin : le carnet des objets gardés n'entre que pour l'appli qui en
 
   for (const [nom, sources] of Object.entries(AVEC)) it(`le cœur l'a : ${nom}`, async () => {
     const c = await coeur(nom, sources)
-    assert.ok(c.includes('µ._mjs_carnetVoit = function'), nom)
-    assert.ok(!/<\/?(?:sans-)?carnet>/.test(c), 'marques retirées')
+    assert.ok(c.includes('µ._mjs_ledgerSees = function'), nom)
+    assert.ok(!/<\/?(?:no-)?ledger>/.test(c), 'marques retirées')
   })
   for (const [nom, sources] of Object.entries(SANS)) it(`le cœur ne l'a pas : ${nom}`, async () => {
     const c = await coeur(nom, sources)
-    assert.ok(!c.includes('_mjs_carnet'), nom)
-    assert.ok(!/<\/?(?:sans-)?carnet>/.test(c), 'marques retirées')
+    assert.ok(!c.includes('_mjs_ledger'), nom)
+    assert.ok(!/<\/?(?:no-)?ledger>/.test(c), 'marques retirées')
   })
 
   it("sans le carnet, les fichiers du runtime reprennent leurs lignes d'avant, sans marque ni appel au carnet", () => {
     for (const f of ['mjs_init.ts', 'mjs_element.ts', 'mjs_store_globals.ts', 'mjs_state.ts']) {
       const texte = readFileSync(join(import.meta.dirname, '../src/runtime', f), 'utf-8')
-      const sans  = projeterBlocs(texte, { carnet: false })
-      assert.ok(texte.includes('// <carnet>'), f)
-      assert.ok(!/carnet/i.test(sans.replace(/^.*\/\/.*$/gm, '')), f + ' : aucun code du carnet')
-      assert.ok(!sans.includes('<sans-carnet>') && !sans.includes('<carnet>'), f + ' : marques retirées')
+      const sans  = projectBlocks(texte, { ledger: false })
+      assert.ok(texte.includes('// <ledger>'), f)
+      assert.ok(!/ledger/i.test(sans.replace(/^.*\/\/.*$/gm, '')), f + ' : aucun code du carnet')
+      assert.ok(!sans.includes('<no-ledger>') && !sans.includes('<ledger>'), f + ' : marques retirées')
     }
-    const magasin = projeterBlocs(readFileSync(join(import.meta.dirname, '../src/runtime/mjs_store_globals.ts'), 'utf-8'), { carnet: false })
+    const magasin = projectBlocks(readFileSync(join(import.meta.dirname, '../src/runtime/mjs_store_globals.ts'), 'utf-8'), { ledger: false })
     assert.ok(/^function _mjsStoreTenants\(rootKey, w\) \{$/m.test(magasin), 'la recherche des détenteurs reprend son texte')
   })
 })

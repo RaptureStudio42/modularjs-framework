@@ -271,7 +271,7 @@ for (const prod of [false, true]) {
       it('son cœur ne porte ni le contrôle des collections suivies ni l\'aide des clés d\'une autre famille', async () => {
         const sans = (await construire(SANS_PART, { prod, lisible: true })).replace(/^[ \t]*\/\/.*$/gm, '')
         const avec = (await construire({ ...SANS_PART, 'n-map': NOMME }, { prod, lisible: true })).replace(/^[ \t]*\/\/.*$/gm, '')
-        for (const nom of ['_mjsSuivie', '_mjsCollections', '_mjs_douteCle']) {
+        for (const nom of ['_mjsTracked', '_mjsCollections', '_mjs_doubtKey']) {
           assert.equal(sans.includes(nom), false, nom + ' dans un cœur sans collection')
           assert.equal(avec.includes(nom), true, nom + ' dans le cœur d\'une appli qui nomme `Map`')
         }

@@ -74,7 +74,7 @@ describe('handlers — les variables ordinaires du <script>', function () {
   })
 
   // une ligne pure d'un {for} de racine (elle ne lit que son élément et son indice) les relit sur l'entrée de la ligne
-  // (`el._mjs_ev._mjs_en`) ; le squelette en tête du handler les déclare toujours pour lui seul
+  // (`el._mjs_ev._mjs_ent`) ; le squelette en tête du handler les déclare toujours pour lui seul
   it('la variable de boucle reste LOCALE, même si le <script> porte un homonyme', async function () {
     const batch = await batchInline("<script>\n  item = 'du script'\n  $list = [1, 2]\n</script>\n{for item in $list}\n  <button @click={console.log(item)}>x</button>\n{end}\n")
     assert.match(batch, /let item = _mjs_ra_0\._mjs_it\b/, 'le squelette DOIT garder sa propre déclaration')

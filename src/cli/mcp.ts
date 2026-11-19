@@ -25,7 +25,7 @@ import { isTypesFile } from '../bundler/types-files.js'
 import { t, type MsgKey } from '../messages/index.js'
 import { captureOutput, componentFiles, diagnosticsOf, fileModel, type Diagnostic } from './check-json.js'
 import { ownDocsDir } from './package-files.js'
-import { resolveServeurEntryPath } from './server.js'
+import { resolveServerEntryPath } from './server.js'
 import { resolveEntryPath } from './ws.js'
 
 /** versions du protocole comprises, la plus récente d'abord — une version inconnue reçoit la première */
@@ -72,11 +72,11 @@ function rel(root: string, file: string): string {
   return relative(root, file).split(sep).join('/')
 }
 
-// le chemin réel (liens suivis) est-il sous `racine`, déjà réelle ? un lien cassé ou illisible : non
-function inside(racine: string, chemin: string): boolean {
-  let reel: string
-  try { reel = realpathSync(chemin) } catch { return false }
-  const r = relative(racine, reel)
+// le chemin réel (liens suivis) est-il sous `root`, déjà réelle ? un lien cassé ou illisible : non
+function inside(root: string, path: string): boolean {
+  let real: string
+  try { real = realpathSync(path) } catch { return false }
+  const r = relative(root, real)
   return r !== '' && r !== '..' && !r.startsWith('..' + sep) && !isAbsolute(r)
 }
 
@@ -99,8 +99,8 @@ function project(root: string): { root: string, config: MjsConfig | null, opts: 
 
 /** les pages de la doc : les `*.md` et `llms*.txt` du dossier — un lien qui mène hors du dossier n'en est pas une */
 export function docPages(dir: string): string[] {
-  const reel = realpathSync(dir)
-  return readdirSync(dir).filter((f) => (f.endsWith('.md') || /^llms.*\.txt$/.test(f)) && inside(reel, join(dir, f))).sort()
+  const real = realpathSync(dir)
+  return readdirSync(dir).filter((f) => (f.endsWith('.md') || /^llms.*\.txt$/.test(f)) && inside(real, join(dir, f))).sort()
 }
 
 interface Heading { level: number, text: string, line: number }
@@ -121,72 +121,72 @@ function headings(lines: string[]): Heading[] {
 
 function resolvePage(dir: string, asked: string): string | null {
   const pages = docPages(dir)
-  const nom   = basename(asked.trim())
-  if (pages.includes(nom)) return nom
-  if (pages.includes(nom + '.md')) return nom + '.md'
-  const debut = pages.filter((p) => p.startsWith(nom + '-') || p.startsWith(nom + '.'))
-  return debut.length === 1 ? debut[0] : null
+  const name  = basename(asked.trim())
+  if (pages.includes(name)) return name
+  if (pages.includes(name + '.md')) return name + '.md'
+  const start = pages.filter((p) => p.startsWith(name + '-') || p.startsWith(name + '.'))
+  return start.length === 1 ? start[0] : null
 }
 
 async function searchDocs(args: Record<string, unknown>): Promise<ToolResult> {
   const dir   = ownDocsDir()
   const query = typeof args.query === 'string' ? args.query.trim() : ''
-  if (dir === null) return fail(t('cli.mcp.doc-absente'))
-  if (query === '') return fail(t('cli.mcp.parametre-manquant', { nom: 'query' }))
-  if (query.length > QUERY_MAX) return fail(t('cli.mcp.recherche-trop-longue', { nb: query.length, max: QUERY_MAX }))
+  if (dir === null) return fail(t('cli.mcp.doc-missing'))
+  if (query === '') return fail(t('cli.mcp.param-missing', { name: 'query' }))
+  if (query.length > QUERY_MAX) return fail(t('cli.mcp.search-too-long', { count: query.length, max: QUERY_MAX }))
   const limit = Math.min(50, Math.max(1, Number.isInteger(args.limit) ? (args.limit as number) : 10))
   const terms = [...new Set(fold(query).split(/\s+/).filter(Boolean))]
   // des accents seuls ne laissent aucun mot une fois pliés
-  if (terms.length === 0) return fail(t('cli.mcp.parametre-manquant', { nom: 'query' }))
-  if (terms.length > TERMS_MAX) return fail(t('cli.mcp.recherche-trop-de-mots', { nb: terms.length, max: TERMS_MAX }))
+  if (terms.length === 0) return fail(t('cli.mcp.param-missing', { name: 'query' }))
+  if (terms.length > TERMS_MAX) return fail(t('cli.mcp.search-too-many-words', { count: terms.length, max: TERMS_MAX }))
   const found = [] as { page: string, title: string, section: string, line: number, excerpt: string, hits: number }[]
   for (const page of docPages(dir)) {
     const lines = readFileSync(join(dir, page), 'utf-8').split('\n')
     const heads = headings(lines)
     const title = heads[0]?.text ?? page
     // une section va d'un titre au suivant ; le début de page, avant tout titre, compte pour la page
-    const bornes = [{ text: title, line: 1 }, ...heads.slice(1)]
-    bornes.forEach((h, i) => {
-      const fin     = i + 1 < bornes.length ? bornes[i + 1].line - 1 : lines.length
-      const morceau = lines.slice(h.line - 1, fin)
-      const plie    = morceau.map(fold)
-      if (!terms.every((term) => plie.some((l) => l.includes(term)))) return
-      const hits  = plie.reduce((n, l) => n + terms.reduce((m, term) => m + l.split(term).length - 1, 0), 0)
-      const index = plie.findIndex((l) => l.includes(terms[0]))
-      found.push({ page, title, section: h.text, line: h.line + index, excerpt: morceau[index].trim().slice(0, 240), hits })
+    const bounds = [{ text: title, line: 1 }, ...heads.slice(1)]
+    bounds.forEach((h, i) => {
+      const end    = i + 1 < bounds.length ? bounds[i + 1].line - 1 : lines.length
+      const piece  = lines.slice(h.line - 1, end)
+      const folded = piece.map(fold)
+      if (!terms.every((term) => folded.some((l) => l.includes(term)))) return
+      const hits  = folded.reduce((n, l) => n + terms.reduce((m, term) => m + l.split(term).length - 1, 0), 0)
+      const index = folded.findIndex((l) => l.includes(terms[0]))
+      found.push({ page, title, section: h.text, line: h.line + index, excerpt: piece[index].trim().slice(0, 240), hits })
     })
   }
   found.sort((a, b) => b.hits - a.hits || (a.page < b.page ? -1 : a.page > b.page ? 1 : a.line - b.line))
   const results = found.slice(0, limit)
-  const text    = results.length === 0 ? t('cli.mcp.recherche-vide', { query }) : results.map((r) => `${r.page}:${r.line} · ${r.section}\n   ${r.excerpt}`).join('\n')
+  const text    = results.length === 0 ? t('cli.mcp.search-empty', { query }) : results.map((r) => `${r.page}:${r.line} · ${r.section}\n   ${r.excerpt}`).join('\n')
   return ok({ query, results }, text)
 }
 
 async function readDoc(args: Record<string, unknown>): Promise<ToolResult> {
   const dir = ownDocsDir()
-  if (dir === null) return fail(t('cli.mcp.doc-absente'))
+  if (dir === null) return fail(t('cli.mcp.doc-missing'))
   const page = typeof args.page === 'string' ? resolvePage(dir, args.page) : null
-  if (page === null) return fail(t('cli.mcp.page-inconnue', { page: String(args.page ?? ''), pages: docPages(dir).join(', ') }))
+  if (page === null) return fail(t('cli.mcp.page-unknown', { page: String(args.page ?? ''), pages: docPages(dir).join(', ') }))
   const text  = readFileSync(join(dir, page), 'utf-8')
   const lines = text.split('\n')
   const heads = headings(lines)
   if (typeof args.section === 'string' && args.section.trim() !== '') {
-    const cherche = fold(args.section.trim())
-    const h       = heads.find((x) => fold(x.text).includes(cherche))
-    if (!h) return fail(t('cli.mcp.section-inconnue', { page, section: args.section, sections: heads.map((x) => x.text).join(' · ') }))
-    const suite   = heads.find((x) => x.line > h.line && x.level <= h.level)
-    const fin     = suite ? suite.line - 1 : lines.length
-    const morceau = lines.slice(h.line - 1, fin).join('\n').trimEnd()
-    if (morceau.length <= PAGE_MAX) return ok({ page, section: h.text, line: h.line, truncated: false }, morceau)
+    const search = fold(args.section.trim())
+    const h      = heads.find((x) => fold(x.text).includes(search))
+    if (!h) return fail(t('cli.mcp.section-unknown', { page, section: args.section, sections: heads.map((x) => x.text).join(' · ') }))
+    const next  = heads.find((x) => x.line > h.line && x.level <= h.level)
+    const end   = next ? next.line - 1 : lines.length
+    const piece = lines.slice(h.line - 1, end).join('\n').trimEnd()
+    if (piece.length <= PAGE_MAX) return ok({ page, section: h.text, line: h.line, truncated: false }, piece)
     // plus longue que le plafond (le titre de la page prend la page entière) : coupée comme une page, ses sous-sections listées
-    const coupe = morceau.lastIndexOf('\n', PAGE_MAX)
-    const sous  = heads.filter((x) => x.line > h.line && x.line <= fin && x.level === h.level + 1).map((x) => x.text).join(' · ')
-    return ok({ page, section: h.text, line: h.line, truncated: true }, morceau.slice(0, coupe > 0 ? coupe : PAGE_MAX) + '\n\n' + t('cli.mcp.section-tronquee', { page, section: h.text, sections: sous }))
+    const cut = piece.lastIndexOf('\n', PAGE_MAX)
+    const sub   = heads.filter((x) => x.line > h.line && x.line <= end && x.level === h.level + 1).map((x) => x.text).join(' · ')
+    return ok({ page, section: h.text, line: h.line, truncated: true }, piece.slice(0, cut > 0 ? cut : PAGE_MAX) + '\n\n' + t('cli.mcp.section-truncated', { page, section: h.text, sections: sub }))
   }
   if (text.length <= PAGE_MAX) return ok({ page, truncated: false }, text)
-  const coupe = text.lastIndexOf('\n', PAGE_MAX)
-  const reste = heads.filter((x) => x.level === 2).map((x) => x.text).join(' · ')
-  return ok({ page, truncated: true }, text.slice(0, coupe) + '\n\n' + t('cli.mcp.page-tronquee', { page, sections: reste }))
+  const cut = text.lastIndexOf('\n', PAGE_MAX)
+  const rest  = heads.filter((x) => x.level === 2).map((x) => x.text).join(' · ')
+  return ok({ page, truncated: true }, text.slice(0, cut) + '\n\n' + t('cli.mcp.page-truncated', { page, sections: rest }))
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -194,63 +194,63 @@ async function readDoc(args: Record<string, unknown>): Promise<ToolResult> {
 // ---------------------------------------------------------------------------------------------------------------------
 
 function filesEndingWith(dir: string, suffix: string): string[] {
-  const out  = [] as string[]
-  const pile = [dir]
-  while (pile.length > 0) {
-    const d = pile.pop()!
+  const out   = [] as string[]
+  const stack = [dir]
+  while (stack.length > 0) {
+    const d = stack.pop()!
     let entries: import('node:fs').Dirent[]
     try { entries = readdirSync(d, { withFileTypes: true }) } catch { continue }
     for (const e of entries) {
       if (e.name.startsWith('.') || e.name === 'node_modules') continue
-      if (e.isDirectory()) pile.push(join(d, e.name))
+      if (e.isDirectory()) stack.push(join(d, e.name))
       else if (e.name.endsWith(suffix)) out.push(join(d, e.name))
     }
   }
   return out.sort()
 }
 
-// `chemin` est-il sous `dossier` (lui-même exclu), à lire les deux chemins tels qu'ils sont écrits ?
-function under(dossier: string, chemin: string): boolean {
-  const r = relative(dossier, chemin)
+// `chemin` est-il sous `dir` (lui-même exclu), à lire les deux chemins tels qu'ils sont écrits ?
+function under(dir: string, path: string): boolean {
+  const r = relative(dir, path)
   return r !== '' && r !== '..' && !r.startsWith('..' + sep) && !isAbsolute(r)
 }
 
 // le fichier que charge une commande serveur du projet, trouvé comme la commande le trouve : `mjs ws` (cli/ws.ts,
-// resolveEntryPath : `ws.entry` de mjs.config.json, à défaut ws.server.mjs, server/ws.server.mjs, ws.js…), `mjs serveur`
-// (cli/server.ts, resolveServeurEntryPath : `serveur.entry`, à défaut serveur.server.mjs…), `mjs serve` et `mjs dev`
+// resolveEntryPath : `ws.entry` de mjs.config.json, à défaut ws.server.mjs, server/ws.server.mjs, ws.js…), `mjs server`
+// (cli/server.ts, resolveServerEntryPath : `server.entry`, à défaut game.server.mjs…), `mjs serve` et `mjs dev`
 // (server/serve-entry.ts : `render.entry`) — la commande et son champ, `null` pour tout autre fichier
-function serverEntry(file: string, p: ReturnType<typeof project>): { commande: string, champ: string } | null {
-  const est   = (entry: () => string | undefined): boolean => {
+function serverEntry(file: string, p: ReturnType<typeof project>): { command: string, field: string } | null {
+  const isEntry   = (entry: () => string | undefined): boolean => {
     try {
       const e = entry()
       return e !== undefined && resolve(e) === file
     }
     catch { return false }
   }
-  const rendu = (p.config?.render as unknown as { entry?: string } | undefined)?.entry
-  if (est(() => resolveEntryPath(p.root, undefined, p.config?.ws?.entry))) return { commande: 'ws', champ: 'ws.entry' }
-  if (est(() => resolveServeurEntryPath(p.root, undefined, p.config?.serveur?.entry))) return { commande: 'serveur', champ: 'serveur.entry' }
-  if (est(() => (rendu === undefined ? undefined : resolve(p.root, rendu)))) return { commande: 'serve', champ: 'render.entry' }
+  const render = (p.config?.render as unknown as { entry?: string } | undefined)?.entry
+  if (isEntry(() => resolveEntryPath(p.root, undefined, p.config?.ws?.entry))) return { command: 'ws', field: 'ws.entry' }
+  if (isEntry(() => resolveServerEntryPath(p.root, undefined, p.config?.server?.entry))) return { command: 'server', field: 'server.entry' }
+  if (isEntry(() => (render === undefined ? undefined : resolve(p.root, render)))) return { command: 'serve', field: 'render.entry' }
   return null
 }
 
 // ce qu'est un fichier qui n'est pas un composant, `null` pour un composant. D'abord ce que la construction ne lit pas : un
 // fichier serveur (`*.server.mjs` HORS du dossier source — elle ne lit que ce dossier ; ces fichiers sont compilés par `mjs ws`,
-// `mjs serveur` et `mjs serve`, cf. cli/server-entry.ts), le fichier que charge une de ces commandes (`entry`, cf. serverEntry),
+// `mjs server` et `mjs serve`, cf. cli/server-entry.ts), le fichier que charge une de ces commandes (`entry`, cf. serverEntry),
 // un fichier sans l'extension `.mjs` ; puis son propre tri (bundler/index.ts, compile). Une page `nom.page.mjs` et un modèle en
 // fichier `carte.compacte.mjs` sont des composants ; SOUS le dossier source (`inSource`), `carte.server.mjs` est pour elle le
 // modèle « server » de `carte` (collectFileModels), compilé comme tel. Une source donnée sans fichier n'a pas de place : nommée
 // `*.server`, elle reste un fichier serveur
-function notComponent(nom: string, inSource: boolean, entry: boolean): 'autre' | 'module' | 'classe' | 'regles' | 'effets' | 'theme' | 'serveur' | 'entree' | 'partiel' | null {
-  if (nom.endsWith('.server.mjs') && !inSource) return 'serveur'
-  if (entry) return 'entree'
-  if (!nom.endsWith('.mjs')) return 'autre'
-  if (isModuleFile(nom)) return 'module'
-  if (isClassFile(nom)) return 'classe'
-  if (isTypesFile(nom)) return 'regles'
-  if (isEffectsFile(nom)) return 'effets'
-  if (isThemeFile(nom)) return 'theme'
-  return nom.startsWith('_') ? 'partiel' : null
+function notComponent(name: string, inSource: boolean, entry: boolean): 'other' | 'module' | 'class' | 'rules' | 'effects' | 'theme' | 'server' | 'entry' | 'partial' | null {
+  if (name.endsWith('.server.mjs') && !inSource) return 'server'
+  if (entry) return 'entry'
+  if (!name.endsWith('.mjs')) return 'other'
+  if (isModuleFile(name)) return 'module'
+  if (isClassFile(name)) return 'class'
+  if (isTypesFile(name)) return 'rules'
+  if (isEffectsFile(name)) return 'effects'
+  if (isThemeFile(name)) return 'theme'
+  return name.startsWith('_') ? 'partial' : null
 }
 
 async function compileComponent(args: Record<string, unknown>, ctx: McpContext): Promise<ToolResult> {
@@ -259,39 +259,39 @@ async function compileComponent(args: Record<string, unknown>, ctx: McpContext):
   let file = null as string | null
   if (typeof args.file === 'string' && args.file.trim() !== '') {
     file = resolve(p.root, args.file)
-    const chemin = relative(p.root, file)
-    if (chemin === '..' || chemin.startsWith('..' + sep) || isAbsolute(chemin)) return fail(t('cli.mcp.fichier-hors-projet', { fichier: args.file, racine: p.root }))
-    if (!existsSync(file)) return fail(t('cli.mcp.fichier-introuvable', { fichier: args.file }))
+    const path = relative(p.root, file)
+    if (path === '..' || path.startsWith('..' + sep) || isAbsolute(path)) return fail(t('cli.mcp.file-outside-project', { file: args.file, root: p.root }))
+    if (!existsSync(file)) return fail(t('cli.mcp.file-not-found', { file: args.file }))
     // un lien du projet qui mène dehors n'est pas suivi : le fichier réel doit être sous la racine réelle
-    if (!inside(realpathSync(p.root), file)) return fail(t('cli.mcp.lien-hors-projet', { fichier: args.file, racine: p.root }))
+    if (!inside(realpathSync(p.root), file)) return fail(t('cli.mcp.link-outside-project', { file: args.file, root: p.root }))
     source = readFileSync(file, 'utf-8')
   }
   else if (typeof args.source === 'string') source = args.source
-  else return fail(t('cli.mcp.parametre-manquant', { nom: 'file / source' }))
+  else return fail(t('cli.mcp.param-missing', { name: 'file / source' }))
   const name     = file !== null ? basename(file, '.mjs').replace(/\.page$/, '') : (typeof args.name === 'string' && args.name !== '' ? args.name : 'component')
   const fileName = file !== null ? basename(file) : name + '.mjs'
   // module de script, classe globale, règles, effets, thème, partiel, fichier serveur, fichier sans `.mjs` : la construction les
   // traite autrement, ou pas du tout — compilé ici comme un composant, un tel fichier rendrait un résultat faux (« ok » sur une
   // faute, conseil de le renommer)
-  const entree   = file !== null ? serverEntry(file, p) : null
-  const sous     = file !== null && under(p.sourceDir, file)
-  const genre    = notComponent(fileName, sous, entree !== null)
-  if (genre !== null) return fail(t('cli.mcp.pas-un-composant', { fichier: file !== null ? String(args.file) : fileName, genre, commande: entree?.commande ?? '', champ: entree?.champ ?? '' }))
+  const entry = file !== null ? serverEntry(file, p) : null
+  const sub   = file !== null && under(p.sourceDir, file)
+  const genre = notComponent(fileName, sub, entry !== null)
+  if (genre !== null) return fail(t('cli.mcp.not-a-component', { file: file !== null ? String(args.file) : fileName, kind: genre, command: entry?.command ?? '', field: entry?.field ?? '' }))
   // un modèle en fichier n'en est un que sous le dossier source (une source donnée sans fichier y est comptée) : ailleurs, la
   // construction ne lit rien, un nom à point n'y dit rien
-  const model    = file === null || sous ? fileModel(fileName) : null
-  const opts     = p.opts
-  const bundler  = new Bundler({ sourceDir: p.sourceDir, defaultScriptLang: opts?.defaultScriptLang, templateLang: opts?.templateLang, sigil: opts?.sigil, contextAlias: opts?.contextAlias, varPrefix: opts?.varPrefix, defaultTheme: opts?.defaultTheme, maxStateVars: opts?.maxStateVars, a11y: opts?.a11y, ujsForm: opts?.ujsForm, lint: opts?.lint, types: opts?.types, derivedMode: opts?.derivedMode, routesPreload: opts?.routesPreload, blocksPreload: opts?.blocksPreload, proxy: opts?.proxy, responsiveFontSize: opts?.responsiveFontSize, collections: opts?.collections, effects: opts?.effects, colorsEnabled: false, env: 'dev' })
-  const files    = componentFiles(p.sourceDir)
+  const model   = file === null || sub ? fileModel(fileName) : null
+  const opts    = p.opts
+  const bundler = new Bundler({ sourceDir: p.sourceDir, defaultScriptLang: opts?.defaultScriptLang, templateLang: opts?.templateLang, sigil: opts?.sigil, contextAlias: opts?.contextAlias, varPrefix: opts?.varPrefix, defaultTheme: opts?.defaultTheme, maxStateVars: opts?.maxStateVars, a11y: opts?.a11y, ujsForm: opts?.ujsForm, lint: opts?.lint, types: opts?.types, derivedMode: opts?.derivedMode, reffetsMode: opts?.reffetsMode, routesPreload: opts?.routesPreload, blocksPreload: opts?.blocksPreload, proxy: opts?.proxy, responsiveFontSize: opts?.responsiveFontSize, collections: opts?.collections, effects: opts?.effects, colorsEnabled: false, env: 'dev' })
+  const files   = componentFiles(p.sourceDir)
   if (file !== null) files.set(model !== null ? `${model.base}--${model.model}` : name, file)
-  const detail   = (d: string) => t('bundler.index.erreur-fichier-detail', { fichier: file ?? fileName, detail: d })
+  const detail   = (d: string) => t('bundler.index.error-file-detail', { file: file ?? fileName, detail: d })
   const capture  = captureOutput()
   const errors   = [] as string[]
   const warnings = [] as string[]
   // les deux fautes que la construction trouve à un modèle en fichier (bundler/index.ts, collectFileModels) : nommé « default », ou
   // sans son composant dans le projet
-  if (model?.model === 'default') errors.push(detail(t('bundler.modele-default', { fichier: fileName })))
-  else if (model !== null && !files.has(model.base)) errors.push(detail(t('bundler.modele-sans-composant', { fichier: fileName, base: model.base })))
+  if (model?.model === 'default') errors.push(detail(t('bundler.layout-default', { file: fileName })))
+  else if (model !== null && !files.has(model.base)) errors.push(detail(t('bundler.layout-no-component', { file: fileName, base: model.base })))
   try {
     // les règles et les effets du projet, lus comme le fait la construction : un effet de l'appli n'est pas une faute
     bundler.compileTypesFiles(filesEndingWith(p.sourceDir, '.types.mjs'))
@@ -308,8 +308,8 @@ async function compileComponent(args: Record<string, unknown>, ctx: McpContext):
   // les avertissements du fichier, nommés comme ceux de la construction (stats.warnings, que lit mjs check --json)
   const diags = diagnosticsOf(capture.lines, { root: p.root, files }, { errors, warnings: warnings.map((w) => detail(w)) })
   // une source sans fichier : ses objets ne nomment pas de fichier
-  const sans  = (d: Diagnostic) => (file === null ? { ...d, file: null } : d)
-  return ok({ ok: diags.errors.length === 0, errors: diags.errors.map(sans), warnings: diags.warnings.map(sans) })
+  const without  = (d: Diagnostic) => (file === null ? { ...d, file: null } : d)
+  return ok({ ok: diags.errors.length === 0, errors: diags.errors.map(without), warnings: diags.warnings.map(without) })
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -326,28 +326,39 @@ function loopbackHost(host: string): string | null {
 
 // « localhost » sans passer par le DNS : la boucle locale, en IPv4 puis en IPv6
 const loopbackLookup: LookupFunction = (_host, opts, done) => {
-  const famille  = opts.family === 6 || opts.family === 'IPv6' ? 6 : opts.family === 4 || opts.family === 'IPv4' ? 4 : 0
-  const adresses = [{ address: '127.0.0.1', family: 4 }, { address: '::1', family: 6 }].filter((a) => famille === 0 || a.family === famille)
-  if (opts.all) done(null, adresses)
-  else done(null, adresses[0].address, adresses[0].family)
+  const family    = opts.family === 6 || opts.family === 'IPv6' ? 6 : opts.family === 4 || opts.family === 'IPv4' ? 4 : 0
+  const addresses = [{ address: '127.0.0.1', family: 4 }, { address: '::1', family: 6 }].filter((a) => family === 0 || a.family === family)
+  if (opts.all) done(null, addresses)
+  else done(null, addresses[0].address, addresses[0].family)
 }
+
+// réponse lue au plus : le journal de mjs dev tient en deux fichiers de `journal.maxBytes` chacun (1 Mio par défaut) ; au-delà, la
+// lecture s'arrête et l'outil le dit, plutôt que de garder en mémoire tout ce qu'un serveur envoie
+const RESPONSE_MAX_MIB = 16
+const RESPONSE_MAX     = RESPONSE_MAX_MIB * 1024 * 1024
+
+class ResponseTooLarge extends Error {}
 
 function fetchJson(host: string, port: number, path: string): Promise<{ status: number, body: string }> {
   return new Promise((ok, ko) => {
     // node:http et pas fetch, avec un agent à soi (`agent: false`) : l'agent commun suit HTTP_PROXY dès que NODE_USE_ENV_PROXY est
     // posé — jamais de mandataire entre l'outil et le serveur local, le jeton du journal ne lui est pas confié
     const req = get({ host, port, path, agent: false, timeout: 5000, ...(host === 'localhost' ? { lookup: loopbackLookup } : {}) }, (res) => {
-      let body = ''
-      res.setEncoding('utf8')
-      res.on('data', (d) => { body += d })
-      res.on('end', () => ok({ status: res.statusCode ?? 0, body }))
+      const chunks: Buffer[] = []
+      let size               = 0
+      res.on('data', (d: Buffer) => {
+        size += d.length
+        if (size > RESPONSE_MAX) req.destroy(new ResponseTooLarge())
+        else chunks.push(d)
+      })
+      res.on('end', () => ok({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8') }))
     })
     req.on('timeout', () => req.destroy(new Error('timeout')))
     req.on('error', ko)
   })
 }
 
-interface PageError { source: 'server' | 'client', message: string, pile: string, url: string, version: string | null, n: number, premier: number | null, dernier: number | null }
+interface PageError { source: 'server' | 'client', message: string, stack: string, url: string, version: string | null, n: number, first: number | null, last: number | null }
 
 // les données du journal en JSON, les fins de ligne que JSON laisse telles quelles dans une chaîne (codes 0x85, 0x2028 et 0x2029)
 // écrites en échappement : une page n'y pose pas de fin de ligne, et les données relues redonnent son texte, caractère pour caractère
@@ -369,51 +380,51 @@ function boundedEntries(entries: unknown[]): PageError[] {
   const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
   for (const e of entries) {
     if (e === null || typeof e !== 'object' || Array.isArray(e)) continue
-    const x    = e as Record<string, unknown>
-    const pile = typeof x.pile === 'string' ? x.pile.split('\n') : []
-    const d    = { source: x.source === 'server' ? 'server' : 'client', message: cut(x.message, MESSAGE_MAX), pile: cut(pile.slice(0, STACK_LINES_MAX).join('\n') + (pile.length > STACK_LINES_MAX ? '\n…' : ''), STACK_MAX), url: cut(x.url, URL_MAX), version: typeof x.version === 'string' ? cut(x.version, 32) : null, n: Math.max(1, num(x.n) ?? 1), premier: num(x.premier), dernier: num(x.dernier) } as PageError
-    const cle  = JSON.stringify([d.source, d.message, d.pile, d.url])
-    const deja = out.get(cle)
-    if (deja === undefined) {
-      out.set(cle, d)
+    const x       = e as Record<string, unknown>
+    const stack   = typeof x.stack === 'string' ? x.stack.split('\n') : []
+    const d       = { source: x.source === 'server' ? 'server' : 'client', message: cut(x.message, MESSAGE_MAX), stack: cut(stack.slice(0, STACK_LINES_MAX).join('\n') + (stack.length > STACK_LINES_MAX ? '\n…' : ''), STACK_MAX), url: cut(x.url, URL_MAX), version: typeof x.version === 'string' ? cut(x.version, 32) : null, n: Math.max(1, num(x.n) ?? 1), first: num(x.first), last: num(x.last) } as PageError
+    const key     = JSON.stringify([d.source, d.message, d.stack, d.url])
+    const already = out.get(key)
+    if (already === undefined) {
+      out.set(key, d)
       continue
     }
-    deja.n      += d.n
-    deja.premier = deja.premier === null || d.premier === null ? deja.premier ?? d.premier : Math.min(deja.premier, d.premier)
-    deja.dernier = deja.dernier === null || d.dernier === null ? deja.dernier ?? d.dernier : Math.max(deja.dernier, d.dernier)
+    already.n    += d.n
+    already.first = already.first === null || d.first === null ? already.first ?? d.first : Math.min(already.first, d.first)
+    already.last  = already.last === null || d.last === null ? already.last ?? d.last : Math.max(already.last, d.last)
   }
   return [...out.values()]
 }
 
 async function pageErrors(args: Record<string, unknown>, ctx: McpContext): Promise<ToolResult> {
-  const p          = project(ctx.root)
-  const portProjet = p.opts?.devPort ?? 3939
+  const p           = project(ctx.root)
+  const projectPort = p.opts?.devPort ?? 3939
   // un mjs dev qui écoute sur toutes les interfaces se joint par la boucle locale
-  const ecoute     = p.opts?.devHost ?? '127.0.0.1'
-  const demande    = typeof args.host === 'string' && args.host.trim() !== '' ? args.host : ecoute === '0.0.0.0' ? '127.0.0.1' : ecoute === '::' ? '::1' : ecoute
-  const host       = loopbackHost(demande)
-  if (host === null) return fail(t('cli.mcp.hote-refuse', { hote: demande }))
-  const port       = Number.isInteger(args.port) ? (args.port as number) : portProjet
-  const viewer     = p.config?.journal?.viewer
+  const listener = p.opts?.devHost ?? '127.0.0.1'
+  const request  = typeof args.host === 'string' && args.host.trim() !== '' ? args.host : listener === '0.0.0.0' ? '127.0.0.1' : listener === '::' ? '::1' : listener
+  const host     = loopbackHost(request)
+  if (host === null) return fail(t('cli.mcp.host-refused', { host: request }))
+  const port   = Number.isInteger(args.port) ? (args.port as number) : projectPort
+  const viewer = p.config?.journal?.viewer
   // le jeton ne part que vers le port du projet : un autre port n'est pas demandé du tout
-  if (typeof viewer === 'string' && port !== portProjet) return fail(t('cli.mcp.jeton-autre-port', { port, portProjet }))
+  if (typeof viewer === 'string' && port !== projectPort) return fail(t('cli.mcp.token-other-port', { port, projectPort: projectPort }))
   const path       = '/__mjs/errors.json' + (typeof viewer === 'string' ? '?token=' + encodeURIComponent(viewer) : '')
   const url        = `http://${host.includes(':') ? `[${host}]` : host}:${port}/__mjs/errors.json`
   let r: { status: number, body: string }
   try { r = await fetchJson(host, port, path) }
-  catch { return fail(t('cli.mcp.dev-absent', { url })) }
-  if (r.status !== 200) return fail(t('cli.mcp.journal-ferme', { url, statut: r.status }))
+  catch (e) { return fail(e instanceof ResponseTooLarge ? t('cli.mcp.journal-too-big', { url, max: RESPONSE_MAX_MIB }) : t('cli.mcp.dev-missing', { url })) }
+  if (r.status !== 200) return fail(t('cli.mcp.journal-closed', { url, status: r.status }))
   let entries: unknown
-  try { entries = JSON.parse(r.body) } catch { return fail(t('cli.mcp.journal-illisible', { url })) }
-  const toutes  = boundedEntries(Array.isArray(entries) ? entries : [])
-  if (toutes.length === 0) return ok({ url, total: 0, truncated: false, entries: [] }, t('cli.mcp.journal-vide', { url }))
-  const limit   = Math.min(ENTRIES_MAX, Math.max(1, Number.isInteger(args.limit) ? (args.limit as number) : ENTRIES_DEFAULT))
-  const rendues = toutes.slice(0, limit)
-  const avis    = t('cli.mcp.journal-avis')
+  try { entries = JSON.parse(r.body) } catch { return fail(t('cli.mcp.journal-unreadable', { url })) }
+  const all  = boundedEntries(Array.isArray(entries) ? entries : [])
+  if (all.length === 0) return ok({ url, total: 0, truncated: false, entries: [] }, t('cli.mcp.journal-empty', { url }))
+  const limit    = Math.min(ENTRIES_MAX, Math.max(1, Number.isInteger(args.limit) ? (args.limit as number) : ENTRIES_DEFAULT))
+  const rendered = all.slice(0, limit)
+  const notice   = t('cli.mcp.journal-notice')
   // ce que la page a écrit au journal est rendu comme des données : l'avis d'abord, puis deux lignes à un identifiant tiré au sort,
   // qu'aucune page ne peut écrire d'avance pour faire croire que les données sont finies
-  const texte   = t('cli.mcp.journal-texte', { url, nb: rendues.length, total: toutes.length, max: ENTRIES_MAX, avis, id: randomBytes(6).toString('hex'), donnees: dataJson(rendues) })
-  return ok({ url, total: toutes.length, truncated: rendues.length < toutes.length, notice: avis, entries: rendues }, texte)
+  const text   = t('cli.mcp.journal-text', { url, count: rendered.length, total: all.length, max: ENTRIES_MAX, notice: notice, id: randomBytes(6).toString('hex'), data: dataJson(rendered) })
+  return ok({ url, total: all.length, truncated: rendered.length < all.length, notice: notice, entries: rendered }, text)
 }
 
 async function listComponents(_args: Record<string, unknown>, ctx: McpContext): Promise<ToolResult> {
@@ -443,12 +454,12 @@ async function listRoutes(_args: Record<string, unknown>, ctx: McpContext): Prom
 }
 
 const TOOLS: Tool[] = [
-  { name: 'search_docs', description: 'cli.mcp.outil-search-docs', properties: { query: { type: 'string', description: 'cli.mcp.param-query' }, limit: { type: 'integer', description: 'cli.mcp.param-limit' } }, required: ['query'], run: searchDocs },
-  { name: 'read_doc', description: 'cli.mcp.outil-read-doc', properties: { page: { type: 'string', description: 'cli.mcp.param-page' }, section: { type: 'string', description: 'cli.mcp.param-section' } }, required: ['page'], run: readDoc },
-  { name: 'compile_component', description: 'cli.mcp.outil-compile-component', properties: { file: { type: 'string', description: 'cli.mcp.param-file' }, source: { type: 'string', description: 'cli.mcp.param-source' }, name: { type: 'string', description: 'cli.mcp.param-name' } }, run: compileComponent },
-  { name: 'page_errors', description: 'cli.mcp.outil-page-errors', properties: { port: { type: 'integer', description: 'cli.mcp.param-port' }, host: { type: 'string', description: 'cli.mcp.param-host' }, limit: { type: 'integer', description: 'cli.mcp.param-limit-journal' } }, run: pageErrors },
-  { name: 'list_components', description: 'cli.mcp.outil-list-components', properties: {}, run: listComponents },
-  { name: 'list_routes', description: 'cli.mcp.outil-list-routes', properties: {}, run: listRoutes },
+  { name: 'search_docs', description: 'cli.mcp.tool-search-docs', properties: { query: { type: 'string', description: 'cli.mcp.param-query' }, limit: { type: 'integer', description: 'cli.mcp.param-limit' } }, required: ['query'], run: searchDocs },
+  { name: 'read_doc', description: 'cli.mcp.tool-read-doc', properties: { page: { type: 'string', description: 'cli.mcp.param-page' }, section: { type: 'string', description: 'cli.mcp.param-section' } }, required: ['page'], run: readDoc },
+  { name: 'compile_component', description: 'cli.mcp.tool-compile-component', properties: { file: { type: 'string', description: 'cli.mcp.param-file' }, source: { type: 'string', description: 'cli.mcp.param-source' }, name: { type: 'string', description: 'cli.mcp.param-name' } }, run: compileComponent },
+  { name: 'page_errors', description: 'cli.mcp.tool-page-errors', properties: { port: { type: 'integer', description: 'cli.mcp.param-port' }, host: { type: 'string', description: 'cli.mcp.param-host' }, limit: { type: 'integer', description: 'cli.mcp.param-limit-journal' } }, run: pageErrors },
+  { name: 'list_components', description: 'cli.mcp.tool-list-components', properties: {}, run: listComponents },
+  { name: 'list_routes', description: 'cli.mcp.tool-list-routes', properties: {}, run: listRoutes },
 ]
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -513,19 +524,19 @@ export async function runMcp(opts: { root: string, version: string | null }): Pr
   const lines = createInterface({ input: process.stdin, crlfDelay: Infinity })
   let file    = Promise.resolve()
   // l'entrée fermée (l'assistant est parti) : au-delà de cette heure, ce qui attend encore est abandonné
-  let limite  = Infinity
+  let limit  = Infinity
   lines.on('line', (line) => {
     file = file.then(async () => {
       // un tour de la boucle d'événements avant chaque message : la fin de l'entrée se voit entre deux requêtes
       await new Promise<void>((ok) => setImmediate(ok))
-      if (Date.now() > limite || line.trim() === '') return
+      if (Date.now() > limit || line.trim() === '') return
       let msg: unknown
       try { msg = JSON.parse(line) }
       catch { send(rpcError(null, -32700, 'Parse error')); return }
       if (Array.isArray(msg)) {
         const out = [] as object[]
         for (const m of msg) {
-          if (Date.now() > limite) return
+          if (Date.now() > limit) return
           const r = await handle(m, ctx)
           if (r !== null) out.push(r)
         }
@@ -538,9 +549,9 @@ export async function runMcp(opts: { root: string, version: string | null }): Pr
     })
   })
   await new Promise<void>((ok) => lines.once('close', () => ok()))
-  limite = Date.now() + CLOSE_GRACE_MS
+  limit = Date.now() + CLOSE_GRACE_MS
   // la requête en cours a le même délai pour finir ; au-delà, le serveur s'arrête quand même
-  let minuterie: NodeJS.Timeout | undefined
-  await Promise.race([file, new Promise<void>((ok) => { minuterie = setTimeout(ok, CLOSE_GRACE_MS) })])
-  clearTimeout(minuterie)
+  let timer: NodeJS.Timeout | undefined
+  await Promise.race([file, new Promise<void>((ok) => { timer = setTimeout(ok, CLOSE_GRACE_MS) })])
+  clearTimeout(timer)
 }

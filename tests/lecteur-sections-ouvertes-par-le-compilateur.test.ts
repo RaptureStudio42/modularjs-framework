@@ -6,8 +6,8 @@
 // langue du script du projet, comme le compilateur
 
 import assert from 'node:assert/strict'
-import { lireFichier, parcourir } from '../src/reader/index.js'
-import { bornesDesSections, extractSections } from '../src/transpiler/sections.js'
+import { readFile, traverse } from '../src/reader/index.js'
+import { sectionBounds, extractSections } from '../src/transpiler/sections.js'
 import { scanImgTags } from '../src/transpiler/img-tag.js'
 import { scanEffectImages } from '../src/transpiler/effect-images.js'
 
@@ -37,13 +37,13 @@ const CAS: Array<[string, string, string?]> = [
 
 // les sections que le compilateur lit (hors des blocs <@head> / <@failed>, émis tels quels) et celles du lecteur, à toute profondeur
 function sectionsDe(texte: string, langue: string): { compilateur: string[], lecteur: string[] } {
-  const lu     = lireFichier(texte, { compiler: false, directives: false, langue })
-  const bornes = bornesDesSections(lu.source, langue)
+  const lu                = readFile(texte, { compiler: false, directives: false, lang: langue })
+  const bornes            = sectionBounds(lu.source, langue)
   const lecteur: string[] = []
-  parcourir(lu, (n) => {
-    if (n.sorte === 'script' || n.sorte === 'style' || n.sorte === 'section') lecteur.push(`${n.debut}-${n.corps.debut}-${n.corps.fin}-${n.fin}`)
+  traverse(lu, (n) => {
+    if (n.kind === 'script' || n.kind === 'style' || n.kind === 'section') lecteur.push(`${n.start}-${n.body.start}-${n.body.end}-${n.end}`)
   })
-  return { compilateur: bornes.sections.map(b => `${b.debut}-${b.corps.debut}-${b.corps.fin}-${b.fin}`), lecteur }
+  return { compilateur: bornes.sections.map(b => `${b.start}-${b.body.start}-${b.body.end}-${b.end}`), lecteur }
 }
 
 describe('lecteur du fichier : une section se lit partout où le compilateur en ouvre une', () => {
@@ -59,11 +59,11 @@ describe('lecteur du fichier : une section se lit partout où le compilateur en 
 
   it('images des effets d\'un projet CoffeeScript : un `#voir </script>` ne referme pas le script, l\'exemple qui suit n\'est pas lu', () => {
     const texte = `<script>\nx = 1 #voir </script>\ny = '<p *behind("absent.jpg")>t</p>'\n</script>\n<p *behind('b.png')>ok</p>\n`
-    assert.deepEqual(scanEffectImages(texte, 'coffee').map(e => e.chemin), ['b.png'])
+    assert.deepEqual(scanEffectImages(texte, 'coffee').map(e => e.path), ['b.png'])
   })
 
   it('images des effets : un commentaire HTML avant le script sur sa ligne, l\'exemple cité dans le script n\'est pas lu', () => {
     const texte = `<!-- c --><script>\n  fin = '</script >'\n  y = '<p *behind("absent.jpg")>t</p>'\n</script>\n<p *behind('b.png')>ok</p>\n`
-    assert.deepEqual(scanEffectImages(texte).map(e => e.chemin), ['b.png'])
+    assert.deepEqual(scanEffectImages(texte).map(e => e.path), ['b.png'])
   })
 })

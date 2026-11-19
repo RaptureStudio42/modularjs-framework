@@ -6,15 +6,15 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { creerRegistre, defSchema, encode, decode } from '../src/schema/core.js'
+import { createRegistry, defineSchema, encode, decode } from '../src/schema/core.js'
 
 const ICI    = dirname(fileURLToPath(import.meta.url))
-const CLIENT = new Function('µ', readFileSync(join(ICI, '../src/runtime/mjs_schema.ts'), 'utf-8') + '\nreturn { ecrire: _mjschemaEcrireScalaire }')({})
+const CLIENT = new Function('µ', readFileSync(join(ICI, '../src/runtime/mjs_schema.ts'), 'utf-8') + '\nreturn { ecrire: _mjschemaWriteScalar }')({})
 
 function allerRetour(objet: Record<string, unknown>): Record<string, unknown> {
-  const r = creerRegistre()
-  defSchema(r, 'p', { a: 'f32', b: 'f64', c: 'f32', d: 'f64' })
-  return decode(r, encode(r, 'p', objet)).objet
+  const r = createRegistry()
+  defineSchema(r, 'p', { a: 'f32', b: 'f64', c: 'f32', d: 'f64' })
+  return decode(r, encode(r, 'p', objet)).data
 }
 
 function client(type: 'f32' | 'f64', valeur: unknown): number {
@@ -37,8 +37,8 @@ describe('µschema — Infinity, -Infinity et NaN dans un champ flottant', () =>
   })
 
   it('serveur : un champ entier refuse toujours un nombre infini', () => {
-    const r = creerRegistre()
-    defSchema(r, 'n', { a: 'i32' })
+    const r = createRegistry()
+    defineSchema(r, 'n', { a: 'i32' })
     assert.throws(() => encode(r, 'n', { a: Infinity }))
   })
 

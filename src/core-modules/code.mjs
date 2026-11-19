@@ -8,6 +8,9 @@
   slotRef      = null
   watcher      = null
   timer        = null
+  mounted      = false
+  dirty        = false
+  projected    = null
 
   # libellés par défaut : la langue de la page choisit (lire µlang rend le dérivé réactif à la bascule)
   tr = (key, lang)-> µ._mjs_label('core', key)
@@ -52,10 +55,11 @@
     host    = hostOf()
     $offset = (first.getBoundingClientRect().top - host.getBoundingClientRect().top) + 'px' if first and host
 
+  # le texte montré : en mode bloc (rien de préformaté projeté), les nœuds projetés à la suite, chacun tel qu'il se lit (un élément par son texte
+  # rendu, lignes en <div> de l'éditeur du tuto comprises) ; sinon les blocs projetés, un par ligne
   sourceOf = ->
-    els = blocks()
-    src = if els.length then els.map((el)-> el.innerText or el.textContent or '') else nodes().map((n)-> n.textContent or '')
-    src.join('\n').replace(/\s+$/, '')
+    src = if bare() then nodes().map((n)-> (if n.nodeType is 1 then n.innerText or n.textContent else n.textContent) or '').join('') else blocks().map((el)-> el.innerText or el.textContent or '').join('\n')
+    src.replace(/\s+$/, '')
 
   # repli sans API presse-papier (page servie en http hors localhost) : sélection du premier bloc puis commande copier
   selectAndCopy = ->
@@ -87,20 +91,78 @@
       done()
 
 
+  # noms du code dans la langue `lang` : groupe `mjs.core.code` de son dictionnaire (`panier: cart`), null quand il n'y est pas
+  namesOf = (lang)->
+    group = lang and µ._mjs_i18nDictOf?.(lang).mjs?.core?.code
+    if group and typeof group is 'object' and Object.keys(group).length then group else null
+
+  # programme injoignable (réseau) : la bascule suivante le redemande, sous une adresse neuve (un import refusé le reste pour la page à la même adresse)
+  missed = ->
+    µ._mjs_codeAsk  = null
+    µ._mjs_codeMiss = Date.now()
+
+  # le code prend ses noms traduits (`names`), ou rend son texte d'origine (`names` nul, ou hôte `translate="no"`) ; sans noms ni texte traduit,
+  # rien n'est parcouru ni demandé. Le programme (parcours, noms, colonnes, retour au texte d'origine : bloc `<code-names>` de mjs_i18n.ts) est au
+  # cœur en développement ; en production, il vit dans son propre fichier (`µ._codeUrl`), demandé une seule fois pour tous les blocs, à la
+  # première langue qui a une table, et chaque bloc se traduit à son arrivée ; injoignable, le code reste tel quel, sans erreur. `shared` : appel
+  # d'une bascule, tous les blocs dans le même tour
+  translate = (names, shared)->
+    names = null if hostOf()?.getAttribute('translate') is 'no'
+    return unless names or dirty
+    return dirty = µ._codeNames(slotRef, names, shared) if µ._codeNames
+    return unless µ._codeUrl
+    µ._mjs_codeAsk ||= import(µ._codeUrl + (if µ._mjs_codeMiss then '?' + µ._mjs_codeMiss else '')).then((m)-> µ._codeNames = m.default())
+    µ._mjs_codeAsk.then((-> again(true)), missed)
+
+  # langue de la page : µlang, et avant que le démarrage la pose, celle où la page va paraître
+  pageLang = -> µlang or µ._mjs_i18nEffectiveLang?.()
+
+  # bascule de langue aboutie, textes de la langue cible arrivés (crochet de mjs_i18n.ts) : la traduction se refait
+  swapped = (lang)-> translate(namesOf(lang), true)
+
+  # la traduction se refait dans la langue de la page : texte projeté ajouté après le montage (slotchange), texte de la langue ou programme arrivé
+  again = (shared)->
+    translate(namesOf(pageLang()), shared is true) if mounted
+
+  # nœuds projetés ajoutés ou retirés après le montage (slotchange) : WebKit lève aussi l'événement quand un texte projeté change sans que les
+  # nœuds projetés changent (le programme qui écrit les noms, une valeur dynamique) ; rien ne se refait tant que la liste des nœuds est la même
+  slotted = ->
+    now       = nodes()
+    same      = projected and now.length is projected.length and now.every((n, i)-> n is projected[i])
+    projected = now
+    again() unless same
+
+  # texte encore en route au montage (démarrage) : la traduction se refait après son arrivée, la langue alors posée
+  arrived = ->
+    µafter 0, again
+
+
   µmount ->
     # `frameless` force le régime nu même sur du texte brut : dédenté et mis en forme (police, espaces)
     # comme le mode cadre, mais sans cadre ni fond ni retrait — pour un bloc déjà dans son propre
     # habillage (l'éditeur du tuto par exemple), qui n'a pas besoin d'un second cadre par-dessus
-    brut   = bare()
-    dedent() if brut
-    $block = brut and not $frameless
+    raw   = bare()
+    dedent() if raw
+    $block = raw and not $frameless
     align()
+    # au serveur (prérendu par un navigateur), les noms restent ceux du gabarit : le client les traduit à son tour
+    unless µserver
+      mounted = true
+      names   = namesOf(pageLang())
+      translate(names)
+      (µ._mjs_i18nSwapHooks ||= new Set()).add(swapped)
+      µ.i18n?._mjs_inFlight?.(arrived) unless names
+      projected = nodes()
+      slotRef?.addEventListener('slotchange', slotted)
     host = hostOf()
     return unless host and window.ResizeObserver
     watcher = new ResizeObserver(align)
     watcher.observe(host)
 
   µdestroy ->
+    mounted = false
+    µ._mjs_i18nSwapHooks?.delete(swapped)
+    slotRef?.removeEventListener('slotchange', slotted)
     watcher?.disconnect()
     timer?.()
 </script>

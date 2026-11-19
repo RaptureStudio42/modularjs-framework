@@ -1,4 +1,4 @@
-// Construction : le retour d'une sortie en cours (blocs balisés `<retour-sortie>` de runtime/mjs_for.ts et runtime/mjs_easing.ts — la ligne
+// Construction : le retour d'une sortie en cours (blocs balisés `<exit-reverse>` de runtime/mjs_for.ts et runtime/mjs_easing.ts — la ligne
 // de `{for}` remise pendant sa sortie revient, ses balises intérieures avec elle ; une transition partagée reprise repart de là où elle en
 // était) n'entre au cœur que si l'appli écrit `:in`, `:out` ou `:transition`. Une appli qui joint les crochets de destruction pour
 // `:attach`, `:this=!`, `:flip` ou un effet posé sur la balise n'en porte rien ; développement et production
@@ -60,7 +60,7 @@ describe('{for} : le retour d\'une ligne remise pendant sa sortie n\'entre au c�
       assert.equal(c.includes('_mjs_outRows'), false, nom + ' : rien du retour des lignes')
       assert.equal(c.includes('_mjs_txBack'), false, nom + ' : ni celui de leurs balises intérieures')
       assert.equal(c.includes('_mjsDyingRuns'), false, nom + ' : ni le numéro des retraits')
-      assert.equal(c.includes('<retour-sortie>'), false, nom + ' : le bloc balisé est retiré')
+      assert.equal(c.includes('<exit-reverse>'), false, nom + ' : le bloc balisé est retiré')
     }
     const avec = await coeur(':out', AVEC[':out'], 'prod')
     assert.equal(avec.includes('const _mjs_outRows = new WeakMap()'), true, ':out : le retour des lignes est au cœur')
@@ -72,7 +72,7 @@ describe('{for} : le retour d\'une ligne remise pendant sa sortie n\'entre au c�
   it('cœur de développement : la même règle', async () => {
     const sans = await coeur(':attach', SANS[':attach'], 'dev')
     assert.equal(sans.includes('_mjs_outRows'), false, ':attach : rien du retour des lignes')
-    assert.equal(sans.includes('<retour-sortie>'), false, ':attach : le bloc balisé est retiré')
+    assert.equal(sans.includes('<exit-reverse>'), false, ':attach : le bloc balisé est retiré')
     const avec = await coeur(':transition', AVEC[':transition'], 'dev')
     assert.equal(avec.includes('const _mjs_outRows = new WeakMap()'), true, ':transition : le retour des lignes est au cœur')
   })

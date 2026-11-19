@@ -50,7 +50,7 @@
     var style   = /^(gradient|wave|run)$/.test(s.style) ? s.style : 'gradient';
     var restore = µ._mjs_fxRelative(el);
     var undo    = [];
-    var tour    = null;
+    var turn    = null;
     var turns   = 0;
     var owed    = null;
     var again   = false;
@@ -89,14 +89,14 @@
       el.style.setProperty('--mjs-fx-border-w', (s.width || 4) + 'px');
       // l'arrondi de la balise, pour que le halo en suive le tour ; en % (un avatar rond, 50 %), rapporté
       // à la balise
-      tour = function() {
+      turn = function() {
         var v = typeof getComputedStyle === 'function' ? getComputedStyle(el).borderTopLeftRadius : '';
         var r = parseFloat(v);
         if (/%/.test(v)) r = r * Math.min(el.offsetWidth, el.offsetHeight) / 100;
         if (r > 0) el.style.setProperty('--mjs-fx-border-r', r + 'px');
         else el.style.removeProperty('--mjs-fx-border-r');
       };
-      tour();
+      turn();
       if (s.animate) µ._mjs_dom.setAttribute(el, 'mjs-fx-border-spin', '');
       // le tour des couleurs (animate) : la vitesse écrite, sinon celle du thème ($$border-speed), 4s
       if (s.speed) el.style.setProperty('--mjs-border-speed', s.speed);
@@ -185,7 +185,7 @@
     // l'arrondi changé (réglage `radius`, posé par le cœur) : le halo en suit le tour
     stop.set = function(k) {
       if (k !== 'radius') return false;
-      if (tour) tour();
+      if (turn) turn();
     };
     return stop;
   }

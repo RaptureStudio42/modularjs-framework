@@ -10,7 +10,7 @@
 // minifié, noms raccourcis) et, pour chaque build et chaque moteur, joue TOUS les cas qui
 // pourraient casser en silence :
 //   - chaque transition intégrée (*fade, *fly — un mot, un angle, une courbe élastique —, *slide,
-//     *scale — un point d'origine —, *blur, *typewriter, *draw, *iris, *volet, *swipe, *bars,
+//     *scale — un point d'origine —, *blur, *typewriter, *draw, *iris, *cover, *swipe, *bars,
 //     *blocks, *shatter) en entrée ET en sortie ;
 //   - les appariées dans un {key} (*reveal, *flip, *cube, *turn) ;
 //   - `µanim.create` en forme css et en forme tick, `@in`/`@out` dissociés, les effets de l'appli
@@ -56,7 +56,7 @@ const MIME: Record<string, string> = {
 
 // animations INTÉGRÉES que la fixture pose par `@transition=*x`/`@in=*x`/`@out=*x` — chacune doit
 // se retrouver dans la sortie compilée sous la forme `anim.x =` (nom PUBLIC, jamais raccourci)
-const BUILTINS = ['fade', 'fly', 'slide', 'scale', 'blur', 'typewriter', 'draw', 'iris', 'volet', 'swipe', 'bars', 'blocks', 'shatter', 'reveal', 'flip', 'cube', 'turn', 'crossfade', 'create']
+const BUILTINS = ['fade', 'fly', 'slide', 'scale', 'blur', 'typewriter', 'draw', 'iris', 'cover', 'swipe', 'bars', 'blocks', 'shatter', 'reveal', 'flip', 'cube', 'turn', 'crossfade', 'create']
 
 // cas {if} à un seul nœud racine : sortie puis entrée, signal WAAPI (`anim`), texte (`tick`) ou
 // calque de tuiles (`eclats`) ; `outro: false` = nœud IMBRIQUÉ dans son bloc (le tracé SVG sous
@@ -67,7 +67,7 @@ const TOGGLES: ToggleCase[] = [
   { id: 'fly_elastic', signal: 'anim' }, { id: 'slide', signal: 'anim' }, { id: 'scale', signal: 'anim' },
   { id: 'scale_origin', signal: 'anim' }, { id: 'scale_elastic', signal: 'anim' }, { id: 'blur', signal: 'anim' },
   { id: 'typewriter', signal: 'tick' }, { id: 'draw', signal: 'anim', outro: false }, { id: 'iris', signal: 'anim' },
-  { id: 'iris_corner', signal: 'anim' }, { id: 'volet', signal: 'anim' }, { id: 'swipe', signal: 'anim' },
+  { id: 'iris_corner', signal: 'anim' }, { id: 'cover', signal: 'anim' }, { id: 'swipe', signal: 'anim' },
   { id: 'swipe_angle', signal: 'anim' }, { id: 'bars', signal: 'anim' }, { id: 'blocks', signal: 'anim' },
   { id: 'shatter', signal: 'eclats' }, { id: 'toupie', signal: 'anim' }, { id: 'typer', signal: 'tick' },
   { id: 'inout', signal: 'anim' }, { id: 'maison', signal: 'anim' }, { id: 'shared', signal: 'anim' },

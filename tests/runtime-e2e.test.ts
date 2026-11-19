@@ -687,11 +687,13 @@ $selected = -1
       '_mjs_filt[selected__attr_data_active*].idx doit contenir 100 entrées',
     )
 
-    // Instrumente setAttribute sur chaque div pour compter.
+    // Instrumente setAttribute et removeAttribute sur chaque div pour compter : `false` retire un `data-*`, comme hors du filtre
     let attrsSet = 0
     divs.forEach((d: any) => {
-      const orig = d.setAttribute.bind(d)
-      d.setAttribute = (...args: any[]) => { attrsSet++; return orig(...args) }
+      const orig       = d.setAttribute.bind(d)
+      const origRemove = d.removeAttribute.bind(d)
+      d.setAttribute    = (...args: any[]) => { attrsSet++; return orig(...args) }
+      d.removeAttribute = (...args: any[]) => { attrsSet++; return origRemove(...args) }
     })
 
     // 1er set : sélectionne row 50. Prev=-1 absent → 1 setAttribute.
@@ -711,8 +713,8 @@ $selected = -1
     `)
     await new Promise(r => setTimeout(r, 50))
     assert.equal(attrsSet, 2, '2e set : exactly 2 attrs modifiés (prev=50, curr=75)')
-    assert.equal(divs[50].getAttribute('data-active'), 'false',
-      'row 50 doit avoir data-active=false')
+    assert.equal(divs[50].getAttribute('data-active'), null,
+      'row 50 : data-active retiré (false retire un data-*, comme hors du filtre)')
     assert.equal(divs[75].getAttribute('data-active'), 'true',
       'row 75 doit avoir data-active=true')
 

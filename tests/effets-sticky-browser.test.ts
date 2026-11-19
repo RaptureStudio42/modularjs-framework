@@ -222,10 +222,10 @@ describe('*sticky (navigateurs réels) — seuil, tenant-lieu, boîte qui défil
         const cs = getComputedStyle(b)
         const r  = b.getBoundingClientRect()
         const sieges = Array.from(b.parentNode.querySelectorAll('[mjs-fx-seat]')).map((x: any) => x.getBoundingClientRect())
-        return { on: b.getAttribute('mjs-fx-on'), cache: b.getAttribute('mjs-fx-sticky'), boite: b.hasAttribute('mjs-fx-sticky-box'), pos: cs.position, top: r.top, bottom: r.bottom, left: r.left, width: r.width, opacity: cs.opacity, clip: cs.clipPath, anim: cs.animationName, trans: cs.transitionProperty, enCours: b.getAnimations().length, de: parseFloat(b.style.getPropertyValue('--mjs-fx-sticky-from') || 'NaN'), sieges: sieges.length, siegeH: sieges[0] ? sieges[0].height : 0, siegeW: sieges[0] ? sieges[0].width : 0 }
+        return { on: b.getAttribute('mjs-fx-on'), cache: b.getAttribute('mjs-fx-sticky'), boite: b.hasAttribute('mjs-fx-sticky-box'), pos: cs.position, top: r.top, bottom: r.bottom, left: r.left, width: r.width, opacity: cs.opacity, clip: cs.clipPath, anim: cs.animationName, trans: cs.transitionProperty, pending: b.getAnimations().length, de: parseFloat(b.style.getPropertyValue('--mjs-fx-sticky-from') || 'NaN'), sieges: sieges.length, siegeH: sieges[0] ? sieges[0].height : 0, siegeW: sieges[0] ? sieges[0].width : 0 }
       }, sel)
       // figée (ou rendue à sa place) et immobile : son glissement est fini
-      const figee = async (page: any, oui: boolean, sel = '.barre') => jusqua(() => etat(page, sel), (e: any) => (e.on === 'sticky') === oui && e.enCours === 0)
+      const figee = async (page: any, oui: boolean, sel = '.barre') => jusqua(() => etat(page, sel), (e: any) => (e.on === 'sticky') === oui && e.pending === 0)
 
       // le défilement : la page, ou la boîte de la scène
       const pageA = (page: any, y: number) => page.evaluate((v: number) => scrollTo(0, v), y)
@@ -977,7 +977,7 @@ describe('*sticky (navigateurs réels) — seuil, tenant-lieu, boîte qui défil
           })
           await pageA(page, 600)
           // elle revient en glissant : on remonte aussitôt, pendant le glissement
-          await jusqua(() => etat(page), (v: any) => v.cache === null && v.enCours > 0)
+          await jusqua(() => etat(page), (v: any) => v.cache === null && v.pending > 0)
           await pageA(page, 0)
           await page.waitForFunction(() => (window as any).__filmFini === true)
           const film: Array<{ on: string | null, translate: string, haut: number }> = await page.evaluate(() => (window as any).__film)
@@ -1048,7 +1048,7 @@ describe('*sticky (navigateurs réels) — seuil, tenant-lieu, boîte qui défil
         if (!present) return this.skip()
         await avec('mjs-sticky-page', async (page) => {
           await pageA(page, 560)
-          await jusqua(() => etat(page), (v: any) => v.on === 'sticky' && v.enCours > 0)
+          await jusqua(() => etat(page), (v: any) => v.on === 'sticky' && v.pending > 0)
           const film = await filme(page, 1000, 'scrollTo(0, 0)')
           const i = rendue(film)
           assert.ok(i >= 0, 'elle a repris sa place')
@@ -1067,7 +1067,7 @@ describe('*sticky (navigateurs réels) — seuil, tenant-lieu, boîte qui défil
           await jusqua(() => etat(page), (v: any) => v.cache === 'hidden')
           await attendre(600)
           await boiteA(page, 600)
-          await jusqua(() => etat(page), (v: any) => v.cache === null && v.enCours > 0)
+          await jusqua(() => etat(page), (v: any) => v.cache === null && v.pending > 0)
           const film = await filme(page, 1200, 'window.__trouve(".scene").scrollTop = 0')
           const i = rendue(film)
           assert.ok(i >= 0, 'elle a repris sa place')

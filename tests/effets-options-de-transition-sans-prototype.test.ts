@@ -15,7 +15,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const lire      = (f: string) => readFileSync(join(__dirname, '..', 'src', 'runtime', f), 'utf-8')
 
 const ENVELOPPE = ['fade', 'fly', 'scale', 'blur', 'rotate', 'slide']
-const PONT      = ['fade', 'fly', 'scale', 'rotate', 'blur', 'slide', 'draw', 'iris', 'wheel', 'swipe', 'bars', 'volet', 'reveal', 'flip', 'cube', 'turn', 'blocks', 'typewriter', 'shatter', 'pixelate', 'ink']
+const PONT      = ['fade', 'fly', 'scale', 'rotate', 'blur', 'slide', 'draw', 'iris', 'wheel', 'swipe', 'bars', 'cover', 'reveal', 'flip', 'cube', 'turn', 'blocks', 'typewriter', 'shatter', 'pixelate', 'ink']
 
 function monter() {
   const µ: any  = { debug: false, warn() {}, anim: {}, _mjs_txt: (_k: string, _a: any, d: string) => d, _mjs_dom: {}, _mjs_fxDefs: {} }

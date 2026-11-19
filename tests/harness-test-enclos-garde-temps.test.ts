@@ -24,7 +24,7 @@ function runScript(tmp: string, source: string, env: { mem: string, maxsec: stri
   mkdirSync(env.tmpdir, { recursive: true })
   writeFileSync(specPath, source)
   const t0 = Date.now()
-  const r  = spawnSync('bash', [script, '--no-config', '--no-package', specPath], { cwd: repoRoot, env: { ...process.env, MJS_TEST_MEM: env.mem, MJS_TEST_MAXSEC: env.maxsec, TMPDIR: env.tmpdir }, encoding: 'utf-8', timeout: 120000 })
+  const r  = spawnSync('bash', [script, '--no-config', '--no-package', specPath], { cwd: repoRoot, env: { ...process.env, MJS_TEST_MEM: env.mem, MJS_TEST_MAXSEC: env.maxsec, MJS_TEST_JETONS: '0', TMPDIR: env.tmpdir }, encoding: 'utf-8', timeout: 120000 })
   return { code: r.status, out: (r.stdout ?? '') + (r.stderr ?? ''), ms: Date.now() - t0 }
 }
 

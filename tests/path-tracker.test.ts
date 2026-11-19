@@ -239,13 +239,13 @@ describe('applyPathTracking', () => {
       const out = applyPathTracking(`let it = $.list[i]; i++; it.x = 1;`)
       assert.equal(out, `let it = $.list[i]; i++; it.x = 1;`)
       assert.ok(applyPathTracking(auMagasin(`let it = $.list[i]; i++; it.x = 1;`)).includes(GARDE_MAGASIN))
-      assert.ok(applyPathTracking(`let it = $.list[i]; i++; it.x = 1;`, { sansProxy: true }).includes(GARDE_SANS))
+      assert.ok(applyPathTracking(`let it = $.list[i]; i++; it.x = 1;`, { withoutProxy: true }).includes(GARDE_SANS))
     })
 
     it('alias à index dynamique + mutation directe (sans i++) : enveloppe : telle quelle ; magasin et proxy: false : la même garde', () => {
       assert.equal(applyPathTracking(`let it = $.list[i]; it.x = 1;`), `let it = $.list[i]; it.x = 1;`)
       assert.equal(applyPathTracking(auMagasin(`let it = $.list[i]; it.x = 1;`)), `let it = µ.store.list[i]; ;(${GARDE_MAGASIN});`)
-      assert.equal(applyPathTracking(`let it = $.list[i]; it.x = 1;`, { sansProxy: true }), `let it = $.list[i]; ;(${GARDE_SANS});`)
+      assert.equal(applyPathTracking(`let it = $.list[i]; it.x = 1;`, { withoutProxy: true }), `let it = $.list[i]; ;(${GARDE_SANS});`)
     })
 
     it('alias à index dynamique + méthode mutative : PAS de _mjs_deepCall ; magasin : l\'objet tenu', () => {
@@ -340,7 +340,7 @@ describe('applyPathTracking', () => {
     it('affectation composée sur un chemin LOCAL profond ($.box.width += 1) → _mjs_deepSet, avec ou sans le réglage proxy: false', () => {
       const attendu = /µ\._mjs_deepSet\(_mjsThis, \["box", "width"\], \$\.box\.width \+ \(1\)\)/
       assert.match(applyPathTracking(`$.box.width += 1;`), attendu)
-      assert.match(applyPathTracking(`$.box.width += 1;`, { sansProxy: true }), attendu)
+      assert.match(applyPathTracking(`$.box.width += 1;`, { withoutProxy: true }), attendu)
       assert.match(applyPathTracking(`$.box.n++;`), /\{let _mjs_n;\(_mjs_n = \$\.box\.n, µ\._mjs_deepSet\(_mjsThis, \["box", "n"\], \+\+_mjs_n\)\);\}/)
       assert.match(applyPathTracking(`$.box.c ||= 3;`), /µ\._mjs_deepSet\(_mjsThis, \["box", "c"\], \$\.box\.c \|\| \(3\)\)/)
     })

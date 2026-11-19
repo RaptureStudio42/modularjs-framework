@@ -37,26 +37,26 @@ export interface MjsWsReactionsOptions {
 
 // un ou plusieurs pictogrammes : émoji (et ses teintes, variantes, liaisons), drapeau, touche `1️⃣`,
 // drapeau de région (caractères d'étiquette) ; au moins un vrai pictogramme
-const PICTOS   = /^(?:[#*0-9]\uFE0F?\u20E3|\p{Regional_Indicator}|\p{Extended_Pictographic}|\p{Emoji_Modifier}|[\u200D\uFE0E\uFE0F]|[\u{E0020}-\u{E007F}])+$/u
-const UN_PICTO = /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20E3/u
+const PICTOS        = /^(?:[#*0-9]\uFE0F?\u20E3|\p{Regional_Indicator}|\p{Extended_Pictographic}|\p{Emoji_Modifier}|[\u200D\uFE0E\uFE0F]|[\u{E0020}-\u{E007F}])+$/u
+const PICTOGRAPH_RE = /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20E3/u
 
 /** un émoji reçu, s'il est permis ; null sinon */
 export function cleanEmoji(e: unknown, allowed?: string[]): string | null {
   if (typeof e !== 'string' || e === '' || e.length > 16) return null
   if (/[<>&"'`\u0000-\u001f\u007f]/.test(e)) return null
   if (allowed) return allowed.includes(e) ? e : null
-  return PICTOS.test(e) && UN_PICTO.test(e) ? e : null
+  return PICTOS.test(e) && PICTOGRAPH_RE.test(e) ? e : null
 }
 
 /** paquet RÉACTIONS — `app.use(reactionsPackage(opts))` (cf. tête de fichier pour le protocole). */
 export function reactionsPackage(opts: MjsWsReactionsOptions = {}): MjsPackage {
-  const prefix  = opts.prefix ?? 'reactions:'
-  const rate    = opts.rateLimit?.rate ?? 5
-  const burst   = opts.rateLimit?.burst ?? 10
-  const onLog   = opts.onLog ?? defaultLogOf('reactions')
-  const seaux   = perRoomBuckets(burst, rate)
-  const buckets = seaux.buckets
-  let actions   = 0
+  const prefix      = opts.prefix ?? 'reactions:'
+  const rate        = opts.rateLimit?.rate ?? 5
+  const burst       = opts.rateLimit?.burst ?? 10
+  const onLog       = opts.onLog ?? defaultLogOf('reactions')
+  const roomBuckets = perRoomBuckets(burst, rate)
+  const buckets     = roomBuckets.buckets
+  let actions       = 0
 
   const pkg = definePackage('reactions', app => {
     app.on('reactions:send', async (p, client) => {
@@ -65,22 +65,22 @@ export function reactionsPackage(opts: MjsWsReactionsOptions = {}): MjsPackage {
       const e = cleanEmoji(p?.e, opts.emojis)
       if (!e) return
       const fullName = prefix + room
-      const salon    = app.room(fullName)
-      if (!salon.has(client)) return
+      const roomName = app.room(fullName)
+      if (!roomName.has(client)) return
       if (opts.canJoin) {
         let ok: unknown
         try { ok = await opts.canJoin(fullName, client) }
-        catch (err) { onLog('error', t('ws.reactions.canjoin-a-leve'), { err: err instanceof Error ? err.message : String(err) }); return }
+        catch (err) { onLog('error', t('ws.reactions.canjoin-threw'), { err: err instanceof Error ? err.message : String(err) }); return }
         if (ok === false) return
       }
       // mémoire bornée : les seaux des salons vidés, toutes les 200 trames
       if (++actions >= 200) {
         actions = 0
-        seaux.sweep(app)
+        roomBuckets.sweep(app)
       }
       const id = peerIdOf(client)
-      if (!seaux.bucketOf(fullName, id).take()) return
-      salon.send('reactions:send', { room, e, from: { id, name: nameOf(client) } }, { except: client })
+      if (!roomBuckets.bucketOf(fullName, id).take()) return
+      roomName.send('reactions:send', { room, e, from: { id, name: nameOf(client) } }, { except: client })
     })
   })
   ;(pkg as any)._buckets = buckets

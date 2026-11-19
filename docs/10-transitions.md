@@ -94,7 +94,7 @@ Une valeur est fixe, vérifiée à la compilation, ou une **variable** écrite t
 | `*draw` | **`duration`**, `speed` (en px par seconde : la durée suit la longueur du tracé) | 800ms · `cubic-in-out` | un tracé SVG (`<path>`, `<line>`…) se dessine |
 | `*iris` | **`origin`** (`center`, ou `pointer` : le point où la souris a cliqué ou survolé en dernier, ramené au bord de la balise s'il est dehors), `shape` (`circle`, ou `box`, `diamond`, `cross`, `ellipse`), `start` (0 : l'ouverture de départ, de 0 à 1), `angle` (0 : l'inclinaison de la fenêtre fermée, en degrés) | 380ms · `ease-out` | une ouverture grandit depuis `origin` et découvre la balise : un rond, un rectangle, un losange, une croix, un ovale, déjà entrouvert ou penché si l'on veut |
 | `*wheel` | **`spokes`** (1 : le nombre de rayons), `origin` (`center`), `reverse` (non : l'autre sens) | 700ms · `linear` | un rayon balaie la balise comme l'aiguille d'une horloge et la découvre |
-| `*volet` | **`direction`** (`down`) | 380ms · `ease-out` | le contenu entre en glissant dans sa propre boîte, comme un store |
+| `*cover` | **`direction`** (`down`) | 380ms · `ease-out` | le contenu entre en glissant dans sa propre boîte, comme un store |
 | `*reveal` | **`direction`** (`up`) | 380ms · `ease-in` | l'entrée remonte de l'ombre ; la sortie glisse hors champ dans le sens choisi, par-dessus |
 | `*flip` | **`direction`** (`left`) | 550ms · `ease-in-out` | un retournement en place, comme une carte |
 | `*cube` | **`direction`** (`left`) | 600ms · `cubic-bezier(.45, .05, .55, .95)` | les faces tournent comme celles d'un cube |
@@ -108,7 +108,7 @@ Une valeur est fixe, vérifiée à la compilation, ou une **variable** écrite t
 | `*typewriter` | **`speed`** (30 : en ms par caractère) | — · `linear` | le texte se tape à la machine, puis s'efface |
 | `*crossfade` | **`key`**, `group`, `fallback` (`scale`) | — · `cubic-out` | la balise vole d'une liste à l'autre (cf. [Cross-fade](#cross-fade--une-balise-qui-vole-dune-liste-à-lautre)) |
 
-- `*volet`, `*reveal`, `*flip`, `*cube`, `*turn`, `*bars` vont dans quatre sens (`right`, `left`, `up`, `down`) ; `*fly` et `*swipe`, dans tous (un mot ou un angle).
+- `*cover`, `*reveal`, `*flip`, `*cube`, `*turn`, `*bars` vont dans quatre sens (`right`, `left`, `up`, `down`) ; `*fly` et `*swipe`, dans tous (un mot ou un angle).
 - `*shatter` découpe l'image de la balise — une `<img>`, ou l'image de fond de la balise ; sans image, c'est un fondu. Jamais plus de 2 500 tuiles : sur une grande image, les tuiles sont plus grandes que `size`.
 - `*typewriter` exige que la balise ne contienne que du texte (pas de balise dedans) ; les blancs d'indentation autour d'une interpolation sont tolérés.
 - `*draw` ne s'applique qu'à un tracé SVG.
@@ -126,7 +126,7 @@ Une valeur est fixe, vérifiée à la compilation, ou une **variable** écrite t
 <details>
 <summary>🎓 <b>Pour débutants</b> — pourquoi la sortie <em>rejoue</em>-t-elle l'entrée à l'envers&nbsp;?</summary>
 
-La plupart des transitions sont symétriques : `*iris` qui s'ouvrait au centre pour l'entrée se referme au centre pour la sortie, `*volet` qui descendait remonte. C'est la même animation que MJS joue simplement à l'envers — pas la peine d'écrire une version « sortie » séparée, `:transition=*nom` suffit ; `:in`/`:out` restent là pour choisir une paire différente de chaque côté. Seules `*reveal`, `*flip`, `*cube` et `*turn` ont deux animations distinctes : seules, elles ne jouent que leur moitié ; c'est dans un `{key}`, où l'ancien et le nouveau coexistent un instant, que les deux moitiés se superposent et donnent l'illusion d'un seul mouvement continu.
+La plupart des transitions sont symétriques : `*iris` qui s'ouvrait au centre pour l'entrée se referme au centre pour la sortie, `*cover` qui descendait remonte. C'est la même animation que MJS joue simplement à l'envers — pas la peine d'écrire une version « sortie » séparée, `:transition=*nom` suffit ; `:in`/`:out` restent là pour choisir une paire différente de chaque côté. Seules `*reveal`, `*flip`, `*cube` et `*turn` ont deux animations distinctes : seules, elles ne jouent que leur moitié ; c'est dans un `{key}`, où l'ancien et le nouveau coexistent un instant, que les deux moitiés se superposent et donnent l'illusion d'un seul mouvement continu.
 
 </details>
 
@@ -150,7 +150,7 @@ Posée **directement** sur une balise, sans `:in`, une transition se joue selon 
 
 | `on` | La balise… |
 |---|---|
-| `view` (défaut) | attend, dans son état caché, d'arriver à l'écran, puis entre ; `once: false` la fait ressortir quand elle quitte l'écran, et rentrer quand elle revient. Elle est jugée à sa place, jamais là où l'emporte son mouvement : quand la première image la déplace ou la découpe (`*fly`, `*volet`, `*iris`…), elle attend invisible à sa place ; quand elle la déplace (`*fly`, `*volet`, `*scale`…), une sortie commencée va jusqu'au bout avant que l'écran ne soit regardé de nouveau (une balise posée juste au-delà d'un bord sort une fois et s'arrête) |
+| `view` (défaut) | attend, dans son état caché, d'arriver à l'écran, puis entre ; `once: false` la fait ressortir quand elle quitte l'écran, et rentrer quand elle revient. Elle est jugée à sa place, jamais là où l'emporte son mouvement : quand la première image la déplace ou la découpe (`*fly`, `*cover`, `*iris`…), elle attend invisible à sa place ; quand elle la déplace (`*fly`, `*cover`, `*scale`…), une sortie commencée va jusqu'au bout avant que l'écran ne soit regardé de nouveau (une balise posée juste au-delà d'un bord sort une fois et s'arrête) |
 | `scroll` | suit le défilement : l'animation avance quand on descend, recule quand on remonte |
 | `load` | entre dès son apparition |
 | `hover` | est cachée au repos, sans quitter la mise en page, et entre quand la souris arrive sur son parent (ou sur l'ancêtre que `of` désigne), sort quand elle le quitte ; le focus du clavier compte, au toucher un appui sur le parent la fait entrer et un appui ailleurs la fait sortir |

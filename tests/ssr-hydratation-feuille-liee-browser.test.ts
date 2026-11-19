@@ -132,7 +132,7 @@ for (const nom of ['chromium', 'firefox'] as const) for (const env of ENVS) desc
 
   it('le rendu de 24 cases lie la feuille de thème (un <link> par racine), celui de 3 cases la garde en ligne', function () {
     if (!present) { this.skip(); return }
-    const lies = (rendus.markers.grand.html.match(/<link rel="stylesheet" href="[^"]*mjs_ssr_style_partagee-[^"]*\.css">/g) ?? []).length
+    const lies = (rendus.markers.grand.html.match(/<link rel="stylesheet" href="[^"]*mjs_ssr_style_shared-[^"]*\.css">/g) ?? []).length
     assert.ok(lies >= 25, `une feuille liée par racine d'ombre (24 cases et la page) : ${lies}`)
     assert.ok(feuilles.size > 0, 'le fichier de la feuille est écrit dans le dossier de sortie')
     assert.equal((rendus.markers.petit.html.match(/<link rel="stylesheet"/g) ?? []).length, 0, 'sur 3 cases la feuille reste en ligne')

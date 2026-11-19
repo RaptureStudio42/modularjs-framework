@@ -56,13 +56,13 @@ describe('MJS-WS — plafond de connexions PAR IP (limits.maxConnectionsPerIp, s
     try {
       const c1 = await connectReal(port)
       const c2 = await connectReal(port)
-      assert.equal(app.stats().connexions.refuseesPlafond, 0, 'les 2 premières connexions (plafond = 2) doivent passer sans refus')
+      assert.equal(app.stats().connections.refusedCap, 0, 'les 2 premières connexions (plafond = 2) doivent passer sans refus')
 
       // 3e connexion depuis la MÊME IP (127.0.0.1) — doit être refusée AVANT le hello
       const c3 = new WebSocket(`ws://127.0.0.1:${port}/`)
       const c3Closed = new Promise<number>((resolve) => c3.once('close', (code: number) => resolve(code)))
       assert.equal(await c3Closed, 1013, 'la 3e connexion depuis la même IP doit être refusée (plafond par IP = 2, code 1013)')
-      assert.equal(app.stats().connexions.refuseesPlafond, 1, 'compteur stats dédié incrémenté une fois')
+      assert.equal(app.stats().connections.refusedCap, 1, 'compteur stats dédié incrémenté une fois')
 
       // libère un slot — la fermeture de c1 doit décrémenter le compteur par IP
       await closeReal(c1)
@@ -92,13 +92,13 @@ describe('MJS-WS — plafond de connexions GLOBAL (limits.maxConnections, Memory
       await tick()
       assert.equal(c1.readyState, MemoryClientSocket.OPEN)
       assert.equal(c2.readyState, MemoryClientSocket.OPEN)
-      assert.equal(app.stats().connexions.refuseesPlafond, 0)
+      assert.equal(app.stats().connections.refusedCap, 0)
 
       const c3 = transport.connect({ url: 'memory://cap-global-3' })
       const c3Closed = new Promise<{ code: number; reason: string }>((resolve) => { c3.onclose = (ev) => resolve(ev) })
       const ev = await c3Closed
       assert.equal(ev.code, 1013, 'la 3e connexion doit être refusée — plafond global = 2, code 1013')
-      assert.equal(app.stats().connexions.refuseesPlafond, 1)
+      assert.equal(app.stats().connections.refusedCap, 1)
 
       // libère un slot
       const c1Closed = new Promise<void>((resolve) => { c1.onclose = () => resolve() })
@@ -162,7 +162,7 @@ describe('MJS-WS — non-régression : MemoryTransport (adresse absente) jamais 
       const clients = [1, 2, 3, 4, 5].map(i => transport.connect({ url: `memory://cap-noregression-${i}` }))
       await tick()
       for (const c of clients) assert.equal(c.readyState, MemoryClientSocket.OPEN, "l'IP absente (MemoryTransport) ne doit jamais être comptée/limitée par IP")
-      assert.equal(app.stats().connexions.refuseesPlafond, 0)
+      assert.equal(app.stats().connections.refusedCap, 0)
 
       for (const c of clients) c.close()
       await tick()
@@ -179,7 +179,7 @@ describe('MJS-WS — non-régression : MemoryTransport (adresse absente) jamais 
       const clients = [1, 2, 3].map(i => transport.connect({ url: `memory://cap-defaults-${i}` }))
       await tick()
       for (const c of clients) assert.equal(c.readyState, MemoryClientSocket.OPEN)
-      assert.equal(app.stats().connexions.refuseesPlafond, 0)
+      assert.equal(app.stats().connections.refusedCap, 0)
       for (const c of clients) c.close()
       await tick()
     } finally {

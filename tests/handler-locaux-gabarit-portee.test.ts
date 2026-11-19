@@ -100,7 +100,7 @@ describe('gestionnaires — portée des noms que le gabarit introduit', function
     it('le squelette de reconstruction reste posé pour la boucle, et pour elle SEULE', async function () {
       // le gestionnaire DANS la boucle lit sa variable (la réaffecter est refusé au build : ce n'est
       // qu'une copie, cf. handler-locaux-gabarit-lecture.test.ts) ; celui de DEHORS écrit la var du <script>
-      // ligne pure d'un {for} de racine : le squelette lit l'élément sur l'entrée de la ligne (`el._mjs_ev._mjs_en`)
+      // ligne pure d'un {for} de racine : le squelette lit l'élément sur l'entrée de la ligne (`el._mjs_ev._mjs_ent`)
       const batch = await gestionnaires(
         "<script>\n  item = 'du script'\n  $list = [1, 2]\n</script>\n{for item in $list}<button @click={console.log(item)}>{item}</button>{end}\n<button @click={item = 'hors'}>go</button>\n",
       )

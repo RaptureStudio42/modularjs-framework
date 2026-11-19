@@ -42,9 +42,10 @@
 // `"typesReport"` envoie chaque refus au serveur, après le gestionnaire, une fois par page et par chemin (`µ._typesReport`) : rien de
 // personnel, ni la valeur, ni l'adresse d'une requête, ni le texte d'une règle (le nom d'une règle nommée seulement).
 //
-// Blocs gardés par le build pour la seule appli qui s'en sert (bundler/index.ts, projeterBlocs) : `types-defaut` (une règle
-// compilée porte `_mjs_z`), `types-strict` (`_mjs_tstrict`), `types-dur` (`µtypes.onError` ou `µTypeError` écrits, `type:` d'un appel
-// µajax, `"types": "throw"`, `typesReport`), `types-signal` (production avec `typesReport`). Tel quel, le fichier porte tout.
+// Blocs gardés par le build pour la seule appli qui s'en sert (bundler/index.ts, projectBlocks) : `types-default` (une règle
+// compilée porte `_mjs_z`), `types-strict` (`_mjs_tstrict`), `types-hard` (`µtypes.onError` ou `µTypeError` écrits, `type:` d'un appel
+// µajax, `"types": "throw"`, `typesReport`), `types-signal` (production avec `typesReport`). Le verdict des valeurs dérivées réglées
+// (`derived-check`, µ._mjs_tderived) n'existe qu'hors production. Tel quel, le fichier porte tout.
 
 // refus : rendu à la place d'une valeur, jamais une valeur possible
 µ._mjs_TNO = Object.freeze({});
@@ -223,18 +224,18 @@ function _mjsTPath(reg, e, v) {
   return top.up === void 0 && _mjsTCurrent(reg, top, vs[vs.length - 1]) ? p : _mjsTDoubt(p);
 }
 
-// la note d'un contrôle (`note.refus`, `note.borne`) avec le chemin d'à présent de la valeur contrôlée : les
+// la note d'un contrôle (`note.deny`, `note.bound`) avec le chemin d'à présent de la valeur contrôlée : les
 // chemins que le contrôle note sont relatifs à cette valeur, et le sien ne se calcule qu'ici, au moment d'un
 // message — celui de son conteneur `up` puis sa clé ou sa position `at`, ou `p` (le chemin d'inscription)
-// pour une variable ou un store. La production ne nomme rien, sauf pour une µTypeError ou un signal (bloc `types-dur`)
+// pour une variable ou un store. La production ne nomme rien, sauf pour une µTypeError ou un signal (bloc `types-hard`)
 function _mjsTWhere(n, reg, p, up, at) {
-  // <types-dur>
+  // <types-hard>
   // la µTypeError et le signal nomment le chemin, en production aussi quand quelqu'un les attend : celui où chaque conteneur a été inscrit
   if (n === void 0 || !(_mjsTDev() || _mjsTHard())) return n;
-  // </types-dur>
-  // <sans-types-dur>
+  // </types-hard>
+  // <no-types-hard>
   // if (n === void 0 || !_mjsTDev()) return n;
-  // </sans-types-dur>
+  // </no-types-hard>
   var pe = up === void 0 ? void 0 : reg.get(up);
   n.p    = (pe === void 0 ? p : _mjsTPath(reg, pe, up) + _mjsTSeg(pe.r.t === 'a', at)) + n.p;
   return n;
@@ -243,12 +244,12 @@ function _mjsTWhere(n, reg, p, up, at) {
 // idem pour une liste `o` (inscrite en `e`) dont une méthode a été appelée : les chemins notés sont
 // relatifs à la liste
 function _mjsTWhereList(n, reg, e, o) {
-  // <types-dur>
+  // <types-hard>
   if (n !== void 0 && (_mjsTDev() || _mjsTHard())) n.p = _mjsTPath(reg, e, o) + n.p;
-  // </types-dur>
-  // <sans-types-dur>
+  // </types-hard>
+  // <no-types-hard>
   // if (n !== void 0 && _mjsTDev()) n.p = _mjsTPath(reg, e, o) + n.p;
-  // </sans-types-dur>
+  // </no-types-hard>
   return n;
 }
 
@@ -257,61 +258,71 @@ function _mjsTArr(r, v, w, note, p, up, at) {
   v = µ._mjs_toRaw(v);
   if (!Array.isArray(v)) return [-1, v];
   if ((r.a !== void 0 && v.length < r.a) || (r.b !== void 0 && v.length > r.b)) return [-1, v];
-  var s = 0;
+  var s = 0, c = v;
   for (var i = 0; i < v.length; i++) {
     var x = _mjsTChk(r.e, v[i], w, note, p + '[' + i + ']', v, i);
     if (x[0] < 0) return [-1, v];
     if (x[0] > s) s = x[0];
-    if (w !== null && x[1] !== v[i]) v[i] = x[1];
+    // une liste gelée ne s'écrit pas sur place : la conversion va dans une copie, gelée de même, la liste reçue reste intacte ; scellée ou
+    // fermée aux ajouts, ses cases s'écrivent sur place (une méthode comme `fill` repasse sa règle sur la liste même, sans en prendre la copie)
+    if (w !== null && x[1] !== v[i]) (c === v && Object.isFrozen(v) ? c = v.slice() : c)[i] = x[1];
   }
-  if (w !== null) w.set(v, _mjsTEntry(r, p, up, at));
-  return [s, v];
+  if (c !== v) Object.freeze(c);
+  if (w !== null) w.set(c, _mjsTEntry(r, p, up, at));
+  return [s, c];
 }
 
-// <types-defaut>
+// <types-default>
 // la valeur de départ d'un champ : une liste neuve à chaque fois, jamais partagée entre deux objets
 function _mjsTDef(z, k) {
   return Array.isArray(z[k]) ? [] : z[k];
 }
-// </types-defaut>
+// </types-default>
 
 function _mjsTObj(r, v, w, note, p, up, at) {
   v = µ._mjs_toRaw(v);
   if (v === null || typeof v !== 'object' || Array.isArray(v)) return [-1, v];
-  var s = 0, f = r.f;
+  var s = 0, f = r.f, c = v;
+  // un objet gelé ne s'écrit pas sur place : conversions et valeurs de départ vont dans une copie, gelée de même ; scellé ou fermé aux ajouts,
+  // ses champs s'écrivent sur place, seule une valeur de départ (un champ qu'il n'a pas) le fait passer dans une copie
+  var write = function(k, x) {
+    if (c === v && (Object.isFrozen(v) || (!Object.isExtensible(v) && !_mjsTHas.call(v, k)))) c = Object.assign(Object.create(Object.getPrototypeOf(v)), v);
+    return c[k] = x;
+  };
   for (var k in f) {
     if (!_mjsTHas.call(f, k)) continue;
     var x0 = v[k];
-    // <types-defaut>
+    // <types-default>
     // champ absent (clé manquante ou undefined) qui a sa valeur de départ, déjà vérifiée au build : il la prend,
     // écrite au second passage, puis passe sa règle comme un autre (une liste y est inscrite) — statut .5 : l'objet est à écrire,
     // sans conversion (`strict` juge les valeurs données, jamais une valeur de départ)
     if (x0 === void 0 && r._mjs_z !== void 0 && _mjsTHas.call(r._mjs_z, k)) {
       if (s < .5) s = .5;
       if (w === null) continue;
-      x0 = v[k] = _mjsTDef(r._mjs_z, k);
+      x0 = write(k, _mjsTDef(r._mjs_z, k));
     }
-    // </types-defaut>
+    // </types-default>
     if (x0 === void 0 && r.o !== void 0 && r.o.indexOf(k) >= 0) continue;
     var x = _mjsTChk(f[k], x0, w, note, _mjsTKey(p, k), v, k);
     if (x[0] < 0) return [-1, v];
     if (x[0] > s) s = x[0];
-    if (w !== null && x[1] !== x0) v[k] = x[1];
+    if (w !== null && x[1] !== x0) write(k, x[1]);
   }
-  if (w !== null) w.set(v, _mjsTEntry(r, p, up, at));
-  return [s, v];
+  if (c !== v && Object.isFrozen(v)) Object.freeze(c);
+  if (w !== null) w.set(c, _mjsTEntry(r, p, up, at));
+  return [s, c];
 }
 
 // choix : une valeur exacte d'abord, sinon la première règle qui sait la convertir ou la ramener
 function _mjsTUni(r, v, w, note, p, up, at) {
-  var u = r.u, choisie = -1, x;
+  var u = r.u, chosen = -1, x;
   for (var i = 0; i < u.length; i++) {
     x = _mjsTChk(u[i], v, null, null, p);
-    if (x[0] === 0) { choisie = i; break; }
-    if (x[0] > 0 && choisie < 0) choisie = i;
+    if (x[0] === 0) { chosen = i; break; }
+    if (x[0] > 0 && chosen < 0) chosen = i;
   }
-  if (choisie < 0) return [-1, v];
-  return _mjsTChk(u[choisie], v, w, note, p, up, at);
+  if (chosen < 0) return [-1, v];
+  return _mjsTChk(u[chosen], v, w, note, p, up, at);
 }
 
 // `w` : registre en écriture (2e passage) ou null (1er passage, lecture seule) ; `note` recueille
@@ -336,13 +347,13 @@ function _mjsTChk(r, v, w, note, p, up, at) {
   if (x[0] >= 1 && r._mjs_tstrict) x = [-1, v];
   // </types-strict>
   if (note !== null) {
-    if (x[0] < 0 && note.refus === void 0) note.refus = { p: p, v: v, d: r.d };
+    if (x[0] < 0 && note.deny === void 0) note.deny = { p: p, v: v, d: r.d };
     // <types-signal>
     // production qui signale ses refus : seule une règle nommée y garde un texte, son nom, à son sommet — le refus d'une valeur
     // qu'elle contient le prend
-    else if (x[0] < 0 && note.refus.d === void 0) note.refus.d = r.d;
+    else if (x[0] < 0 && note.deny.d === void 0) note.deny.d = r.d;
     // </types-signal>
-    else if (x[0] === 2 && note.borne === void 0) note.borne = { p: p, v: v, to: x[1], d: r.d };
+    else if (x[0] === 2 && note.bound === void 0) note.bound = { p: p, v: v, to: x[1], d: r.d };
   }
   return x;
 }
@@ -360,25 +371,25 @@ function _mjsTRepr(v) {
 }
 
 // message de développement : refus (kind 0), valeur ramenée (kind 1), valeur animée reçue (kind 2) ;
-// rien en production. Un refus passe d'abord par le gestionnaire de l'appli et le mode dur (bloc `types-dur`)
+// rien en production. Un refus passe d'abord par le gestionnaire de l'appli et le mode dur (bloc `types-hard`)
 function _mjsTMsg(el, kind, n) {
   var mode = µ._typesMode;
-  // <types-dur>
-  if (kind === 0 && n !== void 0 && _mjsTHard()) mode = _mjsTRefus(el && el.localName, n, mode);
-  // </types-dur>
+  // <types-hard>
+  if (kind === 0 && n !== void 0 && _mjsTHard()) mode = _mjsTReject(el && el.localName, n, mode);
+  // </types-hard>
   if ((mode !== 'warn' && mode !== 'error') || n === void 0) return;
-  var ou  = el && el.localName ? ' (<' + el.localName + '>)' : '';
+  var where  = el && el.localName ? ' (<' + el.localName + '>)' : '';
   var d   = n.d === void 0 ? '' : µ._mjs_txt('typesAllowed', { d: n.d }, ' — permis : {d}');
   var txt = kind === 0
-    ? µ._mjs_msg('typesRefuses', { p: n.p, v: _mjsTRepr(n.v), d: d, at: ou }, '{p} refuse {v}{d}{at}')
+    ? µ._mjs_msg('typesRefuses', { p: n.p, v: _mjsTRepr(n.v), d: d, at: where }, '{p} refuse {v}{d}{at}')
     : kind === 1
-    ? µ._mjs_msg('typesBrought', { p: n.p, v: _mjsTRepr(n.v), to: _mjsTRepr(n.to), d: d, at: ou }, '{p} : {v} ramené à {to}{d}{at}')
-    : µ._mjs_msg('typesAnimated', { p: n.p, at: ou }, '{p} reçoit une valeur animée : ses bornes se règlent en la créant (µspring(valeur, raideur, amortissement, min, max), µinterpolate(valeur, durée, min, max)) — retirez {p} du <vars>{at}');
+    ? µ._mjs_msg('typesBrought', { p: n.p, v: _mjsTRepr(n.v), to: _mjsTRepr(n.to), d: d, at: where }, '{p} : {v} ramené à {to}{d}{at}')
+    : µ._mjs_msg('typesAnimated', { p: n.p, at: where }, '{p} reçoit une valeur animée : ses bornes se règlent en la créant (µspring(valeur, raideur, amortissement, min, max), µinterpolate(valeur, durée, min, max)) — retirez {p} du <vars>{at}');
   if (mode === 'error') throw new Error(txt);
   µ.warn(txt);
 }
 
-// <types-dur>
+// <types-hard>
 // valeur refusée, levée pour qui la veut : son chemin (`$messages[4].id`, `[4].id` dans une réponse), sa règle (son texte en
 // développement ; en production, le nom d'une règle nommée avec `typesReport`, sinon rien), la valeur et le composant. En développement, son message est celui de la console
 µ.TypeError = class extends Error {
@@ -395,22 +406,22 @@ function _mjsTMsg(el, kind, n) {
 // un refus attendu au-delà du message de développement : par le gestionnaire de l'appli, le mode dur ou le signal — sans eux, rien
 // ne change (aucun chemin calculé en production, aucune µTypeError)
 function _mjsTHard() {
-  return µ._mjs_tonErr || µ._typesThrow || µ._typesReport;
+  return µ._mjs_userTypeError || µ._typesThrow || µ._typesReport;
 }
 
 // le gestionnaire de l'appli, posé une fois : `µtypes.onError (e) -> …`
 µ.types = {
-  onError: function(f) { µ._mjs_tonErr = f; }
+  onError: function(f) { µ._mjs_userTypeError = f; }
 };
 
 // une valeur refusée (`c` : le composant) : le gestionnaire de l'appli la reçoit avant tout, puis elle est signalée au serveur
 // (production, `typesReport`) ; ce qu'il rend décide — 'throw' lève la µTypeError, 'warn' l'écrit en avertissement, rien laisse le
 // mode réglé (`"types": "throw"` la lève). Rend le mode du message ; l'écriture refusée n'a pas lieu, quoi qu'il rende. Un
 // gestionnaire qui lève n'empêche pas le signal : il part, puis l'erreur du gestionnaire remonte
-function _mjsTRefus(c, n, mode) {
+function _mjsTReject(c, n, mode) {
   var e = new µ.TypeError(n.p, n.d, n.v, c), r;
   try {
-    r = µ._mjs_tonErr ? µ._mjs_tonErr(e) : void 0;
+    r = µ._mjs_userTypeError ? µ._mjs_userTypeError(e) : void 0;
   }
   finally {
     // <types-signal>
@@ -420,7 +431,7 @@ function _mjsTRefus(c, n, mode) {
   if (r === 'throw' || (r !== 'warn' && µ._typesThrow)) throw e;
   return r === 'warn' ? r : mode;
 }
-// </types-dur>
+// </types-hard>
 
 // <types-signal>
 // production, `"typesReport": "/errors/types"` (mjs.config.json) : un refus part au serveur une fois par page et par chemin (et par
@@ -450,8 +461,8 @@ function _mjsTSignal(e, u) {
 function _mjsTWriteX(r, v, reg, p, el, up, at) {
   var note = {};
   var x = _mjsTChk(r, v, null, note, '');
-  if (x[0] < 0) { _mjsTMsg(el, 0, _mjsTWhere(note.refus, reg, p, up, at)); return x; }
-  if (x[0] === 2) _mjsTMsg(el, 1, _mjsTWhere(note.borne, reg, p, up, at));
+  if (x[0] < 0) { _mjsTMsg(el, 0, _mjsTWhere(note.deny, reg, p, up, at)); return x; }
+  if (x[0] === 2) _mjsTMsg(el, 1, _mjsTWhere(note.bound, reg, p, up, at));
   if (r.t === 'a' || r.t === 'o' || r.t === 'u') {
     x[1] = _mjsTChk(r, v, reg, null, p, up, at)[1];
     if (up === void 0) _mjsTRoot(reg, p, x[1]);
@@ -468,11 +479,11 @@ function _mjsTWrite(r, v, reg, p, el, up, at) {
 µ._mjs_tcheck = function(r, v) {
   var x = _mjsTChk(r, v, null, null, '');
   if (x[0] >= 0 && (r.t === 'a' || r.t === 'o' || r.t === 'u')) x[1] = _mjsTChk(r, v, new WeakMap(), null, '')[1];
-  // <types-defaut>
+  // <types-default>
   // un champ absent qui a pris sa valeur de départ (statut .5) : pour qui lit le statut (µrules, les effets), une valeur à écrire,
   // comme une valeur convertie
   if (x[0] === .5) x[0] = 1;
-  // </types-defaut>
+  // </types-default>
   return { s: x[0], v: x[1] };
 };
 
@@ -551,6 +562,44 @@ function _mjsTAt(os, x) {
   return x[1];
 };
 
+// <derived-check>
+// valeur dérivée qui porte une règle (`total int 0..100` dans le <vars>, `$total = $a * 2`), hors production (bloc retiré de la
+// production) : appelé par le cœur à son premier calcul et à chaque recalcul qui la change (_mjsDerivedCheck, mjs_element.ts). Le
+// verdict d'une écriture, par le premier passage du contrôle, en lecture seule : rien n'est écrit, ni ramené, ni converti, ni inscrit
+// au registre — la valeur reste celle du calcul. Une valeur qui ne passerait pas telle quelle (convertie, valeur de départ prise,
+// ramenée, refusée) le dit une fois par composant (sa balise) et par variable tant qu'une de ses instances reste hors de sa règle ; toutes
+// revenues dans leur règle puis une ressortie, de nouveau. Un avertissement dans tous les modes (`"types"` : "warn", "error", "throw") : une
+// dérivée ne s'arrête pas, et ni le gestionnaire de l'appli ni le signal ne le reçoivent — rien n'est refusé
+// les variables hors de leur règle, par instance, et le nombre d'instances dehors, par balise et variable
+var _mjsTDerivedOut   = new WeakMap();
+var _mjsTDerivedCount = new Map();
+µ._mjs_tderived = function(el, k, v) {
+  if (!_mjsTDev()) return;
+  var r     = el._mjs_types[k];
+  var note  = {};
+  var x     = _mjsTChk(r, v, null, note, '');
+  var key   = el.localName + ' ' + k;
+  var out   = _mjsTDerivedOut.get(el);
+  var count = _mjsTDerivedCount.get(key) || 0;
+  if (x[0] === 0) {
+    if (out !== void 0 && out.delete(k)) _mjsTDerivedCount.set(key, count - 1);
+    return;
+  }
+  if (out === void 0) _mjsTDerivedOut.set(el, out = new Set());
+  else if (out.has(k)) return;
+  out.add(k);
+  _mjsTDerivedCount.set(key, count + 1);
+  if (count > 0) return;
+  // la valeur refusée ou ramenée qu'a notée le contrôle, à son chemin dans la valeur ; convertie, la valeur entière
+  var n     = note.deny || note.bound || { p: '', v: v, d: r.d };
+  var shown = _mjsTRepr(µ._mjs_toRaw(n.v));
+  // la règle telle qu'écrite dans le <vars> ; celle d'un objet, écrite sur ses lignes, se dit sur une seule (`{ n int, s str }`)
+  var d     = n.d === void 0 ? r.d : n.d;
+  if (typeof d === 'string' && d.indexOf('\n') >= 0) d = '{ ' + d.trim().split(/\s*\n\s*/).map(function(l) { return l.replace(/\s+/g, ' '); }).join(', ') + ' }';
+  µ.warn(µ._mjs_msg('typesDerived', { k: '$' + k, c: el.localName, p: '$' + k + n.p, v: shown, d: d },'La variable dérivée « {k} » du composant <{c}> sort de sa règle : {p} vaut {v} — permis : {d}. Sa valeur reste celle du calcul : corrigez le calcul ou la règle. Cet avertissement n\'existe qu\'en développement.'));
+};
+// </derived-check>
+
 // règle d'une écriture sous un conteneur inscrit : champ d'objet, élément ou longueur de liste ; `p` : le
 // chemin où la valeur s'inscrira (celui d'inscription du conteneur, puis la clé ou la position), `at` : sa
 // clé ou sa position
@@ -574,10 +623,10 @@ function _mjsTSub(e, o, key, v) {
 µ._mjs_tdeep = function(el, reg, o, key, v) {
   var e = reg.get(o);
   if (e === void 0) return v;
-  // <types-defaut>
+  // <types-default>
   // undefined écrit dans un champ qui a sa valeur de départ : il la reprend
   if (v === void 0 && e.r._mjs_z !== void 0 && _mjsTHas.call(e.r._mjs_z, key)) v = _mjsTDef(e.r._mjs_z, key);
-  // </types-defaut>
+  // </types-default>
   var sub = _mjsTSub(e, o, key, v);
   if (sub === null) return v;
   var r = e.r;
@@ -621,22 +670,22 @@ function _mjsTUndo(o, name, n0, a, b, res) {
 
 // la liste entière repasse sa règle (méthode inconnue, ou copie passée par l'appelant) ; refusée, elle
 // revient à `avant`
-function _mjsTAfterAll(el, reg, o, e, avant) {
+function _mjsTAfterAll(el, reg, o, e, before) {
   var note = {};
   var x    = _mjsTChk(e.r, o, null, note, '');
   var back = function() {
     o.length = 0;
-    Array.prototype.push.apply(o, avant);
+    Array.prototype.push.apply(o, before);
   };
   if (x[0] < 0) {
     back();
-    _mjsTMsg(el, 0, _mjsTWhereList(note.refus, reg, e, o));
+    _mjsTMsg(el, 0, _mjsTWhereList(note.deny, reg, e, o));
     return false;
   }
   if (x[0] === 2) {
     // mode 'error' : l'erreur arrête l'écriture, la liste revient à son état d'avant
     try {
-      _mjsTMsg(el, 1, _mjsTWhereList(note.borne, reg, e, o));
+      _mjsTMsg(el, 1, _mjsTWhereList(note.bound, reg, e, o));
     }
     catch (err) {
       back();
@@ -652,12 +701,12 @@ function _mjsTAfterAll(el, reg, o, e, avant) {
 // le nombre d'éléments et ses ajouts : un fil de messages qui en reçoit des milliers un par un ne
 // revérifie pas toute la liste à chaque fois. Refusée, la liste est défaite ; une valeur ramenée, en
 // mode 'error', l'arrête aussi. Rend `true` si la liste est gardée
-µ._mjs_tafter = function(el, reg, o, avant, name, args, res) {
+µ._mjs_tafter = function(el, reg, o, before, name, args, res) {
   var e = reg.get(o);
   if (e === void 0) return true;
-  if (typeof avant !== 'number') return _mjsTAfterAll(el, reg, o, e, avant);
+  if (typeof before !== 'number') return _mjsTAfterAll(el, reg, o, e, before);
   var r  = e.r;
-  var n0 = avant;
+  var n0 = before;
   var a  = 0;
   var b  = 0;
   var i, x, v;
@@ -674,7 +723,8 @@ function _mjsTAfterAll(el, reg, o, e, avant) {
   var note = {};
   var s    = 0;
   if ((r.a !== void 0 && o.length < r.a) || (r.b !== void 0 && o.length > r.b)) {
-    note.refus = { p: '', v: o, d: r.d };
+    // copie de la liste telle que la méthode l'a laissée : le message et le gestionnaire la citent après que la liste est défaite
+    note.deny = { p: '', v: o.slice(), d: r.d };
     s = -1;
   }
   else {
@@ -689,13 +739,13 @@ function _mjsTAfterAll(el, reg, o, e, avant) {
   }
   if (s < 0) {
     _mjsTUndo(o, name, n0, a, b, res);
-    _mjsTMsg(el, 0, _mjsTWhereList(note.refus, reg, e, o));
+    _mjsTMsg(el, 0, _mjsTWhereList(note.deny, reg, e, o));
     return false;
   }
   if (s === 2) {
     // mode 'error' : l'erreur arrête la méthode, la liste revient à son état d'avant
     try {
-      _mjsTMsg(el, 1, _mjsTWhereList(note.borne, reg, e, o));
+      _mjsTMsg(el, 1, _mjsTWhereList(note.bound, reg, e, o));
     }
     catch (err) {
       _mjsTUndo(o, name, n0, a, b, res);

@@ -23,7 +23,7 @@ describe('sucre µurl & co — globales framework en forme courte', function () 
     it('temps réel : µsocket → µ.socket (fabrique appelée)', () =>
       assert.equal(tokenize('µsocket "wss://jeu/play"'), 'µ.socket "wss://jeu/play"'))
     it('temps réel : µsmooth → µ.smooth', () =>
-      assert.equal(tokenize('µsmooth brut, { retard: 100 }'), 'µ.smooth brut, { retard: 100 }'))
+      assert.equal(tokenize('µsmooth brut, { delay: 100 }'), 'µ.smooth brut, { delay: 100 }'))
     it('identifiant plus long intact (µsocketFoo)', () =>
       assert.equal(tokenize('µsocketFoo'), 'µsocketFoo'))
     it('navigation ujs : µnav → µ.nav (état réactif {active, href}, mjs_store_globals.ts)', () =>

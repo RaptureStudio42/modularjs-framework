@@ -45,7 +45,7 @@ describe('journal — masquage des secrets en temps linéaire', function () {
     const journal = createJournal({ dir: mjsTmp('journal-lineaire') })
     try {
       let i = 0
-      const ms = meilleurTemps(() => journal.record('server', { message: 'eyJ-'.repeat(16384) + (i++), pile: 'eyJ-'.repeat(16384), url: '/p?q=' + 'eyJ-'.repeat(512) }))
+      const ms = meilleurTemps(() => journal.record('server', { message: 'eyJ-'.repeat(16384) + (i++), stack: 'eyJ-'.repeat(16384), url: '/p?q=' + 'eyJ-'.repeat(512) }))
       assert.ok(ms < 25, `${ms.toFixed(1)} ms`)
     } finally {
       journal.close()

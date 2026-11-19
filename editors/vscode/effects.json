@@ -1448,6 +1448,87 @@
       }
     }
   },
+  "cover": {
+    "family": "Transitions",
+    "family_en": "Transitions",
+    "main": "direction",
+    "help": "le contenu entre en glissant dans sa propre boîte, comme un store",
+    "help_en": "The content slides in inside its own box, like a blind.",
+    "lifecycle": false,
+    "settings": {
+      "direction": {
+        "rule": "right, left, up, down",
+        "default": "down",
+        "values": [
+          "right",
+          "left",
+          "up",
+          "down"
+        ]
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "rule_en": "a duration (300ms, 1.5s, 0)",
+        "default": "380ms",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "rule_en": "a duration (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "rule_en": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), or a curve: back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, followed by -in, -out or -in-out (bounce-out, elastic-out)",
+        "default": "ease-out",
+        "values": null
+      },
+      "on": {
+        "rule": "view, scroll, load, success, error, hover",
+        "default": "view",
+        "values": [
+          "view",
+          "scroll",
+          "load",
+          "success",
+          "error",
+          "hover"
+        ]
+      },
+      "once": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "range": {
+        "rule": "deux positions de défilement de la page, « début fin », en px ou en vh (0 1000px, 100vh 200vh)",
+        "rule_en": "two page scroll positions, \"start end\", in px or vh (0 1000px, 100vh 200vh)",
+        "default": null,
+        "values": null
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "rule_en": "two screen heights, \"start end\", in % (0% at the top, 100% at the bottom) or top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "of": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      },
+      "visible": {
+        "rule": "de 1 % à 100 % de la balise, en valeur fixe (100%, 60%)",
+        "rule_en": "1% to 100% of the tag, as a fixed value (100%, 60%)",
+        "default": null,
+        "values": null
+      }
+    }
+  },
   "crossfade": {
     "family": "Transitions",
     "family_en": "Transitions",
@@ -10163,87 +10244,6 @@
           "style": "tilt",
           "max": "28"
         }
-      }
-    }
-  },
-  "volet": {
-    "family": "Transitions",
-    "family_en": "Transitions",
-    "main": "direction",
-    "help": "le contenu entre en glissant dans sa propre boîte, comme un store",
-    "help_en": "The content slides in inside its own box, like a blind.",
-    "lifecycle": false,
-    "settings": {
-      "direction": {
-        "rule": "right, left, up, down",
-        "default": "down",
-        "values": [
-          "right",
-          "left",
-          "up",
-          "down"
-        ]
-      },
-      "duration": {
-        "rule": "une durée (300ms, 1.5s, 0)",
-        "rule_en": "a duration (300ms, 1.5s, 0)",
-        "default": "380ms",
-        "values": null
-      },
-      "delay": {
-        "rule": "une durée (300ms, 1.5s, 0)",
-        "rule_en": "a duration (300ms, 1.5s, 0)",
-        "default": "0s",
-        "values": null
-      },
-      "easing": {
-        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
-        "rule_en": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), or a curve: back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, followed by -in, -out or -in-out (bounce-out, elastic-out)",
-        "default": "ease-out",
-        "values": null
-      },
-      "on": {
-        "rule": "view, scroll, load, success, error, hover",
-        "default": "view",
-        "values": [
-          "view",
-          "scroll",
-          "load",
-          "success",
-          "error",
-          "hover"
-        ]
-      },
-      "once": {
-        "rule": "bool",
-        "default": "true",
-        "values": [
-          "true",
-          "false"
-        ]
-      },
-      "range": {
-        "rule": "deux positions de défilement de la page, « début fin », en px ou en vh (0 1000px, 100vh 200vh)",
-        "rule_en": "two page scroll positions, \"start end\", in px or vh (0 1000px, 100vh 200vh)",
-        "default": null,
-        "values": null
-      },
-      "zone": {
-        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
-        "rule_en": "two screen heights, \"start end\", in % (0% at the top, 100% at the bottom) or top, center, bottom (70% 40%, bottom center)",
-        "default": null,
-        "values": null
-      },
-      "of": {
-        "rule": "string 1..200",
-        "default": null,
-        "values": null
-      },
-      "visible": {
-        "rule": "de 1 % à 100 % de la balise, en valeur fixe (100%, 60%)",
-        "rule_en": "1% to 100% of the tag, as a fixed value (100%, 60%)",
-        "default": null,
-        "values": null
       }
     }
   },

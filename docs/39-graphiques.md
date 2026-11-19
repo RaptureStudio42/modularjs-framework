@@ -44,6 +44,8 @@ Deux props portent les données : `rows` et `series`.
 | `kind` | `'text'` pour une série de mots | une série de nombres |
 | `axis` | `'right'` : la série prend sa propre échelle, graduée à droite ; voir [Deux échelles](#deux-échelles--axis-right) | `'left'` |
 
+**Une clé par série**, et jamais `#total`, `#count` ni `#others` : le graphique nomme ainsi ce qu'il ajoute (la colonne du total d'une pile, l'effectif d'un histogramme, la part « autres » d'un anneau). Deux colonnes de même clé n'en font qu'une : une série de clé `#total` cache la colonne du total d'une pile, une série dont la clé est déjà prise ne s'affiche pas, et en développement la console le signale (« clés dupliquées détectées »).
+
 **Une mesure** est un nombre fini, ou un texte qui se lit tout entier en nombre, comme le `Float` de Ruby le lit côté serveur : des blancs autour, un signe, des décimales (`'12'`, `'.5'`, `'5.'`, `'1e3'`), un hexadécimal (`'0x1A'`, `'0x1.8p1'`), un souligné seul entre deux chiffres (`'1_000'`). Ne se lisent pas : la virgule décimale (`'1,5'`), le binaire (`'0b101'`), l'octal (`'0o17'`), `'Infinity'`, deux soulignés de suite. Toute autre valeur laisse la case vide : un mot, un texte vide, `null`, une clé absente. Une case vide coupe la courbe et retire la barre ; la bulle l'écrit « — ». Avec `bridge`, la courbe et l'aire passent par-dessus ([Relier par-dessus une case vide](#relier-par-dessus-une-case-vide--bridge)).
 
 **Une série de mots** (`kind: 'text'`) porte une note par ligne (« bien », « fatigué »). Le dessin l'ignore, elle ne compte dans aucun calcul ; la bulle et le tableau montrent ses mots. Quand les lignes sont regroupées par période (`step`), elle quitte la bulle et le tableau : un mot ne se moyenne pas.
@@ -667,6 +669,7 @@ Le premier vient des barres empilées, du radar et de la carte par série, quand
 | nom de branche du radar | 18 signes | abrégé d'un « … » |
 | bulle | 260 px de large au plus, 70 % de l'écran sur un écran étroit | le texte passe à la ligne |
 | une faute ou un avertissement | une fois par page | — |
+| largeurs des étiquettes gardées | 2 000 textes, oubliés quand le tracé change de largeur, quand une police finit de charger et quand le nombre de polices de la page change | un échange de polices qui garde leur nombre (une retirée, une autre ajoutée) n'est pas vu : les étiquettes gardent leurs largeurs jusqu'au prochain changement de largeur du tracé |
 
 ## Accessibilité
 

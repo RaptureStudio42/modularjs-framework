@@ -111,7 +111,7 @@
   shares  = {}
 
   # les zones IANA déjà vérifiées (cf. `zoneOf`)
-  zonesSeen = {}
+  zonesSeen = Object.create(null)
 
   tr   = (key, lang)-> µ._mjs_label('core', key) ?? ''
 
@@ -135,8 +135,19 @@
   pct  = (f)-> Math.round(f * 1e6) / 1e4
   px   = (v)-> Math.round(v * 100) / 100
 
-  # une faute ne se dit qu'une fois par page : vrai la première fois que `id` se présente
-  unsaid = (id)-> not faulted.has(id) and faulted.add(id)
+  # une faute ne se dit qu'une fois par page : vrai la première fois que `id` se présente. La table garde 1 000 fautes au plus (des données
+  # fautives sans fin la feraient grossir sans fin) : la suivante dit une seule fois que les fautes d'après ne sont plus listées
+  FAULTS_MAX = 1000
+  faultsFull = false
+  unsaid = (id)->
+    return false if faulted.has(id)
+    if faulted.size < FAULTS_MAX
+      faulted.add(id)
+      return true
+    if not faultsFull
+      faultsFull = true
+      µ.warn(µ._mjs_msg('coreChartFaultsFull', { max: FAULTS_MAX }, '<@@chart> : {max} données fautives sont déjà signalées sur cette page ; les suivantes ne sont plus listées. Corrigez d\'abord celles-ci.'))
+    false
 
   # les fautes de l'auteur venues d'une variable (écrites en dur, elles arrêtent la construction) : une erreur, une fois, puis la valeur par
   # défaut, pour que la page reste lisible. Un mot inconnu de `shape`, `stats`, `step`, `axis`, `toolbar` ou `shapes` (une faute de frappe,
@@ -563,7 +574,8 @@
   rangeText = (bin, unit, lang, places)->
     return valueText(bin.from, unit, lang, places) if bin.from is bin.to
     step = bin.to - bin.from
-    tr('chartRange', lang).replace('{from}', C.formatNumber(bin.from, lang, step, places)).replace('{to}', C.formatNumber(bin.to, lang, step, places) + (if unit then ' ' + unit else ''))
+    # le texte d'arrivée par une fonction : une unité qui contient `$&` ou `$$` s'écrit telle quelle, jamais lue comme un motif de remplacement
+    tr('chartRange', lang).replace('{from}', C.formatNumber(bin.from, lang, step, places)).replace('{to}', -> C.formatNumber(bin.to, lang, step, places) + (if unit then ' ' + unit else ''))
 
   # la bulle d'une classe : ses bornes et le nombre de valeurs qu'elle compte
   binTip = (at, data, lang)->
@@ -964,6 +976,11 @@
   watch    = null
   ctx      = null
   seen     = 0
+  # la largeur de chaque texte déjà mesuré (2 000 au plus), oubliée quand le tracé change de largeur ou qu'une police finit de charger (cf.
+  # `forget`) : un graphique recalculé au survol ne remesure pas ses étiquettes
+  widths   = new Map()
+  fonts    = null
+  faces    = 0
   pickRef  = null # @@ toolbar
   btnRef   = null # @@ toolbar
   menuRef  = null # @@ toolbar
@@ -993,7 +1010,23 @@
     $input = { width: width, keyed: keyed } unless width is $input.width and keyed is $input.keyed
 
   # la largeur d'une étiquette, mesurée dans la police des graduations ; sans mesure possible (rendu serveur), 6,5 px par caractère
-  measure = (text)-> if ctx then ctx.measureText(text).width else String(text).length * 6.5
+  measure = (text)->
+    return String(text).length * 6.5 unless ctx
+    if fonts and fonts.status isnt 'loading' and fonts.size isnt faces
+      faces = fonts.size
+      widths.clear()
+    w = widths.get(text)
+    unless w?
+      widths.clear() if widths.size >= 2000
+      widths.set(text, w = ctx.measureText(text).width)
+    w
+
+  # une police qui finit de charger change la largeur des textes : les largeurs gardées sont oubliées, le dessin suivant les mesure de
+  # nouveau. La fin d'un chargement se lit sur `ready`, attendue dès son début (`loading` : WebKit n'émet jamais `loadingdone`) et au
+  # montage (une police déjà en route) ; une police ajoutée déjà chargée (`document.fonts.add`) n'émet rien : le nombre de polices de la
+  # page (`faces`) le dit, relu à chaque mesure hors chargement (sa fin oublie déjà les largeurs)
+  forget  = -> widths.clear()
+  onFonts = -> fonts.ready.then(forget)
 
   # la largeur du tracé, relue à chaque changement de taille : les étiquettes de l'axe x se choisissent sur elle
   remeasure = ->
@@ -1007,6 +1040,7 @@
         ctx.font = cs.fontStyle + ' ' + cs.fontWeight + ' ' + cs.fontSize + ' ' + cs.fontFamily if ctx
       catch e
         ctx = null
+    widths.clear() unless w is $input.width
     setInput(w, $input.keyed)
 
   # le zoom CSS autour d'un élément, le menu ou la bulle (sur la page, sur un conteneur) : le navigateur multiplie par lui sa place et sa
@@ -1287,9 +1321,16 @@
     return unless typeof ResizeObserver is 'function'
     watch = new ResizeObserver(-> remeasure())
     follow()
+    fonts = document.fonts
+    faces = fonts?.size
+    return unless fonts?.ready
+    fonts.addEventListener('loading', onFonts)
+    onFonts() if fonts.status is 'loading'
 
-  # retiré menu ouvert, le graphique ne laisse aucun écouteur sur la fenêtre
+  # retiré menu ouvert, le graphique ne laisse aucun écouteur sur la fenêtre ni sur les polices
   µdestroy ->
+    fonts?.removeEventListener('loading', onFonts)
+    fonts = null
     watch?.disconnect()
     watch = null
     shut(false) # @@ toolbar

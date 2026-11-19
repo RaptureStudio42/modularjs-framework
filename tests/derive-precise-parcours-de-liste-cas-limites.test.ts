@@ -2,8 +2,8 @@
 // calcul contrôlé d'une valeur précise rend ce que rend la règle de toujours (le même paquet bâti sans l'option), jusque
 // dans les cas limites : liste `Proxy` de l'application dont les indices ne sont pas des données propres, liste gelée après
 // coup, prototype de la liste changé après coup (tableau rendu : un `Array`), critère qui n'est pas une fonction (même
-// erreur, au même moment), liste tenue par deux composants (la valeur de l'horloge, même quand l'autre composant l'a
-// changée), trou d'une liste rempli par `Array.prototype`. Happy-dom en développement et en production ; Chromium, Firefox
+// erreur, au même moment), liste tenue par deux composants (la valeur de l'horloge, qui suit aussi ce que l'autre composant
+// y change), trou d'une liste rempli par `Array.prototype`. Happy-dom en développement et en production ; Chromium, Firefox
 // et WebKit en production.
 
 import assert from 'node:assert/strict'
@@ -188,7 +188,7 @@ function verifier(precise: any, horloge: any, sansNom = false) {
   assert.equal(horloge['gel.1 premier brut'], true)
   assert.match(horloge['proto.1 prototype changé'], / vis:Array noms:Array$/)
   assert.match(horloge['critere.0 liste vide'], /^ERR TypeError /)
-  assert.match(horloge['partage.3 a après b.editer'], /^vis=\[#0,#2,#4\]/)
+  assert.match(horloge['partage.3 a après b.editer'], /^vis=\[#0,#1,#2,#4\]/)
   assert.match(horloge['trou.1 changé dehors'], /^vis=\[#0,#2\]/)
   const nom = (r: any) => sansNom ? Object.fromEntries(Object.entries(r).map(([k, v]) => [k, typeof v === 'string' ? v.replace(/^ERR TypeError [\w.$]+ is not a function$/, 'ERR TypeError … is not a function') : v])) : r
   assert.deepEqual(nom(precise), nom(horloge))

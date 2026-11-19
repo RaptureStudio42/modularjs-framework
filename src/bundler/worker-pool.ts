@@ -180,7 +180,7 @@ export class WorkerPool {
       // Sinon (worker idle qui sort proprement), simple retrait.
       const hasInFlight = [...this.inFlight.values()].some(p => p.worker === w)
       if (code !== 0 || hasInFlight) {
-        this.loseWorker(w, new Error(t('bundler.worker-pool.worker-sorti', { code })))
+        this.loseWorker(w, new Error(t('bundler.worker-pool.worker-exited', { code })))
       } else {
         this.removeWorker(w)
       }
@@ -259,7 +259,7 @@ export class WorkerPool {
           entry.timer = this.armFlushTimer(id, entry)
           return
         }
-        const line = t('bundler.worker-pool.vidage-timeout', { ms: this.timeoutMs })
+        const line = t('bundler.worker-pool.drain-timeout', { ms: this.timeoutMs })
         this.log(line)
         this.loseWorker(entry.worker, new Error(line))
         void entry.worker.terminate().catch(() => {})
@@ -271,15 +271,15 @@ export class WorkerPool {
   /** Soumet un message au prochain worker libre. Retourne le résultat. */
   submit<T = any>(msg: any): Promise<T> {
     if (this.terminated) {
-      return Promise.reject(new Error(t('bundler.worker-pool.deja-termine')))
+      return Promise.reject(new Error(t('bundler.worker-pool.already-finished')))
     }
     // Aucun worker vivant : la tâche partirait en queue sans jamais être dispatchée (personne pour la traiter) → hang. Le
     // repli la fait tout de suite, sans relancer de fil (un pool mort reste mort : borne nette du nombre de fils), une ligne
     // le dit à la première ; sans repli, elle est rejetée
     if (this.workers.length === 0) {
       const fallback = this.fallback
-      if (!fallback) return Promise.reject(new Error(t('bundler.worker-pool.aucun-worker-vivant')))
-      if (!this.directSaid) this.log(t('bundler.worker-pool.repli-direct'))
+      if (!fallback) return Promise.reject(new Error(t('bundler.worker-pool.no-worker-alive')))
+      if (!this.directSaid) this.log(t('bundler.worker-pool.fallback-direct'))
       this.directSaid = true
       const direct    = { ...msg, id: this.nextId++ }
       return Promise.resolve().then(() => fallback(direct))
@@ -315,7 +315,7 @@ export class WorkerPool {
       setImmediate(() => {
         if (this.inFlight.get(id) !== entry || entry.timer !== handle) return
         if (entry.started) entry.overdue++
-        this.loseWorker(entry.worker, new Error(t('bundler.worker-pool.tache-timeout', { fichier: taskName(entry.msg), ms: this.timeoutMs })), entry.started)
+        this.loseWorker(entry.worker, new Error(t('bundler.worker-pool.task-timeout', { file: taskName(entry.msg), ms: this.timeoutMs })), entry.started)
         void entry.worker.terminate().catch(() => {})
       })
     }, this.timeoutMs)
@@ -344,7 +344,7 @@ export class WorkerPool {
     if (response.ok) {
       pending.resolve(response.result)
     } else {
-      const err = new Error(response.error ?? t('bundler.worker-pool.erreur-inconnue'))
+      const err = new Error(response.error ?? t('bundler.worker-pool.error-unknown'))
       if (response.stack) (err as any).stack = response.stack
       pending.reject(err)
     }
@@ -383,7 +383,7 @@ export class WorkerPool {
       // plus aucun worker : la queue part au repli, ou est rejetée (si tous mouraient, compile() pendait sans message)
       const orphans = this.queue
       this.queue = []
-      for (const p of orphans) this.giveUp(p, new Error(t('bundler.worker-pool.plus-aucun-worker', { message: err.message })))
+      for (const p of orphans) this.giveUp(p, new Error(t('bundler.worker-pool.no-more-workers', { message: err.message })))
     } else {
       this.redispatchQueue()
     }
@@ -396,7 +396,7 @@ export class WorkerPool {
       this.giveUp(task, err)
       return
     }
-    this.log(t('bundler.worker-pool.nouvel-essai', { fichier: taskName(task.msg), raison: err.message }))
+    this.log(t('bundler.worker-pool.retry', { file: taskName(task.msg), reason: err.message }))
     this.queue.unshift({ msg: task.msg, resolve: task.resolve, reject: task.reject, lost: task.lost + 1, overdue: task.overdue })
   }
 
@@ -405,7 +405,7 @@ export class WorkerPool {
   // ne bornerait ni sa durée ni sa mémoire
   private giveUp(task: PendingTask, err: Error): void {
     if (task.overdue > 0) {
-      task.reject(new Error(t('bundler.worker-pool.delai-depasse', { fichier: taskName(task.msg), ms: this.timeoutMs, fois: task.overdue })))
+      task.reject(new Error(t('bundler.worker-pool.timeout', { file: taskName(task.msg), ms: this.timeoutMs, times: task.overdue })))
       return
     }
     const fallback = this.fallback
@@ -413,7 +413,7 @@ export class WorkerPool {
       task.reject(err)
       return
     }
-    this.log(t('bundler.worker-pool.repli-principal', { fichier: taskName(task.msg), raison: err.message }))
+    this.log(t('bundler.worker-pool.fallback-main', { file: taskName(task.msg), reason: err.message }))
     Promise.resolve().then(() => fallback(task.msg)).then(task.resolve, task.reject)
   }
 
@@ -488,7 +488,7 @@ export async function resolveWorkerScript(): Promise<WorkerSpec> {
   // En dev : compile worker.ts à la volée
   const tsPath = join(thisDir, 'worker.ts')
   if (!existsSync(tsPath)) {
-    throw new Error(t('bundler.worker-pool.worker-ts-introuvable', { chemin: tsPath }))
+    throw new Error(t('bundler.worker-pool.worker-ts-not-found', { path: tsPath }))
   }
   const compiledPath = await compileWorkerInMemory(tsPath)
   return { workerPath: compiledPath }

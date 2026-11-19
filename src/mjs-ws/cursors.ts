@@ -119,9 +119,9 @@ export function cursorsPackage(opts: MjsWsCursorsOptions = {}): MjsPackage {
   const onLog   = opts.onLog ?? defaultLogOf('cursors')
   const groupFrom = typeof opts.groupFrom === 'number' && opts.groupFrom >= 1 ? Math.floor(opts.groupFrom) : DEFAULT_GROUP
   // un seau par (salon, identité), purgé quand le salon n'a plus de membre
-  const seaux   = perRoomBuckets(burst, rate)
-  const buckets = seaux.buckets
-  let actions   = 0
+  const roomBuckets = perRoomBuckets(burst, rate)
+  const buckets     = roomBuckets.buckets
+  let actions       = 0
   // les curseurs que chaque visiteur montre (son `max`, dit par cursors:me)
   const shown   = new WeakMap<MjsWsClient, number>()
   // un salon regroupé : la dernière position de chacun (la plus récente en fin) et l'envoi qui vient
@@ -135,13 +135,13 @@ export function cursorsPackage(opts: MjsWsCursorsOptions = {}): MjsPackage {
     const w = waiting.get(fullName)
     waiting.delete(fullName)
     if (!w || w.list.size === 0) return
-    const salon = app.room(fullName)
+    const room = app.room(fullName)
     let cap = 0
-    for (const client of salon.clients) cap = Math.max(cap, shown.get(client) ?? DEFAULT_SHOWN)
-    salon.send('cursors:moves', { room: w.room, list: [...w.list.values()].reverse().slice(0, Math.min(cap || DEFAULT_SHOWN, MAX_GROUPED) + 1) })
+    for (const client of room.clients) cap = Math.max(cap, shown.get(client) ?? DEFAULT_SHOWN)
+    room.send('cursors:moves', { room: w.room, list: [...w.list.values()].reverse().slice(0, Math.min(cap || DEFAULT_SHOWN, MAX_GROUPED) + 1) })
   }
 
-  const bucketOf = seaux.bucketOf
+  const bucketOf = roomBuckets.bucketOf
 
   const pkg = definePackage('cursors', app => {
 
@@ -155,24 +155,24 @@ export function cursorsPackage(opts: MjsWsCursorsOptions = {}): MjsPackage {
       const room = p?.room
       if (typeof room !== 'string' || !room || room.length > 200) return
       const fullName = prefix + room
-      const salon    = app.room(fullName)
-      if (!salon.has(client)) return
+      const roomName = app.room(fullName)
+      if (!roomName.has(client)) return
       if (opts.canJoin) {
         let ok: unknown
         try { ok = await opts.canJoin(fullName, client) }
-        catch (err) { onLog('error', t('ws.cursors.canjoin-a-leve'), { err: err instanceof Error ? err.message : String(err) }); return }
+        catch (err) { onLog('error', t('ws.cursors.canjoin-threw'), { err: err instanceof Error ? err.message : String(err) }); return }
         if (ok === false) return
       }
       // mémoire bornée : les seaux des salons vidés, toutes les 200 trames
       if (++actions >= 200) {
         actions = 0
-        seaux.sweep(app)
+        roomBuckets.sweep(app)
       }
       const id = peerIdOf(client)
       if (!bucketOf(fullName, id).take()) return
       const move = { room, p: cleanPointer(p?.p), t: cleanText(p?.t), f: cleanPath(p?.f), c: cleanClicks(p?.c), from: { id, name: nameOf(client) } }
-      if (salon.size < groupFrom) {
-        salon.send('cursors:move', move, { except: client })
+      if (roomName.size < groupFrom) {
+        roomName.send('cursors:move', move, { except: client })
         return
       }
       let w = waiting.get(fullName)

@@ -10,6 +10,7 @@ import { join, normalize } from 'node:path'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { construire } from './helpers/liaison-navigateur.js'
 import type { Cible } from './helpers/liaison-navigateur.js'
+import { playTogether } from './helpers/engines-together.js'
 
 const RECH = `  $q = ''\n  @chercher = (q) -> $q = q\n  @envoyer  = (u) -> µ.ajax.patch(u, {})\n`
 const SOURCES: Record<string, string> = {
@@ -27,53 +28,59 @@ type Tenue = { motif: string, res: any, fermee: boolean }
 
 describe('µload : le gabarit prévenu sans lire, la dérivée recalculée à chaque arrivée, chaque rang sa donnée — navigateur réel, vrai serveur Node', function () {
   this.timeout(280000)
-  let srv: any = null
-  let port     = 0
-  let doc      = ''
-  let racine   = ''
-  const vus: string[]   = []
-  const tenues: Tenue[] = []
   const cibles: Record<string, Cible> = {}
 
-  // répondre aux requêtes tenues que `filtre` retient (le corps nomme l'adresse lue)
-  const repondre = async (filtre: (m: string) => boolean) => {
-    for (const t of tenues.filter((x) => !x.fermee && !x.res.writableEnded && filtre(x.motif))) {
-      t.res.writeHead(200, { 'content-type': 'application/json' })
-      t.res.end(JSON.stringify({ n: t.motif.replace(/^[A-Z]+ /, '') }))
-    }
-    await pause(300)
-  }
-
   before(async () => {
-    srv = http.createServer((req, res) => {
-      const url    = new URL(req.url!, 'http://x')
-      const chemin = decodeURIComponent(url.pathname)
-      if (chemin === '/') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(doc); return }
-      if (chemin.startsWith('/out/')) {
-        const f = join(racine, normalize(chemin))
-        if (existsSync(f)) { res.writeHead(200, { 'content-type': f.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'application/json' }); res.end(readFileSync(f)); return }
-        res.writeHead(404); res.end(); return
-      }
-      if (!chemin.startsWith('/api/')) { res.writeHead(404); res.end(); return }
-      const t: Tenue = { motif: req.method + ' ' + chemin + url.search, res, fermee: false }
-      vus.push(t.motif)
-      req.resume()
-      // la frappe : réponse tout de suite
-      if (chemin.startsWith('/api/auto/') || req.method !== 'GET') { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ n: chemin + url.search })); return }
-      res.on('close', () => { if (!res.writableEnded) t.fermee = true })
-      tenues.push(t)
-    })
-    await new Promise<void>((ok) => srv.listen(0, '127.0.0.1', () => ok()))
-    port = srv.address().port
     for (const mode of ['dev-parents-avant', 'split'] as const) cibles[mode] = await construire(mode, SOURCES, BALISES)
   })
 
   after(async () => {
     await terminateSharedWorkerPool()
-    if (srv) { srv.closeAllConnections(); srv.close() }
   })
 
-  for (const moteur of ['chromium', 'firefox', 'webkit'] as const) describe(moteur, function () {
+  for (const moteur of ['chromium', 'firefox', 'webkit'] as const) playTogether(describe(moteur, function () {
+    // un serveur et ses relevés par moteur : les trois moteurs jouent ensemble, chacun ses requêtes tenues et sa page
+    let srv: any = null
+    let port     = 0
+    let doc      = ''
+    let racine   = ''
+    const vus: string[]   = []
+    const tenues: Tenue[] = []
+
+    // répondre aux requêtes tenues que `filtre` retient (le corps nomme l'adresse lue)
+    const repondre = async (filtre: (m: string) => boolean) => {
+      for (const t of tenues.filter((x) => !x.fermee && !x.res.writableEnded && filtre(x.motif))) {
+        t.res.writeHead(200, { 'content-type': 'application/json' })
+        t.res.end(JSON.stringify({ n: t.motif.replace(/^[A-Z]+ /, '') }))
+      }
+      await pause(300)
+    }
+
+    before(async () => {
+      srv = http.createServer((req, res) => {
+        const url    = new URL(req.url!, 'http://x')
+        const chemin = decodeURIComponent(url.pathname)
+        if (chemin === '/') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(doc); return }
+        if (chemin.startsWith('/out/')) {
+          const f = join(racine, normalize(chemin))
+          if (existsSync(f)) { res.writeHead(200, { 'content-type': f.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'application/json' }); res.end(readFileSync(f)); return }
+          res.writeHead(404); res.end(); return
+        }
+        if (!chemin.startsWith('/api/')) { res.writeHead(404); res.end(); return }
+        const t: Tenue = { motif: req.method + ' ' + chemin + url.search, res, fermee: false }
+        vus.push(t.motif)
+        req.resume()
+        // la frappe : réponse tout de suite
+        if (chemin.startsWith('/api/auto/') || req.method !== 'GET') { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ n: chemin + url.search })); return }
+        res.on('close', () => { if (!res.writableEnded) t.fermee = true })
+        tenues.push(t)
+      })
+      await new Promise<void>((ok) => srv.listen(0, '127.0.0.1', () => ok()))
+      port = srv.address().port
+    })
+
+    after(async () => { if (srv) { srv.closeAllConnections(); srv.close() } })
+
     let browser: any = null
     let present      = false
 
@@ -105,7 +112,7 @@ describe('µload : le gabarit prévenu sans lire, la dérivée recalculée à ch
       await pause(400)
       const appeler = async (methode: string, valeur: unknown, attente: number) => { await page.evaluate(`(${el}.${methode}(${JSON.stringify(valeur)}), null)`); await pause(attente) }
       const lire    = () => page.evaluate(`[...((${el}._shadow || ${el}.shadowRoot).querySelectorAll('.v'))].map((x) => x.textContent).join('|') || '(absente)'`)
-      const etat    = () => page.evaluate(`({ ldH: ${el}._mjs_ldH ? ${el}._mjs_ldH.size : 0, entrees: typeof _mjsLdEntrees !== 'undefined' ? _mjsLdEntrees.size : null, libres: typeof _mjsLdLibres !== 'undefined' ? _mjsLdLibres.size : null, inv: window.__inv })`)
+      const etat    = () => page.evaluate(`({ ldH: ${el}._mjs_ldH ? ${el}._mjs_ldH.size : 0, entrees: typeof _mjsLdEntries !== 'undefined' ? _mjsLdEntries.size : null, libres: typeof _mjsLdFree !== 'undefined' ? _mjsLdFree.size : null, inv: window.__inv })`)
       const relues  = async (chemin: string) => {
         const n = vus.length
         await appeler('envoyer', chemin, 600)
@@ -185,5 +192,5 @@ describe('µload : le gabarit prévenu sans lire, la dérivée recalculée à ch
         }
       })
     }
-  })
+  }))
 })

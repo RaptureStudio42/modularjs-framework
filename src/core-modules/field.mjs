@@ -14,7 +14,7 @@
   gone         = false
   nameObserver = null
   $filled      = false
-  cible        = null
+  targetEl        = null
   control      = null
   firstErrors  = undefined
   answered     = false
@@ -87,21 +87,21 @@
     # le champ nommé est le PREMIER CHAMP du corps, pas son premier élément : une aide ou une icône peut passer devant
     target = els.find((el)-> fieldOf(el)) ?? els[0]
     if target
-      cible = target
+      targetEl = target
       # target peut envelopper le vrai champ (icône/affixe) : id/for doivent viser le champ natif, pas l'enveloppe
       native  = fieldOf(target) or target
       control = native
-      marquer($status)
+      mark($status)
       applyLabel($label)
       if not native.id
         native.id = 'mjs-field-' + Math.random().toString(36).slice(2, 9)
       $fieldId = native.id
       # name FACULTATIF sur l'enveloppe : le champ porte DÉJÀ le sien, sans quoi aucun formulaire ne le ramasse
-      explicite = !!$name
-      $name     = native.getAttribute?('name') or '' unless explicite
+      explicit = !!$name
+      $name     = native.getAttribute?('name') or '' unless explicit
       # un name déduit suit le champ enveloppé si son attribut change plus tard ; un name
       # explicite sur l'enveloppe, lui, reste prioritaire à vie (jamais réévalué)
-      unless explicite
+      unless explicit
         nameObserver = new MutationObserver -> $name = native.getAttribute?('name') or ''
         nameObserver.observe(native, { attributes: true, attributeFilter: ['name'] })
       # libellé flottant : il reste en haut tant que le champ n'est pas vide — relu aussi en quittant
@@ -135,7 +135,7 @@
   # réponse à SON formulaire
   µeffect ->
     errors = µres.errors
-    own    = if control and µ._mjs_formView then µ._mjs_formView?.(control, errors, cible.parentNode) else errors
+    own    = if control and µ._mjs_formView then µ._mjs_formView?.(control, errors, targetEl.parentNode) else errors
     unless seen and seenControl is control
       seen        = true
       seenControl = control
@@ -145,7 +145,7 @@
     # l'objet formulaire du composant qui a écrit ce champ (µform, absent sans lui), s'il connaît ce nom : l'erreur qu'il montre, celle du
     # serveur comprise ; sinon le sac lu. Le module se trouve par l'élément qu'il enveloppe (`@`, dans un reffet, serait le reffet),
     # connu au montage, qui pose `$fieldId` : sa lecture fait repasser ce reffet une fois le champ trouvé
-    err      = µ._mjs_formErr?.($fieldId and cible, $name) ?? own?.[$name]
+    err      = µ._mjs_formErr?.($fieldId and targetEl, $name) ?? own?.[$name]
     answered = true if err or (µ._mjs_toRaw?.(own) ?? own) isnt firstErrors
     if err
       $status   = 'error'
@@ -160,17 +160,17 @@
   # les règles ::slotted — une classe posée plus haut, dans l'arbre du module, n'est pas toujours
   # recalculée par Chromium sur un élément slotté (le cadre restait rouge après le succès) ; le
   # champ natif porte aussi aria-invalid, le seul signe d'erreur qu'un lecteur d'écran lise sur lui
-  marquer = (etat) ->
-    return unless cible
-    if etat is 'neutral' then cible.removeAttribute('mjs-field') else cible.setAttribute('mjs-field', etat)
-    if etat is 'error'
+  mark = (state) ->
+    return unless targetEl
+    if state is 'neutral' then targetEl.removeAttribute('mjs-field') else targetEl.setAttribute('mjs-field', state)
+    if state is 'error'
       control?.setAttribute('aria-invalid', 'true')
       invalidSet = true
     else if invalidSet
       control?.removeAttribute('aria-invalid')
       invalidSet = false
 
-  µeffect -> marquer($status)
+  µeffect -> mark($status)
 </script>
 
 <div class="field" part="field" :class{$status == 'error'}="has-error" :class{$status == 'ok'}="has-ok" :class{µlayout is 'float'}="float" :class{$filled}="filled">
@@ -230,8 +230,9 @@
   .float
     padding-top: 30px
 
+    // marge du modèle : l'icône et le libellé sont posés dans la case — une remise à zéro de la page (* { padding: 0 }) l'emporterait sur ce ::slotted() et les ferait passer sous la case, sur le message ; !important la garde, comme la bordure d'état (le reste de la case reste à la page)
     ::slotted(input)
-      padding: 20px 10px 20px 60px
+      padding: 20px 10px 20px 60px !important
       border: 2px solid #000
       border-radius: 8px
       background: var(--mjs-field-float-bg, #142846)

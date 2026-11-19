@@ -30,7 +30,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const runesSrc   = readFileSync(join(__dirname, '../src/runtime/mjs_runes.ts'), 'utf8')
 const dynamicSrc = lireDynamique(join(__dirname, '../src/runtime/mjs_dynamic.ts'), join(__dirname, '../src/runtime/mjs_element.ts'))
 const storeSrc   = lireRuntime(join(__dirname, '../src/runtime/mjs_store.ts'))
-const murSrc     = lireBloc(join(__dirname, '../src/runtime/mjs_element.ts'), 'mur')
+const murSrc     = lireBloc(join(__dirname, '../src/runtime/mjs_element.ts'), 'wall')
+// l'avis d'un état partagé à ses abonnés et l'ensemble des objets dont un composant a fait l'enveloppe (bloc <reffets-state> de
+// mjs_runes.ts, que ce bac à sable ne charge pas) : le cœur ne garde les lignes qui les lisent qu'avec ce bloc
+const etatSrc    = lireBloc(join(__dirname, '../src/runtime/mjs_runes.ts'), 'reffets-state')
 const schemaSrc  = readFileSync(join(__dirname, '../src/runtime/mjs_schema.ts'), 'utf8')
 
 // ============================================================================
@@ -147,7 +150,8 @@ function makeStore(): { µ: any; warnCalls: any[][] } {
   µ._mjs_rawIn = (v: any) => Array.isArray(v = µ._mjs_toRaw(v)) && v.some((e: any) => e !== µ._mjs_toRaw(e)) ? v.map(µ._mjs_toRaw) : v
   µ._mjs_bumpEpoch = function(raw: any) { const e = (µ._mjs_epochs.get(raw) || 0) + 1; µ._mjs_epochs.set(raw, e); return e }
   µ._mjs_safeKey = function(k: any) { return k !== '__proto__' && k !== 'constructor' && k !== 'prototype' }
-  // le vrai mur des prototypes (µ._mjs_mur, bloc <mur> de mjs_element.ts), que le magasin pose sur l'enveloppe d'un prototype rangé
+  new Function('µ', etatSrc)(µ)
+  // le vrai mur des prototypes (µ._mjs_wall, bloc <wall> de mjs_element.ts), que le magasin pose sur l'enveloppe d'un prototype rangé
   new Function('µ', murSrc)(µ)
   new Function('µ', storeSrc)(µ)
   return { µ, warnCalls }
@@ -202,20 +206,20 @@ describe('µ.Store refuse __proto__/constructor/prototype (mjs_store.ts)', () =>
 // µschema client borne ses lectures dans decode() (mjs_schema.ts)
 // ============================================================================
 
-// `mjschemaDecode`/`mjschemaHashRegistre` etc. sont des fonctions top-level du fichier (pas
+// `mjschemaDecode`/`mjschemaHashRegistry` etc. sont des fonctions top-level du fichier (pas
 // attachées à µ) — on les récupère via un `return` ajouté APRÈS la source (déclarations de
 // fonction hissées, résolues quel que soit l'ordre).
 function makeSchemaApi(): any {
   const µ: any = { log() {}, error() {}, warn() {} }
   poserMessages(µ)
-  const body = schemaSrc + '\nreturn { mjschemaCreerRegistre: mjschemaCreerRegistre, mjschemaDefSchema: mjschemaDefSchema, mjschemaEncode: mjschemaEncode, mjschemaDecode: mjschemaDecode, mjschemaHashRegistre: mjschemaHashRegistre };'
+  const body = schemaSrc + '\nreturn { mjschemaCreateRegistry: mjschemaCreateRegistry, mjschemaDefSchema: mjschemaDefSchema, mjschemaEncode: mjschemaEncode, mjschemaDecode: mjschemaDecode, mjschemaHashRegistry: mjschemaHashRegistry };'
   return new Function('µ', body)(µ)
 }
 
 describe('µschema client borne ses lectures dans decode() (mjs_schema.ts)', () => {
   it('str8 dont la longueur annoncée dépasse la fenêtre : RangeError NOMMÉ, jamais de fuite des octets voisins', () => {
     const api = makeSchemaApi()
-    const registre = api.mjschemaCreerRegistre()
+    const registre = api.mjschemaCreateRegistry()
     api.mjschemaDefSchema(registre, 'nom', { nom: 'str8' })
     const buf = new ArrayBuffer(32)
     new Uint8Array(buf).fill(0x41)   // 'A' partout — les octets VOISINS d'une fuite
@@ -234,7 +238,7 @@ describe('µschema client borne ses lectures dans decode() (mjs_schema.ts)', () 
 
   it('list(u8) annonçant 300 éléments dans une fenêtre de 4 octets : RangeError NOMMÉ', () => {
     const api = makeSchemaApi()
-    const registre = api.mjschemaCreerRegistre()
+    const registre = api.mjschemaCreateRegistry()
     api.mjschemaDefSchema(registre, 'liste', { items: { kind: 'list', of: 'u8' } })
     const buf = new ArrayBuffer(4)
     const dv = new DataView(buf)
@@ -249,15 +253,15 @@ describe('µschema client borne ses lectures dans decode() (mjs_schema.ts)', () 
 
   it('non-régression : trame correcte décodée à l\'identique, hash de registre stable', () => {
     const api = makeSchemaApi()
-    const registreA = api.mjschemaCreerRegistre()
+    const registreA = api.mjschemaCreateRegistry()
     api.mjschemaDefSchema(registreA, 'nom', { nom: 'str8' })
     const encoded = api.mjschemaEncode(registreA, 'nom', { nom: 'abc' })
     const decoded = api.mjschemaDecode(registreA, encoded)
-    assert.equal(decoded.objet.nom, 'abc')
+    assert.equal(decoded.object.nom, 'abc')
 
-    const registreB = api.mjschemaCreerRegistre()
+    const registreB = api.mjschemaCreateRegistry()
     api.mjschemaDefSchema(registreB, 'nom', { nom: 'str8' })
-    assert.equal(api.mjschemaHashRegistre(registreA), api.mjschemaHashRegistre(registreB), 'même déclaration → même hash')
-    assert.match(api.mjschemaHashRegistre(registreA), /^[0-9a-f]{8}$/, 'hash FNV-1a hexadécimal 8 caractères')
+    assert.equal(api.mjschemaHashRegistry(registreA), api.mjschemaHashRegistry(registreB), 'même déclaration → même hash')
+    assert.match(api.mjschemaHashRegistry(registreA), /^[0-9a-f]{8}$/, 'hash FNV-1a hexadécimal 8 caractères')
   })
 })

@@ -1,12 +1,12 @@
 // Régression — la persistance pouvait TUER le process. Deux mécanismes
 // distincts couverts ici (cf. commentaires de tête persist.ts/persist-file.ts pour le détail) :
-//   1. `_suivre` (dupliqué dans persist-file/sql/redis/bridge.ts) faisait `p.finally(cb)` SANS
+//   1. `_track` (dupliqué dans persist-file/sql/redis/bridge.ts) faisait `p.finally(cb)` SANS
 //      `.catch()` — une promesse suivie qui rejette devient une promesse ORPHELINE rejetée (le
 //      retour de `.finally()` n'est ni stocké ni catché) → unhandledRejection → Node 20 tue le
 //      process. Fix : `.catch(err => onLog('warn', …))` AVANT le `.finally()` dans les 4 adaptateurs.
-//   2. persist-file.ts `_ecrireAtomique` faisait `await this._pret` (mkdir initial) HORS du try —
-//      un mkdir raté (dossier inaccessible, chemin sous un fichier…) rejetait `_ecrireAtomique` À
-//      SEC, sans même passer par le `catch` prévu pour writeFile/rename. Fix : `_pret` DANS le try.
+//   2. persist-file.ts `_writeAtomic` faisait `await this._ready` (mkdir initial) HORS du try —
+//      un mkdir raté (dossier inaccessible, chemin sous un fichier…) rejetait `_writeAtomic` À
+//      SEC, sans même passer par le `catch` prévu pour writeFile/rename. Fix : `_ready` DANS le try.
 // MÊME patron `process.on('unhandledRejection', …)` + `off()` en `finally` que
 // tests/mjs-ws-core.test.ts (test 13, « onLog qui throw »).
 import assert from 'node:assert/strict'
@@ -107,7 +107,7 @@ describe('MJS-Server — persistance : erreurs NON FATALES, JAMAIS de crash proc
     await sansUnhandledRejection(async () => {
       const adapter = new FilePersistAdapter({ dir: cheminImpossible, onLog: (level, message) => { if (level === 'warn') warns.push(message) } })
 
-      adapter.save('p1', { id: 'p1' } as any)   // _ecrireAtomique : _pret DANS le try désormais (fix) → warn, jamais un rejet à sec
+      adapter.save('p1', { id: 'p1' } as any)   // _writeAtomic : _ready DANS le try désormais (fix) → warn, jamais un rejet à sec
       await tick(30)
       adapter.save('p2', { id: 'p2' } as any)   // le mkdir n'est jamais réessayé (limite connue, cf. commentaire de tête) — DOIT quand même warn proprement, pas throw
       await tick(30)

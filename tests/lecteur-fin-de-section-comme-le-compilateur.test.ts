@@ -6,7 +6,7 @@
 // auto-fermé n'est qu'une balise ; un <script> écrit dans un commentaire HTML ou en milieu de ligne n'est pas une section
 
 import assert from 'node:assert/strict'
-import { lireFichier, parcourir, type Noeud } from '../src/reader/index.js'
+import { readFile, traverse, type Node } from '../src/reader/index.js'
 import { extractSections } from '../src/transpiler/sections.js'
 import { scanImgTags } from '../src/transpiler/img-tag.js'
 
@@ -42,15 +42,15 @@ const HORS_SECTION: Array<[string, string]> = [
   ['milieu de ligne', `<p>a</p><script>const ex = '${EX}'</script>\n${IMG}\n`],
 ]
 
-const sectionsDe = (noeuds: Noeud[]): Noeud[] => noeuds.filter(n => n.sorte === 'script' || n.sorte === 'style')
+const sectionsDe = (noeuds: Node[]): Node[] => noeuds.filter(n => n.kind === 'script' || n.kind === 'style')
 
 describe('lecteur du fichier : une section se referme où le compilateur la referme', () => {
   for (const [nom, texte, langue] of SECTIONS) {
     it(nom, () => {
       const fermante = texte.includes('<style') ? '</style>' : '</script>'
-      const lu       = sectionsDe(lireFichier(texte, { compiler: false, directives: false, langue: langue ?? 'civet' }).enfants)
+      const lu       = sectionsDe(readFile(texte, { compiler: false, directives: false, lang: langue ?? 'civet' }).children)
       assert.equal(lu.length, 1, nom)
-      assert.equal(lu[0].fin, texte.lastIndexOf(fermante) + fermante.length, 'la section se referme sur sa vraie fermante')
+      assert.equal(lu[0].end, texte.lastIndexOf(fermante) + fermante.length, 'la section se referme sur sa vraie fermante')
       const s = extractSections(texte, { defaultScriptLang: (langue ?? 'civet') as 'civet' })
       assert.ok([s.script.raw, s.module.raw, s.style.raw].some(r => r.includes('a.png')), 'le compilateur lit la section entière')
       assert.deepEqual(scanImgTags(texte, langue).map(t => t.text), [IMG])
@@ -60,22 +60,22 @@ describe('lecteur du fichier : une section se referme où le compilateur la refe
   for (const [nom, texte] of HORS_SECTION) {
     it(nom, () => {
       assert.deepEqual(scanImgTags(texte).map(t => t.text), [IMG])
-      const vraie    = texte.indexOf(IMG)
-      const sections: Noeud[] = []
-      parcourir(lireFichier(texte, { compiler: false, directives: false }), (n) => {
-        if (n.sorte === 'script' || n.sorte === 'style') sections.push(n)
+      const vraie            = texte.indexOf(IMG)
+      const sections: Node[] = []
+      traverse(readFile(texte, { compiler: false, directives: false }), (n) => {
+        if (n.kind === 'script' || n.kind === 'style') sections.push(n)
       })
-      assert.ok(!sections.some(n => n.debut < vraie && vraie < n.fin), 'aucune section n\'avale la vraie balise')
+      assert.ok(!sections.some(n => n.start < vraie && vraie < n.end), 'aucune section n\'avale la vraie balise')
     })
   }
 
   it('<@head> : le <script> du bloc se referme à sa première fermante exacte, le <script src /> auto-fermé n\'est qu\'une balise', () => {
     const texte = `<@head>\n  <script src="/x.js" />\n  <script>\n  const fin = '</script >'\n  </script>\n</@head>\n${IMG}\n<script>\n  x = 1\n</script>\n`
-    const lu    = lireFichier(texte, { compiler: false, directives: false })
-    const tete  = lu.enfants.find(n => n.sorte === 'balise' && n.nom === '@head')
-    assert.ok(tete !== undefined && tete.sorte === 'balise', 'le bloc <@head> est lu')
-    const dedans = tete.enfants.filter(n => n.sorte !== 'texte')
-    assert.deepEqual(dedans.map(n => n.sorte === 'balise' ? `balise ${n.nom}${n.autoFermante ? ' /' : ''}` : n.sorte), ['balise script /', 'script'])
-    assert.equal(dedans[1].fin, texte.indexOf('</script>') + '</script>'.length)
+    const lu    = readFile(texte, { compiler: false, directives: false })
+    const tete  = lu.children.find(n => n.kind === 'tag' && n.name === '@head')
+    assert.ok(tete !== undefined && tete.kind === 'tag', 'le bloc <@head> est lu')
+    const dedans = tete.children.filter(n => n.kind !== 'text')
+    assert.deepEqual(dedans.map(n => n.kind === 'tag' ? `balise ${n.name}${n.selfClosing ? ' /' : ''}` : n.kind), ['balise script /', 'script'])
+    assert.equal(dedans[1].end, texte.indexOf('</script>') + '</script>'.length)
   })
 })

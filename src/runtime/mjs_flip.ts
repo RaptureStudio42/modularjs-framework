@@ -1,4 +1,4 @@
-// mjs_flip.coffee
+// mjs_flip.ts
 var originalReconcileList;
 
 // `animate` de la balise, insensible à une méthode du composant du même nom (cf. mjs_element.ts)

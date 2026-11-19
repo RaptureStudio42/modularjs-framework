@@ -40,12 +40,12 @@ function _mjsSkelHtml(c) {
       return '<i mjs-skel="' + k + '">' + (k === 'lines' ? '<i mjs-skel="line"></i><i mjs-skel="line"></i><i mjs-skel="line"></i>' : '') + '</i>';
     }
     if (!h) return '</' + open.pop() + '>';
-    var vide = h.charAt(h.length - 1) === '/';
-    if (vide) h = h.slice(0, -1);
+    var empty = h.charAt(h.length - 1) === '/';
+    if (empty) h = h.slice(0, -1);
     h = h.replace(/^([\w-]+)\.([^ ]+)/, function(_, n, k) { return n + ' class="' + k.split('.').join(' ') + '"'; });
-    var nom = h.split(' ')[0];
-    if (nom === 'img') return '<' + h + ' mjs-skel="media">';
-    if (!vide) open.push(nom);
+    var name = h.split(' ')[0];
+    if (name === 'img') return '<' + h + ' mjs-skel="media">';
+    if (!empty) open.push(name);
     return '<' + h + '>';
   });
   while (open.length) html += '</' + open.pop() + '>';
@@ -71,9 +71,9 @@ function _mjsSkelHeld(el) {
   for (var n = el, r; n; n = r.host) {
     r = n.getRootNode ? µ._mjs_dom.getRootNode(n) : document;
     if (!r || !r.querySelectorAll) return false;
-    var avant = r.querySelectorAll(':not(:defined)');
-    for (var i = 0; i < avant.length; i++) {
-      var b = avant[i];
+    var before = r.querySelectorAll(':not(:defined)');
+    for (var i = 0; i < before.length; i++) {
+      var b = before[i];
       if (b === n || (b.compareDocumentPosition(n) & 2)) break;
       if (b.localName !== el.localName && pending.has(b.localName) && !b.contains(n) && !µ._mjs_dom.hasAttribute(b, 'mjs-skel-host')) return true;
     }
@@ -86,9 +86,9 @@ function _mjsSkelRetry() {
   for (var i = 0; i < l.length; i++) if (l[i].isConnected) µ._mjs_skelShow(l[i]);
 }
 µ._mjs_skelShow = function(el) {
-  var tag  = el.localName;
-  var forme = tag.indexOf('mjs-') === 0 && µ._skels && Object.prototype.hasOwnProperty.call(µ._skels, tag.slice(4)) ? µ._skels[tag.slice(4)] : null;
-  if (!forme || el.firstChild || (typeof customElements !== 'undefined' && customElements.get(tag))) return null;
+  var tag   = el.localName;
+  var shape = tag.indexOf('mjs-') === 0 && µ._skels && Object.prototype.hasOwnProperty.call(µ._skels, tag.slice(4)) ? µ._skels[tag.slice(4)] : null;
+  if (!shape || el.firstChild || (typeof customElements !== 'undefined' && customElements.get(tag))) return null;
   if (_mjsSkelHeld(el)) {
     if (_mjsSkelLater.indexOf(el) < 0) _mjsSkelLater.push(el);
     return null;
@@ -100,7 +100,7 @@ function _mjsSkelRetry() {
   zone.setAttribute('aria-hidden', 'true');
   var t = document.createElement('template');
   // rangée en HTML entier (le manifeste d'avant la forme compacte, qui ne commence jamais par `<`) : lue telle quelle
-  t.innerHTML = µ._mjs_th(forme.charAt(0) === '<' ? forme : _mjsSkelHtml(forme));
+  t.innerHTML = µ._mjs_th(shape.charAt(0) === '<' ? shape : _mjsSkelHtml(shape));
   zone.appendChild(t.content);
   µ._mjs_dom.setAttribute(el, 'mjs-skel-host', '');
   µ._mjs_dom.appendChild(el, zone);

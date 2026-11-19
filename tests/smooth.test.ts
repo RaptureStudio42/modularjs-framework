@@ -47,7 +47,7 @@ describe('µ.smooth — store réactif (retard + glissement)', () => {
   it('affiche la source avec le retard, en glissant entre deux positions', () => {
     const { µ, getTask } = makeMu()
     const source: any = {}
-    const out = µ.smooth(source, { retard: 100 })
+    const out = µ.smooth(source, { delay: 100 })
     const task = getTask()
 
     source['a'] = { x: 0, y: 0 }
@@ -61,7 +61,7 @@ describe('µ.smooth — store réactif (retard + glissement)', () => {
   it('purge une entité disparue de la source', () => {
     const { µ, getTask } = makeMu()
     const source: any = { a: { x: 1, y: 1 } }
-    const out = µ.smooth(source, { retard: 0 })
+    const out = µ.smooth(source, { delay: 0 })
     const task = getTask()
     task._mjs_step(0)
     assert.ok('a' in out)

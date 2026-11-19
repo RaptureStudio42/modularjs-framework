@@ -13,7 +13,7 @@ import { poserMessages } from './helpers/messages-stub.js'
 
 const ICI = dirname(fileURLToPath(import.meta.url))
 const SRC = readFileSync(join(ICI, '../src/runtime/mjs_types.ts'), 'utf-8')
-const OU  = { bloc: '<vars>', ligne: 1 }
+const OU  = { block: '<vars>', line: 1 }
 
 // Reward ligne 2, id 3, title 4, price 5, surprise 6
 const CORPS = ['', '  Reward', '    id int 1..', '    title string 1..80', '    price = 0 int 0..', '    surprise = false bool', ''].join('\n')
@@ -84,7 +84,7 @@ describe('types — valeur de départ d\'un champ', () => {
   })
 
   it('une valeur de départ doit passer sa règle telle quelle : refusée à la construction, avec sa ligne', () => {
-    const faute = (champ: string) => () => resolveRule(parseTypesBlock(['', 'Reward', '  id int 1..', '  ' + champ].join('\n'), 1)[0].rule, {}, { bloc: '<types>', ligne: 2 })
+    const faute = (champ: string) => () => resolveRule(parseTypesBlock(['', 'Reward', '  id int 1..', '  ' + champ].join('\n'), 1)[0].rule, {}, { block: '<types>', line: 2 })
     assert.throws(faute('price = 0 int 1..'), /ligne 4[\s\S]*0[\s\S]*int 1\.\./)
     assert.throws(faute('price = 50 int 0..10'), /ligne 4/)
     assert.throws(faute("price = '5' int"), /ligne 4/)

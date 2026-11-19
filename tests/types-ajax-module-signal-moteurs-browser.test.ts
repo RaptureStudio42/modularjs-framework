@@ -14,7 +14,7 @@ import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 const FICHIERS: Record<string, string> = {
   'app.types.mjs':  '<types>\nReward\n  id     int 1..\n  title  string 1..80\n  price = 0 int 0..\n</types>',
   'charger.coffee.mjs': "export charger = -> await µajax '/app/rewards'\nexport chargerType = -> await µajax '/app/rewards', type: Reward[]",
-  'boutique.mjs':   "<vars>\n$v int 0..10\n</vars>\n<script>\n@import { charger chargerType } 'charger.coffee.mjs'\nµmount ->\n  µtypes.onError (e) ->\n    window.__vus.push e.path\n    throw new Error('gestionnaire qui lève')\n  try\n    $v = 'abc'\n  catch e\n    window.__leve = e.message\n  window.__brut  = await charger()\n  window.__type  = await chargerType()\n  window.__refus = await µajax '/app/refus?token=abc', type: Reward[], typeError: (e) -> []\n  window.__fin   = 1\n</script>\n<p>{$v}</p>",
+  'boutique.mjs':   "<vars>\n$v int 0..10\n</vars>\n<script>\n@import { charger chargerType } 'charger.coffee.mjs'\nµmount ->\n  µtypes.onError (e) ->\n    window.__vus.push e.path\n    throw new Error('gestionnaire qui lève')\n  try\n    $v = 'abc'\n  catch e\n    window.__leve = e.message\n  window.__brut  = await charger()\n  window.__type  = await chargerType()\n  window.__reject = await µajax '/app/refus?token=abc', type: Reward[], typeError: (e) -> []\n  window.__fin   = 1\n</script>\n<p>{$v}</p>",
 }
 
 describe('types : module .coffee, signal à l\'adresse réelle, gestionnaire qui lève', function () {
@@ -82,7 +82,7 @@ describe('types : module .coffee, signal à l\'adresse réelle, gestionnaire qui
         await page.goto(origine + '/users/jean.dupont@exemple.fr/boutique?token=abc#haut')
         await page.waitForFunction(() => (window as any).__fin === 1, null, { timeout: 10000 }).catch(() => fautes.push('__fin jamais posé'))
         await page.waitForTimeout(500)
-        const etat = await page.evaluate(() => ({ vus: (window as any).__vus, leve: (window as any).__leve, brut: (window as any).__brut, type: (window as any).__type, refus: (window as any).__refus }))
+        const etat = await page.evaluate(() => ({ vus: (window as any).__vus, leve: (window as any).__leve, brut: (window as any).__brut, type: (window as any).__type, refus: (window as any).__reject }))
         await page.close()
         assert.deepEqual(fautes, [])
         assert.deepEqual(etat, { vus: ['$v'], leve: 'gestionnaire qui lève', brut: [{ id: '1', title: 'a' }], type: [{ id: 1, title: 'a', price: 0 }], refus: [] })

@@ -29,8 +29,8 @@ const CAS: [string, boolean, boolean][] = [
   ['gabarit Civet, "proxy": false', false, true],
 ]
 const construits = new Map<string, Promise<Buffer | string>>()
-const construire = (env: string, js: boolean, sansProxy: boolean): Promise<Buffer | string> => {
-  const cle = `${env}-${js ? 'js' : 'civet'}-${sansProxy ? 'sans' : 'avec'}`
+const construire = (env: string, js: boolean, withoutProxy: boolean): Promise<Buffer | string> => {
+  const cle = `${env}-${js ? 'js' : 'civet'}-${withoutProxy ? 'sans' : 'avec'}`
   if (!construits.has(cle)) construits.set(cle, (async () => {
     const root   = mjsTmp('reffets-racine-fonction-du-gestionnaire-' + cle)
     const srcDir = join(root, 'src')
@@ -38,7 +38,7 @@ const construire = (env: string, js: boolean, sansProxy: boolean): Promise<Buffe
     mkdirSync(srcDir, { recursive: true })
     writeFileSync(join(srcDir, 'gm.mjs'), GM.replace('CONST', js ? '() => $y' : '-> $y'))
     const opts: any = { sourceDir: srcDir, outputDir: outDir, manifestPath: join(outDir, 'bundle.js'), urlPrefix: '/out', env, js: 'bundle', minify: env === 'prod' }
-    if (sansProxy) opts.proxy = false
+    if (withoutProxy) opts.proxy = false
     const bundler = new Bundler(opts)
     const stats   = await bundler.compile()
     await bundler.close()
@@ -97,8 +97,8 @@ for (const moteur of ['chromium', 'firefox', 'webkit'] as const) describe(`µeff
       await page.close()
     }
   }
-  for (const [nom, js, sansProxy] of CAS) for (const env of ['prod', 'dev']) it(`${nom}, ${env}`, async () => {
-    const b = await construire(env, js, sansProxy)
+  for (const [nom, js, withoutProxy] of CAS) for (const env of ['prod', 'dev']) it(`${nom}, ${env}`, async () => {
+    const b = await construire(env, js, withoutProxy)
     if (typeof b === 'string') { console.log('    construction : ' + b); assert.fail(b) }
     const corps = `
       await pas('ouverture', () => { el('gm').ouvrir(); sh('gm').querySelector('button.hors').click(); sh('gm').querySelector('button.c').click(); window.dispatchEvent(new Event('sondefen')) })

@@ -5,7 +5,7 @@
 // ceux qu'une construction complète lui donnerait. Deux suites : l'une part toujours d'un dossier de sortie NEUF (sans
 // `.mangle-cache.json`, l'essai d'une appli qui construit dans un dossier vide), l'autre construit toujours sur place (avec celui de la
 // construction d'avant) ; puis une construction en dossier neuf sur un cache écrit sur place, juste elle aussi. `--prod
-// --cache=verifier` : égale sur place, une ligne le dit ; un fichier du cache faussé à la main est vu, et la sortie reçoit les fichiers
+// --cache=verify` : égale sur place, une ligne le dit ; un fichier du cache faussé à la main est vu, et la sortie reçoit les fichiers
 // de la construction complète (code 1).
 
 import assert from 'node:assert/strict'
@@ -123,14 +123,14 @@ describe('mjs build --prod --cache : sortie identique à une construction compl�
     console.log(`      ${report.join('\n      ')}`)
   })
 
-  it('--prod --cache=verifier : égale sur place, une ligne le dit ; un fichier du cache faussé est vu, la sortie reçoit les fichiers justes, code 1', function () {
+  it('--prod --cache=verify : égale sur place, une ligne le dit ; un fichier du cache faussé est vu, la sortie reçoit les fichiers justes, code 1', function () {
     const root  = project('cache-prod-verifier')
     const cache = join(root, 'node_modules/.cache/mjs/build')
     const pied  = join(root, 'app/modularjs/pied.mjs')
-    const init  = build(root, ['--prod', '--cache=verifier'])
+    const init  = build(root, ['--prod', '--cache=verify'])
     assert.equal(init.status, 0, init.out)
     writeFileSync(pied, readFileSync(pied, 'utf-8').replace("t: 'pied'", "t: 'pied, tour 2'"))
-    const again = build(root, ['--prod', '--cache=verifier'])
+    const again = build(root, ['--prod', '--cache=verify'])
     assert.equal(again.status, 0, again.out)
     assert.ok(again.served > 0, again.out)
     assert.ok(CHECKED.test(again.out), `sur place, la vérification part du même .mangle-cache.json que la construction\n${again.out}`)
@@ -141,7 +141,7 @@ describe('mjs build --prod --cache : sortie identique à une construction compl�
     assert.ok(kept !== undefined, `fichier gardé de carte-b : ${[...files(join(cache, 'files')).keys()].join(', ')}`)
     appendFileSync(join(cache, 'files', kept), '\n// faussé à la main\n')
     const neuf    = join(root, 'essai/neuf')
-    const checked = build(root, ['--prod', '--cache=verifier', '--output', neuf, '--manifest', join(neuf, 'bundle.js')])
+    const checked = build(root, ['--prod', '--cache=verify', '--output', neuf, '--manifest', join(neuf, 'bundle.js')])
     assert.equal(checked.status, 1, checked.out)
     assert.match(checked.out, /cache jeté/, checked.out)
     assert.ok(checked.out.includes(kept), `le fichier qui diffère est nommé\n${checked.out}`)

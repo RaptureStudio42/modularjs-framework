@@ -21,7 +21,7 @@ import { createBrowserRenderer } from '../src/server/render-browser.js'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp, sweepRegistered } from './helpers/tmp.js'
 import { Bundler } from '../src/bundler/index.js'
-import { ecrireFeuilleRendu, feuillesConsignees } from '../src/server/sorties-rendu.js'
+import { writeRenderSheet, recordedSheets } from '../src/server/render-outputs.js'
 
 after(() => sweepRegistered())
 
@@ -172,7 +172,7 @@ describe('prérendu — poids des feuilles partagées sur une page à nombreuses
     }
   }
   const liens = (html: string): string[] => [...html.matchAll(/<link rel="stylesheet" href="([^"]+)">/g)].map(m => m[1])
-  const cssEcrits = (sortie: string): string[] => readdirSync(sortie).filter(f => /^mjs_ssr_style_partagee-.*\.css$/.test(f))
+  const cssEcrits = (sortie: string): string[] => readdirSync(sortie).filter(f => /^mjs_ssr_style_shared-.*\.css$/.test(f))
 
   it('300 composants identiques, une feuille partagée de 30 Ko : HTML sous 80 Ko (au lieu de 9 Mo), UNE feuille liée, écrite une seule fois', async function () {
     const p = fixture('prerendu-poids-300')
@@ -308,15 +308,15 @@ describe('prérendu — fichiers de feuilles partagées et purge du build', func
     assert.equal(stats.errors.length, 0)
     const registre = (): any => JSON.parse(readFileSync(join(out, '.mjs-outputs.json'), 'utf-8'))
     // un ancien prérendu avait écrit celle-ci (consignée à la main : ce processus ne l'a pas réécrite)
-    const ancienne = 'mjs_ssr_style_partagee-feuille-a-deadbeef.css'
+    const ancienne = 'mjs_ssr_style_shared-feuille-a-deadbeef.css'
     writeFileSync(join(out, ancienne), '.ancienne{}')
     const brut = registre(); brut.ssrStyles = [ancienne]
     writeFileSync(join(out, '.mjs-outputs.json'), JSON.stringify(brut))
-    const inconnue = 'mjs_ssr_style_partagee-autre-cafebabe.css'
+    const inconnue = 'mjs_ssr_style_shared-autre-cafebabe.css'
     writeFileSync(join(out, inconnue), '.inconnue{}')
-    const url = ecrireFeuilleRendu(out, '/o', 'partagee-feuille-b', '.courante { color: red }')
+    const url = writeRenderSheet(out, '/o', 'shared-feuille-b', '.courante { color: red }')
     const courante = url.split('/').pop()!
-    assert.ok(feuillesConsignees(out).includes(courante), 'la feuille écrite est consignée')
+    assert.ok(recordedSheets(out).includes(courante), 'la feuille écrite est consignée')
     const bilan = bundler.pruneOrphans()
     assert.deepEqual(bilan.removed.filter(n => n.startsWith('mjs_ssr_style')), [ancienne], `seule l'ancienne consignée est retirée — retirés : ${bilan.removed}`)
     assert.ok(existsSync(join(out, courante)), 'la feuille que ce rendu a écrite reste')
@@ -358,7 +358,7 @@ describe('prérendu — moteur navigateur : feuilles liées, thème et @import a
     const r = await avecNavigateur.call(this, p, 'mjs-liste')
     if(!r) return this.skip()
     assert.ok(r.html.length < 110000, `HTML de ${r.html.length} octets`)
-    const l = liens(r.html).filter(h => h.includes('partagee-feuille-grosse'))
+    const l = liens(r.html).filter(h => h.includes('shared-feuille-grosse'))
     assert.equal(l.length, 300, 'une balise par carte')
     assert.equal(new Set(l).size, 1, 'une seule URL')
     assert.equal((r.html.match(/\.regle-0 /g) ?? []).length, 0, 'la feuille n\'est écrite nulle part en ligne')

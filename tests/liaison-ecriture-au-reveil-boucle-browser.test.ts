@@ -12,6 +12,7 @@ import { existsSync } from 'node:fs'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { MODES, variantes, construire, charger, attendre, graves } from './helpers/liaison-navigateur.js'
 import type { Cible, Mode, Ouverture } from './helpers/liaison-navigateur.js'
+import { playTogether } from './helpers/engines-together.js'
 
 const SOURCES: Record<string, string> = {
   // un enfant qui ajoute 1 à sa propriété à chaque réveil, et note de quelle ligne il se réveille
@@ -128,7 +129,7 @@ const GESTES: Array<{ bouton: string, deplace: boolean, applique: (m: Modele) =>
   { bouton: 'dep', deplace: true, applique: (m) => ({ ...m, ordre: [m.ordre[m.ordre.length - 1], ...m.ordre.slice(0, -1)] }) }
 ]
 
-for (const nom of ['chromium', 'firefox'] as const) describe(`écriture de l'enfant à son réveil dans les lignes d'un {for} (${nom} réel)`, function () {
+for (const nom of ['chromium', 'firefox'] as const) playTogether(describe(`écriture de l'enfant à son réveil dans les lignes d'un {for} (${nom} réel)`, function () {
   this.timeout(300000)
   let present = false
   let browser: any
@@ -340,4 +341,4 @@ for (const nom of ['chromium', 'firefox'] as const) describe(`écriture de l'enf
       }
     })
   }
-})
+}))

@@ -57,14 +57,14 @@ function buildScript(): string {
   const locale = getMessagesLang() === 'en' ? 'en-US' : 'fr-FR'
   return `
 var FAMILIES = [
-  ['connexions', ${jsString(t('ws.stats.titre-connexions'))}, [['actives',${jsString(t('ws.stats.champ-actives'))}],['parquees',${jsString(t('ws.stats.champ-parquees'))}],['accueillies',${jsString(t('ws.stats.champ-accueillies'))}],['refusees',${jsString(t('ws.stats.champ-refusees'))}],['refuseesPlafond',${jsString(t('ws.stats.champ-refusees-plafond'))}],['refuseesOrigine',${jsString(t('ws.stats.champ-refusees-origine'))}],['refuseesBan',${jsString(t('ws.stats.champ-refusees-ban'))}],['fermees',${jsString(t('ws.stats.champ-fermees'))}]]],
-  ['salons', ${jsString(t('ws.stats.titre-salons'))}, [['nombre',${jsString(t('ws.stats.champ-nombre'))}],['membresTotal',${jsString(t('ws.stats.champ-membres-total'))}],['abonnesPresence',${jsString(t('ws.stats.champ-abonnes-presence'))}]]],
-  ['flux', ${jsString(t('ws.stats.titre-flux'))}, [['nombre',${jsString(t('ws.stats.champ-nombre'))}],['deltasEmis',${jsString(t('ws.stats.champ-deltas-emis'))}],['resyncsRejeu',${jsString(t('ws.stats.champ-resyncs-rejeu'))}],['resyncsReset',${jsString(t('ws.stats.champ-resyncs-reset'))}]]],
-  ['messages', ${jsString(t('ws.stats.titre-messages'))}, [['recus',${jsString(t('ws.stats.champ-recus'))}],['envoyes',${jsString(t('ws.stats.champ-envoyes'))}],['tamponnes',${jsString(t('ws.stats.champ-tamponnes'))}],['rejoues',${jsString(t('ws.stats.champ-rejoues'))}],['rejetes',${jsString(t('ws.stats.champ-rejetes'))}],['binaireRecues',${jsString(t('ws.stats.champ-binaire-recues'))}],['binaireIgnorees',${jsString(t('ws.stats.champ-binaire-ignorees'))}]]],
-  ['garde', ${jsString(t('ws.stats.titre-garde'))}, [['kicksDebit',${jsString(t('ws.stats.champ-kicks-debit'))}],['kicksSilence',${jsString(t('ws.stats.champ-kicks-silence'))}],['kicksEngorgement',${jsString(t('ws.stats.champ-kicks-engorgement'))}],['kicksChargeUtile',${jsString(t('ws.stats.champ-kicks-charge-utile'))}],['expirationsJeton',${jsString(t('ws.stats.champ-expirations-jeton'))}],['misesAuBanc',${jsString(t('ws.stats.champ-mises-au-banc'))}]]],
-  ['pont', ${jsString(t('ws.stats.titre-pont'))}, [['http401','401'],['rateLimited',${jsString(t('ws.stats.champ-rate-limited'))}],['webhooksEnvoyes',${jsString(t('ws.stats.champ-webhooks-envoyes'))}],['webhooksEchoues',${jsString(t('ws.stats.champ-webhooks-echoues'))}],['webhooksAbandonnes',${jsString(t('ws.stats.champ-webhooks-abandonnes'))}]]],
-  ['adaptateur', ${jsString(t('ws.stats.titre-adaptateur'))}, [['publies',${jsString(t('ws.stats.champ-publies'))}],['recus',${jsString(t('ws.stats.champ-recus'))}],['ignoresOrigin',${jsString(t('ws.stats.champ-ignores-origin'))}],['reordonnances',${jsString(t('ws.stats.champ-reordonnances'))}],['reconnexions',${jsString(t('ws.stats.champ-reconnexions'))}]]],
-  ['sessions', ${jsString(t('ws.stats.titre-sessions'))}, [['emises',${jsString(t('ws.stats.champ-emises'))}],['reprises',${jsString(t('ws.stats.champ-reprises'))}],['expirees',${jsString(t('ws.stats.champ-expirees'))}],['debordees',${jsString(t('ws.stats.champ-debordees'))}]]]
+  ['connections', ${jsString(t('ws.stats.title-connections'))}, [['active',${jsString(t('ws.stats.field-active'))}],['parked',${jsString(t('ws.stats.field-parked'))}],['welcomed',${jsString(t('ws.stats.field-accepted'))}],['refused',${jsString(t('ws.stats.field-refused'))}],['refusedCap',${jsString(t('ws.stats.field-refused-cap'))}],['refusedOrigin',${jsString(t('ws.stats.field-refused-origin'))}],['refusedBan',${jsString(t('ws.stats.field-refused-ban'))}],['closed',${jsString(t('ws.stats.field-closed'))}]]],
+  ['rooms', ${jsString(t('ws.stats.title-rooms'))}, [['count',${jsString(t('ws.stats.field-number'))}],['membersTotal',${jsString(t('ws.stats.field-members-total'))}],['presenceSubscribers',${jsString(t('ws.stats.field-subscribers-presence'))}]]],
+  ['streams', ${jsString(t('ws.stats.title-stream'))}, [['count',${jsString(t('ws.stats.field-number'))}],['deltasEmitted',${jsString(t('ws.stats.field-deltas-emitted'))}],['resyncsReplay',${jsString(t('ws.stats.field-resyncs-replay'))}],['resyncsReset',${jsString(t('ws.stats.field-resyncs-reset'))}]]],
+  ['messages', ${jsString(t('ws.stats.title-messages'))}, [['received',${jsString(t('ws.stats.field-received'))}],['sent',${jsString(t('ws.stats.field-sent'))}],['buffered',${jsString(t('ws.stats.field-buffered'))}],['replayed',${jsString(t('ws.stats.field-replayed'))}],['dropped',${jsString(t('ws.stats.field-rejected'))}],['binaryReceived',${jsString(t('ws.stats.field-binary-received'))}],['binaryIgnored',${jsString(t('ws.stats.field-binary-ignored'))}]]],
+  ['guard', ${jsString(t('ws.stats.title-guard'))}, [['kicksRate',${jsString(t('ws.stats.field-kicks-rate'))}],['kicksSilence',${jsString(t('ws.stats.field-kicks-silence'))}],['kicksBackpressure',${jsString(t('ws.stats.field-kicks-congestion'))}],['kicksPayload',${jsString(t('ws.stats.field-kicks-payload'))}],['tokenExpired',${jsString(t('ws.stats.field-expirations-token'))}],['bans',${jsString(t('ws.stats.field-bans'))}]]],
+  ['bridge', ${jsString(t('ws.stats.title-bridge'))}, [['http401','401'],['rateLimited',${jsString(t('ws.stats.field-rate-limited'))}],['webhooksSent',${jsString(t('ws.stats.field-webhooks-sent'))}],['webhooksFailed',${jsString(t('ws.stats.field-webhooks-failed'))}],['webhooksAbandoned',${jsString(t('ws.stats.field-webhooks-abandoned'))}]]],
+  ['adapter', ${jsString(t('ws.stats.title-adapter'))}, [['published',${jsString(t('ws.stats.field-published'))}],['received',${jsString(t('ws.stats.field-received'))}],['ignoredOrigin',${jsString(t('ws.stats.field-ignored-origin'))}],['reordered',${jsString(t('ws.stats.field-reordered'))}],['reconnects',${jsString(t('ws.stats.field-reconnects'))}]]],
+  ['sessions', ${jsString(t('ws.stats.title-sessions'))}, [['issued',${jsString(t('ws.stats.field-emitted'))}],['resumed',${jsString(t('ws.stats.field-resumed'))}],['expired',${jsString(t('ws.stats.field-expired'))}],['overflowed',${jsString(t('ws.stats.field-overflowed'))}]]]
 ]
 
 function fmt(n) { return typeof n === 'number' ? n.toLocaleString('${locale}') : String(n) }
@@ -80,20 +80,20 @@ function render(data) {
     var rows = f[2].map(function(fld) { return [fld[1], fmt(fam[fld[0]])] })
     return card(f[1], rows)
   })
-  var lat = data.intervallesPing || {}
-  cards.push(card(${jsString(t('ws.stats.titre-intervalle-ping'))}, [
+  var lat = data.pingIntervals || {}
+  cards.push(card(${jsString(t('ws.stats.title-interval-ping'))}, [
     ['p50', lat.p50 == null ? '—' : fmt(lat.p50)],
     ['p95', lat.p95 == null ? '—' : fmt(lat.p95)],
-    [${jsString(t('ws.stats.champ-echantillon'))}, fmt(lat.echantillon)]
+    [${jsString(t('ws.stats.field-sample'))}, fmt(lat.samples)]
   ]))
-  cards.push(card(${jsString(t('ws.stats.titre-memoire'))}, [
+  cards.push(card(${jsString(t('ws.stats.title-memory'))}, [
     ['uptime', fmt(data.uptime) +' s'],
-    ['RSS', fmt(Math.round(((data.memoire && data.memoire.rss) || 0) / 1048576)) +' Mo'],
+    ['RSS', fmt(Math.round(((data.memory && data.memory.rss) || 0) / 1048576)) +' Mo'],
     ['process', data.processId]
   ]))
   document.getElementById('grid').innerHTML = cards.join('')
-  document.getElementById('sub').textContent = ${jsString(t('ws.stats.sub-process'))}+ data.processId +${jsString(t('ws.stats.sub-depuis'))}+ fmt(data.uptime) +${jsString(t('ws.stats.sub-s'))}
-  document.getElementById('ts').textContent = new Date(data.horodatage).toLocaleTimeString('${locale}')
+  document.getElementById('sub').textContent = ${jsString(t('ws.stats.sub-process'))}+ data.processId +${jsString(t('ws.stats.sub-since'))}+ fmt(data.uptime) +${jsString(t('ws.stats.sub-s'))}
+  document.getElementById('ts').textContent = new Date(data.timestamp).toLocaleTimeString('${locale}')
 }
 
 function refresh() {
@@ -113,16 +113,16 @@ export function renderStatsPage(snapshot: MjsWsStatsSnapshot): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${htmlText(t('ws.stats.titre-page'))}</title>
+<title>${htmlText(t('ws.stats.title-page'))}</title>
 <style>
 ${CSS}
 </style>
 </head>
 <body>
-<h1>${htmlText(t('ws.stats.titre-page'))}</h1>
+<h1>${htmlText(t('ws.stats.title-page'))}</h1>
 <p class="sub" id="sub"></p>
 <div class="grid" id="grid"></div>
-<footer>${htmlText(t('ws.stats.pied-de-page'))} <span id="ts"></span></footer>
+<footer>${htmlText(t('ws.stats.footer'))} <span id="ts"></span></footer>
 <script>
 ${buildScript()}
 var INITIAL_STATS = ${initial}

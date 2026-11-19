@@ -107,9 +107,9 @@
 :where(.mjs-toast-action:active){background:var(--mjs-toast-active-bg, color-mix(in srgb, var(--mjs-toast-fg, #fff) 18%, transparent))!important}
 :where(.mjs-toast-action:focus-visible){outline:2px solid var(--mjs-toast-focus, var(--mjs-toast-fg, #fff))!important}
 :where(.mjs-toast-action ~ .mjs-toast-close){position:relative}
-:where(.mjs-toast-action ~ .mjs-toast-barre){pointer-events:none}
-:where(.mjs-toast-barre){position:absolute;left:0;top:0;height:3px;background:var(--mjs-toast-color);box-shadow:0 0 10px var(--mjs-toast-color);animation:mjs-toast-vie var(--mjs-toast-duration, 4000ms) linear forwards}
-:where(.mjs-toast-paused .mjs-toast-barre){animation-play-state:paused}
+:where(.mjs-toast-action ~ .mjs-toast-bar){pointer-events:none}
+:where(.mjs-toast-bar){position:absolute;left:0;top:0;height:3px;background:var(--mjs-toast-color);box-shadow:0 0 10px var(--mjs-toast-color);animation:mjs-toast-vie var(--mjs-toast-duration, 4000ms) linear forwards}
+:where(.mjs-toast-paused .mjs-toast-bar){animation-play-state:paused}
 :where(.mjs-toast-swipe){touch-action:pan-y}
 :where(.mjs-toast-dragging){translate:var(--mjs-toast-dx, 0) 0;-webkit-user-select:none;user-select:none}
 :where(.mjs-toast-sliding){translate:var(--mjs-toast-dx, 0) 0;transition:translate .2s ease}
@@ -334,8 +334,8 @@ function __modalReason(e) {
 // son script tournait. `herite` : la lecture suit le prototype (les méthodes d'une Map, qui vivent sur Map.prototype).
 // Un getter (ou un trap de Proxy) qui lève devient une erreur claire, nommant la clé fautive, au lieu d'une pile opaque
 // venue du fond du runtime.
-function __modalPick(obj, key, where, herite) {
-  try { return (herite || Object.prototype.hasOwnProperty.call(obj, key)) ? obj[key] : void 0; }
+function __modalPick(obj, key, where, inherits) {
+  try { return (inherits || Object.prototype.hasOwnProperty.call(obj, key)) ? obj[key] : void 0; }
   catch (e) { throw __modalErr(µ._mjs_txt('modalRead', { where: where, reason: __modalReason(e) }, 'la lecture de `{where}` a échoué : {reason}.')); }
 }
 
@@ -522,11 +522,11 @@ function __modalPlaySignature(name) {
       __modalAudioCtx = new Ctor();
     }
     ctx = __modalAudioCtx;
-    function note(freq, t0, dur, forme, vol) {
+    function note(freq, t0, dur, shape, vol) {
       var osc, gain, t;
       osc = ctx.createOscillator();
       gain = ctx.createGain();
-      osc.type = forme || 'sine';
+      osc.type = shape || 'sine';
       osc.frequency.value = freq;
       osc.connect(gain);
       gain.connect(ctx.destination);
@@ -647,12 +647,12 @@ var __toastBox = null;
 // l'emporte avec le reste de la page, un élément plein écran que l'appli retire non (cf. __toastGone)
 var __toastMark = null;
 
-// toast (élément) → son enregistrement : le conteneur ne garde que des éléments, __toastRelire en retrouve l'état de pause
+// toast (élément) → son enregistrement : le conteneur ne garde que des éléments, __toastReread en retrouve l'état de pause
 var __toastRecs = new WeakMap();
 
 function __toastEnsureContainer() {
-  var racine = document.documentElement || document.body;
-  var el = __toastBox || racine.querySelector('.mjs-toasts'); // retenu hors de la page : sorti avec un élément retiré, il y revient (cf. __toastGone)
+  var root = document.documentElement || document.body;
+  var el = __toastBox || root.querySelector('.mjs-toasts'); // retenu hors de la page : sorti avec un élément retiré, il y revient (cf. __toastGone)
   if (!el) {
     el = document.createElement('div');
     el.className = 'mjs-toasts';
@@ -676,7 +676,7 @@ function __toastPlace(el) {
   if (el.parentNode === host) { return; }
   __modalAdoptSheet(host);
   host.appendChild(el);
-  __toastRelire(el);
+  __toastReread(el);
 }
 
 function __toastFollow() {
@@ -739,7 +739,7 @@ var __TOAST_POSITIONS = { 'top-right': 1, 'top-left': 1, 'bottom-right': 1, 'bot
 
 // marge de garde entre la pile et le bord OPPOSÉ de la fenêtre — même respiration que les 16px
 // d'ancrage des préréglages (feuille µ._mjs_modalSheet).
-var __TOAST_MARGE = 16;
+var __TOAST_MARGIN = 16;
 
 // position courante — RELUE à chaque affichage réel (même stratégie que __toastMax) : préréglage
 // connu → son nom ; objet de longueurs CSS {top,right,bottom,left} → 'custom' (les valeurs sont
@@ -790,7 +790,7 @@ function __toastApplyPosition(el) {
 function __toastBounds(container) {
   var a = container.firstElementChild.getBoundingClientRect();
   var b = container.lastElementChild.getBoundingClientRect();
-  return { haut: Math.min(a.top, b.top), bas: Math.max(a.bottom, b.bottom) };
+  return { top: Math.min(a.top, b.top), bottom: Math.max(a.bottom, b.bottom) };
 }
 
 // essai d'insertion RÉEL : le toast est ajouté puis la pile MESURÉE, et il est retiré
@@ -820,16 +820,16 @@ function __toastBounds(container) {
 // toasts sans que __toastRemove soit passé — le compteur dit alors « 3 affichés » sur un conteneur
 // vide. Sans cette garde, la mesure planterait sur un firstElementChild nul.
 function __toastFits(container, el) {
-  var vh, avant, apres, ok;
+  var vh, before, after, ok;
   if (__toastVisibleCount === 0 || !container.firstElementChild || typeof window === 'undefined' || typeof el.getBoundingClientRect !== 'function') { container.appendChild(el); return true; }
   vh = window.innerHeight || (document.documentElement && document.documentElement.clientHeight) || 0;
-  avant = __toastBounds(container);
+  before = __toastBounds(container);
   container.appendChild(el);
-  apres = __toastBounds(container);
-  if (!vh || apres.bas - apres.haut <= 0) { return true; }
+  after = __toastBounds(container);
+  if (!vh || after.bottom - after.top <= 0) { return true; }
   ok = true;
-  if (apres.bas > avant.bas) { ok = apres.bas <= vh - __TOAST_MARGE; }             // la pile s'est allongée vers le BAS
-  if (ok && apres.haut < avant.haut) { ok = apres.haut >= __TOAST_MARGE; }         // … et/ou vers le HAUT
+  if (after.bottom > before.bottom) { ok = after.bottom <= vh - __TOAST_MARGIN; }             // la pile s'est allongée vers le BAS
+  if (ok && after.top < before.top) { ok = after.top >= __TOAST_MARGIN; }         // … et/ou vers le HAUT
   if (ok) { return true; }
   container.removeChild(el);
   return false;
@@ -841,7 +841,7 @@ function __toastFits(container, el) {
 // file, invisible). Position (re)posée ICI aussi, à CHAQUE affichage réel — un changement à chaud
 // de µ.config.notifyPosition déplace le conteneur COURANT (donc les toasts déjà affichés avec).
 function __toastDisplay(rec) {
-  var barreEl, container;
+  var barEl, container;
   container = __toastEnsureContainer();
   __toastApplyPosition(container);
   if (!__toastFits(container, rec.el)) { return false; } // plus la place à l'écran : il RESTE en file
@@ -849,10 +849,10 @@ function __toastDisplay(rec) {
   __toastVisibleCount++;
   __modalSound(__MODAL_SOUND_NAMES[rec.type] && rec.type !== 'notify' ? rec.type : 'notify', rec.sound); // signature du type, repli ping notify
   if (rec.duration > 0) {
-    barreEl = document.createElement('i');
-    barreEl.className = 'mjs-toast-barre';
-    barreEl.style.setProperty('--mjs-toast-duration', rec.duration + 'ms');
-    rec.el.appendChild(barreEl);
+    barEl = document.createElement('i');
+    barEl.className = 'mjs-toast-bar';
+    barEl.style.setProperty('--mjs-toast-duration', rec.duration + 'ms');
+    rec.el.appendChild(barEl);
     rec.left = rec.duration;
     rec.since = Date.now();
     rec.timerId = setTimeout(function() { __toastRemove(rec); }, rec.duration);
@@ -900,7 +900,7 @@ function __toastBindPause(rec) {
 // le conteneur vient de changer de parent (plein écran) : le navigateur oublie le survol et le focus de ses toasts, et Firefox et WebKit
 // n'envoient alors ni pointerleave ni focusout — la tenue posée avant resterait pour toujours, le toast ne se fermerait plus. On relit donc
 // l'état réel de chaque toast, enfant du conteneur : encore survolé (:hover), focus encore dedans ; sinon la tenue est relâchée
-function __toastRelire(box) {
+function __toastReread(box) {
   Array.prototype.forEach.call(box.children, function(el) {
     var rec = __toastRecs.get(el);
     if (!rec) { return; }
@@ -1551,8 +1551,8 @@ function __modalDismissResult(result) {
     // et ce close() fermait alors la MAUVAISE. Le spinner restait à vie — keydown global jamais
     // retiré, promesse jamais résolue, focus jamais rendu. `fire()` pose la closure de façon
     // SYNCHRONE (l'exécuteur de la promesse tourne à l'appel), donc on la capture ici même.
-    var propre = __modalCurrentClose;
-    return { close: function() { if (propre) { var f = propre; propre = null; f(__modalDismissResult()); } } };
+    var clean = __modalCurrentClose;
+    return { close: function() { if (clean) { var f = clean; clean = null; f(__modalDismissResult()); } } };
   },
 
   // toast — empilé au préréglage µ.config.notifyPosition (défaut 'top-right' ; .mjs-toasts,

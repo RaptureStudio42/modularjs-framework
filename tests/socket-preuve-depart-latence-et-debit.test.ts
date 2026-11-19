@@ -130,7 +130,7 @@ describe('µ.socket — preuve du départ d\'un salon : ni écart faussé chez l
     assert.equal(envoyes.length, 24, 'un µ:join et un µ:leave par tour, rien d\'autre : ' + JSON.stringify(envoyes))
     await attendre(() => retenus(a) === 0, { message: 'dernier départ prouvé, la ligne calme', delai: 2500 })
     assert.equal(pings('a').length, 1, 'une seule preuve, après la boucle')
-    assert.equal(app.stats().garde.kicksDebit, 0)
+    assert.equal(app.stats().guard.kicksRate, 0)
     a.destroy()
   })
 

@@ -3,7 +3,7 @@
 // absente (défaut) = comportement historique STRICT, aucune connexion refusée pour son origine ;
 // posée (tableau = allowlist stricte, ou fonction = contrôle total), chaque connexion entrante est
 // contrôlée à l'admission, AVANT le hello (pas de µ:denied, code de fermeture 1008 « Policy
-// Violation », compteur DÉDIÉ stats.connexions.refuseesOrigine — MÊME patron que refuseForCap,
+// Violation », compteur DÉDIÉ stats.connections.refusedOrigin — MÊME patron que refuseForCap,
 // cf. tests/mjs-ws-connection-cap.test.ts). MemoryTransport pour l'essentiel (origin déjà exposée
 // par transport.ts::MemoryTransport.connect, cf. MjsWsRemoteInfo) ; un test transport RÉEL
 // (bibliothèque `ws`) pour couvrir aussi transport-ws.ts (remoteInfo.origin posé ligne 119).
@@ -64,7 +64,7 @@ describe('MJS-WS — verifyOrigin ABSENT : non-régression stricte (opt-in)', ()
       assert.equal(c1.readyState, MemoryClientSocket.OPEN)
       assert.equal(c2.readyState, MemoryClientSocket.OPEN)
       assert.equal(c3.readyState, MemoryClientSocket.OPEN)
-      assert.equal(app.stats().connexions.refuseesOrigine, 0)
+      assert.equal(app.stats().connections.refusedOrigin, 0)
       c1.close(); c2.close(); c3.close()
       await tick()
     } finally {
@@ -86,20 +86,20 @@ describe('MJS-WS — verifyOrigin (forme tableau, allowlist stricte)', () => {
       const admis = transport.connect({ url: 'memory://vo-allow-ok', origin: 'https://exemple.com' })
       await tick()
       assert.equal(admis.readyState, MemoryClientSocket.OPEN)
-      assert.equal(app.stats().connexions.refuseesOrigine, 0)
+      assert.equal(app.stats().connections.refusedOrigin, 0)
       admis.close()
 
       const refuse = transport.connect({ url: 'memory://vo-allow-ko', origin: 'https://autre.com' })
       const refuseClosed = new Promise<{ code: number; reason: string }>((resolve) => { refuse.onclose = (ev) => resolve(ev) })
       const ev1 = await refuseClosed
       assert.equal(ev1.code, 1008, "origine non listée → close 1008")
-      assert.equal(app.stats().connexions.refuseesOrigine, 1)
+      assert.equal(app.stats().connections.refusedOrigin, 1)
 
       const sansOrigin = transport.connect({ url: 'memory://vo-allow-absent' })   // pas de champ `origin`
       const sansOriginClosed = new Promise<{ code: number; reason: string }>((resolve) => { sansOrigin.onclose = (ev) => resolve(ev) })
       const ev2 = await sansOriginClosed
       assert.equal(ev2.code, 1008, "Origin absent → refusé")
-      assert.equal(app.stats().connexions.refuseesOrigine, 2)
+      assert.equal(app.stats().connections.refusedOrigin, 2)
 
       await tick()
     } finally {
@@ -115,7 +115,7 @@ describe('MJS-WS — verifyOrigin (forme tableau, allowlist stricte)', () => {
       const c = transport.connect({ url: 'memory://vo-case', origin: 'https://exemple.com' })
       await tick()
       assert.equal(c.readyState, MemoryClientSocket.OPEN, "comparaison insensible à la casse — admise")
-      assert.equal(app.stats().connexions.refuseesOrigine, 0)
+      assert.equal(app.stats().connections.refusedOrigin, 0)
       c.close()
       await tick()
     } finally {
@@ -150,7 +150,7 @@ describe('MJS-WS — verifyOrigin (forme fonction)', () => {
       const koClosed = new Promise<{ code: number; reason: string }>((resolve) => { ko.onclose = (ev) => resolve(ev) })
       const ev = await koClosed
       assert.equal(ev.code, 1008)
-      assert.equal(app.stats().connexions.refuseesOrigine, 1)
+      assert.equal(app.stats().connections.refusedOrigin, 1)
 
       assert.equal(vus.length, 2)
       assert.ok(vus.every(v => v.hasRemote), 'le MjsWsRemoteInfo doit être transmis au prédicat')
@@ -175,7 +175,7 @@ describe('MJS-WS — verifyOrigin (forme fonction)', () => {
       const closed = new Promise<{ code: number; reason: string }>((resolve) => { c.onclose = (ev) => resolve(ev) })
       const ev = await closed
       assert.equal(ev.code, 1008, "un prédicat qui lève doit REFUSER la connexion (fail-closed), pas planter/admettre")
-      assert.equal(app.stats().connexions.refuseesOrigine, 1)
+      assert.equal(app.stats().connections.refusedOrigin, 1)
       await tick()
     } finally {
       await app.stop()
@@ -187,23 +187,23 @@ describe('MJS-WS — verifyOrigin (forme fonction)', () => {
 // compteur stats — incrémenté SEULEMENT sur refus, jamais sur admission
 // ============================================================================================
 
-describe('MJS-WS — verifyOrigin : compteur stats.connexions.refuseesOrigine', () => {
+describe('MJS-WS — verifyOrigin : compteur stats.connections.refusedOrigin', () => {
   it('incrémenté sur refus, PAS sur admission', async () => {
     const transport = new MemoryTransport()
     const app       = mjsWs({ transport, verifyOrigin: ['https://exemple.com'], onLog: () => {} })
     await app.listen()
     try {
-      assert.equal(app.stats().connexions.refuseesOrigine, 0)
+      assert.equal(app.stats().connections.refusedOrigin, 0)
 
       const ok1 = transport.connect({ url: 'memory://vo-stats-ok1', origin: 'https://exemple.com' })
       const ok2 = transport.connect({ url: 'memory://vo-stats-ok2', origin: 'https://exemple.com' })
       await tick()
-      assert.equal(app.stats().connexions.refuseesOrigine, 0, "aucune admission ne doit incrémenter le compteur")
+      assert.equal(app.stats().connections.refusedOrigin, 0, "aucune admission ne doit incrémenter le compteur")
 
       const ko = transport.connect({ url: 'memory://vo-stats-ko', origin: 'https://etranger.example' })
       const koClosed = new Promise<void>((resolve) => { ko.onclose = () => resolve() })
       await koClosed
-      assert.equal(app.stats().connexions.refuseesOrigine, 1)
+      assert.equal(app.stats().connections.refusedOrigin, 1)
 
       ok1.close(); ok2.close()
       await tick()
@@ -235,7 +235,7 @@ describe('MJS-WS — verifyOrigin (transport RÉEL, bibliothèque `ws`)', functi
         setTimeout(() => reject(new Error('timeout — la connexion aurait dû être fermée par le serveur')), 4000)
       })
       assert.equal(closeCode, 1008)
-      assert.equal(app.stats().connexions.refuseesOrigine, 1)
+      assert.equal(app.stats().connections.refusedOrigin, 1)
 
       // non-régression : une origine listée passe toujours en transport RÉEL
       const admis = await connectReal(port, 'https://exemple.com')

@@ -194,7 +194,7 @@ if (typeof MjsSocket !== 'undefined') {
     };
     // ouverture : à l'appel, puis au retour dans la page du composant qui l'a ouverte (cf. _mjs_ownHandle) — les
     // invitations et annonces gardées reprennent leur expiration (échue pendant la fermeture : retirée aussitôt)
-    var ouvrir = function() {
+    var openNow = function() {
       var i, l;
       h._mjs_room = self.room('lobby:' + hallName);
       self._mjs_lobbies.push(h);
@@ -207,7 +207,7 @@ if (typeof MjsSocket !== 'undefined') {
       _lobbyEnter(self, h);
     };
     // fermeture : close(), ou destruction de ce composant
-    var fermer = function() {
+    var close = function() {
       var i = self._mjs_lobbies.indexOf(h), id;
       if (i === -1) { return false; }
       self._mjs_lobbies.splice(i, 1);
@@ -216,26 +216,26 @@ if (typeof MjsSocket !== 'undefined') {
       h._mjs_room.leave();
     };
 
-    state.status    = function(statut, texte) { self.send('lobby:status', { hall: hallName, status: statut, text: texte }); };
-    state.invite   = function(identityId, note) { self.send('lobby:invite', { hall: hallName, identityId: identityId, note: note }); };
-    state.reply  = function(inv, accepte) {
+    state.status = function(status, text) { self.send('lobby:status', { hall: hallName, status: status, text: text }); };
+    state.invite = function(identityId, note) { self.send('lobby:invite', { hall: hallName, identityId: identityId, note: note }); };
+    state.reply  = function(inv, accepts) {
       var id = (inv && typeof inv === 'object') ? inv.id : inv;
-      self.send('lobby:reply', { hall: hallName, id: id, accepted: accepte });
+      self.send('lobby:reply', { hall: hallName, id: id, accepted: accepts });
     };
     state.advertise  = function(p) {
       p = p || {};
       self.send('lobby:advertise', { hall: hallName, title: p.title, code: p.code, seats: p.seats, meta: p.meta });
     };
-    state.withdraw   = function(id) { self.send('lobby:withdraw', { hall: hallName, id: id }); };
-    state.join = function(annonce) {
-      var id = (annonce && typeof annonce === 'object') ? annonce.id : annonce;
+    state.withdraw = function(id) { self.send('lobby:withdraw', { hall: hallName, id: id }); };
+    state.join     = function(announce) {
+      var id = (announce && typeof announce === 'object') ? announce.id : announce;
       self.send('lobby:join', { hall: hallName, id: id });
     };
-    state.block   = function(identityId) { self.send('lobby:block', { hall: hallName, identityId: identityId }); };
-    state.close    = function() { h._mjs_shut = true; fermer(); };
+    state.block = function(identityId) { self.send('lobby:block', { hall: hallName, identityId: identityId }); };
+    state.close = function() { h._mjs_shut = true; close(); };
 
-    ouvrir();
-    this._mjs_ownHandle(h, fermer, ouvrir);
+    openNow();
+    this._mjs_ownHandle(h, close, openNow);
 
     return state;
   };

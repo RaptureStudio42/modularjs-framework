@@ -62,8 +62,8 @@ async function arreter(app: any) { const arret = app.stop().catch(() => {}); awa
 const apres = (ms: number, v: boolean) => () => new Promise<boolean>(r => setTimeout(() => r(v), ms))
 const erreurs = (trames: any[], depuis: number) => trames.slice(depuis).filter(f => f.t === 'µ:error').map(f => f.p)
 const deltas = (trames: any[], depuis: number, nom: string) => trames.slice(depuis).filter(f => f.t === nom).map(f => f.p.op + (f.p.key ? ':' + f.p.key : ''))
-const refus = (stream: string) => ({ message: t('ws.streams.acces-flux-refuse'), code: 'stream-denied', stream })
-const refusEchu = (stream: string) => ({ message: t('ws.streams.garde-sans-reponse'), code: 'stream-denied', stream })
+const refus = (stream: string) => ({ message: t('ws.streams.access-stream-refused'), code: 'stream-denied', stream })
+const refusEchu = (stream: string) => ({ message: t('ws.streams.guard-no-response'), code: 'stream-denied', stream })
 
 describe('MJS-WS — flux : le refus nomme le flux (µ:error code stream-denied)', function () {
   this.timeout(20000)

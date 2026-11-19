@@ -298,7 +298,7 @@ describe('bundler — sans clé `runtime`, seuls les modules optionnels repéré
   }
 
   // appli à vues serveur et appli en JavaScript réduites : la liste proposée nomme ujs, qui garde le bloc du préchargement des liens
-  // (`<precharge-on>`, mjs_ujs.ts) ; collée, elle rend à l'octet le cœur détecté sur le même projet quand il écrit `:preload="on"`, et
+  // (`<preload-on>`, mjs_ujs.ts) ; collée, elle rend à l'octet le cœur détecté sur le même projet quand il écrit `:preload="on"`, et
   // sur un projet qui ne l'écrit pas, ce même cœur : le détecté plus ce seul bloc
   const PRECHARGE = '<nav><a href="/produits" :preload="on">produits</a></nav>'
   for (const [cas, composants, avecPrecharge, config, avant] of [
@@ -313,7 +313,7 @@ describe('bundler — sans clé `runtime`, seuls les modules optionnels repéré
       assert.ok(avec.coeur !== null && avecCollee.coeur !== null, 'cœur écrit attendu')
       assert.ok(avecCollee.coeur === avec.coeur, 'projet qui écrit le préchargement : même cœur à l\'octet')
       // projet qui ne l'écrit pas, bâti sans minification (les noms courts dépendent du code des composants) : le cœur collé, privé du
-      // texte des blocs `<precharge-on>` et rendu aux lignes `<sans-precharge-on>`, est le cœur détecté à l'octet
+      // texte des blocs `<preload-on>` et rendu aux lignes `<no-preload-on>`, est le cœur détecté à l'octet
       const sansMin = { ...config, minify: false }
       const defaut  = await selection(composants, sansMin, avant, 'prod')
       const liste   = listeProposee(defaut.infos)
@@ -322,8 +322,8 @@ describe('bundler — sans clé `runtime`, seuls les modules optionnels repéré
       assert.ok(defaut.coeur !== null && collee.coeur !== null, 'cœur écrit attendu')
       assert.ok(collee.coeur.includes('const _mjsEagerFlush') && !defaut.coeur.includes('const _mjsEagerFlush'), 'le bloc du préchargement, dans le cœur collé seulement')
       let prive = collee.coeur
-      const [bloc1, bloc2] = blocsDuSource('precharge-on')
-      const [sans]         = blocsDuSource('sans-precharge-on').map(t => t.replace(/^(\s*)\/\/ /gm, '$1'))
+      const [bloc1, bloc2] = blocsDuSource('preload-on')
+      const [sans]         = blocsDuSource('no-preload-on').map(t => t.replace(/^(\s*)\/\/ /gm, '$1'))
       assert.equal(prive.split(bloc1).length, 2, 'premier bloc du préchargement attendu une fois')
       assert.equal(prive.split(bloc2).length, 2, 'second bloc du préchargement attendu une fois')
       prive = prive.replace(bloc1, () => '').replace(bloc2, () => sans)

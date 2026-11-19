@@ -1,6 +1,6 @@
 // catalogue-server-strings : 3 chaînes EN DUR (français
 // figé, jamais couvert par messages/fr.ts+en.ts) — promues ici au catalogue
-// (server.form-champ-reserve-ignore, server.browser-popup-fermee, server.ssr-await-rejete-sans-
+// (server.form-field-reserved-ignored, server.browser-popup-closed, server.ssr-await-rejete-sans-
 // branche). Preuve RÉELLE du hors-catalogue : `setMessagesLang('en')` ne changeait RIEN au texte
 // observé (français quoi qu'il arrive) — après promotion, la même bascule fait sortir l'anglais.
 

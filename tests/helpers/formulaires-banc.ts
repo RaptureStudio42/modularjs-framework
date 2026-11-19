@@ -1,9 +1,10 @@
 // le banc des réponses du serveur aux formulaires d'une page, au navigateur réel : chaque cas, un composant (et ceux qu'il monte) seul dans
 // sa page, servi avec la navigation (ujs, ajax, vault). Un envoi dont le corps porte `okok` réussit (`method: 'none'`, `errors: null`), un
 // autre est refusé (422, les erreurs que le cas donne pour l'adresse du formulaire) ; `lent` fait attendre sa réponse 1,5 s. Deux liens
-// répondent `method: 'none'` : `/lien-null` avec `errors: null`, `/lien-autre` avec une clé `autre` neuve. Le relevé d'un cas, une ligne
-// par étape : ce que montre chaque <@@field> (son marquage `mjs-field`, son message), le texte de `#ex` (l'objet formulaire), ou les
-// passages comptés des µeffect (`window.__compte`). Chaque moteur, en développement puis en production en un seul fichier minifié (le
+// répondent `method: 'none'` : `/lien-null` avec `errors: null`, `/lien-autre` avec une clé `autre` neuve (1 au premier clic d'une page,
+// puis 2…). Le relevé d'un cas, une ligne par étape : ce que montre chaque <@@field> (son marquage `mjs-field`, son message), le texte de
+// `#ex` (l'objet formulaire), les passages comptés des µeffect (`window.__compte`), ou la valeur que chaque µeffect a lue à son dernier
+// passage (`window.__seenMark`, prise en texte pendant le passage : un µeffect resté sur une valeur périmée s'y voit). Chaque moteur, en développement puis en production en un seul fichier minifié (le
 // build d'un mode n'est fait qu'au premier test qui le demande) ; les écarts de tous les cas sont rendus ensemble
 
 import assert from 'node:assert/strict'
@@ -17,6 +18,7 @@ import { MOTEURS, moteurPresent } from './navigateurs-compiles.js'
 export interface Gestes {
   voir: (etape: string) => Promise<void>
   compter: (etape: string) => Promise<void>
+  vus: (etape: string) => Promise<void>
   noter: (cle: string) => Promise<void>
   ecart: (etape: string, cle: string) => Promise<void>
   remplir: (id: string, valeur: string) => Promise<void>
@@ -41,10 +43,11 @@ export interface Cas {
 
 const TYPES: Record<string, string> = { '.js': 'text/javascript; charset=utf-8', '.json': 'application/json', '.map': 'application/json', '.css': 'text/css' }
 
-// les outils de la page : les passages comptés, un élément cherché à travers les ombres, ce que montre le <@@field> qui enveloppe un champ,
+// les outils de la page : les passages comptés, la dernière valeur lue par chaque µeffect, un élément cherché à travers les ombres, ce que montre le <@@field> qui enveloppe un champ,
 // le texte de `#ex`
 const OUTILS = `
   window.__n = {}; window.__compte = (k) => { window.__n[k] = (window.__n[k] || 0) + 1 }
+  window.__v = {}; window.__seenMark = (k, v) => { window.__v[k] = v === undefined ? 'undefined' : JSON.stringify(v) }
   window.__deep = (sel) => { const pile = [document]; while (pile.length) { const r = pile.shift(); const e = r.querySelector(sel); if (e) return e; for (const x of r.querySelectorAll('*')) { const s = x._shadow || x.shadowRoot; if (s) pile.push(s) } } return null }
   window.__champ = (id) => { const c = window.__deep('#' + id); if (!c) return null; const w = c.parentNode; const sh = w && (w._shadow || w.shadowRoot); const er = sh && sh.querySelector('.error'); return [c.getAttribute('mjs-field'), er ? er.textContent.trim() : ''] }
   window.__ex = () => { const p = window.__deep('#ex'); try { return p ? JSON.parse(p.textContent) : null } catch { return 'illisible' } }
@@ -108,6 +111,7 @@ export function bancFormulaires(titre: string, prefixe: string, cas: Cas[]): voi
         if (f === 'lien-null') return json(200, none)
         if (f === 'lien-autre') return json(200, { method: 'none', module: null, props: { autre: ++autre }, url: url.pathname, title: null })
         if (/^p\d+$/.test(f)) {
+          autre = 0
           res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'vary': 'X-MJS-Nav' })
           res.end(`<!doctype html><html lang="fr"><head><meta charset="utf-8"><script type="module" src="/modularjs/bundle.js"></script></head><body><mjs-${f}></mjs-${f}></body></html>`)
           return
@@ -158,6 +162,7 @@ export function bancFormulaires(titre: string, prefixe: string, cas: Cas[]): voi
                   lignes.push(`${etape} | ${etats}${ex}`)
                 },
                 compter: async (etape) => { lignes.push(`${etape} | compteurs=${await p.evaluate(() => JSON.stringify((window as any).__n))}`) },
+                vus: async (etape) => { lignes.push(`${etape} | ${await p.evaluate(() => Object.keys((window as any).__v).map((k) => k + '=' + (window as any).__v[k]).join(' '))}`) },
                 noter: async (cle) => { notes[cle] = await compte(cle) },
                 ecart: async (etape, cle) => { lignes.push(`${etape} | ${cle}=+${await compte(cle) - (notes[cle] ?? 0)}`) },
                 remplir: async (id, valeur) => { await (await prise(id))!.fill(valeur, { force: true }) },

@@ -105,7 +105,7 @@ describe('stores — variable d’un {for} en ligne pure : l’écriture passe p
       const f = Object.keys(compiles).find((x) => x.startsWith(nom + '-'))
       assert.ok(f, `${nom} : composant construit`)
       assert.ok(!/data-mjs-idx-0|_mjs_nIdx/.test(compiles[f]), `${nom} : aucun indice posé sur les balises de la ligne`)
-      assert.ok(/_mjs_en\b/.test(compiles[f]), `${nom} : le gestionnaire lit l’entrée de la ligne`)
+      assert.ok(/_mjs_ent\b/.test(compiles[f]), `${nom} : le gestionnaire lit l’entrée de la ligne`)
     }
   })
 

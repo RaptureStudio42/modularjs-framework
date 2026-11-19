@@ -285,7 +285,7 @@ describe('µload : le gabarit ne boucle jamais et relit une fois après un envoi
           const enfant = `${o.el}._shadow.querySelector('mjs-c-dep')`
           assert.ok(await o.page.evaluate(`(() => { const k = ${enfant}; window.__k = k; k.__n = 0; const f = k._mjs_invalidate; k._mjs_invalidate = function () { k.__n++; return f.apply(this, arguments) }; return k.isConnected })()`), 'enfant monté')
           await o.appeler('basculer', false, 400)
-          const tient = () => o.page.evaluate(`typeof _mjsLdEntrees === 'undefined' ? 'invisible' : ['/api/h/dep', '/api/h/dep0'].filter((u) => { const e = _mjsLdEntrees.get(u); return !!(e && e.o && e.o.has(window.__k)) }).join()`)
+          const tient = () => o.page.evaluate(`typeof _mjsLdEntries === 'undefined' ? 'invisible' : ['/api/h/dep', '/api/h/dep0'].filter((u) => { const e = _mjsLdEntries.get(u); return !!(e && e.o && e.o.has(window.__k)) }).join()`)
           const t1 = await tient()
           await repondre((m) => m === 'GET /api/h/dep' || m === 'GET /api/h/dep0')
           await o.appeler('envoyer', '/api/h/dep', 400)

@@ -20,14 +20,14 @@ import { createRoomsEngine } from './rooms.js'
 import type { MjsWsRoomHandle, MjsWsRoomOptions, MjsWsRoomsEngineOptions, MjsWsRoomsOptions } from './rooms.js'
 import { createStreamsEngine } from './streams.js'
 import type { MjsWsStreamHandle, MjsWsStreamOptions, MjsWsStreamsCluster } from './streams.js'
-import { createBridge, EXCEPT_RECU } from './bridge.js'
-import type { MjsWsBridgeEngine, MjsWsResolvedBridgeOptions, MjsWsExceptRecu } from './bridge.js'
+import { createBridge, EXCEPT_RECEIVED } from './bridge.js'
+import type { MjsWsBridgeEngine, MjsWsResolvedBridgeOptions, MjsWsReceivedExcept } from './bridge.js'
 // proxy de décisions (proxy.ts) — auth ET join (rooms.ts) résolus ICI, UNE SEULE FOIS
 // (cf. leurs commentaires respectifs) : objet {url,secret,...} → fonction compatible via
-// creerAuthProxy/creerJoinProxy, fonction historique → passthrough tel quel. proxy.ts dépend de
+// createAuthProxy/createJoinProxy, fonction historique → passthrough tel quel. proxy.ts dépend de
 // bridge.ts (signCanonical/canonicalString) : core.ts reste le SEUL point qui importe proxy.ts EN
 // VALEUR dans ce module (rooms.ts ne le peut pas, cf. son commentaire — graphe de modules).
-import { creerAuthProxy, creerJoinProxy } from './proxy.js'
+import { createAuthProxy, createJoinProxy } from './proxy.js'
 import type { MjsWsProxyOptions } from './proxy.js'
 import { createSessionsEngine, identityIdOf } from './sessions.js'
 import { ACCOUNTS_TYPES } from './accounts.js'
@@ -41,7 +41,7 @@ import type { MjsWsAdapter } from './adapter.js'
 import { createStatsRegistry } from './stats.js'
 import type { MjsWsGuardCause, MjsWsStatsRegistry, MjsWsStatsSnapshot } from './stats.js'
 // µschema — cf. mjs-ws/schema.ts pour le moteur (BRANCHÉ ici, jamais réimplémenté) ;
-// src/schema/core.ts pour le registre pur (defSchema/encode/decode/hash, zéro API node/navigateur)
+// src/schema/core.ts pour le registre pur (defineSchema/encode/decode/hash, zéro API node/navigateur)
 import { createSchemaEngine } from './schema.js'
 import type { MjsWsResolvedSchema, MjsWsSchemaEngine } from './schema.js'
 import type { MjschemaFields } from '../schema/core.js'
@@ -190,7 +190,7 @@ export type MjsWsAuthFn = (hello: MjsWsHelloPayload, meta: MjsWsRemoteInfo) => u
  * du premier cas — `throw new MjsWsAuthDenied('mot de passe incorrect')` pour un refus dont le
  * message doit atteindre le client tel quel ; tout le reste (Error nue, throw d'une chaîne, etc.)
  * est traité comme interne et SANITISÉ (message générique au client, détail loggé côté serveur).
- * Le proxy de décisions (creerAuthProxy, proxy.ts) reste transmis tel quel SANS passer par cette
+ * Le proxy de décisions (createAuthProxy, proxy.ts) reste transmis tel quel SANS passer par cette
  * classe — son throw est déjà sûr par construction (cf. authIsProxy plus bas).
  */
 export class MjsWsAuthDenied extends Error {
@@ -203,12 +203,12 @@ export class MjsWsAuthDenied extends Error {
 // marques communes à toutes les copies de ce module (le paquet MJS-Server embarque son propre cœur, cf. build:self) :
 // une erreur levée avec la classe importée de 'modularjs-framework/ws' est reconnue par le cœur de MJS-Server, ce
 // qu'`instanceof` ne fait pas entre deux copies d'une classe
-const MARQUE_REFUS_AUTH = Symbol.for('modularjs-framework.ws.auth-denied')
-const MARQUE_REFUS      = Symbol.for('modularjs-framework.ws.error')
-Object.defineProperty(MjsWsAuthDenied.prototype, MARQUE_REFUS_AUTH, { value: true })
+const AUTH_REJECT_MARK = Symbol.for('modularjs-framework.ws.auth-denied')
+const REJECT_MARK      = Symbol.for('modularjs-framework.ws.error')
+Object.defineProperty(MjsWsAuthDenied.prototype, AUTH_REJECT_MARK, { value: true })
 
-function estMarquee(err: unknown, marque: symbol): boolean {
-  try { return typeof err === 'object' && err !== null && (err as Record<symbol, unknown>)[marque] === true }
+function isMarked(err: unknown, mark: symbol): boolean {
+  try { return typeof err === 'object' && err !== null && (err as Record<symbol, unknown>)[mark] === true }
   catch { return false }
 }
 
@@ -224,7 +224,7 @@ export class MjsWsError extends Error {
     this.name = 'MjsWsError'
   }
 }
-Object.defineProperty(MjsWsError.prototype, MARQUE_REFUS, { value: true })
+Object.defineProperty(MjsWsError.prototype, REJECT_MARK, { value: true })
 
 /** Options déjà normalisées (défauts appliqués) — cf. index.ts pour la surface publique avec défauts. */
 export interface MjsWsResolvedOptions {
@@ -322,12 +322,12 @@ export interface MjsWsApp {
   on(type: string, handler: (p: any, client: MjsWsClient) => unknown): void
   /**
    * paquets activables (cf. packages.ts) — installe un paquet : enregistre ses
-   * handlers/conventions sur CETTE app (`pkg.installer(app)`, SYNCHRONE — cf. MjsPackage).
+   * handlers/conventions sur CETTE app (`pkg.install(app)`, qui peut rendre une promesse — cf. MjsPackage).
    * Chaînable (`app.use(a).use(b)`, retourne toujours `app`). Double installation du MÊME
-   * `pkg.nom` = `log('warn', …)`, IGNORÉE (jamais réinstallée, jamais un throw) — cf. createCore
-   * pour le registre des noms déjà installés. Un `installer` qui LÈVE : `pkg.nom`
+   * `pkg.name` = `log('warn', …)`, IGNORÉE (jamais réinstallée, jamais un throw) — cf. createCore
+   * pour le registre des noms déjà installés. Un `install` qui LÈVE : `pkg.name`
    * n'est PAS inscrit (retry du même nom possible ensuite, ex. paquet corrigé), l'erreur remonte
-   * telle quelle à l'appelant (log cataloguée + rethrow). Exemple de référence : packages.ts::paquetEcho.
+   * telle quelle à l'appelant (log cataloguée + rethrow). Exemple de référence : packages.ts::echoPackage.
    */
   use(pkg: MjsPackage): MjsWsApp
   /** `false` UNIQUEMENT si la charge n'a pas pu être sérialisée — cf. core.ts::sendRaw. */
@@ -365,11 +365,11 @@ export interface MjsWsApp {
   stats(): MjsWsStatsSnapshot
   /**
    * µschema — déclare (ou ré-affirme à l'identique, no-op) un schéma binaire nommé.
-   * `champs` = objet ORDONNÉ { nom: type, ... } (cf. src/schema/core.ts pour les types et `list`/
-   * `bits`). Garde AJOUT-SEUL : re-déclarer `nom` avec une forme DIFFÉRENTE (champ/type/ordre) jette
+   * `fields` = objet ORDONNÉ { field: type, ... } (cf. src/schema/core.ts pour les types et `list`/
+   * `bits`). Garde AJOUT-SEUL : re-déclarer `name` avec une forme DIFFÉRENTE (champ/type/ordre) jette
    * clair — un schéma existant est IMMUABLE. Cf. docs/23-mjs-ws.md « µschema » pour le guide complet.
    */
-  schema(nom: string, champs: MjschemaFields): void
+  schema(name: string, fields: MjschemaFields): void
 }
 
 // ----------------------------------------------------------------------------
@@ -380,14 +380,14 @@ export interface MjsWsApp {
 let _idCounter = Date.now()
 // trames ouvertes à un visiteur sans compte accueilli au banc : le battement, le rafraîchissement, et celles du paquet
 // comptes (la liste vient du paquet lui-même, jamais recopiée ici)
-const TYPES_OUVERTS_AU_BANC = new Set<string>(['µ:ping', 'µ:refresh', ...ACCOUNTS_TYPES])
-// `except` publié aux autres processus : les personnes qu'a reçues le pont (cf. bridge.ts EXCEPT_RECU — l'id d'un compte
+const BENCHED_OPEN_TYPES = new Set<string>(['µ:ping', 'µ:refresh', ...ACCOUNTS_TYPES])
+// `except` publié aux autres processus : les personnes qu'a reçues le pont (cf. bridge.ts EXCEPT_RECEIVED — l'id d'un compte
 // y exclut aussi ses onglets servis ailleurs) et, à part, les connexions : celles exclues ici, plus celles que le pont a
 // reçues en `{ client }`. Un id de connexion n'y désigne jamais le compte qui porterait le même
-function idsExclus(clients: MjsWsClient[], opts: object | undefined): MjsWsExceptRecu {
-  const connexions = clients.map(c => c.id)
-  const recu       = (opts as { [EXCEPT_RECU]?: MjsWsExceptRecu } | undefined)?.[EXCEPT_RECU]
-  return recu ? { personnes: recu.personnes, connexions: connexions.concat(recu.connexions) } : { personnes: [], connexions }
+function excludedIds(clients: MjsWsClient[], opts: object | undefined): MjsWsReceivedExcept {
+  const connections = clients.map(c => c.id)
+  const received    = (opts as { [EXCEPT_RECEIVED]?: MjsWsReceivedExcept } | undefined)?.[EXCEPT_RECEIVED]
+  return received ? { peers: received.peers, connections: connections.concat(received.connections) } : { peers: [], connections }
 }
 
 class MjsWsClientImpl implements MjsWsClient {
@@ -406,6 +406,8 @@ class MjsWsClientImpl implements MjsWsClient {
   // doit viser le compteur de l'IP réellement incrémentée, jamais l'ancienne.
   connSlotHeld = false
   connSlotIp: string | undefined = undefined
+  // adresse sous laquelle cette session parquée est comptée (cf. parkedByIp) — undefined hors parcage ou sans adresse
+  parkIp: string | undefined = undefined
 
   // Course d'état à la fermeture refusée — 'closing' : décision de
   // fermeture déjà prise SYNCHRONEMENT (sendDeniedAndClose/kickClient/dismissClient, cf. leurs
@@ -458,13 +460,13 @@ class MjsWsClientImpl implements MjsWsClient {
   // débit partagé (limits.rateBy) — clés des seaux de cette connexion, figées dès son hello accepté
   // (compte connu, IP de la connexion physique) : jamais recalculées message après message ;
   // remises à null par une reprise de session (connexion physique neuve, cf. resumeClient)
-  clesDebit: string[] | null = null
+  rateKeys: string[] | null = null
   // visiteur sans compte accueilli d'une adresse au banc pour la faute d'un visiteur sans compte : jusqu'à cette échéance,
-  // seuls le battement, le rafraîchissement et le paquet comptes lui sont ouverts (cf. handleHello, refuseAuBanc)
-  auBancJusqua = 0
+  // seuls le battement, le rafraîchissement et le paquet comptes lui sont ouverts (cf. handleHello, rejectBenched)
+  benchedUntil = 0
   // accueilli au banc : ni présence globale ni webhook connect tant que dure le banc (rien à montrer d'une connexion qui
-  // ne peut que se connecter à un compte) — rattrapés à sa fin, cf. rattraperAccueil ; sans connect, pas de disconnect
-  accueilDiffere = false
+  // ne peut que se connecter à un compte) — rattrapés à sa fin, cf. catchUpWelcome ; sans connect, pas de disconnect
+  welcomeDeferred = false
 
   // rebranchés par acceptConnection() — a besoin du moteur (sendRaw/dismiss)
   send: (type: string, p?: unknown) => void = () => {}
@@ -511,17 +513,17 @@ export async function awaitBounded(promises: Array<Promise<void>>, timeoutMs: nu
   clearTimeout(timer!)
 }
 
-// compteurs LOCAUX optionnels d'un adaptateur (ignoresOrigin/reconnexions, cf.
+// compteurs LOCAUX optionnels d'un adaptateur (ignoredOrigin/reconnects, cf.
 // adapter-redis.ts RedisAdapter) — duck typing SOBRE (jamais un `instanceof RedisAdapter` en dur,
 // hors du contrat MjsWsAdapter lui-même) : tout adaptateur qui expose ces deux getters NUMÉRIQUES
 // les voit recopiés dans app.stats(), MemoryAdapter pourra les exposer un jour sans qu'aucune
 // ligne ici ne change. Absent/non-numérique → 0, déjà la valeur par défaut du registre (stats.ts)
 // — AUCUNE régression pour un adaptateur qui ne les expose pas (mono-process ou adaptateur maison).
-function adapterLocalCounters(adapter: MjsWsAdapter | undefined): { ignoresOrigin: number; reconnexions: number } {
-  const a = adapter as unknown as { ignoresOrigin?: unknown; reconnexions?: unknown } | undefined
+function adapterLocalCounters(adapter: MjsWsAdapter | undefined): { ignoredOrigin: number; reconnects: number } {
+  const a = adapter as unknown as { ignoredOrigin?: unknown; reconnects?: unknown } | undefined
   return {
-    ignoresOrigin: typeof a?.ignoresOrigin === 'number' ? a.ignoresOrigin : 0,
-    reconnexions:  typeof a?.reconnexions  === 'number' ? a.reconnexions  : 0,
+    ignoredOrigin: typeof a?.ignoredOrigin === 'number' ? a.ignoredOrigin : 0,
+    reconnects:    typeof a?.reconnects    === 'number' ? a.reconnects    : 0,
   }
 }
 
@@ -557,26 +559,29 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   // jamais ailleurs. cf. le commentaire de MjsWsLimits.maxConnections/maxConnectionsPerIp.
   let liveConnections = 0
   const connectionsByIp = new Map<string, number>()
+  // sessions PARQUÉES par adresse (reprise de session) : une session parquée a rendu sa place de connexion, sans ce compte
+  // une adresse en parquait autant qu'elle ouvrait de connexions pendant la grâce — bornées par limits.maxConnectionsPerIp
+  const parkedByIp = new Map<string, number>()
   // débit partagé (limits.rateBy) — seaux COMMUNS à plusieurs connexions, clés 'id:<compte>' /
   // 'ip:<adresse>' ; chacun disparaît avec la dernière connexion de sa clé (identityRemove,
   // releaseConnectionSlot) : la mémoire suit les connexions vivantes, sans minuterie
   const rateBy        = opts.limits.rateBy ?? 'connection'
-  const seauxPartages = new Map<string, TokenBucket>()
+  const sharedBuckets = new Map<string, TokenBucket>()
   // mise au banc (opts.ban) — fautes récentes par cible (horodatages) et refus en cours
-  // (échéance), mêmes clés que les seaux ci-dessus ; balayés au fil de l'eau (balayerBan)
-  const banFautes  = new Map<string, number[]>()
-  const banJusqua  = new Map<string, number>()
-  let banBalayeA   = 0
+  // (échéance), mêmes clés que les seaux ci-dessus ; balayés au fil de l'eau (sweepBan)
+  const banFaults   = new Map<string, number[]>()
+  const bannedUntil = new Map<string, number>()
+  let banSweptAt    = 0
   const servers     = new Map<string, (p: any, client: MjsWsClient) => unknown>()
   const subscribers = new Map<string, Array<(p: any, client: MjsWsClient) => unknown>>()
   // paquets activables (packages.ts) — noms déjà installés via app.use (cf. son
   // commentaire dans le littéral `app` plus bas) : idempotence PAR NOM, jamais par référence
-  // d'objet (deux instances distinctes du MÊME paquet, ex. deux `paquetEcho()`, comptent comme
+  // d'objet (deux instances distinctes du MÊME paquet, ex. deux `echoPackage()`, comptent comme
   // une double installation).
   const installedPackages = new Set<string>()
   // Faille comblée — installation ASYNC EN VOL, par nom (MÊME clé que installedPackages ci-dessus) :
-  // SANS ce registre, deux app.use(pkg) rapprochés (avant la résolution du 1er installer() async)
-  // exécutaient installer() DEUX FOIS — installedPackages ne se remplit qu'À LA RÉSOLUTION, la
+  // SANS ce registre, deux app.use(pkg) rapprochés (avant la résolution du 1er install() async)
+  // exécutaient install() DEUX FOIS — installedPackages ne se remplit qu'À LA RÉSOLUTION, la
   // fenêtre entre l'appel et cette résolution n'était gardée par RIEN. Retiré dès que l'installation
   // aboutit (succès → installedPackages) ou échoue (log cataloguée, cf. use() plus bas) — un ÉCHEC
   // libère donc le nom pour un retry, comme avant ce correctif.
@@ -608,8 +613,8 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   // paramètre — donc compter erreurs/avertissements ICI couvre l'app entière sans autre accroche.
   const stats: MjsWsStatsRegistry = createStatsRegistry()
   const log: MjsWsLogFn = (level, message, meta) => {
-    if (level === 'error') stats.erreurs.erreurs++
-    else if (level === 'warn') stats.erreurs.avertissements++
+    if (level === 'error') stats.errors.errors++
+    else if (level === 'warn') stats.errors.warnings++
     // filet — `log()` est appelé depuis des dizaines de sites, SYNCHRONES et dans des
     // chaînes `.catch(err => log(...))` (FIFO par connexion, cf. handleRaw/resumeClient) : un
     // onLog utilisateur qui THROW (bug de son intégration — Winston/Pino cassé, JSON.stringify
@@ -626,7 +631,7 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   // pas savoir ICI si `opts.auth` lit VRAIMENT `meta.headers.cookie` (fonction opaque, jamais
   // instrumentée), donc formulation plus large — « auth applicative sans contrôle d'origine ».
   // Émis UNE SEULE FOIS au démarrage, jamais par connexion (sinon déni de service par journal).
-  if (opts.auth && !opts.verifyOrigin) log('warn', t('ws.core.origine-non-verifiee-avec-cookie'))
+  if (opts.auth && !opts.verifyOrigin) log('warn', t('ws.core.origin-not-checked-with-cookie'))
 
   // --- envoi bas niveau (contre-pression + sérialisation gardées) ----------
   // retour — `false` UNIQUEMENT si la charge n'a pas pu être SÉRIALISÉE (cf.
@@ -640,12 +645,12 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     // opts.resume.maxBuffered (même plafond que le tampon normal de sessions.ts) — au-delà,
     // silencieusement laissée de côté plutôt que de croître sans borne.
     if (client.resuming) {
-      if (client.resumeQueue!.length < opts.resume!.maxBuffered) { stats.messages.tamponnes++; client.resumeQueue!.push(obj as Record<string, unknown>) }
+      if (client.resumeQueue!.length < opts.resume!.maxBuffered) { stats.messages.buffered++; client.resumeQueue!.push(obj as Record<string, unknown>) }
       return true
     }
     // client parqué (reprise) : tamponné au lieu d'envoyé — exclusions et bornes
     // dans le moteur (sessions.ts). `parked` implique que sessionsEngine existe.
-    if (client.parked) { stats.messages.tamponnes++; sessionsEngine!.buffer(client, obj as Record<string, unknown>); return true }
+    if (client.parked) { stats.messages.buffered++; sessionsEngine!.buffer(client, obj as Record<string, unknown>); return true }
     if (isBackpressured(client.conn.bufferedAmount, opts.limits.maxBuffered)) { dropForBackpressure(client); return true }
 
     // µschema — SEUL choke point d'encodage (app.send/sendUser/broadcast/room().send
@@ -658,10 +663,10 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     // ci-dessous) — jamais ici : un rejeu de session ne doit JAMAIS re-lever pour une frame déjà
     // valide à son envoi d'origine (cf. commentaire de tête de schema.ts).
     const frame = obj as Record<string, unknown>
-    const binaire = frame.seq == null && typeof frame.t === 'string' ? schemaEngine.encodeOutbound(frame.t, frame.p) : null
-    if (binaire) {
-      try { handOver(client, binaire) }
-      catch (err) { stats.messages.rejetes++; log('error', t('ws.core.echec-envoi-binaire'), { err }) }
+    const binary = frame.seq == null && typeof frame.t === 'string' ? schemaEngine.encodeOutbound(frame.t, frame.p) : null
+    if (binary) {
+      try { handOver(client, binary) }
+      catch (err) { stats.messages.dropped++; log('error', t('ws.core.failed-send-binary'), { err }) }
       return true
     }
 
@@ -670,9 +675,9 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     // avant, la trame disparaissait en silence (compteur muet) — log cataloguée AVEC le type de
     // message, `false` remonté à l'appelant (cf. app.send/preEncodeFrame, MÊME racine)
     try { data = opts.serialize(obj) }
-    catch (err) { stats.messages.rejetes++; log('error', t('ws.core.echec-serialisation', { type: String(frame.t) }), { err }); return false }
+    catch (err) { stats.messages.dropped++; log('error', t('ws.core.failed-serialization', { type: String(frame.t) }), { err }); return false }
     try { handOver(client, data) }
-    catch (err) { stats.messages.rejetes++; log('error', t('ws.core.echec-envoi'), { err }) }
+    catch (err) { stats.messages.dropped++; log('error', t('ws.core.failed-send'), { err }) }
     return true
   }
 
@@ -680,9 +685,9 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   // transport lui-même (cf. handOver) ; au-delà de MAX_CONSECUTIVE_DROPS de suite, connexion jugée irrécupérable
   function dropForBackpressure(client: MjsWsClientImpl): void {
     client.consecutiveDrops++
-    stats.messages.rejetes++
-    log('warn', t('ws.core.envoi-ignore-contre-pression', { clientId: client.id }), { bufferedAmount: client.conn.bufferedAmount })
-    if (client.consecutiveDrops > MAX_CONSECUTIVE_DROPS) kickClient(client, 1008, t('ws.core.close-contre-pression-persistante'), 'engorgement')
+    stats.messages.dropped++
+    log('warn', t('ws.core.send-ignored-backpressure', { clientId: client.id }), { bufferedAmount: client.conn.bufferedAmount })
+    if (client.consecutiveDrops > MAX_CONSECUTIVE_DROPS) kickClient(client, 1008, t('ws.core.close-backpressure-persistent'), 'backpressure')
   }
 
   // remise d'une trame au transport — `false` de sa part = abandonnée par sa propre contre-pression (uWS au-delà de
@@ -691,7 +696,7 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   function handOver(client: MjsWsClientImpl, data: string | Uint8Array): void {
     if (client.conn.send(data) === false) { dropForBackpressure(client); return }
     client.consecutiveDrops = 0
-    stats.messages.envoyes++
+    stats.messages.sent++
   }
 
   // fan-out à encodage unique (perf, scénario « saturation fan-out » — 150 membres, payload
@@ -717,14 +722,14 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   // (avant, la garde parked de sendRaw passait AVANT l'encodage → l'échec ne surfaçait qu'au rejeu ;
   // issue finale identique dans les deux mondes : la trame malformée n'atteint jamais personne).
   function preEncodeFrame(frame: Record<string, unknown>): MjsWsPreEncoded | null {
-    const binaire = frame.seq == null && typeof frame.t === 'string' ? schemaEngine.encodeOutbound(frame.t, frame.p) : null
-    if (binaire) return { bin: binaire, txt: null }
+    const binary = frame.seq == null && typeof frame.t === 'string' ? schemaEngine.encodeOutbound(frame.t, frame.p) : null
+    if (binary) return { bin: binary, txt: null }
     // MÊME correctif que sendRaw ci-dessus (racine commune) : log cataloguée
     // AVEC le type de message (une fois par diffusion, jamais par destinataire), `null` déjà
     // remonté à TOUS les appelants existants (broadcastLocal/sendUser/fanSend) — désormais
     // exploité par broadcastLocal/app.sendUser pour renvoyer un résultat d'échec (cf. plus bas).
     try { return { bin: null, txt: opts.serialize(frame) } }
-    catch (err) { stats.messages.rejetes++; log('error', t('ws.core.echec-serialisation', { type: String(frame.t) }), { err }); return null }
+    catch (err) { stats.messages.dropped++; log('error', t('ws.core.failed-serialization', { type: String(frame.t) }), { err }); return null }
   }
 
   // sœur de sendRaw — MÊMES gardes, MÊME ordre (closed/closing → resuming → parqué → contre-
@@ -741,14 +746,14 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     if (client.state === 'closed' || client.state === 'closing') return
     // reprise en cours — cf. sendRaw, MÊME garde/MÊME file unique ordonnée.
     if (client.resuming) {
-      if (client.resumeQueue!.length < opts.resume!.maxBuffered) { stats.messages.tamponnes++; client.resumeQueue!.push(frame) }
+      if (client.resumeQueue!.length < opts.resume!.maxBuffered) { stats.messages.buffered++; client.resumeQueue!.push(frame) }
       return
     }
-    if (client.parked) { stats.messages.tamponnes++; sessionsEngine!.buffer(client, frame); return }
+    if (client.parked) { stats.messages.buffered++; sessionsEngine!.buffer(client, frame); return }
     if (isBackpressured(client.conn.bufferedAmount, opts.limits.maxBuffered)) { dropForBackpressure(client); return }
 
     try { handOver(client, pre.bin ?? pre.txt!) }
-    catch (err) { stats.messages.rejetes++; log('error', pre.bin ? t('ws.core.echec-envoi-binaire') : t('ws.core.echec-envoi'), { err }) }
+    catch (err) { stats.messages.dropped++; log('error', pre.bin ? t('ws.core.failed-send-binary') : t('ws.core.failed-send'), { err }) }
   }
 
   // façade exportée (MjsWsFanSend, injectée dans createRoomsEngine/createStreamsEngine ci-dessous)
@@ -788,7 +793,7 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     const pre = preEncodeFrame(frame)
     if (!pre) return false
     for (const client of clientsById.values()) {
-      if (client.state !== 'authenticated') continue
+      if (!isServed(client)) continue
       if (except && except.has(client)) continue
       sendPre(client, frame, pre)
     }
@@ -803,12 +808,12 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   // directement) ; roomsEngineOpts.join est ce que createRoomsEngine reçoit (rooms.ts ne sait rien
   // de proxy.ts, cf. son commentaire — le graphe de modules l'interdit).
   const authFn: MjsWsAuthFn | undefined =
-    typeof opts.auth === 'function' ? opts.auth : (opts.auth ? creerAuthProxy(opts.auth, log) : undefined)
+    typeof opts.auth === 'function' ? opts.auth : (opts.auth ? createAuthProxy(opts.auth, log) : undefined)
   // fuite d'erreur — vrai UNIQUEMENT quand authFn est le proxy de
-  // décisions (creerAuthProxy ci-dessus, TOUJOURS sûr : cf. le commentaire de tête de
+  // décisions (createAuthProxy ci-dessus, TOUJOURS sûr : cf. le commentaire de tête de
   // MjsWsAuthDenied) — jamais un opts.auth FONCTION BRUTE. Consulté dans le catch de handleHello.
   const authIsProxy = !!opts.auth && typeof opts.auth !== 'function'
-  const joinFn = typeof opts.rooms.join === 'function' ? opts.rooms.join : (opts.rooms.join ? creerJoinProxy(opts.rooms.join, log) : undefined)
+  const joinFn = typeof opts.rooms.join === 'function' ? opts.rooms.join : (opts.rooms.join ? createJoinProxy(opts.rooms.join, log) : undefined)
   // plafond de salons par client — vient de `limits` (MjsWsLimits), PAS
   // de `opts.rooms` : même famille que maxConnections/maxConnectionsPerIp (un NOMBRE, jamais une
   // fonction), câblé ICI vers roomsEngineOpts, jamais consulté ailleurs (cf. MjsWsRoomsEngineOptions).
@@ -816,7 +821,7 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   // absent est résolu PAR rooms.ts, pas ici, cf. MjsWsRoomsEngineOptions).
   const roomsEngineOpts: MjsWsRoomsEngineOptions = {
     ...opts.rooms, join: joinFn, maxRoomsPerClient: opts.limits.maxRoomsPerClient,
-    maxPresencePerClient: opts.limits.maxPresencePerClient, presenceGlobale: opts.presence,
+    maxPresencePerClient: opts.limits.maxPresencePerClient, globalPresence: opts.presence,
   }
 
   // hooks join/leave → pont universel (webhooks 'join'/'leave') ET cluster (présence
@@ -826,27 +831,27 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   // fonction qu'ils RENDENT est sa reprise au retour — rooms.ts la garde et l'appelle quand la connexion revient dans
   // ce salon (elle y retrouve ses flux). Rendre cette fonction est le contrat du crochet onClientLeave : la perdre (un
   // bloc sans `return`) couperait la reprise sans la moindre erreur. Un test le garde (flux de salon rendu au retour)
-  function quitteSalon(client: MjsWsClient, room: string): (() => void) | undefined {
-    const repriseAuRetour = streamsEngine.onLeaveRoom(client, room)
-    return repriseAuRetour
+  function onRoomLeave(client: MjsWsClient, room: string): (() => void) | undefined {
+    const resumeOnReturn = streamsEngine.onLeaveRoom(client, room)
+    return resumeOnReturn
   }
   // départ d'une identité d'un salon (sa dernière connexion partie : µ:leave, expulsion, déconnexion), annoncé aux paquets
   // du framework qui tiennent leur propre présence : le hall retire un membre parti sans attendre son balayage. Accroche
   // interne posée sur l'app plus bas (`_onRoomLeave`, même précédent que `_binaryHandler`), jamais un contrat public
-  const departsDeSalon: Array<(room: string, id: string) => void> = []
-  function annoncerDepart(room: string, id: string): void {
-    for (const fn of departsDeSalon) {
+  const roomLeaveHandlers: Array<(room: string, id: string) => void> = []
+  function announceLeave(room: string, id: string): void {
+    for (const fn of roomLeaveHandlers) {
       try { fn(room, id) }
-      catch (err) { log('error', t('ws.core.depart-salon-a-leve', { room }), { err }) }
+      catch (err) { log('error', t('ws.core.room-leave-threw', { room }), { err }) }
     }
   }
   const roomsEngine = createRoomsEngine(roomsEngineOpts, rawSend, log, {
     onJoin:        (room, id, meta) => { bridgeEngine?.notifyRoomJoin(room, id, meta); clusterEngine?.publishRoomJoin(room, id, meta) },
-    onLeave:       (room, id, meta) => { bridgeEngine?.notifyRoomLeave(room, id, meta); clusterEngine?.publishRoomLeave(room, id, meta); annoncerDepart(room, id) },
+    onLeave:       (room, id, meta) => { bridgeEngine?.notifyRoomLeave(room, id, meta); clusterEngine?.publishRoomLeave(room, id, meta); announceLeave(room, id) },
     onGlobalJoin:  (id, meta) => clusterEngine?.publishGlobalJoin(id, meta),
     onGlobalLeave: (id) => clusterEngine?.publishGlobalLeave(id),
     isAlive:       (client) => (client as MjsWsClientImpl).state !== 'closed',
-    onClientLeave: quitteSalon,   // flux réservés au salon : désabonnée au départ, rendus au retour
+    onClientLeave: onRoomLeave,   // flux réservés au salon : désabonnée au départ, rendus au retour
     onClientJoin:  (client, room) => streamsEngine.onJoinRoom(client, room),   // flux refusés en lisant ce salon dehors : garde repassée
     onMembershipRead: (client, room) => streamsEngine.noteMembershipRead(client, room),   // gardes canSubscribe : salons qu'elles lisent
   }, fanSend)
@@ -883,47 +888,47 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   // clés qui comptent pour un client, communes au débit partagé et à la mise au banc : le compte
   // s'il est connu et que `par` le vise, sinon l'IP ; 'both' vise les deux ; ni compte ni IP
   // connue (transport sans adresse) : aucune
-  function clesDe(par: MjsWsBanBy, ip: string | undefined, compte: string | null): string[] {
-    const cles: string[] = []
-    const parCompte = par !== 'ip' && compte != null
-    if (parCompte) cles.push('id:' + compte)
-    if ((par !== 'account' || !parCompte) && ip !== undefined) cles.push('ip:' + ip)
-    return cles
+  function banKeys(by: MjsWsBanBy, ip: string | undefined, account: string | null): string[] {
+    const keys: string[] = []
+    const byAccount = by !== 'ip' && account != null
+    if (byAccount) keys.push('id:' + account)
+    if ((by !== 'account' || !byAccount) && ip !== undefined) keys.push('ip:' + ip)
+    return keys
   }
 
   // clés d'une FAUTE (mise au banc) — celles de clesDe, sauf en 'both' pour un client sans compte : sa faute ne
   // vise que les connexions anonymes de son IP (clé 'anon:<ip>', jugée au hello), jamais l'arrivée d'un compte
   // depuis la même adresse (réseau mobile, école, entreprise partagent souvent une IP)
-  function clesDeFaute(par: MjsWsBanBy, ip: string | undefined, compte: string | null): string[] {
-    return par === 'both' && compte == null && ip !== undefined ? ['anon:' + ip] : clesDe(par, ip, compte)
+  function faultKeys(by: MjsWsBanBy, ip: string | undefined, account: string | null): string[] {
+    return by === 'both' && account == null && ip !== undefined ? ['anon:' + ip] : banKeys(by, ip, account)
   }
 
   // clé sous laquelle la faute d'un visiteur sans compte met son adresse au banc — aucune en 'ip' (l'adresse est refusée
   // à tous dès l'arrivée) ni sans adresse connue
-  function cleDesAnonymes(par: MjsWsBanBy, ip: string | undefined): string | null {
-    if (ip === undefined || par === 'ip') return null
-    return par === 'both' ? 'anon:' + ip : 'ip:' + ip
+  function anonymousKeyOf(by: MjsWsBanBy, ip: string | undefined): string | null {
+    if (ip === undefined || by === 'ip') return null
+    return by === 'both' ? 'anon:' + ip : 'ip:' + ip
   }
 
-  // visiteur sans compte réduit au paquet comptes (cf. MjsWsClientImpl.auBancJusqua) — `true` = trame refusée, avec un
+  // visiteur sans compte réduit au paquet comptes (cf. MjsWsClientImpl.benchedUntil) — `true` = trame refusée, avec un
   // µ:ack en erreur pour une requête, un µ:error sinon ; l'échéance passée, la connexion retrouve tout. Seules les trames du
   // paquet lui-même passent (accounts.ts) : le préfixe `account:` n'est qu'une convention, un `serve('account:…')` de l'appli
   // (mot de passe oublié, vérification d'un nom) lui reste fermé
-  function refuseAuBanc(client: MjsWsClientImpl, type: string, id: unknown): boolean {
-    const maintenant = Date.now()
-    if (client.auBancJusqua <= maintenant) { client.auBancJusqua = 0; rattraperAccueil(client); return false }
-    if (TYPES_OUVERTS_AU_BANC.has(type)) return false
-    const message = t('ws.core.banc-comptes-seulement', { minutes: minutesRestantes(client.auBancJusqua, maintenant) })
+  function rejectBenched(client: MjsWsClientImpl, type: string, id: unknown): boolean {
+    const now = Date.now()
+    if (client.benchedUntil <= now) { client.benchedUntil = 0; catchUpWelcome(client); return false }
+    if (BENCHED_OPEN_TYPES.has(type)) return false
+    const message = t('ws.core.ban-accounts-only', { minutes: minutesLeft(client.benchedUntil, now) })
     if (id != null) sendRaw(client, { t: 'µ:ack', id, e: true, p: message })
     else sendError(client, message)
     return true
   }
 
-  // fin du banc d'une connexion accueillie au banc (cf. accueilDiffere) : elle retrouve tout, rejoint la présence globale
+  // fin du banc d'une connexion accueillie au banc (cf. welcomeDeferred) : elle retrouve tout, rejoint la présence globale
   // et le webhook connect part. Le `welcome` de l'appli, lui, n'a pas tourné : son µ:welcome est déjà parti
-  function rattraperAccueil(client: MjsWsClientImpl): void {
-    if (!client.accueilDiffere) return
-    client.accueilDiffere = false
+  function catchUpWelcome(client: MjsWsClientImpl): void {
+    if (!client.welcomeDeferred) return
+    client.welcomeDeferred = false
     roomsEngine.onWelcome(client)
     bridgeEngine?.notifyConnect(client)
   }
@@ -932,75 +937,75 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   // la connexion quand aucun seau partagé ne s'applique. En 'account', une connexion garde son
   // seau propre tant que son hello n'est pas accepté : son compte n'est pas encore connu, et des
   // comptes différents derrière une même IP (box, entreprise, école) ne doivent jamais se gêner
-  function prendreJeton(client: MjsWsClientImpl): boolean {
+  function takeToken(client: MjsWsClientImpl): boolean {
     if (rateBy === 'connection' || (rateBy === 'account' && client.state !== 'authenticated')) return client.bucket.take()
-    let cles = client.clesDebit
-    if (cles === null) {
-      cles = clesDe(rateBy, client.connSlotIp, identityIdOf(client.identity))
-      if (client.state === 'authenticated') client.clesDebit = cles
+    let keys = client.rateKeys
+    if (keys === null) {
+      keys = banKeys(rateBy, client.connSlotIp, identityIdOf(client.identity))
+      if (client.state === 'authenticated') client.rateKeys = keys
     }
-    if (cles.length === 0) return client.bucket.take()
-    for (const cle of cles) {
-      let seau = seauxPartages.get(cle)
-      if (!seau) { seau = new TokenBucket(opts.limits.burst, opts.limits.rate); seauxPartages.set(cle, seau) }
-      if (!seau.take()) return false
+    if (keys.length === 0) return client.bucket.take()
+    for (const key of keys) {
+      let bucket = sharedBuckets.get(key)
+      if (!bucket) { bucket = new TokenBucket(opts.limits.burst, opts.limits.rate); sharedBuckets.set(key, bucket) }
+      if (!bucket.take()) return false
     }
     return true
   }
 
   // oublie fautes et refus expirés — au plus une fois par min(within, duration), à l'arrivée d'une
   // connexion, d'un hello ou d'une faute
-  function balayerBan(maintenant: number): void {
+  function sweepBan(now: number): void {
     const ban = opts.ban
-    if (!ban || maintenant - banBalayeA < Math.min(ban.within, ban.duration)) return
-    banBalayeA = maintenant
-    for (const [cle, fin] of banJusqua) if (fin <= maintenant) banJusqua.delete(cle)
-    for (const [cle, fautes] of banFautes) if (fautes[fautes.length - 1] <= maintenant - ban.within) banFautes.delete(cle)
+    if (!ban || now - banSweptAt < Math.min(ban.within, ban.duration)) return
+    banSweptAt = now
+    for (const [key, end] of bannedUntil) if (end <= now) bannedUntil.delete(key)
+    for (const [key, faults] of banFaults) if (faults[faults.length - 1] <= now - ban.within) banFaults.delete(key)
   }
 
   // échéance du refus le plus long parmi ces clés — 0 si aucune n'est au banc
-  function finDuBan(cles: string[], maintenant: number): number {
-    let fin = 0
-    for (const cle of cles) {
-      const f = banJusqua.get(cle)
-      if (f !== undefined && f > maintenant && f > fin) fin = f
+  function banEnd(keys: string[], now: number): number {
+    let end = 0
+    for (const key of keys) {
+      const f = bannedUntil.get(key)
+      if (f !== undefined && f > now && f > end) end = f
     }
-    return fin
+    return end
   }
 
-  function minutesRestantes(fin: number, maintenant: number): number {
-    return Math.max(1, Math.ceil((fin - maintenant) / 60000))
+  function minutesLeft(end: number, now: number): number {
+    return Math.max(1, Math.ceil((end - now) / 60000))
   }
 
   // refus prononcé ailleurs (autre process, canal ban) — jamais raccourci par un message en retard
-  function appliquerBan(cle: string, duree: number): void {
+  function applyBan(key: string, duration: number): void {
     if (!opts.ban) return
-    const fin = Date.now() + duree
-    if (fin > (banJusqua.get(cle) ?? 0)) banJusqua.set(cle, fin)
+    const end = Date.now() + duration
+    if (end > (bannedUntil.get(key) ?? 0)) bannedUntil.set(key, end)
   }
 
   // faute d'abus — `after` fautes en `within` ms : la clé est refusée `duration` ms, le refus
   // publié aux autres process ; une clé déjà au banc n'accumule rien de plus
-  function noterFaute(client: MjsWsClientImpl): void {
+  function noteFault(client: MjsWsClientImpl): void {
     const ban = opts.ban
     if (!ban) return
-    const maintenant = Date.now()
-    balayerBan(maintenant)
-    for (const cle of clesDeFaute(ban.by, client.connSlotIp, identityIdOf(client.identity))) {
-      if (finDuBan([cle], maintenant) > 0) continue
-      const fautes = (banFautes.get(cle) ?? []).filter(h => h > maintenant - ban.within)
-      fautes.push(maintenant)
-      if (fautes.length < ban.after) { banFautes.set(cle, fautes); continue }
-      banFautes.delete(cle)
-      banJusqua.set(cle, maintenant + ban.duration)
-      stats.garde.misesAuBanc++
-      const minutes = minutesRestantes(maintenant + ban.duration, maintenant)
-      let ligne: string
-      if (cle.startsWith('ip:')) ligne = t('ws.core.mise-au-banc-ip', { ip: cle.slice(3), fautes: ban.after, minutes })
-      else if (cle.startsWith('anon:')) ligne = t('ws.core.mise-au-banc-ip-anonymes', { ip: cle.slice(5), fautes: ban.after, minutes })
-      else ligne = t('ws.core.mise-au-banc-compte', { compte: cle.slice(3), fautes: ban.after, minutes })
-      log('warn', ligne)
-      clusterEngine?.publishBan(cle, ban.duration)
+    const now = Date.now()
+    sweepBan(now)
+    for (const key of faultKeys(ban.by, client.connSlotIp, identityIdOf(client.identity))) {
+      if (banEnd([key], now) > 0) continue
+      const faults = (banFaults.get(key) ?? []).filter(h => h > now - ban.within)
+      faults.push(now)
+      if (faults.length < ban.after) { banFaults.set(key, faults); continue }
+      banFaults.delete(key)
+      bannedUntil.set(key, now + ban.duration)
+      stats.guard.bans++
+      const minutes = minutesLeft(now + ban.duration, now)
+      let line: string
+      if (key.startsWith('ip:')) line = t('ws.core.ban-ip', { ip: key.slice(3), faults: ban.after, minutes })
+      else if (key.startsWith('anon:')) line = t('ws.core.ban-ip-anonymous', { ip: key.slice(5), faults: ban.after, minutes })
+      else line = t('ws.core.ban-account', { account: key.slice(3), faults: ban.after, minutes })
+      log('warn', line)
+      clusterEngine?.publishBan(key, ban.duration)
     }
   }
 
@@ -1010,9 +1015,9 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   // voit 1009 avec `ws`, 1006 avec `uws`, qui coupe sans trame de fermeture : transport-uws.ts la
   // reconnaît au texte de sa coupure) ; une coupure ordinaire (réseau perdu, onglet fermé) ne compte
   // jamais, ni une fermeture par le cœur (kickClient, déjà compté)
-  function surFermeture(client: MjsWsClientImpl): (code: number, reason: string) => void {
+  function onClose(client: MjsWsClientImpl): (code: number, reason: string) => void {
     return (code, reason) => {
-      if (code === 1009 && !client.guardFired) noterFaute(client)
+      if (code === 1009 && !client.guardFired) noteFault(client)
       cleanupClient(client, reason)
     }
   }
@@ -1020,7 +1025,7 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   // fermeture PROTECTRICE (guard) — pas de µ:bye : le client peut reconnecter
   // (backoff standard côté client), utile pour une coupure qui peut être transitoire.
   // `cause` (stats.ts) — catégorise le kick pour garde.kicksXxx ; « trop de messages
-  // invalides » (JSON) est comptée sous 'debit', cf. le commentaire de tête de MjsWsGuardCause.
+  // invalides » (JSON) est comptée sous 'rate', cf. le commentaire de tête de MjsWsGuardCause.
   // `guardFired` : la fermeture PHYSIQUE (conn.close) est asynchrone — un
   // client authentifié backpressuré/en débit reste 'authenticated' (design voulu pour le
   // parcage) tant qu'elle n'a pas abouti, RIEN n'empêchait alors un 2e/Ne appel de rejouer tout
@@ -1029,14 +1034,14 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   function kickClient(client: MjsWsClientImpl, code: number, reason: string, cause: MjsWsGuardCause): void {
     if (client.state === 'closed' || client.state === 'closing' || client.guardFired) return
     client.guardFired = true
-    log('warn', t('ws.core.client-expulse', { clientId: client.id, reason }))
-    if (cause === 'debit') stats.garde.kicksDebit++
-    else if (cause === 'silence') stats.garde.kicksSilence++
-    else if (cause === 'engorgement') stats.garde.kicksEngorgement++
-    else stats.garde.kicksChargeUtile++
+    log('warn', t('ws.core.client-kicked', { clientId: client.id, reason }))
+    if (cause === 'rate') stats.guard.kicksRate++
+    else if (cause === 'silence') stats.guard.kicksSilence++
+    else if (cause === 'backpressure') stats.guard.kicksBackpressure++
+    else stats.guard.kicksPayload++
     // débit, messages invalides, file pleine, charge trop lourde : des abus, comptés pour la mise au
     // banc — un silence ou un réseau lent n'en sont pas
-    if (cause === 'debit' || cause === 'charge') noterFaute(client)
+    if (cause === 'rate' || cause === 'payload') noteFault(client)
     // Course d'état — MÊME garde que sendDeniedAndClose : un client
     // encore NON authentifié ('hello', ex. watchdog/débit/payload déclenchés AVANT le hello)
     // bascule en 'closing' SYNCHRONE pour fermer la même fenêtre de pipelining (cf. state,
@@ -1082,41 +1087,41 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     const set = clientsByIdentity.get(identityId)
     if (!set) return
     set.delete(client)
-    if (set.size === 0) { clientsByIdentity.delete(identityId); seauxPartages.delete('id:' + identityId) }
+    if (set.size === 0) { clientsByIdentity.delete(identityId); sharedBuckets.delete('id:' + identityId) }
   }
 
   // connexions LOCALES d'un utilisateur (app.sendUser, canal cluster `send`) — MÊME résolution que peerIdOf
   // (rooms.ts), par les index : `anon:` suivi d'un id de connexion = cette connexion si elle est anonyme, tout autre
   // id = les connexions de ce compte, jamais une connexion par son id nu (un compte peut porter le même).
   // Jamais un parcours de toutes les connexions du processus : le coût suit les connexions de l'utilisateur
-  function connexionsDe(id: string): MjsWsClientImpl[] {
-    const cibles: MjsWsClientImpl[] = []
+  function connectionsOf(id: string): MjsWsClientImpl[] {
+    const targets: MjsWsClientImpl[] = []
     if (id.startsWith('anon:')) {
-      const anonyme = clientsById.get(id.slice(5))
-      if (anonyme && anonyme.state === 'authenticated' && identityIdOf(anonyme.identity) == null) cibles.push(anonyme)
-      return cibles
+      const anonymous = clientsById.get(id.slice(5))
+      if (anonymous && anonymous.state === 'authenticated' && identityIdOf(anonymous.identity) == null) targets.push(anonymous)
+      return targets
     }
-    const parIdentite = clientsByIdentity.get(id)
-    if (parIdentite) for (const c of parIdentite) if (c.state === 'authenticated') cibles.push(c)
-    return cibles
+    const byIdentity = clientsByIdentity.get(id)
+    if (byIdentity) for (const c of byIdentity) if (c.state === 'authenticated') targets.push(c)
+    return targets
   }
 
   // cible d'un envoi venu d'un autre processus (canal cluster `send`) — une connexion par son id, ou un utilisateur
-  function ciblesLocales(clientId: string | undefined, user: string | undefined): MjsWsClient[] {
+  function localTargets(clientId: string | undefined, user: string | undefined): MjsWsClient[] {
     if (clientId !== undefined) {
       const c = clientsById.get(clientId)
       return c && c.state === 'authenticated' ? [c] : []
     }
-    return typeof user === 'string' ? connexionsDe(user) : []
+    return typeof user === 'string' ? connectionsOf(user) : []
   }
 
   // connexions LOCALES désignées par un `except` (pont, autres processus) : ses personnes (identity.id, ou `anon:` suivi
   // de l'id de connexion — MÊME résolution que peerIdOf) et ses connexions, par leur id seul (jamais le compte qui
   // porterait le même), par les index — le coût suit les ids reçus, jamais un parcours de toutes les connexions
-  function connexionsDesIds(recu: MjsWsExceptRecu): MjsWsClient[] {
+  function connectionsOfIds(received: MjsWsReceivedExcept): MjsWsClient[] {
     const out = new Set<MjsWsClient>()
-    for (const id of recu.personnes) for (const m of connexionsDe(id)) out.add(m)
-    for (const id of recu.connexions) {
+    for (const id of received.peers) for (const m of connectionsOf(id)) out.add(m)
+    for (const id of received.connections) {
       const c = clientsById.get(id)
       if (c && c.state === 'authenticated') out.add(c)
     }
@@ -1154,6 +1159,16 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     sessionsEngine?.dismissByIdentity(identityId, reason)
   }
 
+  // place de parcage rendue (grâce finie, session reprise, purge) — symétrique du compte posé par cleanupClient
+  function releaseParkSlot(client: MjsWsClientImpl): void {
+    const ip = client.parkIp
+    if (ip === undefined) return
+    client.parkIp = undefined
+    const n = parkedByIp.get(ip) ?? 0
+    if (n <= 1) parkedByIp.delete(ip)
+    else parkedByIp.set(ip, n - 1)
+  }
+
   // déconnexion d'une connexion — une coupure NON définitive d'un client
   // authentifié sous reprise active est PARQUÉE (salons/présence conservés, tampon armé,
   // minuterie de grâce) au lieu d'être purgée ; la purge historique est alors DIFFÉRÉE à
@@ -1168,10 +1183,16 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     // suivi d'expiration du jeton — `tokenExpired` court-circuite le parcage au
     // même titre que `dismissed` : une fermeture pour jeton expiré n'est JAMAIS une coupure
     // réseau anodine à mettre en grâce, le client doit re-authentifier avec un jeton neuf.
-    if (sessionsEngine && client.state === 'authenticated' && !client.dismissed && !client.parked && !client.tokenExpired && sessionsEngine.park(client, reason)) {
+    // sessions parquées bornées PAR ADRESSE (même plafond que les connexions vivantes) : au-delà, la coupure de trop
+    // n'est pas parquée, elle se ferme pour de bon — les sessions déjà en grâce gardent leur place
+    const ip       = client.connSlotIp
+    const parkCap  = opts.limits.maxConnectionsPerIp
+    const parkRoom = ip === undefined || parkCap == null || (parkedByIp.get(ip) ?? 0) < parkCap
+    if (sessionsEngine && parkRoom && client.state === 'authenticated' && !client.dismissed && !client.parked && !client.tokenExpired && sessionsEngine.park(client, reason)) {
       client.parked = true
-      stats.connexions.actives--
-      stats.connexions.parquees++
+      if (ip !== undefined) { parkedByIp.set(ip, (parkedByIp.get(ip) ?? 0) + 1); client.parkIp = ip }
+      stats.connections.active--
+      stats.connections.parked++
       client.watchdog.stop()
       // la connexion MORTE ne doit plus jamais rappeler ce client — un onClose tardif
       // (timeout TCP après coup) re-parquerait sinon un client déjà REPRIS sur une conn neuve
@@ -1190,10 +1211,10 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     try {
       const r: unknown = opts.onDisconnect(client, reason)
       if (r && typeof (r as PromiseLike<unknown>).then === 'function') {
-        Promise.resolve(r as PromiseLike<unknown>).catch((err) => log('error', t('ws.core.ondisconnect-a-rejete', { clientId: client.id }), { err }))
+        Promise.resolve(r as PromiseLike<unknown>).catch((err) => log('error', t('ws.core.ondisconnect-rejected', { clientId: client.id }), { err }))
       }
     } catch (err) {
-      log('error', t('ws.core.ondisconnect-a-leve', { clientId: client.id }), { err })
+      log('error', t('ws.core.ondisconnect-threw', { clientId: client.id }), { err })
     }
   }
 
@@ -1208,6 +1229,7 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     // cette fermeture définitive vient d'un client ACTIF ou déjà PARQUÉ (grâce expirée/µ:bye reçu
     // pendant la grâce), pour décrémenter le bon compteur — jamais les deux à la fois.
     const wasParked = client.parked
+    releaseParkSlot(client)
     client.state  = 'closed'
     client.parked = false
     client.watchdog.stop()
@@ -1219,14 +1241,14 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     sessionsEngine?.discard(client)
     roomsEngine.onDisconnect(client)
     streamsEngine.onDisconnect(client)
-    if (wasParked) stats.connexions.parquees--
-    else if (wasAuthenticated) stats.connexions.actives--
-    stats.connexions.fermees++
+    if (wasParked) stats.connections.parked--
+    else if (wasAuthenticated) stats.connections.active--
+    stats.connections.closed++
     // webhook pont + accroche générique (cf. MjsWsOptions.onDisconnect) — MÊME garde
     // `wasAuthenticated` que le pont : un client jamais accueilli n'a rien à notifier de sa
     // « déconnexion », il n'a jamais été là pour personne (MJS-Server et consorts s'appuient
     // là-dessus pour ne JAMAIS voir un client fantôme qu'ils n'ont eux-mêmes jamais vu welcome)
-    if (wasAuthenticated) { if (!client.accueilDiffere) bridgeEngine?.notifyDisconnect(client, reason); notifyHostDisconnect(client, reason) }
+    if (wasAuthenticated) { if (!client.welcomeDeferred) bridgeEngine?.notifyDisconnect(client, reason); notifyHostDisconnect(client, reason) }
     // CHOKE POINT unique (onClose réel OU parcage déjà mort, cf. dismissClient) :
     // résout le rendez-vous que stop() a posé pour CE client avant de le dismiss. No-op si stop()
     // n'est pas en cours (Map vide) ou si ce client n'était pas concerné (déjà retirée une fois).
@@ -1241,7 +1263,7 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   // une charge utile (les 4 causes de MjsWsGuardCause restent SPÉCIFIQUES à kickClient, cf. son
   // commentaire de tête stats.ts) — code de fermeture (4002) et absence de µ:bye propres à ELLE
   // seule. Compteur DÉDIÉ plutôt qu'un rattachement approximatif à
-  // une cause erronée : stats.garde.expirationsJeton, hors de l'union MjsWsGuardCause — cf.
+  // une cause erronée : stats.guard.tokenExpired, hors de l'union MjsWsGuardCause — cf.
   // stats.ts/stats-page.ts/toPrometheusText (métrique guard_token_expired_total).
   // Course d'état — PAS de bascule 'closing' ici (contrairement à
   // kickClient/dismissClient/sendDeniedAndClose) : sweepExpiredTokens (cf. plus bas) ne cible QUE
@@ -1253,11 +1275,11 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   function expireClientToken(client: MjsWsClientImpl): void {
     if (client.state === 'closed' || client.guardFired) return
     client.guardFired = true
-    log('warn', t('ws.core.client-expulse', { clientId: client.id, reason: t('ws.core.close-jeton-expire') }))
-    stats.garde.expirationsJeton++
+    log('warn', t('ws.core.client-kicked', { clientId: client.id, reason: t('ws.core.close-token-expired') }))
+    stats.guard.tokenExpired++
     sendRaw(client, { t: 'µ:error', p: { code: 'token-expired' } })
     client.tokenExpired = true
-    client.conn.close(4002, t('ws.core.close-jeton-expire'))
+    client.conn.close(4002, t('ws.core.close-token-expired'))
   }
 
   // balayage périodique GLOBAL — jamais un timer par client (cf. Watchdog de guard.ts pour le
@@ -1290,50 +1312,50 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   // n'est pas transitoire, réessayer avec la même origine échouera toujours). Pas de µ:denied (le
   // hello n'a pas eu lieu). Prédicat qui LÈVE → fail-closed (refusé, log warn).
   function refuseForOrigin(conn: MjsWsConnection): void {
-    stats.connexions.refuseesOrigine++
+    stats.connections.refusedOrigin++
     const { origin, address } = conn.remoteInfo
-    journaliserRefus('origine', () => t('ws.core.connexion-refusee-origine', { origin: tronquer(origin, ORIGINE_JOURNAL_MAX), address }))
-    conn.close(1008, t('ws.core.close-origine-refusee'))
+    logReject('origin', () => t('ws.core.connection-refused-origin', { origin: truncate(origin, ORIGIN_LOG_MAX), address }))
+    conn.close(1008, t('ws.core.close-origin-refused'))
   }
 
   // journal des connexions refusées (origine, plafonds) — une ligne au plus par minute et par motif : la
   // première part tout de suite, les suivantes sont seulement comptées et annoncées par la ligne suivante.
   // Un flot de connexions refusées ne remplit donc plus le journal ; les compteurs de stats restent exacts.
   // L'en-tête Origin, écrit par le visiteur, est tronqué
-  const REFUS_JOURNAL_MS    = 60000
-  const ORIGINE_JOURNAL_MAX = 200
-  const refusJournal        = { origine: { depuis: -Infinity, tus: 0 }, plafond: { depuis: -Infinity, tus: 0 } }
+  const REJECT_LOG_MS  = 60000
+  const ORIGIN_LOG_MAX = 200
+  const rejectLog      = { origin: { from: -Infinity, muted: 0 }, cap: { from: -Infinity, muted: 0 } }
 
-  function journaliserRefus(motif: 'origine' | 'plafond', ligne: () => string): void {
-    const etat       = refusJournal[motif]
-    const maintenant = Date.now()
-    if (maintenant >= etat.depuis && maintenant - etat.depuis < REFUS_JOURNAL_MS) { etat.tus++; return }
-    log('warn', etat.tus > 0 ? ligne() + ' ' + t('ws.core.refus-semblables-tus', { n: etat.tus }) : ligne())
-    etat.depuis = maintenant
-    etat.tus    = 0
+  function logReject(pattern: 'origin' | 'cap', line: () => string): void {
+    const state = rejectLog[pattern]
+    const now   = Date.now()
+    if (now >= state.from && now - state.from < REJECT_LOG_MS) { state.muted++; return }
+    log('warn', state.muted > 0 ? line() + ' ' + t('ws.core.refusal-similar-silenced', { n: state.muted }) : line())
+    state.from  = now
+    state.muted = 0
   }
 
-  function tronquer(texte: string | undefined, max: number): string | undefined {
-    return texte !== undefined && texte.length > max ? texte.slice(0, max) + '…' : texte
+  function truncate(text: string | undefined, max: number): string | undefined {
+    return text !== undefined && text.length > max ? text.slice(0, max) + '…' : text
   }
 
   // --- plafond de connexions — admission/décrément symétriques -----
   // refus AVANT toute admission (plafonds) — code 1013 (RFC 6455 : « Try Again Later », sémantique
   // EXACTE ici), AUCUN MjsWsClientImpl créé (rien à nettoyer plus tard : conn.onClose/onMessage ne
   // sont même pas posés). Pas de µ:denied (le hello n'a pas eu lieu, ce n'est pas une décision
-  // applicative) — compteur DÉDIÉ (stats.connexions.refuseesPlafond, DISTINCT de .refusees, cf.
+  // applicative) — compteur DÉDIÉ (stats.connections.refusedCap, DISTINCT de .refused, cf.
   // sendDeniedAndClose) + log, même esprit que sendDeniedAndClose mais sans trame µ:.
   function refuseForCap(conn: MjsWsConnection, reason: string): void {
-    stats.connexions.refuseesPlafond++
-    journaliserRefus('plafond', () => t('ws.core.connexion-refusee-raison', { reason }))   // regroupé, cf. journaliserRefus
-    conn.close(1013, t('ws.core.close-reessayez-plus-tard'))
+    stats.connections.refusedCap++
+    logReject('cap', () => t('ws.core.connection-refused-reason', { reason }))   // regroupé, cf. logReject
+    conn.close(1013, t('ws.core.close-retry-later'))
   }
 
   // mise au banc — refus à l'arrivée d'une IP au banc, même famille que refuseForOrigin (1008,
   // aucun MjsWsClientImpl créé) ; jamais journalisé à chaque essai : la mise au banc l'a été une fois
   function refuseForBan(conn: MjsWsConnection): void {
-    stats.connexions.refuseesBan++
-    conn.close(1008, t('ws.core.close-banni'))
+    stats.connections.refusedBan++
+    conn.close(1008, t('ws.core.close-banned'))
   }
 
   // décrément SYMÉTRIQUE de l'admission ci-dessous — CHOKE POINT unique (cf. cleanupClient, appelé
@@ -1348,7 +1370,7 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     if (ip === undefined) return
     const n = connectionsByIp.get(ip)
     if (n === undefined) return
-    if (n <= 1) { connectionsByIp.delete(ip); seauxPartages.delete('ip:' + ip) }
+    if (n <= 1) { connectionsByIp.delete(ip); sharedBuckets.delete('ip:' + ip) }
     else connectionsByIp.set(ip, n - 1)
   }
 
@@ -1372,14 +1394,14 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     // opt-in strict, ZÉRO changement de comportement tant que non posé. Prédicat qui LÈVE → refus
     // (fail-closed), jamais une exception qui remonterait jusqu'au transport.
     if (opts.verifyOrigin != null) {
-      let admis: boolean
+      let admitted: boolean
       try {
-        admis = opts.verifyOrigin(conn.remoteInfo.origin, conn.remoteInfo)
+        admitted = opts.verifyOrigin(conn.remoteInfo.origin, conn.remoteInfo)
       } catch (err) {
         log('warn', t('ws.core.verifyorigin-exception'), { err })
-        admis = false
+        admitted = false
       }
-      if (!admis) {
+      if (!admitted) {
         refuseForOrigin(conn)
         return
       }
@@ -1387,11 +1409,11 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
 
     // mise au banc — une IP au banc ('ip'/'both') est refusée avant les plafonds ; en 'account',
     // l'IP ne vise que les anonymes, jugés au hello (un compte de la même IP reste bienvenu) — de
-    // même en 'both' pour la faute d'un anonyme, rangée sous sa propre clé (cf. clesDeFaute)
+    // même en 'both' pour la faute d'un anonyme, rangée sous sa propre clé (cf. faultKeys)
     if (opts.ban && opts.ban.by !== 'account' && ip !== undefined) {
-      const maintenant = Date.now()
-      balayerBan(maintenant)
-      if (finDuBan(['ip:' + ip], maintenant) > 0) {
+      const now = Date.now()
+      sweepBan(now)
+      if (banEnd(['ip:' + ip], now) > 0) {
         refuseForBan(conn)
         return
       }
@@ -1401,7 +1423,7 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     // (bucket/watchdog/client) : `null` (défaut) = illimité, opt-in strict, ZÉRO changement de
     // comportement tant que non posé.
     if (opts.limits.maxConnections != null && liveConnections >= opts.limits.maxConnections) {
-      refuseForCap(conn, t('ws.core.plafond-global-atteint', { max: opts.limits.maxConnections }))
+      refuseForCap(conn, t('ws.core.cap-global-reached', { max: opts.limits.maxConnections }))
       return
     }
     // plafond PAR IP — IP absente (transport sans adresse, ex.
@@ -1409,7 +1431,7 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     // AVANT tout incrément (ni global ni par IP) : les DEUX plafonds sont contrôlés avant que l'un
     // ou l'autre compteur ne bouge — aucune « admission partielle » à annuler en cas de refus.
     if (ip !== undefined && opts.limits.maxConnectionsPerIp != null && (connectionsByIp.get(ip) ?? 0) >= opts.limits.maxConnectionsPerIp) {
-      refuseForCap(conn, t('ws.core.plafond-par-ip-atteint', { ip, max: opts.limits.maxConnectionsPerIp }))
+      refuseForCap(conn, t('ws.core.cap-per-ip-reached', { ip, max: opts.limits.maxConnectionsPerIp }))
       return
     }
 
@@ -1419,9 +1441,9 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     liveConnections++
     if (ip !== undefined) connectionsByIp.set(ip, (connectionsByIp.get(ip) ?? 0) + 1)
 
-    const bucket   = new TokenBucket(opts.limits.burst, opts.limits.rate)
-    const watchdog = new Watchdog(opts.heartbeat > 0 ? opts.heartbeat * 2.5 : 0, () => kickClient(client, 4000, t('ws.core.close-inactivite'), 'silence'))
-    const client   = new MjsWsClientImpl(conn, conn.remoteInfo, bucket, watchdog, idPrefix)
+    const bucket        = new TokenBucket(opts.limits.burst, opts.limits.rate)
+    const watchdog      = new Watchdog(opts.heartbeat > 0 ? opts.heartbeat * 2.5 : 0, () => kickClient(client, 4000, t('ws.core.close-idle'), 'silence'))
+    const client        = new MjsWsClientImpl(conn, conn.remoteInfo, bucket, watchdog, idPrefix)
     client.connSlotHeld = true
     client.connSlotIp   = ip
     // Faille HAUTE comblée — MÊME vérification (assertSendable) que app.send() : sans elle,
@@ -1431,7 +1453,7 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     client.close = (reason) => dismissClient(client, reason)
 
     clientsById.set(client.id, client)
-    conn.onClose = surFermeture(client)
+    conn.onClose = onClose(client)
     conn.onMessage = (raw) => enqueueMessage(client, raw)
     // amorcé dès l'acceptation, AVANT même le hello — une connexion qui ne dit
     // jamais bonjour est aussi une connexion muette.
@@ -1454,25 +1476,30 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   // consommation ; le retirer de là évite de le compter deux fois pour une même trame).
   function enqueueMessage(client: MjsWsClientImpl, raw: string | Uint8Array): void {
     if (client.state === 'closed' || client.state === 'closing') return
-    if (maxQueued !== null && client.queuedMessages >= maxQueued) { kickClient(client, 1008, t('ws.core.close-debit-depasse'), 'debit'); return }
-    if (!prendreJeton(client)) { onRateLimitViolation(client); return }
+    // fermeture déjà décidée (client.close(), expulsion, jeton expiré, éviction) : la connexion physique peut traîner jusqu'au
+    // délai du transport (un client qui ne répond pas à la trame de fermeture), plus rien de lui n'est traité
+    if (client.guardFired || client.dismissed) return
+    if (maxQueued !== null && client.queuedMessages >= maxQueued) { kickClient(client, 1008, t('ws.core.close-rate-exceeded'), 'rate'); return }
+    if (!takeToken(client)) { onRateLimitViolation(client); return }
+    // un client accueilli bat à la RÉCEPTION : ses trames en file derrière un serve() lent prouvent qu'il est là
+    if (client.state === 'authenticated') client.watchdog.pet()
     client.queuedMessages++
     client.chain = client.chain
       .then(() => (typeof raw === 'string' ? handleRaw(client, raw) : handleBinaryRaw(client, raw)))
-      .catch(err => log('error', t('ws.core.erreur-interne-non-geree'), { err }))
+      .catch(err => log('error', t('ws.core.error-internal-not-handled'), { err }))
       .finally(() => { client.queuedMessages-- })
   }
 
   // --- une trame brute reçue -------------------------------------------------
   async function handleRaw(client: MjsWsClientImpl, raw: string): Promise<void> {
-    stats.messages.recus++
+    stats.messages.received++
     // Course d'état — 'closing' ignoré au même titre que 'closed' : un
     // 2e message pipeliné après une décision de fermeture (µ:denied/kick pré-auth, cf. state
     // dans MjsWsClientImpl) n'est PLUS jamais routé, même si la fermeture PHYSIQUE (onClose,
     // async) n'a pas encore eu lieu — cas concret : un 2e µ:hello valide après un 1er refusé ne
     // s'authentifie plus (cf. sendDeniedAndClose).
-    if (client.state === 'closed' || client.state === 'closing') return
-    if (!opts.payloadCappedByTransport && Buffer.byteLength(raw, 'utf8') > opts.limits.maxPayload) { kickClient(client, 1009, t('ws.core.close-payload-trop-volumineux'), 'charge'); return }
+    if (client.state === 'closed' || client.state === 'closing' || client.guardFired || client.dismissed) return   // fermeture décidée : cf. enqueueMessage
+    if (!opts.payloadCappedByTransport && Buffer.byteLength(raw, 'utf8') > opts.limits.maxPayload) { kickClient(client, 1009, t('ws.core.close-payload-too-large'), 'payload'); return }
     client.watchdog.pet()
 
     let msg: any
@@ -1481,13 +1508,13 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     if (!msg || typeof msg !== 'object' || typeof msg.t !== 'string') { onInvalidJson(client); return }
 
     if (client.state === 'hello') {
-      if (msg.t !== 'µ:hello') { sendDeniedAndClose(client, t('ws.core.hello-attendu-premier')); return }
+      if (msg.t !== 'µ:hello') { sendDeniedAndClose(client, t('ws.core.hello-expected-first')); return }
       return handleHello(client, msg)
     }
-    if (client.auBancJusqua > 0 && refuseAuBanc(client, msg.t, msg.id)) return
+    if (client.benchedUntil > 0 && rejectBenched(client, msg.t, msg.id)) return
 
     switch (msg.t) {
-      case 'µ:hello':       sendError(client, t('ws.core.hello-deja-recu')); return
+      case 'µ:hello':       sendError(client, t('ws.core.hello-already-received')); return
       case 'µ:ping':         handlePing(client, msg); return
       case 'µ:refresh':      return handleRefresh(client, msg)   // await : re-vérifie via opts.auth (peut être async) — la FIFO par connexion doit l'attendre, même garde que µ:join
       case 'µ:sub-stream':   handleSubStream(client, msg); return
@@ -1497,7 +1524,7 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
       case 'µ:join':         return handleJoin(client, msg)   // await : la garde rooms.join peut être async — la FIFO par connexion doit l'attendre (un µ:leave qui suit ne double pas le join)
       case 'µ:leave':        handleLeave(client, msg); return
     }
-    if (msg.t.indexOf('µ:') === 0) { sendError(client, t('ws.core.type-inconnu', { type: msg.t })); return }
+    if (msg.t.indexOf('µ:') === 0) { sendError(client, t('ws.core.type-unknown', { type: msg.t })); return }
     // µschema — ws.codec 'binary' STRICT : un message applicatif TEXTE (donc hors
     // schéma par construction) est un refus, pas un routage silencieux — compté +
     // µ:error throttlé (cf. schema.ts::rejectIfStrictText), jamais en 'auto'/'json'.
@@ -1510,8 +1537,8 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
 
   function onInvalidJson(client: MjsWsClientImpl): void {
     client.invalidJsonCount++
-    log('warn', t('ws.core.json-invalide-recu', { clientId: client.id }))
-    if (client.invalidJsonCount > opts.limits.kickAfter) kickClient(client, 1008, t('ws.core.close-trop-messages-invalides'), 'debit')
+    log('warn', t('ws.core.json-invalid-received', { clientId: client.id }))
+    if (client.invalidJsonCount > opts.limits.kickAfter) kickClient(client, 1008, t('ws.core.close-too-many-messages-invalid'), 'rate')
   }
 
   function onRateLimitViolation(client: MjsWsClientImpl): void {
@@ -1520,10 +1547,10 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     client.lastViolationAt = now
     client.violations++
     if (client.lastRateErrorAt == null || now - client.lastRateErrorAt > RATE_ERROR_THROTTLE_MS) {
-      sendError(client, t('ws.core.debit-depasse-ralentis'))
+      sendError(client, t('ws.core.rate-exceeded-slowed'))
       client.lastRateErrorAt = now
     }
-    if (client.violations > opts.limits.kickAfter) kickClient(client, 1008, t('ws.core.close-debit-depasse'), 'debit')
+    if (client.violations > opts.limits.kickAfter) kickClient(client, 1008, t('ws.core.close-rate-exceeded'), 'rate')
   }
 
   // --- trame binaire (socle du futur µschema) -------------------
@@ -1538,20 +1565,20 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   // trame ignorée SILENCIEUSEMENT (PAS de µ:error : un client pourrait sonder le protocole avant
   // même d'avoir le droit d'y parler, µ:error lui offrirait un canal de reconnaissance gratuit).
   async function handleBinaryRaw(client: MjsWsClientImpl, bytes: Uint8Array): Promise<void> {
-    stats.messages.binaireRecues++
-    if (client.state === 'closed' || client.state === 'closing') return   // même garde que handleRaw, cf. son commentaire
-    if (bytes.byteLength > opts.limits.maxPayload) { kickClient(client, 1009, t('ws.core.close-trame-binaire-trop-volumineuse'), 'charge'); return }
+    stats.messages.binaryReceived++
+    if (client.state === 'closed' || client.state === 'closing' || client.guardFired || client.dismissed) return   // même garde que handleRaw, cf. son commentaire
+    if (bytes.byteLength > opts.limits.maxPayload) { kickClient(client, 1009, t('ws.core.close-frame-binary-too-large'), 'payload'); return }
+    if (client.state !== 'authenticated') { stats.messages.binaryIgnored++; return }   // sans hello, une trame binaire ne repousse pas le chien d'inactivité
     client.watchdog.pet()
-    if (client.state !== 'authenticated') { stats.messages.binaireIgnorees++; return }
     // signature élargie — `void | Promise<void>` : le décodeur µschema route vers
     // routeAppMessage (peut attendre un serve() async), la FIFO de CETTE connexion (client.chain,
     // cf. enqueueMessage) doit donc attendre la promesse EXACTEMENT comme pour handleRaw — sinon
     // un message texte/binaire suivant pourrait doubler un µ:ack encore en vol (piège #1, même
     // famille que le hello/welcome). `await` sur un retour non-promesse est un no-op inoffensif.
     const handler = (app as any)._binaryHandler as ((c: MjsWsClient, b: Uint8Array) => void | Promise<void>) | null
-    if (!handler) { stats.messages.binaireIgnorees++; return }
+    if (!handler) { stats.messages.binaryIgnored++; return }
     try { await handler(client, bytes) }
-    catch (err) { log('error', t('ws.core.accroche-binaire-a-leve'), { err }) }
+    catch (err) { log('error', t('ws.core.hook-binary-threw'), { err }) }
   }
 
   // --- handshake ---------------------------------------------------------
@@ -1575,7 +1602,7 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
 
   async function handleHello(client: MjsWsClientImpl, msg: any): Promise<void> {
     const p: MjsWsHelloPayload = msg.p || {}
-    if (p.protocol !== 1) { sendDeniedAndClose(client, t('ws.core.close-protocole-non-supporte')); return }
+    if (p.protocol !== 1) { sendDeniedAndClose(client, t('ws.core.close-protocol-not-supported')); return }
 
     let identity: unknown
     if (authFn) {
@@ -1586,15 +1613,15 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
         // (proxy de décisions, TOUJOURS sûr) OU throw explicite MjsWsAuthDenied → message transmis
         // tel quel ; sinon (fonction brute, throw nu = bug/panne interne présumé) → détail loggé
         // ICI côté serveur, message GÉNÉRIQUE au client (même motif que le `false` ci-dessous).
-        if (!estMarquee(err, MARQUE_REFUS_AUTH) && !authIsProxy) {
-          log('warn', t('ws.core.auth-exception-interne', { clientId: client.id, err: errMessage(err) }))
-          sendDeniedAndClose(client, t('ws.core.close-authentification-refusee'))
+        if (!isMarked(err, AUTH_REJECT_MARK) && !authIsProxy) {
+          log('warn', t('ws.core.auth-exception-internal', { clientId: client.id, err: errMessage(err) }))
+          sendDeniedAndClose(client, t('ws.core.close-auth-refused'))
           return
         }
         sendDeniedAndClose(client, errMessage(err))
         return
       }
-      if (identity === false) { sendDeniedAndClose(client, t('ws.core.close-authentification-refusee')); return }
+      if (identity === false) { sendDeniedAndClose(client, t('ws.core.close-auth-refused')); return }
       // La connexion a pu tomber PENDANT cet auth async (finalizeCleanup déjà passé,
       // client.state === 'closed') : SANS ce garde-fou, la suite (resumeClient / présence
       // globale / webhook connect, plus bas) s'exécute quand même sur une connexion qui n'existe
@@ -1616,26 +1643,26 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     // `anon:` est l'espace de noms des visiteurs sans compte (peerIdOf, rooms.ts) : un compte qui s'y glisserait serait
     // confondu avec l'anonyme d'une connexion (sendUser, kick, présence, hall) — refusé dès la porte, reprise comprise
     if (identityId != null && identityId.startsWith('anon:')) {
-      log('warn', t('ws.core.auth-id-anon-reserve', { clientId: client.id, id: identityId }))
-      sendDeniedAndClose(client, t('ws.core.close-id-anon-reserve'))
+      log('warn', t('ws.core.auth-id-anon-reserved', { clientId: client.id, id: identityId }))
+      sendDeniedAndClose(client, t('ws.core.close-id-anon-reserved'))
       return
     }
     // mise au banc — AVANT la reprise : un compte au banc ne revient pas par sa session
     if (opts.ban) {
-      const maintenant = Date.now()
-      balayerBan(maintenant)
-      const cles = clesDe(opts.ban.by, client.connSlotIp, identityId)
-      // en 'both', un anonyme répond aussi des fautes des anonymes de son IP (cf. clesDeFaute) ; un compte, jamais
-      if (opts.ban.by === 'both' && identityId == null && client.connSlotIp !== undefined) cles.push('anon:' + client.connSlotIp)
-      const fin = finDuBan(cles, maintenant)
+      const now = Date.now()
+      sweepBan(now)
+      const keys = banKeys(opts.ban.by, client.connSlotIp, identityId)
+      // en 'both', un anonyme répond aussi des fautes des anonymes de son IP (cf. faultKeys) ; un compte, jamais
+      if (opts.ban.by === 'both' && identityId == null && client.connSlotIp !== undefined) keys.push('anon:' + client.connSlotIp)
+      const end = banEnd(keys, now)
       // visiteur sans compte d'une adresse au banc pour la seule faute de visiteurs sans compte : avec le paquet comptes,
       // accueilli mais réduit à se connecter ou créer un compte — un titulaire sans jeton (autre poste, jeton expiré) passe
       // par là ; sans paquet comptes, refusé comme avant
-      const cleAnonymes = identityId == null ? cleDesAnonymes(opts.ban.by, client.connSlotIp) : null
-      if (fin > 0 && cleAnonymes !== null && servers.has('account:login') && finDuBan(cles.filter(c => c !== cleAnonymes), maintenant) === 0) client.auBancJusqua = fin
-      else if (fin > 0) {
-        stats.connexions.refuseesBan++
-        sendDeniedAndClose(client, t('ws.core.close-au-banc', { minutes: minutesRestantes(fin, maintenant) }))
+      const anonymousKey = identityId == null ? anonymousKeyOf(opts.ban.by, client.connSlotIp) : null
+      if (end > 0 && anonymousKey !== null && servers.has('account:login') && banEnd(keys.filter(c => c !== anonymousKey), now) === 0) client.benchedUntil = end
+      else if (end > 0) {
+        stats.connections.refusedBan++
+        sendDeniedAndClose(client, t('ws.core.close-banned-abuse', { minutes: minutesLeft(end, now) }))
         return
       }
     }
@@ -1643,7 +1670,7 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     // reprise n'est JAMAIS un contournement : hello.auth re-vérifié comme toujours). Échec
     // quelconque (session inconnue/expirée, clé fausse, identité différente, tampon
     // débordé) = accueil FRAIS silencieux ci-dessous — sans erreur ni fuite d'information.
-    if (sessionsEngine && p.session != null && client.auBancJusqua === 0) {
+    if (sessionsEngine && p.session != null && client.benchedUntil === 0) {
       const claimed = sessionsEngine.claim(p.session, identityId)
       // `identity` (déjà FRAÎCHEMENT validé par authFn ci-dessus) transmis à
       // resumeClient : sans lui, une reprise réussie continuait de tourner sur les
@@ -1660,9 +1687,9 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     // process — 'refuse' garantit l'exclusivité PAR PROCESS seulement (best effort global, cf.
     // docs/23-mjs-ws.md §8.5).
     if (opts.sessionExclusive === 'refuse' && identityId != null) {
-      const existantes = clientsByIdentity.get(identityId)
-      if (existantes && Array.from(existantes).some(c => !c.parked && !c.dismissed)) {
-        sendDeniedAndClose(client, t('ws.core.close-session-deja-active'), 4004)
+      const existing = clientsByIdentity.get(identityId)
+      if (existing && Array.from(existing).some(c => !c.parked && !c.dismissed)) {
+        sendDeniedAndClose(client, t('ws.core.close-session-already-active'), 4004)
         return
       }
     }
@@ -1678,9 +1705,9 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     if (client.tokenExpiresAt != null) ensureTokenSweep()
     client.state    = 'authenticated'
     // stats.ts — welcome FRAIS uniquement (le chemin resumeClient ci-dessus est
-    // déjà sorti par `return` et compte séparément sous sessions.reprises, jamais les deux)
-    stats.connexions.accueillies++
-    stats.connexions.actives++
+    // déjà sorti par `return` et compte séparément sous sessions.resumed, jamais les deux)
+    stats.connections.welcomed++
+    stats.connections.active++
 
     // session exclusive par identité (2 modes) — AVANT le µ:welcome.
     // 'replace' : le nouveau prend la place, toute AUTRE connexion (vivante ou parquée) de la
@@ -1710,9 +1737,9 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     let welcomeP: unknown = {}
     // accueilli au banc, réduit au paquet comptes : le `welcome` de l'appli n'a rien à préparer pour lui (µ:welcome sans
     // sa charge), et ne tourne plus à chacune de ses reconnexions
-    if (opts.welcome && client.auBancJusqua === 0) {
+    if (opts.welcome && client.benchedUntil === 0) {
       try { welcomeP = (await opts.welcome(client)) ?? {} }
-      catch (err) { log('error', t('ws.core.welcome-a-leve'), { err }); welcomeP = {} }
+      catch (err) { log('error', t('ws.core.welcome-threw'), { err }); welcomeP = {} }
       // Même course que celle documentée après l'auth ci-dessus, ici pendant welcome() :
       // `client.state` est déjà passé à 'authenticated' juste avant (stats déjà comptées), donc
       // une coupure PENDANT ce await est passée par finalizeCleanup DIRECTEMENT (jamais par le
@@ -1740,8 +1767,8 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     pushSchemaIfMismatch(client, p.schemaHash)
     // présence GLOBALE : un client authentifié « apparaît » à son welcome (delta join aux
     // abonnés globaux si c'est la 1re connexion de son identité — agrégation, cf. rooms.ts). Accueilli au banc : ni
-    // présence globale ni webhook connect tant que dure le banc (cf. accueilDiffere)
-    if (client.auBancJusqua > 0) { client.accueilDiffere = true; return }
+    // présence globale ni webhook connect tant que dure le banc (cf. welcomeDeferred)
+    if (client.benchedUntil > 0) { client.welcomeDeferred = true; return }
     roomsEngine.onWelcome(client)
     bridgeEngine?.notifyConnect(client)
   }
@@ -1770,13 +1797,14 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     // suit : l'IP de la connexion physique en cours peut différer de celle d'origine de `parked`.
     parked.connSlotHeld = fresh.connSlotHeld
     parked.connSlotIp   = fresh.connSlotIp
-    parked.clesDebit    = null
+    parked.rateKeys     = null
     fresh.connSlotHeld  = false
 
     parked.conn   = conn
     parked.parked = false
-    stats.connexions.parquees--
-    stats.connexions.actives++
+    releaseParkSlot(parked)   // la session reprise rend sa place de parcage
+    stats.connections.parked--
+    stats.connections.active++
     parked.consecutiveDrops = 0
     parked.guardFired = false   // connexion neuve, une garde neuve doit pouvoir s'appliquer
     parked.lastPingAt = null   // sinon le 1er ping post-reprise mesurerait une « latence » de toute la grâce
@@ -1805,8 +1833,8 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     // (piège #1 du contrat), même avec un welcome() applicatif async.
     parked.chain = parked.chain
       .then(() => finishResume(parked, frames, schemaHash))
-      .catch(err => log('error', t('ws.core.erreur-interne-non-geree'), { err }))
-    conn.onClose   = surFermeture(parked)
+      .catch(err => log('error', t('ws.core.error-internal-not-handled'), { err }))
+    conn.onClose   = onClose(parked)
     conn.onMessage = (raw) => enqueueMessage(parked, raw)
   }
 
@@ -1814,9 +1842,9 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     let welcomeP: unknown = {}
     // accueillie au banc et reprise pendant qu'il court (depuis une adresse hors banc) : même règle qu'à son hello, le
     // `welcome` de l'appli ne tourne pas pour elle
-    if (opts.welcome && parked.auBancJusqua <= Date.now()) {
+    if (opts.welcome && parked.benchedUntil <= Date.now()) {
       try { welcomeP = (await opts.welcome(parked)) ?? {} }
-      catch (err) { log('error', t('ws.core.welcome-a-leve'), { err }); welcomeP = {} }
+      catch (err) { log('error', t('ws.core.welcome-threw'), { err }); welcomeP = {} }
     }
     // La connexion neuve a pu retomber PENDANT ce await (re-parquée par cleanupClient,
     // voire purgée pour de bon si la grâce a expiré entre-temps) : émettre le µ:welcome
@@ -1834,7 +1862,7 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
       // d'inversion d'ordre en le repeuplant ici, on le reverse simplement TEL QUEL.
       parked.resuming    = false
       parked.resumeQueue = null
-      for (const frame of frames) { stats.messages.tamponnes++; sessionsEngine!.buffer(parked, frame) }
+      for (const frame of frames) { stats.messages.buffered++; sessionsEngine!.buffer(parked, frame) }
       return
     }
     const session = sessionsEngine!.issue(parked)   // clé TOURNÉE (même id) — l'ancienne ne marche plus
@@ -1848,8 +1876,8 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     // rejeu ORDONNÉ du tampon, juste après le welcome — la salve du client (resync/join)
     // arrivera indépendamment ; les join re-tentés sont déjà dédupliqués (rooms.ts)
     for (const frame of frames) sendRaw(parked, frame)
-    stats.messages.rejoues += frames.length
-    log('info', t('ws.core.client-repris', { clientId: parked.id, sessionId: session.id, count: frames.length }))
+    stats.messages.replayed += frames.length
+    log('info', t('ws.core.client-resumed', { clientId: parked.id, sessionId: session.id, count: frames.length }))
   }
 
   // Course d'état — TOUJOURS appelée sur un client encore 'hello' (les
@@ -1865,7 +1893,7 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   // `refusees` reste incrémenté au même titre (pas de compteur dédié, cf. docs/23-mjs-ws.md §8.5).
   function sendDeniedAndClose(client: MjsWsClientImpl, message: string, code = 4001): void {
     if (client.state === 'closed' || client.state === 'closing') return
-    stats.connexions.refusees++
+    stats.connections.refused++
     sendRaw(client, { t: 'µ:denied', p: { message } })
     client.state = 'closing'
     client.conn.close(code, 'denied')
@@ -1879,7 +1907,7 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     sendRaw(client, { t: 'µ:pong', p: { ts } })   // verbatim — même non-numérique, cf. contrat piège #5
     const now = Date.now()
     // l'écart entre deux pings reçus (≈ période du battement client), pas un aller-retour : cf. stats.ts
-    if (client.lastPingAt != null && !(msg.p && msg.p.early === true)) { client.latency = now - client.lastPingAt; stats.intervallesPing.push(client.latency) }
+    if (client.lastPingAt != null && !(msg.p && msg.p.early === true)) { client.latency = now - client.lastPingAt; stats.pingIntervals.push(client.latency) }
     client.lastPingAt = now
   }
 
@@ -1900,17 +1928,17 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     if (identity === false) { denyRefresh(client, msg.id); return }
     if (client.state === 'closed') return   // course : coupé pendant l'await (même garde que handleHello)
     if (identityIdOf(identity) !== identityIdOf(client.identity)) { denyRefresh(client, msg.id); return }
-    const avant           = client.identity
+    const before          = client.identity
     client.identity       = identity
     client.tokenExpiresAt = tokenExpOf(identity)
     if (client.tokenExpiresAt != null) ensureTokenSweep()
     // même utilisateur, autres champs (un rôle retiré…) : les gardes des flux qu'elle suit relisent l'identité
-    if (!memeIdentite(avant, identity)) streamsEngine.onIdentityChange(client)
+    if (!sameIdentity(before, identity)) streamsEngine.onIdentityChange(client)
     if (msg.id != null) sendRaw(client, { t: 'µ:ack', id: msg.id, p: { exp: client.tokenExpiresAt != null ? Math.round(client.tokenExpiresAt / 1000) : null } })
   }
 
   // identité rafraîchie inchangée : même objet, ou même contenu sérialisé — en cas de doute, changée
-  function memeIdentite(a: unknown, b: unknown): boolean {
+  function sameIdentity(a: unknown, b: unknown): boolean {
     if (a === b) return true
     try { return JSON.stringify(a) === JSON.stringify(b) }
     catch { return false }
@@ -1975,40 +2003,40 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   // code de la famille du message : `lobby:block` → `lobby-denied`) est du trafic attendu, qu'un client répète
   // au débit autorisé : jamais journalisé en erreur. Une MjsWsError, refus voulu par l'application, part en avertissement, sa phrase sans
   // pile ; tout le reste est journalisé en erreur, avec sa pile
-  const CODE_DE_REFUS = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$/
-  const enProduction  = process.env.NODE_ENV === 'production'
+  const REJECT_CODE_RE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$/
+  const inProduction   = process.env.NODE_ENV === 'production'
 
-  function estInterne(err: unknown): boolean {
-    if (!(err instanceof Error) || estMarquee(err, MARQUE_REFUS)) return false
+  function isInternal(err: unknown): boolean {
+    if (!(err instanceof Error) || isMarked(err, REJECT_MARK)) return false
     const e = err as Error & { errno?: unknown; syscall?: unknown }
     return Object.getPrototypeOf(err) !== Error.prototype || e.errno !== undefined || e.syscall !== undefined
   }
 
-  function reponseAException(err: unknown, cle: 'ws.core.serve-a-leve' | 'ws.core.on-a-leve', type: string): string {
+  function exceptionReply(err: unknown, key: 'ws.core.serve-threw' | 'ws.core.on-threw', type: string): string {
     const message = errMessage(err)
-    const interne = estInterne(err)
-    const refus   = !interne && CODE_DE_REFUS.test(message) && message.startsWith(type.split(':')[0] + '-')
-    if (!refus) {
-      if (estMarquee(err, MARQUE_REFUS)) log('warn', t(cle === 'ws.core.serve-a-leve' ? 'ws.core.serve-a-refuse' : 'ws.core.on-a-refuse', { type, message }))
-      else log('error', t(cle, { type }), { err })
+    const internal = isInternal(err)
+    const reject  = !internal && REJECT_CODE_RE.test(message) && message.startsWith(type.split(':')[0] + '-')
+    if (!reject) {
+      if (isMarked(err, REJECT_MARK)) log('warn', t(key === 'ws.core.serve-threw' ? 'ws.core.serve-refused' : 'ws.core.on-refused', { type, message }))
+      else log('error', t(key, { type }), { err })
     }
-    if (!enProduction) return message
-    const montrable = estMarquee(err, MARQUE_REFUS) || (!interne && (CODE_DE_REFUS.test(message) || type.startsWith('µgame:')))
-    return montrable ? message : t('ws.core.erreur-interne-client')
+    if (!inProduction) return message
+    const showable = isMarked(err, REJECT_MARK) || (!internal && (REJECT_CODE_RE.test(message) || type.startsWith('µgame:')))
+    return showable ? message : t('ws.core.error-internal-client')
   }
 
   async function routeAppMessage(client: MjsWsClientImpl, msg: any): Promise<void> {
     const handler = servers.get(msg.t)
     const pubsub  = subscribers.get(msg.t)
     // le type part avec l'erreur : un effet en direct dont le paquet manque ici le dit en console
-    if (!handler && (!pubsub || pubsub.length === 0)) { sendRaw(client, { t: 'µ:error', p: { message: t('ws.core.type-inconnu', { type: msg.t }), type: msg.t } }); return }
+    if (!handler && (!pubsub || pubsub.length === 0)) { sendRaw(client, { t: 'µ:error', p: { message: t('ws.core.type-unknown', { type: msg.t }), type: msg.t } }); return }
 
     if (msg.id != null && handler) {
       try {
         const result = await handler(msg.p, client)
         sendRaw(client, { t: 'µ:ack', id: msg.id, p: result })
       } catch (err) {
-        sendRaw(client, { t: 'µ:ack', id: msg.id, e: true, p: reponseAException(err, 'ws.core.serve-a-leve', msg.t) })
+        sendRaw(client, { t: 'µ:ack', id: msg.id, e: true, p: exceptionReply(err, 'ws.core.serve-threw', msg.t) })
       }
       return
     }
@@ -2018,15 +2046,15 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     if (!pubsub) return
     for (const h of pubsub.slice()) {
       try { await h(msg.p, client) }
-      catch (err) { sendError(client, reponseAException(err, 'ws.core.on-a-leve', msg.t)) }
+      catch (err) { sendError(client, exceptionReply(err, 'ws.core.on-threw', msg.t)) }
     }
   }
 
   // --- garde process (option guardProcess, défaut false) ---------------------
   function armProcessGuard(): void {
     if (!opts.guardProcess) return
-    uncaughtHandler  = (err) => log('error', t('ws.core.uncaught-exception-survit'), { err })
-    unhandledHandler = (reason) => log('error', t('ws.core.unhandled-rejection-survit'), { reason })
+    uncaughtHandler  = (err) => log('error', t('ws.core.uncaught-exception-survived'), { err })
+    unhandledHandler = (reason) => log('error', t('ws.core.unhandled-rejection-survived'), { reason })
     process.on('uncaughtException', uncaughtHandler)
     process.on('unhandledRejection', unhandledHandler)
   }
@@ -2039,7 +2067,14 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   }
 
   function* iterateClients(): IterableIterator<MjsWsClient> {
-    for (const c of clientsById.values()) if (c.state === 'authenticated') yield c
+    for (const c of clientsById.values()) if (isServed(c)) yield c
+  }
+
+  // connexion servie par la diffusion et listée dans app.clients : accueillie, sans fermeture déjà décidée (client.close(),
+  // expulsion, jeton expiré, éviction — la connexion physique peut traîner jusqu'au délai du transport) ; une session
+  // parquée reste servie, ses trames vont au tampon de reprise
+  function isServed(client: MjsWsClientImpl): boolean {
+    return client.state === 'authenticated' && (client.parked || !(client.guardFired || client.dismissed))
   }
 
   // --- façade applicative ------------------------------------------------------
@@ -2057,38 +2092,43 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     // principe que les accroches `(app as any)._binaryHandler`/`_cluster` posées après ce littéral)
     // : c'est CET objet — avec toute mutation ultérieure d'un composeur externe (ex. MJS-Server, qui
     // réassigne app.serve/app.on APRÈS mjsWs(), cf. modularjs-framework/mjs-server) déjà en place au moment de
-    // l'appel — que reçoit `pkg.installer`. Un paquet installé sur une app MJS-Server voit donc bien
+    // l'appel — que reçoit `pkg.install`. Un paquet installé sur une app MJS-Server voit donc bien
     // la garde de préfixe réservé de MJS-Server sur `app.serve`/`app.on`, jamais contournée.
-    // `pkg.nom` inscrit SEULEMENT après un installer qui n'a PAS levé (avant :
-    // inscrit AVANT l'appel, un installer en échec poisonnait le nom à vie — tout retry, même
+    // `pkg.name` inscrit SEULEMENT après un `install` qui n'a PAS levé (avant :
+    // inscrit AVANT l'appel, un `install` en échec poisonnait le nom à vie — tout retry, même
     // d'un paquet CORRIGÉ, restait ignoré pour toujours). L'erreur est journalisée (catalogue)
     // PUIS relancée telle quelle — comportement inchangé pour l'appelant, qui la voyait déjà.
     // Le try/catch ci-dessus ne voit
-    // QUE le throw SYNCHRONE : un installer `async` (ou qui retourne une Promise) NE lève JAMAIS
+    // QUE le throw SYNCHRONE : un `install` `async` (ou qui retourne une Promise) NE lève JAMAIS
     // sync, même s'il rejette plus tard — le nom passait donc AVANT ce correctif, et le rejet,
     // jamais intercepté, tuait le process (unhandledRejection, Node 24). `r` thenable ⇒ inscrit
     // SEULEMENT à la résolution, rejet capturé et journalisé (MÊME message que le cas sync), JAMAIS
     // relancé (aucun appelant synchrone à qui le faire remonter). `use()` reste
-    // SYNCHRONE et chaînable dans tous les cas — pour un installer async, le paquet est « en cours
+    // SYNCHRONE et chaînable dans tous les cas — pour un `install` async, le paquet est « en cours
     // d'installation » entre l'appel et la résolution : Faille comblée — cette fenêtre est
     // désormais GARDÉE (installingPackages ci-dessus) : une réutilisation du MÊME nom PENDANT
     // qu'une installation async est encore en vol est ignorée (MÊME log qu'un paquet déjà installé),
-    // jamais une 2e exécution de installer().
+    // jamais une 2e exécution de install().
     use(pkg) {
-      if (installedPackages.has(pkg.nom)) { log('warn', t('ws.core.paquet-deja-installe', { nom: pkg.nom })); return app }
-      if (installingPackages.has(pkg.nom)) { log('warn', t('ws.core.paquet-deja-installe', { nom: pkg.nom })); return app }
+      // un paquet porte name (un texte non vide : un nom vide masquerait le paquet suivant au nom vide) et install (une fonction) :
+      // sans l'un ou l'autre, refus clair avant toute installation
+      const missingName    = typeof pkg?.name !== 'string' || pkg.name.trim() === ''
+      const missingInstall = typeof pkg?.install !== 'function'
+      if (missingName || missingInstall) throw new TypeError(t('ws.core.package-incomplete', { missingName, missingInstall }))
+      if (installedPackages.has(pkg.name)) { log('warn', t('ws.core.package-already-installed', { name: pkg.name })); return app }
+      if (installingPackages.has(pkg.name)) { log('warn', t('ws.core.package-already-installed', { name: pkg.name })); return app }
       let r: unknown
-      try { r = pkg.installer(app) }
-      catch (err) { log('error', t('ws.core.installer-a-leve', { nom: pkg.nom }), { err }); throw err }
+      try { r = pkg.install(app) }
+      catch (err) { log('error', t('ws.core.install-threw', { name: pkg.name }), { err }); throw err }
       if (r && typeof (r as any).then === 'function') {
-        const enVol = Promise.resolve(r as PromiseLike<unknown>).then(
-          () => { installingPackages.delete(pkg.nom); installedPackages.add(pkg.nom) },
-          (err) => { installingPackages.delete(pkg.nom); log('error', t('ws.core.installer-a-leve', { nom: pkg.nom }), { err }) },
+        const inFlight = Promise.resolve(r as PromiseLike<unknown>).then(
+          () => { installingPackages.delete(pkg.name); installedPackages.add(pkg.name) },
+          (err) => { installingPackages.delete(pkg.name); log('error', t('ws.core.install-threw', { name: pkg.name }), { err }) },
         )
-        installingPackages.set(pkg.nom, enVol)
+        installingPackages.set(pkg.name, inFlight)
         return app
       }
-      installedPackages.add(pkg.nom)
+      installedPackages.add(pkg.name)
       return app
     },
 
@@ -2103,7 +2143,7 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
       // partagé par toutes les connexions locales de cet utilisateur (multi-onglets compris).
       const frame = { t: type, p }
       const pre = preEncodeFrame(frame)
-      if (pre) for (const client of connexionsDe(id)) sendPre(client, frame, pre)
+      if (pre) for (const client of connectionsOf(id)) sendPre(client, frame, pre)
       // cluster — un autre process peut détenir d'autres connexions de ce user ;
       // no-op tant que clusterEngine n'est pas posé (opts.adapter absent), MÊME accroche que
       // le pont universel pour /send{user} (bridge.ts, ctx.publishSend)
@@ -2117,8 +2157,8 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
       const ok = broadcastLocal(type, p, exceptClients.length > 0 ? new Set(exceptClients) : null)
       // ordre PRODUCTEUR (cluster) : LOCAL d'abord (ci-dessus), publication ensuite —
       // no-op tant que clusterEngine n'est pas posé (opts.adapter absent). Partent, à part, les id de CONNEXION (un objet
-      // client désigne cette connexion seule) et, venues du pont, les personnes reçues (cf. idsExclus)
-      clusterEngine?.publishBroadcast(type, p, idsExclus(exceptClients, bOpts))
+      // client désigne cette connexion seule) et, venues du pont, les personnes reçues (cf. excludedIds)
+      clusterEngine?.publishBroadcast(type, p, excludedIds(exceptClients, bOpts))
       return ok
     },
 
@@ -2145,7 +2185,7 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
           handle.send(type, p, sOpts)
           if (!engine) return
           const exceptClients = !sOpts?.except ? [] : (Array.isArray(sOpts.except) ? sOpts.except : [sOpts.except])
-          engine.publishRoomSend(name, type, p, idsExclus(exceptClients, sOpts))   // cf. broadcast
+          engine.publishRoomSend(name, type, p, excludedIds(exceptClients, sOpts))   // cf. broadcast
         },
         get clients(): Iterable<MjsWsClient> { return handle.clients },
         get size(): number { return handle.size },
@@ -2166,21 +2206,21 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
       return wrapped
     },
 
-    schema(nom, champs) { schemaEngine.def(nom, champs) },
+    schema(name, fields) { schemaEngine.def(name, fields) },
 
     stream(name, sOpts) { return streamsEngine.stream(name, sOpts) },
 
     // état/métriques (stats.ts) — TOUJOURS disponible, indépendant de opts.stats
     // (qui ne gouverne que l'exposition HTTP via le pont, cf. le bloc `if (opts.bridge)` plus
-    // bas). Gauges salons/flux.nombre lues EN DIRECT ici — jamais stockées dans le registre.
+    // bas). Gauges rooms/streams.count lues EN DIRECT ici — jamais stockées dans le registre.
     stats() {
-      const snapshot = stats.snapshot({ salons: roomsEngine.statsSnapshot(), flux: streamsEngine.statsSnapshot() })
-      // compteurs LOCAUX de l'adaptateur (ignoresOrigin/reconnexions) recopiés ICI,
+      const snapshot = stats.snapshot({ rooms: roomsEngine.statsSnapshot(), streams: streamsEngine.statsSnapshot() })
+      // compteurs LOCAUX de l'adaptateur (ignoredOrigin/reconnects) recopiés ICI,
       // au moment du snapshot, MÊME philosophie que les gauges salons/flux ci-dessus (jamais
       // accumulés à part dans le registre, jamais de drift avec la source — cf. adapterLocalCounters)
       const local = adapterLocalCounters(opts.adapter)
-      snapshot.adaptateur.ignoresOrigin = local.ignoresOrigin
-      snapshot.adaptateur.reconnexions  = local.reconnexions
+      snapshot.adapter.ignoredOrigin = local.ignoredOrigin
+      snapshot.adapter.reconnects    = local.reconnects
       return snapshot
     },
 
@@ -2229,12 +2269,12 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   // toujours à `null`.
   ;(app as any)._tokenSweepArmed = () => tokenSweepTimer !== null
   // même principe : taille des registres de la mise au banc et des seaux partagés (mémoire bornée)
-  ;(app as any)._banc          = () => ({ fautes: banFautes.size, bannis: banJusqua.size })
-  ;(app as any)._seauxPartages = () => seauxPartages.size
+  ;(app as any)._banState          = () => ({ faults: banFaults.size, banned: bannedUntil.size })
+  ;(app as any)._sharedBuckets = () => sharedBuckets.size
 
-  // accroches internes des paquets du framework, jamais un contrat public : départs de salon (cf. annoncerDepart) et
+  // accroches internes des paquets du framework, jamais un contrat public : départs de salon (cf. announceLeave) et
   // diffusion à un ensemble de connexions avec une charge encodée une seule fois (frappe de la discussion)
-  ;(app as any)._onRoomLeave = (fn: (room: string, id: string) => void): void => { departsDeSalon.push(fn) }
+  ;(app as any)._onRoomLeave = (fn: (room: string, id: string) => void): void => { roomLeaveHandlers.push(fn) }
   ;(app as any)._fanOut = (targets: Iterable<MjsWsClient>, type: string, p: unknown, skip?: Set<MjsWsClient>): void => {
     schemaEngine.assertSendable(type)
     fanSend(targets, { t: type, p }, skip)
@@ -2249,7 +2289,7 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   ;(app as any)._binaryHandler = (client: MjsWsClient, bytes: Uint8Array): void | Promise<void> => {
     const decoded = schemaEngine.decodeInbound(client, bytes)
     if (!decoded) return
-    if ((client as MjsWsClientImpl).auBancJusqua > 0 && refuseAuBanc(client as MjsWsClientImpl, decoded.t, undefined)) return
+    if ((client as MjsWsClientImpl).benchedUntil > 0 && rejectBenched(client as MjsWsClientImpl, decoded.t, undefined)) return
     bridgeEngine?.notifyMessage(decoded.t, decoded.p, client)
     // retournée (pas juste appelée) — handleBinaryRaw l'attend, cf. son commentaire (FIFO)
     return routeAppMessage(client as MjsWsClientImpl, { t: decoded.t, p: decoded.p })
@@ -2262,12 +2302,12 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   // streamsEngine/app.broadcast/app.room posées plus haut (optional chaining sur `clusterEngine`)
   // restent des no-op tant qu'on n'atteint pas cette ligne.
   if (opts.adapter) {
-    const engine = createClusterEngine(opts.adapter, { app, roomsEngine, streamsEngine, broadcastLocal, onLog: log, stats, evictIdentity, appliquerBan, ciblesLocales, connexionsDesIds })
-    clusterEngine = engine
+    const engine     = createClusterEngine(opts.adapter, { app, roomsEngine, streamsEngine, broadcastLocal, onLog: log, stats, evictIdentity, applyBan, localTargets, connectionsOfIds })
+    clusterEngine    = engine
     const baseListen = app.listen
     const baseStop   = app.stop
-    app.listen = async () => { await baseListen(); await engine.start() }
-    app.stop   = async () => { await engine.stop(); await baseStop() }
+    app.listen       = async () => { await baseListen(); await engine.start() }
+    app.stop         = async () => { await engine.stop(); await baseStop() }
     // accroches de TEST uniquement (jamais un contrat public, cf. tests/mjs-ws-adapter.test.ts) —
     // _cluster.checkLeasesNow() force une vérification des baux distants sans attendre le cycle
     // ~3s réel ; _presence expose la présence FUSIONNÉE (rooms.ts) sans monter un pont HTTP
@@ -2289,11 +2329,11 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
       publishSend: clusterEngine ? (target, type, p) => clusterEngine!.publishSend(target, type, p) : undefined,
       // `/room/kick {client}` d'une connexion servie par un autre processus : seule une connexion passée en objet
       // reste locale (cf. room().kick), son id part donc à part, marqué comme id de connexion
-      publishKickConnexion: clusterEngine ? (room, clientId, reason) => clusterEngine!.publishRoomKick(room, clientId, reason, true) : undefined,
+      publishKickConnection: clusterEngine ? (room, clientId, reason) => clusterEngine!.publishRoomKick(room, clientId, reason, true) : undefined,
       // destinataires d'un /send par les index (connexion, comptes), jamais un parcours de toutes les connexions
-      ciblesLocales,
+      localTargets,
       // ids d'un `except` (/broadcast, /room/send) par les index, jamais un parcours de toutes les connexions
-      connexionsDesIds,
+      connectionsOfIds,
       // état/métriques (stats.ts) — écriture (compteurs pont) ; lecture via app.stats()
       // (déjà dans `app` ci-dessus). statsEnabled gouverne UNIQUEMENT l'exposition HTTP (/stats,
       // /metrics, /state) — le registre, lui, tourne déjà (créé tout en haut de createCore).
@@ -2325,7 +2365,7 @@ interface MjsWsClusterCtx {
   broadcastLocal: (type: string, p: unknown, except: Set<MjsWsClient> | null) => void
   onLog: MjsWsLogFn
   /** état/métriques (stats.ts) — publies/recus comptés ICI (adapter.ts reste inchangé,
-   *  ignoresOrigin/reconnexions non couverts ici, cf. docs/23-mjs-ws.md) */
+   *  ignoredOrigin/reconnects non couverts ici, cf. docs/23-mjs-ws.md) */
   stats: MjsWsStatsRegistry
   /** session exclusive par identité — éviction LOCALE (vivantes +
    *  parquées, cf. core.ts::evictIdentity) : le canal identity:kick l'appelle avec `exceptId`
@@ -2335,21 +2375,21 @@ interface MjsWsClusterCtx {
    *  toute connexion VIVANTE locale, jamais un mode 'replace' distant qui tuerait à tort la
    *  session gagnante d'un 'refuse' local. */
   evictIdentity: (identityId: string, exceptId: string | undefined, reason: string | undefined, parkedOnly?: boolean) => void
-  /** mise au banc prononcée par un AUTRE process — cf. core.ts::appliquerBan */
-  appliquerBan: (cle: string, duree: number) => void
-  /** cibles LOCALES d'un envoi venu d'un autre process (canal `send`) — par les index, cf. core.ts::ciblesLocales */
-  ciblesLocales: (clientId: string | undefined, user: string | undefined) => MjsWsClient[]
-  /** connexions LOCALES désignées par un `except` venu d'un autre process — par les index, cf. core.ts::connexionsDesIds */
-  connexionsDesIds: (recu: MjsWsExceptRecu) => MjsWsClient[]
+  /** mise au banc prononcée par un AUTRE process — cf. core.ts::applyBan */
+  applyBan: (key: string, duration: number) => void
+  /** cibles LOCALES d'un envoi venu d'un autre process (canal `send`) — par les index, cf. core.ts::localTargets */
+  localTargets: (clientId: string | undefined, user: string | undefined) => MjsWsClient[]
+  /** connexions LOCALES désignées par un `except` venu d'un autre process — par les index, cf. core.ts::connectionsOfIds */
+  connectionsOfIds: (received: MjsWsReceivedExcept) => MjsWsClient[]
 }
 
 interface MjsWsClusterEngine {
   start(): Promise<void>
   stop(): Promise<void>
-  publishBroadcast(type: string, p: unknown, except: MjsWsExceptRecu): void
-  publishRoomSend(room: string, type: string, p: unknown, except: MjsWsExceptRecu): void
-  /** `parConnexion` : `target` est l'id d'UNE connexion (pont, `/room/kick {client}`), sinon l'id d'une personne */
-  publishRoomKick(room: string, target: string, reason: string | undefined, parConnexion?: boolean): void
+  publishBroadcast(type: string, p: unknown, except: MjsWsReceivedExcept): void
+  publishRoomSend(room: string, type: string, p: unknown, except: MjsWsReceivedExcept): void
+  /** `byConnection` : `target` est l'id d'UNE connexion (pont, `/room/kick {client}`), sinon l'id d'une personne */
+  publishRoomKick(room: string, target: string, reason: string | undefined, byConnection?: boolean): void
   publishSend(target: { client?: string; user?: string }, type: string, p: unknown): void
   allocateStreamSeq(name: string): Promise<number>
   publishStreamDelta(name: string, seq: number, p: Record<string, unknown>): void
@@ -2369,7 +2409,7 @@ interface MjsWsClusterEngine {
   publishIdentityKick(identityId: string, reason: string | undefined, parkedOnly?: boolean): void
   /** mise au banc — dit aux AUTRES process de refuser aussi `cle` ('id:…'/'ip:…') pendant `duree` ms
    *  (une durée, pas une échéance : insensible au décalage d'horloge entre machines) */
-  publishBan(cle: string, duree: number): void
+  publishBan(key: string, duration: number): void
   /** force une vérification des baux distants MAINTENANT, hors du cycle ~3 s normal — TESTS seulement */
   checkLeasesNow(): Promise<void>
 }
@@ -2397,39 +2437,39 @@ function createClusterEngine(adapter: MjsWsAdapter, ctx: MjsWsClusterCtx): MjsWs
   // voisine pendant une mise à jour) : ignoré avant tout usage, jamais une exception qui ferait tomber le process.
   // Un avertissement au plus par minute et par canal, qui compte ceux ignorés entre-temps
   const ignores = new Map<string, { n: number; at: number }>()
-  function ignorer(channel: string): void {
+  function ignore(channel: string): void {
     const now  = Date.now()
     const seen = ignores.get(channel)
     if (seen && now - seen.at < 60000) { seen.n++; return }
     ignores.set(channel, { n: 0, at: now })
-    ctx.onLog('warn', t('ws.core.message-canal-malforme', { channel, n: (seen?.n ?? 0) + 1 }))
+    ctx.onLog('warn', t('ws.core.message-channel-malformed', { channel, n: (seen?.n ?? 0) + 1 }))
   }
-  const objet   = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
-  const texte   = (v: unknown): v is string => typeof v === 'string'
-  const textes  = (v: unknown): v is string[] => Array.isArray(v) && v.every(texte)
-  const absentOuTexte = (v: unknown): boolean => v === undefined || typeof v === 'string'
-  const absentOuTextes = (v: unknown): boolean => v === undefined || textes(v)
+  const object        = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
+  const text          = (v: unknown): v is string => typeof v === 'string'
+  const texts         = (v: unknown): v is string[] => Array.isArray(v) && v.every(text)
+  const absentOrText  = (v: unknown): boolean => v === undefined || typeof v === 'string'
+  const absentOrTexts = (v: unknown): boolean => v === undefined || texts(v)
 
   // abonnements posés à la CONSTRUCTION (synchrone, avant même app.listen()) — pas à start() :
   // un setup(app) applicatif qui sème un flux AVANT listen() (cf. docs/23-mjs-ws.md §6.1, exemple
   // d'entry) doit voir sa mutation publiée dès le 1er coup, pas seulement APRÈS le boot complet.
   adapter.subscribe(chBroadcast, (msg) => {
-    ctx.stats.adaptateur.recus++
-    if (!objet(msg) || !texte(msg.type) || !textes(msg.except) || !absentOuTextes(msg.exceptClients)) { ignorer(chBroadcast); return }
-    const m      = msg as { type: string; p: unknown; except: string[]; exceptClients?: string[] }
-    const exclus = ctx.connexionsDesIds({ personnes: m.except, connexions: m.exceptClients ?? [] })
-    ctx.broadcastLocal(m.type, m.p, exclus.length > 0 ? new Set(exclus) : null)
+    ctx.stats.adapter.received++
+    if (!object(msg) || !text(msg.type) || !texts(msg.except) || !absentOrTexts(msg.exceptClients)) { ignore(chBroadcast); return }
+    const m        = msg as { type: string; p: unknown; except: string[]; exceptClients?: string[] }
+    const excluded = ctx.connectionsOfIds({ peers: m.except, connections: m.exceptClients ?? [] })
+    ctx.broadcastLocal(m.type, m.p, excluded.length > 0 ? new Set(excluded) : null)
   })
   adapter.subscribe(chRoomSend, (msg) => {
-    ctx.stats.adaptateur.recus++
-    if (!objet(msg) || !texte(msg.room) || !texte(msg.type) || !textes(msg.except) || !absentOuTextes(msg.exceptClients)) { ignorer(chRoomSend); return }
-    const m      = msg as { room: string; type: string; p: unknown; except: string[]; exceptClients?: string[] }
-    const exclus = ctx.connexionsDesIds({ personnes: m.except, connexions: m.exceptClients ?? [] })
-    ctx.roomsEngine.room(m.room).send(m.type, m.p, exclus.length > 0 ? { except: exclus } : undefined)
+    ctx.stats.adapter.received++
+    if (!object(msg) || !text(msg.room) || !text(msg.type) || !texts(msg.except) || !absentOrTexts(msg.exceptClients)) { ignore(chRoomSend); return }
+    const m        = msg as { room: string; type: string; p: unknown; except: string[]; exceptClients?: string[] }
+    const excluded = ctx.connectionsOfIds({ peers: m.except, connections: m.exceptClients ?? [] })
+    ctx.roomsEngine.room(m.room).send(m.type, m.p, excluded.length > 0 ? { except: excluded } : undefined)
   })
   adapter.subscribe(chRoomKick, (msg) => {
-    ctx.stats.adaptateur.recus++
-    if (!objet(msg) || !texte(msg.room) || !texte(msg.target)) { ignorer(chRoomKick); return }
+    ctx.stats.adapter.received++
+    if (!object(msg) || !text(msg.room) || !text(msg.target)) { ignore(chRoomKick); return }
     const m      = msg as { room: string; target: string; reason?: string; client?: boolean }
     const handle = ctx.roomsEngine.room(m.room)
     if (m.client !== true) { handle.kick(m.target, m.reason); return }
@@ -2441,33 +2481,33 @@ function createClusterEngine(adapter: MjsWsAdapter, ctx: MjsWsClusterCtx): MjsWs
   // 'refuse') — propagé TEL QUEL, transparent : ce process ne décide RIEN, il applique fidèlement
   // ce que l'émetteur a demandé (cf. publishIdentityKick).
   adapter.subscribe(chIdentityKick, (msg) => {
-    ctx.stats.adaptateur.recus++
-    if (!objet(msg) || !texte(msg.identityId)) { ignorer(chIdentityKick); return }
+    ctx.stats.adapter.received++
+    if (!object(msg) || !text(msg.identityId)) { ignore(chIdentityKick); return }
     const m = msg as { identityId: string; reason?: string; parkedOnly?: boolean }
     ctx.evictIdentity(m.identityId, undefined, m.reason, m.parkedOnly)
   })
   adapter.subscribe(chBan, (msg) => {
-    ctx.stats.adaptateur.recus++
-    if (!objet(msg) || !texte(msg.cle) || typeof msg.duree !== 'number' || !Number.isFinite(msg.duree)) { ignorer(chBan); return }
-    const m = msg as { cle: string; duree: number }
-    ctx.appliquerBan(m.cle, m.duree)
+    ctx.stats.adapter.received++
+    if (!object(msg) || !text(msg.key) || typeof msg.duration !== 'number' || !Number.isFinite(msg.duration)) { ignore(chBan); return }
+    const m = msg as { key: string; duration: number }
+    ctx.applyBan(m.key, m.duration)
   })
   adapter.subscribe(chSend, (msg) => {
-    ctx.stats.adaptateur.recus++
-    if (!objet(msg) || !texte(msg.type) || !absentOuTexte(msg.client) || !absentOuTexte(msg.user)) { ignorer(chSend); return }
+    ctx.stats.adapter.received++
+    if (!object(msg) || !text(msg.type) || !absentOrText(msg.client) || !absentOrText(msg.user)) { ignore(chSend); return }
     const m = msg as { client?: string; user?: string; type: string; p: unknown }
-    // par les index locaux (cf. core.ts::connexionsDe) — jamais un parcours de toutes les connexions
-    for (const c of ctx.ciblesLocales(m.client, m.user)) ctx.app.send(c, m.type, m.p)
+    // par les index locaux (cf. core.ts::connectionsOf) — jamais un parcours de toutes les connexions
+    for (const c of ctx.localTargets(m.client, m.user)) ctx.app.send(c, m.type, m.p)
   })
   adapter.subscribe(chStream, (msg) => {
-    ctx.stats.adaptateur.recus++
+    ctx.stats.adapter.received++
     const m = msg as { name: string; seq: number; p: Record<string, unknown> }
     // forme du delta vérifiée par streams.ts (`false` = mal formé, rien n'est touché)
-    if (!objet(msg) || !texte(m.name) || !ctx.streamsEngine.receiveRemote(m.name, m.seq, m.p)) ignorer(chStream)
+    if (!object(msg) || !text(m.name) || !ctx.streamsEngine.receiveRemote(m.name, m.seq, m.p)) ignore(chStream)
   })
   adapter.subscribe(chPresence, (msg, origin) => {
-    ctx.stats.adaptateur.recus++
-    if (!objet(msg) || !absentOuTexte(msg.room) || (msg.op !== 'join' && msg.op !== 'leave') || !texte(msg.id)) { ignorer(chPresence); return }
+    ctx.stats.adapter.received++
+    if (!object(msg) || !absentOrText(msg.room) || (msg.op !== 'join' && msg.op !== 'leave') || !text(msg.id)) { ignore(chPresence); return }
     const m = msg as { room?: string; op: 'join' | 'leave'; id: string; meta?: unknown }
     ctx.roomsEngine.applyRemotePresence(m.room, origin, m.op, m.id, m.meta)
   })
@@ -2477,11 +2517,11 @@ function createClusterEngine(adapter: MjsWsAdapter, ctx: MjsWsClusterCtx): MjsWs
       const alive = new Set(await adapter.listLeases(leasePrefix))
       for (const pid of ctx.roomsEngine.remoteProcessIds()) {
         if (alive.has(leasePrefix + pid)) continue
-        ctx.onLog('warn', t('ws.core.process-distant-bail-expire', { pid }))
+        ctx.onLog('warn', t('ws.core.process-remote-lease-expired', { pid }))
         ctx.roomsEngine.purgeRemoteProcess(pid)
       }
     } catch (err) {
-      ctx.onLog('warn', t('ws.core.verification-baux-echec', { err: errMessage(err) }))
+      ctx.onLog('warn', t('ws.core.check-leases-failed', { err: errMessage(err) }))
     }
   }
 
@@ -2490,7 +2530,7 @@ function createClusterEngine(adapter: MjsWsAdapter, ctx: MjsWsClusterCtx): MjsWs
       await adapter.start()
       await adapter.setLease(leaseKey, CLUSTER_LEASE_TTL_S)
       leaseTimer = setInterval(() => {
-        void adapter.setLease(leaseKey, CLUSTER_LEASE_TTL_S).catch(err => ctx.onLog('warn', t('ws.core.renouvellement-bail-echec', { err: errMessage(err) })))
+        void adapter.setLease(leaseKey, CLUSTER_LEASE_TTL_S).catch(err => ctx.onLog('warn', t('ws.core.renewal-lease-failed', { err: errMessage(err) })))
         void checkLeasesNow()
       }, CLUSTER_LEASE_RENEW_MS)
     },
@@ -2502,18 +2542,18 @@ function createClusterEngine(adapter: MjsWsAdapter, ctx: MjsWsClusterCtx): MjsWs
     },
 
     // `except` : les personnes ; `exceptClients` : les connexions, par leur id seul
-    publishBroadcast(type, p, except)                   { ctx.stats.adaptateur.publies++; adapter.publish(chBroadcast, { type, p, except: except.personnes, exceptClients: except.connexions }) },
-    publishRoomSend(room, type, p, except)              { ctx.stats.adaptateur.publies++; adapter.publish(chRoomSend, { room, type, p, except: except.personnes, exceptClients: except.connexions }) },
-    publishRoomKick(room, target, reason, parConnexion) { ctx.stats.adaptateur.publies++; adapter.publish(chRoomKick, parConnexion ? { room, target, reason, client: true } : { room, target, reason }) },
-    publishIdentityKick(identityId, reason, parkedOnly) { ctx.stats.adaptateur.publies++; adapter.publish(chIdentityKick, { identityId, reason, parkedOnly }) },
-    publishBan(cle, duree)                              { ctx.stats.adaptateur.publies++; adapter.publish(chBan, { cle, duree }) },
-    publishSend(target, type, p)                        { ctx.stats.adaptateur.publies++; adapter.publish(chSend, { client: target.client, user: target.user, type, p }) },
+    publishBroadcast(type, p, except)                   { ctx.stats.adapter.published++; adapter.publish(chBroadcast, { type, p, except: except.peers, exceptClients: except.connections }) },
+    publishRoomSend(room, type, p, except)              { ctx.stats.adapter.published++; adapter.publish(chRoomSend, { room, type, p, except: except.peers, exceptClients: except.connections }) },
+    publishRoomKick(room, target, reason, byConnection) { ctx.stats.adapter.published++; adapter.publish(chRoomKick, byConnection ? { room, target, reason, client: true } : { room, target, reason }) },
+    publishIdentityKick(identityId, reason, parkedOnly) { ctx.stats.adapter.published++; adapter.publish(chIdentityKick, { identityId, reason, parkedOnly }) },
+    publishBan(key, duration)                              { ctx.stats.adapter.published++; adapter.publish(chBan, { key, duration }) },
+    publishSend(target, type, p)                        { ctx.stats.adapter.published++; adapter.publish(chSend, { client: target.client, user: target.user, type, p }) },
     allocateStreamSeq(name)                             { return adapter.incr(`${prefix}:seq:${name}`) },
-    publishStreamDelta(name, seq, p)                    { ctx.stats.adaptateur.publies++; adapter.publish(chStream, { name, seq, p }) },
-    publishGlobalJoin(id, meta)                         { ctx.stats.adaptateur.publies++; adapter.publish(chPresence, { room: undefined, op: 'join', id, meta }) },
-    publishGlobalLeave(id)                              { ctx.stats.adaptateur.publies++; adapter.publish(chPresence, { room: undefined, op: 'leave', id }) },
-    publishRoomJoin(room, id, meta)                     { ctx.stats.adaptateur.publies++; adapter.publish(chPresence, { room, op: 'join', id, meta }) },
-    publishRoomLeave(room, id, _meta)                   { ctx.stats.adaptateur.publies++; adapter.publish(chPresence, { room, op: 'leave', id }) },
+    publishStreamDelta(name, seq, p)                    { ctx.stats.adapter.published++; adapter.publish(chStream, { name, seq, p }) },
+    publishGlobalJoin(id, meta)                         { ctx.stats.adapter.published++; adapter.publish(chPresence, { room: undefined, op: 'join', id, meta }) },
+    publishGlobalLeave(id)                              { ctx.stats.adapter.published++; adapter.publish(chPresence, { room: undefined, op: 'leave', id }) },
+    publishRoomJoin(room, id, meta)                     { ctx.stats.adapter.published++; adapter.publish(chPresence, { room, op: 'join', id, meta }) },
+    publishRoomLeave(room, id, _meta)                   { ctx.stats.adapter.published++; adapter.publish(chPresence, { room, op: 'leave', id }) },
     checkLeasesNow,
   }
 }

@@ -23,6 +23,7 @@ function executer(corps: string, etat: any = {}, magasin: any = {}, globaux: Rec
   const µ: any = {
     store: magasin,
     _set(_el: any, k: string, v: any) { ecrit.push(['$' + k, v]); etat[k] = v; return true },
+    _mjs_deepKey(o: any, k: any) { return o[k] },
     _mjs_deepSet(_el: any, p: any[], v: any) { ecrit.push([p.join('.'), v]); naviguer(etat, p.slice(0, -1))[p[p.length - 1]] = v; return v },
     _mjs_deepCall(_el: any, p: any[], m: string, args: any[]) { ecrit.push([p.join('.') + '.' + m, args]); const o = naviguer(etat, p); return o[m](...args) },
     _storeSet(k: string, v: any) { ecrit.push(['$$' + k, v]); magasin[k] = v },

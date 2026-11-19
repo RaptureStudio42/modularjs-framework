@@ -1,4 +1,4 @@
-// Construction : les réveils retenus des lignes (bloc balisé `<reveils-retenus>` de runtime/mjs_for.ts — `µ._mjs_waitRow`, la file des
+// Construction : les réveils retenus des lignes (bloc balisé `<retained-wakes>` de runtime/mjs_for.ts — `µ._mjs_waitRow`, la file des
 // composants qui attendent la fin d'une réconciliation pour se réveiller) n'entrent au cœur que si une ligne les demande : une ligne qui
 // porte une directive qui lit sa balise dans le document et qui livre des props à un composant enfant, ou un `{if}` de ligne dont une
 // branche en livre (generator/compile.ts). Une appli sans directive, même avec une liste dans une liste, ne paie pas un octet de ce code,
@@ -42,7 +42,7 @@ describe('réveils retenus des lignes — seulement quand une ligne les demande'
   after(async () => { await terminateSharedWorkerPool() })
 
   it('signal : seule une ligne à directive ou un {if} de ligne qui livre des props à un enfant le pose', async () => {
-    const signal = (features as any).REVEILS_RETENUS
+    const signal = (features as any).RETAINED_WAKES
     assert.equal(typeof signal, 'string', 'le signal est publié par le module des signaux')
     const sortie = async (source: string) => (await transpile(source, { moduleName: 'mjs-liste' })).output
     assert.equal(features.scanCompiledFeatures(await sortie(DIRECTIVE)).has(signal), true, 'ligne à directive qui livre des props à un enfant')
@@ -57,7 +57,7 @@ describe('réveils retenus des lignes — seulement quand une ligne les demande'
       const imbriquee = await coeur('imbriquee', IMBRIQUEE, env)
       assert.equal(imbriquee.includes('_mjs_waitRow'), false, 'liste dans une liste, sans directive : rien des réveils retenus')
       assert.equal(imbriquee.includes('_mjs_rowQ'), false, 'liste dans une liste, sans directive : ni leur file')
-      assert.equal(imbriquee.includes('<reveils-retenus>'), false, 'le bloc balisé est retiré')
+      assert.equal(imbriquee.includes('<retained-wakes>'), false, 'le bloc balisé est retiré')
       assert.equal(imbriquee.includes('if (woke)'), false, 'liste dans une liste, sans directive : ni la passe rejouée après leur réveil')
       const plate = await coeur('plate', PLATE, env)
       assert.equal(plate.includes('_mjs_waitRow'), false, 'liste plate, sans directive : rien des réveils retenus')
@@ -70,7 +70,7 @@ describe('réveils retenus des lignes — seulement quand une ligne les demande'
     it(`cœur (${env === 'dev' ? 'développement' : 'production'}) : un {if} de ligne n'en porte que si une branche livre des props à un enfant`, async () => {
       const sans = await coeur('si-sans', SI_SANS, env)
       assert.equal(sans.includes('_mjs_waitRow'), false, '{if} de ligne sans composant : rien des réveils retenus')
-      assert.equal(sans.includes('<reveils-retenus>'), false, '{if} de ligne sans composant : le bloc balisé est retiré')
+      assert.equal(sans.includes('<retained-wakes>'), false, '{if} de ligne sans composant : le bloc balisé est retiré')
       const enfant = await coeur('si-enfant', SI_ENFANT, env)
       assert.equal(enfant.includes('µ._mjs_waitRow = function'), true, '{if} de ligne à composant : les réveils retenus sont au cœur')
       assert.equal(enfant.includes('µ._mjs_rowQ && rowGo()'), true, '{if} de ligne à composant : leur relance en fin de réconciliation aussi')

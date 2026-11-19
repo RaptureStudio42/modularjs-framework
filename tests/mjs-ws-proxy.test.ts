@@ -147,7 +147,7 @@ describe('MJS-WS — proxy de décisions (proxy.ts)', () => {
   })
 
   it('2. connect refusé via proxy auth → µ:denied avec la raison du back', async () => {
-    const server = await startDecisionServer(SECRET, () => ({ status: 200, json: { ok: false, raison: 'compte banni' } }))
+    const server = await startDecisionServer(SECRET, () => ({ status: 200, json: { ok: false, reason: 'compte banni' } }))
     const { transport, app } = await startApp({ auth: { url: server.url, secret: SECRET } })
     const µ = makeClient(transport)
     const s = µ.socket('memory://p2', { auth: { token: 'x' }, reconnect: { backoff: [0], jitter: 0 } })
@@ -353,7 +353,7 @@ describe('MJS-WS — proxy de décisions (proxy.ts)', () => {
 
   it("18. le cookie de la requête d'upgrade part dans le POST connect", async () => {
     const server = await startDecisionServer(SECRET, (req) => ({
-      status: 200, json: req.body.cookie === 'session=abc; autre=1' ? { ok: true, identity: { id: 'u18' } } : { ok: false, raison: 'cookie absent du POST' },
+      status: 200, json: req.body.cookie === 'session=abc; autre=1' ? { ok: true, identity: { id: 'u18' } } : { ok: false, reason: 'cookie absent du POST' },
     }))
     const { transport, app } = await startApp({ auth: { url: server.url, secret: SECRET } })
     const µ = makeClientAvecEntetes(transport, { cookie: 'session=abc; autre=1' })

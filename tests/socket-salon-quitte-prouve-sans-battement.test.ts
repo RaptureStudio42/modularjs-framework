@@ -54,7 +54,7 @@ describe('µ.socket — salon quitté : la preuve du départ, avec ou sans batte
   async function reprises(a: any, fois: number) {
     const leaves: number[] = [], erreurs: string[] = []
     for (let k = 0; k < fois; k++) {
-      assert.ok(a._mjs_ws, 'connexion encore ouverte avant la reprise ' + (k + 1) + ' (état ' + a.state + ', erreurs ' + JSON.stringify(erreurs) + ', expulsions pour débit ' + app.stats().garde.kicksDebit + ')')
+      assert.ok(a._mjs_ws, 'connexion encore ouverte avant la reprise ' + (k + 1) + ' (état ' + a.state + ', erreurs ' + JSON.stringify(erreurs) + ', expulsions pour débit ' + app.stats().guard.kicksRate + ')')
       a._mjs_ws.close(1006, 'coupure'); await tick(15)
       const depuis = liste(sortants, 'a').length, r0 = liste(recus, 'a').length, w = accueils('a')
       a.connect()
@@ -105,7 +105,7 @@ describe('µ.socket — salon quitté : la preuve du départ, avec ou sans batte
     assert.deepEqual(r.leaves.slice(1), [0, 0, 0], 'les départs ne repartent pas à chaque reprise : ' + JSON.stringify(r.leaves))
     assert.deepEqual(r.erreurs, [], 'aucune erreur de débit')
     assert.equal(a.state, 'open')
-    assert.equal(app.stats().garde.kicksDebit, 0, 'aucune expulsion pour débit')
+    assert.equal(app.stats().guard.kicksRate, 0, 'aucune expulsion pour débit')
     assert.equal(retenus(a), 0, 'plus aucun départ retenu')
     a.destroy()
   })
@@ -127,7 +127,7 @@ describe('µ.socket — salon quitté : la preuve du départ, avec ou sans batte
     assert.ok(premiers <= 50, premiers + ' µ:leave en tout')
     assert.deepEqual(r.leaves, [0, 0], 'prouvés : plus rien ensuite')
     assert.deepEqual(r.erreurs, [])
-    assert.equal(app.stats().garde.kicksDebit, 0)
+    assert.equal(app.stats().guard.kicksRate, 0)
     assert.equal(retenus(a), 0)
     a.destroy()
   })

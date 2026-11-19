@@ -20,12 +20,12 @@
 // remontée d'un nœud vers ses ancêtres, ombres traversées (`getRootNode().host`), quelle que soit la profondeur :
 // `trouve(n)` rend vrai pour s'arrêter sur `n`. Un nœud déjà vu arrête la remontée — garde contre une boucle,
 // qu'un arbre DOM n'a pas, mais qu'un `host` posé à la main pourrait faire
-µ._mjs_climb = function(node, trouve) {
+µ._mjs_climb = function(node, found) {
   var seen = new Set();
   while (node && !seen.has(node)) {
     seen.add(node);
     node = node.parentNode || (node.getRootNode ? node.getRootNode().host : null);
-    if (node && trouve(node)) return node;
+    if (node && found(node)) return node;
   }
   return null;
 };
@@ -34,17 +34,17 @@
 // avant les écouteurs de la page. Sa distribution finie, son `eventPhase` retombe à 0 : un `reset` appelé plus tard (une
 // minuterie, la relance d'un repli) n'est jamais pris pour un geste. `navigator.userActivation.isActive` ne le dit pas : il
 // reste vrai quelques secondes après n'importe quel clic dans la page
-var _failedGeste = null;
+var _failedGesture = null;
 if (typeof window !== 'undefined' && window.addEventListener) {
   ['click', 'keydown', 'keyup', 'pointerdown', 'pointerup', 'mousedown', 'mouseup', 'touchend'].forEach(function(t) {
-    window.addEventListener(t, function(e) { if (e.isTrusted) _failedGeste = e; }, true);
+    window.addEventListener(t, function(e) { if (e.isTrusted) _failedGesture = e; }, true);
   });
 }
-var _failedEnCours = function(e) {
+var _failedPending = function(e) {
   return !!e && e.isTrusted === true && e.eventPhase > 0;
 };
 
-µ._mjs_resetComponent = function(comp, voulu) {
+µ._mjs_resetComponent = function(comp, wanted) {
   var fresh = document.createElement(comp.tagName.toLowerCase());
   var attrs = comp.attributes, i, a, k, nodes, effs;
   for (i = 0; i < attrs.length; i++) {
@@ -92,12 +92,12 @@ var _failedEnCours = function(e) {
     fresh.appendChild(comp.firstChild);
   }
   µ._mjs_swap(comp, fresh);
-  // rétablissement VOULU (`voulu` : reset appelé pendant la distribution d'un geste de l'utilisateur, un clic sur « réessayer ») : l'instance
+  // rétablissement VOULU (`wanted` : reset appelé pendant la distribution d'un geste de l'utilisateur, un clic sur « réessayer ») : l'instance
   // neuve qui vit deux secondes sans replanter voit ses réessais repartir de zéro — un plantage plus tard (une autre
   // action, des heures après) retrouve un reset qui marche. Une relance hors geste (le repli qui rappelle `reset` seul,
   // `setTimeout(reset, 10)`) ne remet jamais le compte à zéro : la limite arrête une erreur qui revient, quelle que soit
   // sa période
-  if (voulu) {
+  if (wanted) {
     setTimeout(function() {
       if (fresh.isConnected && fresh._mjs_initial_render === false && !fresh._mjs_has_crashed) fresh.removeAttribute('mjs-retry-used');
     }, 2000);
@@ -156,7 +156,7 @@ if (µ.Element) {
         self.setAttribute('mjs-retry-used', String(retryUsed + 1));
         // voulu : appelé pendant la distribution d'un geste de l'utilisateur — l'événement reçu par un reset posé en écouteur
         // (`@click=reset`), ou celui vu à la capture —, jamais après : seul un reset voulu peut faire repartir le compte de zéro
-        return µ._mjs_resetComponent(self, _failedEnCours(ev) || _failedEnCours(_failedGeste));
+        return µ._mjs_resetComponent(self, _failedPending(ev) || _failedPending(_failedGesture));
       };
     }
     else {

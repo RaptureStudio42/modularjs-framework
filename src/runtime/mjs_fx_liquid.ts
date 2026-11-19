@@ -382,7 +382,7 @@
   // une longueur à l'unité de mise en page du navigateur (1/64 px) : une boîte posée à la même place et à la même taille que celle de
   // l'image tombe sur les mêmes pixels d'écran, quel que soit l'arrondi (au pixel CSS ou au pixel d'écran) que le navigateur applique ;
   // la texture, elle, a la taille arrondie de la boîte × la densité : au plus un ou deux pixels d'écran de plus ou de moins
-  var lu = function(v) { return Math.round(v * 64) / 64; };
+  var readValue = function(v) { return Math.round(v * 64) / 64; };
   var clips = function(v) { return v === 'hidden' || v === 'scroll' || v === 'auto' || v === 'clip' || v === 'overlay'; };
 
   // les quatre arrondis d'une boîte de w × h px, [horizontal, vertical] par coin (haut gauche, haut droit, bas droit, bas gauche) :
@@ -663,11 +663,11 @@
       var dx   = (L - at.left) / m.sx;
       var dy   = (T - at.top) / m.sy;
       if (Math.abs(dx) >= .001) {
-        m.x = lu(m.x + dx);
+        m.x = readValue(m.x + dx);
         m.cv.style.setProperty('--mjs-fx-liquid-x', m.x + 'px');
       }
       if (Math.abs(dy) >= .001) {
-        m.y = lu(m.y + dy);
+        m.y = readValue(m.y + dy);
         m.cv.style.setProperty('--mjs-fx-liquid-y', m.y + 'px');
       }
       if (m.chain.length === 0) return;
@@ -756,8 +756,8 @@
       if (cv.height !== PH) cv.height = PH;
       cv.setAttribute('mjs-fx-layer', 'liquid');
       cv.setAttribute('aria-hidden', 'true');
-      cv.style.setProperty('--mjs-fx-liquid-w', lu(W) + 'px');
-      cv.style.setProperty('--mjs-fx-liquid-h', lu(H) + 'px');
+      cv.style.setProperty('--mjs-fx-liquid-w', readValue(W) + 'px');
+      cv.style.setProperty('--mjs-fx-liquid-h', readValue(H) + 'px');
       cv.style.removeProperty('--mjs-fx-liquid-x');
       cv.style.removeProperty('--mjs-fx-liquid-y');
       cv.style.removeProperty('--mjs-fx-liquid-clip');

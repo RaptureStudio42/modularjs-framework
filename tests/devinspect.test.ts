@@ -70,12 +70,12 @@ describe('mjs_devinspect — l\'inspecteur d\'objets', function () {
 
     // 'texte' est une chaîne ÉDITABLE : rendue en `<input value="…">`, jamais dans `textContent`
     // (un `<input>` n'a pas de nœud texte fils) — vérifier le champ, pas le texte de la div
-    assert.equal(div.querySelectorAll('input.di-valeur[data-di-key="texte"]').length, 0, 'l\'enfant ne doit pas apparaître avant dépliage')
+    assert.equal(div.querySelectorAll('input.di-value[data-di-key="texte"]').length, 0, 'l\'enfant ne doit pas apparaître avant dépliage')
 
     // déplie 'a', puis 'a.b'
     div.querySelectorAll('.di-chevron')[0].dispatchEvent(new window.Event('click', { bubbles: true }))
     div.querySelectorAll('.di-chevron')[1].dispatchEvent(new window.Event('click', { bubbles: true }))
-    const champTexte = div.querySelector('input.di-valeur[data-di-key="texte"]') as any
+    const champTexte = div.querySelector('input.di-value[data-di-key="texte"]') as any
     assert.ok(champTexte, `l'enfant doit apparaître une fois déplié :\n${div.innerHTML}`)
     assert.equal(champTexte.value, 'profond')
   })
@@ -120,7 +120,7 @@ describe('mjs_devinspect — l\'inspecteur d\'objets', function () {
     // `\bnull\b` piégeait sur la concaténation SANS séparateur des `<span>` voisins : la clé
     // `unNull` et le type `null` se touchent en texte brut → "unNullnull", jamais de frontière de
     // mot avant "null". Query le `.di-type` de la ligne concernée, sans ambiguïté de concaténation
-    const ligneNull = Array.from(div.querySelectorAll('.di-ligne')).find((l: any) => l.querySelector('.di-cle')?.textContent === 'unNull') as any
+    const ligneNull = Array.from(div.querySelectorAll('.di-line')).find((l: any) => l.querySelector('.di-key')?.textContent === 'unNull') as any
     assert.ok(ligneNull, `la ligne 'unNull' doit exister :\n${div.innerHTML}`)
     assert.equal(ligneNull.querySelector('.di-type').textContent, 'null')
     assert.match(texte, /undefined/, texte)
@@ -128,7 +128,7 @@ describe('mjs_devinspect — l\'inspecteur d\'objets', function () {
 
     // chaîne longue = ÉDITABLE : rendue en `<input value="…">`, jamais tronquée (l'édition doit
     // porter sur la valeur EXACTE, pas un aperçu ellipsé) — vérifier le champ, pas `textContent`
-    const champLongueChaine = div.querySelector('input.di-valeur[data-di-key="uneLongueChaine"]') as any
+    const champLongueChaine = div.querySelector('input.di-value[data-di-key="uneLongueChaine"]') as any
     assert.ok(champLongueChaine, `la chaîne longue doit rester éditable :\n${div.innerHTML}`)
     assert.equal(champLongueChaine.value, valeur.uneLongueChaine, 'la valeur éditable ne doit JAMAIS être tronquée')
   })
@@ -141,7 +141,7 @@ describe('mjs_devinspect — l\'inspecteur d\'objets', function () {
     window.µ._mjs_diRender(div, gros, { ns: 'plafond' })
     const texte = div.textContent
     assert.match(texte, /… et 50 de plus \(affichage plafonné à 200\)/, `le dépassement doit être annoncé :\n${texte}`)
-    assert.equal(div.querySelectorAll('.di-ligne').length, 200, 'exactement 200 lignes rendues, jamais 250')
+    assert.equal(div.querySelectorAll('.di-line').length, 200, 'exactement 200 lignes rendues, jamais 250')
   })
 
   it('ÉDITION : modifier une valeur dans l\'inspecteur touche l\'objet RÉEL, y compris imbriqué', function () {
@@ -151,7 +151,7 @@ describe('mjs_devinspect — l\'inspecteur d\'objets', function () {
     window.µ._mjs_diRender(div, objet, { ns: 'edition' })
 
     // niveau racine
-    const champNom = div.querySelector('input.di-valeur[data-di-key="nom"]')
+    const champNom = div.querySelector('input.di-value[data-di-key="nom"]')
     assert.ok(champNom, 'le champ nom doit exister')
     champNom.value = 'Bob'
     champNom.dispatchEvent(new window.Event('change', { bubbles: true }))
@@ -159,13 +159,13 @@ describe('mjs_devinspect — l\'inspecteur d\'objets', function () {
 
     // niveau imbriqué : déplie 'profil' puis édite 'age'
     div.querySelector('.di-chevron').dispatchEvent(new window.Event('click', { bubbles: true }))
-    const champAge = div.querySelector('input.di-valeur[data-di-key="age"]')
+    const champAge = div.querySelector('input.di-value[data-di-key="age"]')
     assert.ok(champAge, 'le champ age imbriqué doit exister une fois déplié')
     champAge.value = '31'
     champAge.dispatchEvent(new window.Event('change', { bubbles: true }))
     assert.equal(objet.profil.age, 31, 'la mutation imbriquée doit atteindre l\'objet réel, pas un clone')
 
-    // SABOTAGE documenté : `_diPoser` changé pour écrire sur une COPIE plutôt
+    // SABOTAGE documenté : `_diSet` changé pour écrire sur une COPIE plutôt
     // que sur `conteneur[cle]` fait ROUGIR cette assertion (vérifié, puis remis à l'identique) —
     // preuve que le test surveille bien l'objet source, pas l'affichage
   })
@@ -174,7 +174,7 @@ describe('mjs_devinspect — l\'inspecteur d\'objets', function () {
     const window = fenetreAvecCore(core)
     const div = hote(window)
     window.µ._mjs_diRender(div, 42, { ns: 'scalaire' })
-    assert.equal(div.querySelectorAll('input.di-valeur').length, 0, 'une racine scalaire ne doit proposer aucun champ d\'édition')
+    assert.equal(div.querySelectorAll('input.di-value').length, 0, 'une racine scalaire ne doit proposer aucun champ d\'édition')
     assert.match(div.textContent, /42/, div.textContent)
   })
 
@@ -191,11 +191,11 @@ describe('mjs_devinspect — l\'inspecteur d\'objets', function () {
     // laisse donc tels quels en relisant `innerHTML`, ce n'est pas une faille : la preuve de
     // sécurité tient déjà dans les deux assertions ci-dessus (aucun élément réel créé) plus
     // l'intégrité de la valeur, vérifiée ici sur le CHAMP, jamais interprétée comme du HTML
-    const champPiege = div.querySelector('input.di-valeur[data-di-key="piege"]') as any
+    const champPiege = div.querySelector('input.di-value[data-di-key="piege"]') as any
     assert.ok(champPiege, 'le champ piégé doit exister')
     assert.equal(champPiege.value, valeur.piege, `la valeur doit être préservée intacte, jamais interprétée :\n${div.innerHTML}`)
 
-    // SABOTAGE documenté : remplacer `µ._esc(_mjs_diApercu(...))` par la valeur
+    // SABOTAGE documenté : remplacer `µ._esc(_mjs_diPreview(...))` par la valeur
     // brute dans `rendreLigne` fait ROUGIR cette assertion (vérifié, puis remis à l'identique) —
     // preuve que le test détecte vraiment une régression d'échappement, pas un faux vert
   })
@@ -207,13 +207,13 @@ describe('mjs_devinspect — l\'inspecteur d\'objets', function () {
     window.µ.console({ a: { texteProfond: 'PREMIER_PROFOND' } })
     const racine1 = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
     racine1.querySelector('.di-chevron').dispatchEvent(new window.Event('click', { bubbles: true }))
-    const champ1 = racine1.querySelector('input.di-valeur[data-di-key="texteProfond"]') as any
+    const champ1 = racine1.querySelector('input.di-value[data-di-key="texteProfond"]') as any
     assert.ok(champ1, `le premier objet doit être déplié :\n${racine1.innerHTML}`)
     assert.equal(champ1.value, 'PREMIER_PROFOND')
 
     window.µ.console({ a: { texteProfond: 'SECOND_PROFOND' } })
     const racine2 = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
-    assert.equal(racine2.querySelectorAll('input.di-valeur[data-di-key="texteProfond"]').length, 0, `le second appel ne doit PAS hériter du pli du premier :\n${racine2.innerHTML}`)
+    assert.equal(racine2.querySelectorAll('input.di-value[data-di-key="texteProfond"]').length, 0, `le second appel ne doit PAS hériter du pli du premier :\n${racine2.innerHTML}`)
     window.µ.console(false)
   })
 })
@@ -301,7 +301,7 @@ describe('mjs_devpanel — bascules et onglets (via l\'inspecteur)', function ()
 
     assert.equal(window.µ.console('mjs-dpb-enfant'), true, 'un sélecteur doit ouvrir le panneau')
     const racine = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
-    assert.equal(racine.querySelector('.ligne[aria-selected="true"]').textContent, 'dpb-enfant·1', `l'instance visée par le sélecteur doit être surlignée sélectionnée :\n${racine.textContent}`)
+    assert.equal(racine.querySelector('.line[aria-selected="true"]').textContent, 'dpb-enfant·1', `l'instance visée par le sélecteur doit être surlignée sélectionnée :\n${racine.textContent}`)
     window.µ.console(false)
   })
 
@@ -314,7 +314,7 @@ describe('mjs_devpanel — bascules et onglets (via l\'inspecteur)', function ()
     assert.ok(window.document.querySelector('[data-mjs-devpanel]'), 'ouvert avant Échap')
     // la touche part du panneau, où le focus entre à l'ouverture : une Échap de la page, elle, reste
     // à l'application (cf. tests/devpanel-echap-surlignage-reglages.test.ts)
-    const panneau = window.document.querySelector('[data-mjs-devpanel]').shadowRoot.querySelector('.panneau')
+    const panneau = window.document.querySelector('[data-mjs-devpanel]').shadowRoot.querySelector('.panel')
     panneau.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, composed: true }))
     assertAbsent(window.document.querySelector('[data-mjs-devpanel]'), 'Échap doit fermer le panneau')
   })
@@ -327,7 +327,7 @@ describe('mjs_devpanel — bascules et onglets (via l\'inspecteur)', function ()
     window.µ.console(true)
     const racine = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
     assertAbsent(racine.querySelector('.voile'), 'le panneau n\'est plus une modale : aucun voile ne doit couvrir la page')
-    const panneau = racine.querySelector('.panneau')
+    const panneau = racine.querySelector('.panel')
     assert.ok(panneau, 'le panneau lui-même doit exister')
     assert.notEqual(panneau.getAttribute('aria-modal'), 'true', 'plus de aria-modal : la page derrière reste atteignable')
   })
@@ -350,16 +350,16 @@ describe('mjs_devpanel — bascules et onglets (via l\'inspecteur)', function ()
 
     window.µ.console(true)
     const racine = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
-    const lignes = Array.from(racine.querySelectorAll('.ligne')) as any[]
+    const lignes = Array.from(racine.querySelectorAll('.line')) as any[]
     const ligneEnfant = lignes.find(l => l.textContent.includes('dpb-enfant'))
     ligneEnfant.dispatchEvent(new window.Event('click', { bubbles: true }))
 
-    const etatTexte = racine.querySelector('.onglet-corps').textContent
+    const etatTexte = racine.querySelector('.tab-body').textContent
     // 'couleur' est une chaîne : ÉDITABLE, donc rendue en `<input value="…">`, jamais dans
-    // `textContent` — la CLÉ, elle, apparaît bien en texte (`.di-cle`) ; la VALEUR se lit sur le champ
+    // `textContent` — la CLÉ, elle, apparaît bien en texte (`.di-key`) ; la VALEUR se lit sur le champ
     assert.match(etatTexte, /couleur/, `l'onglet État doit montrer les variables de l'instance sélectionnée :\n${etatTexte}`)
-    const champCouleur = racine.querySelector('input.di-valeur[data-di-key="couleur"]') as any
-    assert.ok(champCouleur, `la variable d'état doit être éditable :\n${racine.querySelector('.onglet-corps').innerHTML}`)
+    const champCouleur = racine.querySelector('input.di-value[data-di-key="couleur"]') as any
+    assert.ok(champCouleur, `la variable d'état doit être éditable :\n${racine.querySelector('.tab-body').innerHTML}`)
     assert.equal(champCouleur.value, 'sombre', 'la valeur d\'état (reçue du contexte du parent) doit être celle de l\'instance')
     window.µ.console(false)
   })
@@ -374,16 +374,16 @@ describe('mjs_devpanel — bascules et onglets (via l\'inspecteur)', function ()
     // l'arborescence, n'écrit jamais dans le consommateur)
     window.µ.console(true)
     const racine = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
-    const lignes = Array.from(racine.querySelectorAll('.ligne')) as any[]
+    const lignes = Array.from(racine.querySelectorAll('.line')) as any[]
     lignes[0].dispatchEvent(new window.Event('click', { bubbles: true }))
-    racine.querySelector('.onglet[data-onglet="contexte"]').dispatchEvent(new window.Event('click', { bubbles: true }))
-    const corps = racine.querySelector('.onglet-corps')
+    racine.querySelector('.tab[data-tab="context"]').dispatchEvent(new window.Event('click', { bubbles: true }))
+    const corps = racine.querySelector('.tab-body')
     const contexteTexte = corps.textContent
     assert.match(contexteTexte, /theme/, `l'onglet Contexte doit montrer la clé posée :\n${contexteTexte}`)
     // la clé 'theme' est une chaîne, ÉDITABLE (l'inspecteur générique la rend en `<input>`) :
     // sa VALEUR ne rentre jamais dans `textContent` — se lit sur le champ, pas le texte du panneau
     // (le label affiché est `JSON.stringify(cle)`, donc `"theme"` guillemets compris)
-    const champTheme = Array.from(corps.querySelectorAll('input.di-valeur')).find((el: any) => el.getAttribute('data-di-key') === '"theme"') as any
+    const champTheme = Array.from(corps.querySelectorAll('input.di-value')).find((el: any) => el.getAttribute('data-di-key') === '"theme"') as any
     assert.ok(champTheme, `la clé de contexte doit être éditable :\n${corps.innerHTML}`)
     assert.equal(champTheme.value, 'sombre', 'et sa valeur')
     window.µ.console(false)

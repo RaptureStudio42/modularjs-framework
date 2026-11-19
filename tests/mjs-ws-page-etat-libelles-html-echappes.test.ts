@@ -8,12 +8,12 @@ import { renderStatsPage } from '../src/mjs-ws/stats-page.js'
 describe('MJS-WS — page /state : libellés du HTML échappés', () => {
   it('titre, h1 et pied de page : `<`, `>`, `&` et guillemets rendus en texte', () => {
     const catalogue = fr as Record<string, unknown>
-    const titre     = catalogue['ws.stats.titre-page']
-    const pied      = catalogue['ws.stats.pied-de-page']
+    const titre     = catalogue['ws.stats.title-page']
+    const pied      = catalogue['ws.stats.footer']
     try {
-      catalogue['ws.stats.titre-page']   = 'État <b>gras</b> & "co"'
-      catalogue['ws.stats.pied-de-page'] = 'Mis à jour <img src=x onerror=alert(1)>'
-      const html = renderStatsPage({} as any)
+      catalogue['ws.stats.title-page'] = 'État <b>gras</b> & "co"'
+      catalogue['ws.stats.footer']     = 'Mis à jour <img src=x onerror=alert(1)>'
+      const html                       = renderStatsPage({} as any)
       assert.ok(!html.includes('<b>gras</b>'), 'aucune balise venue du titre')
       assert.ok(!html.includes('<img'), 'aucune balise venue du pied de page')
       assert.ok(html.includes('<title>État &lt;b&gt;gras&lt;/b&gt; &amp; &quot;co&quot;</title>'), 'titre de l’onglet')
@@ -21,8 +21,8 @@ describe('MJS-WS — page /state : libellés du HTML échappés', () => {
       assert.ok(html.includes('<footer>Mis à jour &lt;img src=x onerror=alert(1)&gt; <span id="ts"></span></footer>'), 'pied de page')
     }
     finally {
-      catalogue['ws.stats.titre-page']   = titre
-      catalogue['ws.stats.pied-de-page'] = pied
+      catalogue['ws.stats.title-page'] = titre
+      catalogue['ws.stats.footer']     = pied
     }
   })
 })

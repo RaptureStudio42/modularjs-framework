@@ -104,7 +104,7 @@ function signedRequest(target: URL, method: string, secret: string, body: string
     // elle) : sans écouter les DEUX, celui qui n'a pas de listener devient un événement 'error' non
     // géré (uncaughtException) — le garde évite un double resolve/reject, jamais un souci en soi.
     let settled       = false
-    const finirErreur = (err: Error): void => { if (!settled) { settled = true; reject(err) } }
+    const failWith = (err: Error): void => { if (!settled) { settled = true; reject(err) } }
     const ts          = Math.floor(Date.now() / 1000)   // l'heure MURALE, volontairement : le back compare cet horodatage signé à la sienne (± 300 s) — l'échéance globale, elle, suit performance.now()
     const sig         = signCanonical(secret, canonicalString(ts, method, target.pathname + target.search, body))
     const requester   = target.protocol === 'https:' ? httpsRequest : httpRequest
@@ -120,20 +120,20 @@ function signedRequest(target: URL, method: string, secret: string, body: string
     }, (res) => {
       const chunks: Buffer[] = []
       let total = 0
-      res.on('error', finirErreur)
+      res.on('error', failWith)
       res.on('data', (c: Buffer) => {
         total += c.byteLength
         if (total > maxResponseBytes) {
           req.destroy()   // coupe le flux — PAS d'erreur passée ici : le rejet part par finirErreur, pas par l'event 'error' de req/res
-          finirErreur(new Error(t('serveur.persist-bridge-reponse-trop-grande', { max: maxResponseBytes })))
+          failWith(new Error(t('mjs-server.persist-bridge-response-too-large', { max: maxResponseBytes })))
           return
         }
         chunks.push(c)
       })
       res.on('end', () => { if (!settled) { settled = true; resolvePromise({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8') }) } })
     })
-    req.on('timeout', () => req.destroy(new Error(t('serveur.persist-bridge-delai-depasse'))))
-    req.on('error', finirErreur)
+    req.on('timeout', () => req.destroy(new Error(t('mjs-server.persist-bridge-timeout'))))
+    req.on('error', failWith)
     if (body) req.write(body)
     req.end()
   })
@@ -153,11 +153,11 @@ function signedRequest(target: URL, method: string, secret: string, body: string
 async function withRetries(run: (attemptTimeoutMs: number) => Promise<HttpResponse>, onFailure: (err: unknown, attempt: number) => void, deadline: number, timeoutMs: number): Promise<HttpResponse | null> {
   for (let attempt = 0; ; attempt++) {
     const remaining = deadline - performance.now()
-    if (remaining <= 0) { onFailure(new Error(t('serveur.persist-bridge-delai-global-depasse')), attempt); return null }
+    if (remaining <= 0) { onFailure(new Error(t('mjs-server.persist-bridge-global-timeout')), attempt); return null }
     try {
       const rep = await run(Math.min(timeoutMs, remaining))
       if (rep.status >= 200 && rep.status < 300) return rep
-      throw new Error(t('serveur.persist-bridge-reponse-http', { status: rep.status }))
+      throw new Error(t('mjs-server.persist-bridge-response-http', { status: rep.status }))
     } catch (err) {
       onFailure(err, attempt)
       if (attempt >= RETRY_DELAYS_MS.length) return null
@@ -182,8 +182,8 @@ export class BridgePersistAdapter implements MjsServerPersistAdapter {
   get writeTimeoutMs(): number { return this._totalTimeoutMs }
 
   constructor(opts: BridgePersistAdapterOpts) {
-    if (!opts.url) throw new Error(t('serveur.persist-bridge-url-manquant'))
-    if (!opts.secret) throw new Error(t('serveur.persist-bridge-secret-manquant'))
+    if (!opts.url) throw new Error(t('mjs-server.persist-bridge-url-missing'))
+    if (!opts.secret) throw new Error(t('mjs-server.persist-bridge-secret-missing'))
     this._target    = new URL(opts.url)
     // garde TLS — load() restaure TOUT l'état (parties en cours, vues éventuellement
     // porteuses d'identité) à partir de la RÉPONSE de cette URL : en http:// non-loopback, un
@@ -193,7 +193,7 @@ export class BridgePersistAdapter implements MjsServerPersistAdapter {
     // que proxy.ts : https:// protège le TRANSPORT, pas l'authenticité du CONTENU de la réponse ;
     // signer la réponse elle-même reste un durcissement complémentaire À FAIRE, hors périmètre ici.
     if (this._target.protocol === 'http:' && !isLoopback(this._target.hostname) && !opts.allowInsecure) {
-      throw new Error(t('serveur.persist-bridge-http-non-loopback', { url: opts.url }))
+      throw new Error(t('mjs-server.persist-bridge-http-not-loopback', { url: opts.url }))
     }
     this._secret    = opts.secret
     this._onLog     = opts.onLog ?? defaultLog
@@ -205,29 +205,29 @@ export class BridgePersistAdapter implements MjsServerPersistAdapter {
   async load(): Promise<Array<{ id: string; data: MjsServerGameSnapshot }>> {
     const rep = await withRetries(
       (attemptTimeoutMs) => signedRequest(this._target, 'GET', this._secret, '', attemptTimeoutMs, this._maxResponseBytes),
-      (err, attempt) => this._onLog('warn', t('serveur.persist-bridge-load-tentative-echouee', { tentative: attempt + 1 }), { err: err instanceof Error ? err.message : String(err) }),
+      (err, attempt) => this._onLog('warn', t('mjs-server.persist-bridge-load-attempt-failed', { attempt: attempt + 1 }), { err: err instanceof Error ? err.message : String(err) }),
       performance.now() + this._totalTimeoutMs,
       this._timeoutMs,
     )
-    if (!rep) { this._onLog('warn', t('serveur.persist-bridge-load-abandonne')); return [] }
+    if (!rep) { this._onLog('warn', t('mjs-server.persist-bridge-load-abandoned')); return [] }
     try {
       const json = JSON.parse(rep.body)
       const games = Array.isArray(json?.games) ? json.games : []
       // contrairement à persist-file/sql/redis (decodeSnapshot par entrée), le back
       // rendait `{id,data}[]` SANS validation de forme — une entrée `{id:'g1',data:null}` rejoint le
       // même problème au boot (loadAtBoot), un id numérique ou absent n'a jamais de sens en aval
-      const bien = games.filter((e: any) => typeof e?.id === 'string' && e.id !== '' && typeof e?.data === 'object' && e.data !== null)
-      if (bien.length !== games.length) this._onLog('warn', t('serveur.persist-bridge-load-entrees-invalides', { nb: games.length - bien.length }))
-      return bien
+      const ok = games.filter((e: any) => typeof e?.id === 'string' && e.id !== '' && typeof e?.data === 'object' && e.data !== null)
+      if (ok.length !== games.length) this._onLog('warn', t('mjs-server.persist-bridge-load-entries-invalid', { count: games.length - ok.length }))
+      return ok
     } catch (err) {
-      this._onLog('warn', t('serveur.persist-bridge-load-reponse-illisible'), { err: err instanceof Error ? err.message : String(err) })
+      this._onLog('warn', t('mjs-server.persist-bridge-load-response-unreadable'), { err: err instanceof Error ? err.message : String(err) })
       return []
     }
   }
 
-  // promesse rendue = fin de la requête (essais compris), jamais rejetée (cf. _suivre) : le moteur s'y enchaîne
-  save(id: string, data: MjsServerGameSnapshot): Promise<void> { return this._pousser({ op: 'save', id, data }, `save('${id}')`) }
-  remove(id: string): Promise<void> { return this._pousser({ op: 'remove', id }, `remove('${id}')`) }
+  // promesse rendue = fin de la requête (essais compris), jamais rejetée (cf. _track) : le moteur s'y enchaîne
+  save(id: string, data: MjsServerGameSnapshot): Promise<void> { return this._push({ op: 'save', id, data }, `save('${id}')`) }
+  remove(id: string): Promise<void> { return this._push({ op: 'remove', id }, `remove('${id}')`) }
 
   async flush(): Promise<void> {
     await Promise.allSettled(Array.from(this._inFlight))
@@ -237,22 +237,22 @@ export class BridgePersistAdapter implements MjsServerPersistAdapter {
   // JAMAIS devenir un unhandledRejection (Node 20 tue le process dessus). En pratique avecRetentatives
   // catche déjà tout en interne (jamais un rejet ici) — filet de sécurité, MÊME patron que les 3
   // autres adaptateurs (persist-file/sql/redis.ts).
-  private _suivre(p: Promise<void>, label: string): Promise<void> {
+  private _track(p: Promise<void>, label: string): Promise<void> {
     this._inFlight.add(p)
-    return p.catch(err => this._onLog('warn', t('serveur.persist-backend-rejet-non-intercepte', { backend: 'bridge', label: label }), { err: err instanceof Error ? err.message : String(err) }))
+    return p.catch(err => this._onLog('warn', t('mjs-server.persist-backend-unhandled-rejection', { backend: 'bridge', label: label }), { err: err instanceof Error ? err.message : String(err) }))
       .finally(() => { this._inFlight.delete(p) })
   }
 
-  private _pousser(payload: unknown, label: string): Promise<void> {
+  private _push(payload: unknown, label: string): Promise<void> {
     const body = JSON.stringify(payload)
     const p = withRetries(
       (attemptTimeoutMs) => signedRequest(this._target, 'POST', this._secret, body, attemptTimeoutMs, this._maxResponseBytes),
-      (err, attempt) => this._onLog('warn', t('serveur.persist-bridge-tentative-echouee', { label: label, tentative: attempt + 1 }), { err: err instanceof Error ? err.message : String(err) }),
+      (err, attempt) => this._onLog('warn', t('mjs-server.persist-bridge-attempt-failed', { label: label, attempt: attempt + 1 }), { err: err instanceof Error ? err.message : String(err) }),
       performance.now() + this._totalTimeoutMs,
       this._timeoutMs,
     ).then((rep) => {
-      if (!rep) this._onLog('warn', t('serveur.persist-bridge-abandonne-apres-tentatives', { label: label, tentatives: RETRY_DELAYS_MS.length + 1 }))
+      if (!rep) this._onLog('warn', t('mjs-server.persist-bridge-abandoned-after-attempts', { label: label, attempts: RETRY_DELAYS_MS.length + 1 }))
     })
-    return this._suivre(p, label)
+    return this._track(p, label)
   }
 }

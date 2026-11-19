@@ -1,4 +1,4 @@
-// cli/server-entry — chargeur d'entry PARTAGÉ pour `mjs ws`/`mjs serveur` (cli/ws.ts,
+// cli/server-entry — chargeur d'entry PARTAGÉ pour `mjs ws`/`mjs server` (cli/ws.ts,
 // cli/server.ts) et `mjs serve` (server/serve-entry.ts). Une entry `.server.mjs` est un
 // VRAI fichier MJS — compilée (MÊME dialecte Civet que le <script> des composants,
 // applyCivetDialectSugar, src/transpiler/index.ts, SOURCE UNIQUE) vers un fichier réel sur
@@ -19,7 +19,7 @@
 //
 // Grammaire `@import` — SEULE directive qui a un sens hors DOM dans
 // un fichier serveur : `@i18n`/`@routes`/`@display`/`@css`/`@lang`… → erreur explicite
-// (`cli.entry-directive-interdite`). MÊME lecture que les composants
+// (`cli.entry-directive-forbidden`). MÊME lecture que les composants
 // (readImportDirectives de transpiler/directives.ts : formes, refus et messages) — cible
 // `https?://` laissée telle quelle ; cible avec préfixe `./`/`../`/`/`/`file:`, OU sans préfixe
 // mais qui EXISTE réellement à côté de l'entry ou sous --root (forme composant
@@ -40,11 +40,13 @@ import { pathToFileURL } from 'node:url'
 import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { t } from '../messages/index.js'
+import { writeFileAtomicAlways } from '../bundler/outputs.js'
 import { findConstReassignment } from '../transpiler/const-reassign.js'
-import { readImportDirectives, importNames, importClause, importDollarName } from '../transpiler/directives.js'
+import { readImportDirectives, importNames, importClause, importDollarName, DIRECTIVE_LINE_RE } from '../transpiler/directives.js'
 import type { CompileResult } from '../languages/index.js'
-import { declarationsDeLaPasse } from '../languages/civet-declarations.js'
-import { masqueDesTextes } from '../reader/zones.js'
+import { passDeclarations } from '../languages/civet-declarations.js'
+import { textMask } from '../reader/zones.js'
+import { opensHashBlock } from '../lexer/index.js'
 
 // traces d'erreur sur les lignes SOURCE (Civet), pas sur le JS généré dans le cache — une
 // exception levée depuis un `setup()`/`serve()` d'entry pointe alors le `.server.mjs`/`.civet` de
@@ -142,21 +144,18 @@ function sharedTmpCacheDir(dir: string): void {
   const uid = process.getuid?.()
   if (uid === undefined) return   // Windows : ni propriétaire ni mode POSIX à vérifier
   const st = lstatSync(dir)
-  if (!st.isDirectory() || st.uid !== uid || (st.mode & 0o002) !== 0) throw new Error(t('cli.entry-cache-non-sur', { dossier: dir }))
+  if (!st.isDirectory() || st.uid !== uid || (st.mode & 0o002) !== 0) throw new Error(t('cli.entry-cache-not-safe', { dir }))
   if ((st.mode & 0o077) !== 0) chmodSync(dir, 0o700)
 }
 
-// écriture atomique — MÊME précédent que compileWorkerInMemory (bundler/worker-pool.ts) : temp
-// UNIQUE (pid + horodatage) puis renameSync, jamais de fichier tronqué visible par un import
-// concurrent (2 process qui rechargent la même entry en même temps).
+// écriture atomique par l'aide commune (bundler/outputs.ts) : temporaire unique puis renameSync, jamais de fichier tronqué visible par un
+// import concurrent (2 process qui rechargent la même entry en même temps), aucun temporaire laissé sur un disque plein. Un échec n'est
+// toléré que si le fichier porte déjà le contenu voulu (l'autre process a gagné) : son nom vient du chemin de la source, pas du contenu
 function writeAtomic(file: string, content: string): void {
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`
-  writeFileSync(tmp, content, 'utf8')
   try {
-    renameSync(tmp, file)
+    writeFileAtomicAlways(file, content)
   } catch (err) {
-    try { unlinkSync(tmp) } catch { /* best-effort */ }
-    if (!existsSync(file)) throw err
+    if (!existsSync(file) || readFileSync(file, 'utf8') !== content) throw err
   }
 }
 
@@ -238,7 +237,7 @@ async function resolveImportTarget(targetPath: string, fromAbsPath: string, root
   const projectFile = existsSync(nearEntry) ? nearEntry : (existsSync(nearRoot) ? nearRoot : null)
 
   if (projectFile === null) {
-    if (looksLikePath(targetPath)) throw new Error(t('cli.entry-import-introuvable', { entryPath: fromAbsPath, cible: targetPath }))
+    if (looksLikePath(targetPath)) throw new Error(t('cli.entry-import-not-found', { entryPath: fromAbsPath, target: targetPath }))
     return targetPath   // spécificateur nu — résolution Node normale ('node:*', paquet npm du projet, cf. cache ci-dessus)
   }
 
@@ -316,7 +315,7 @@ function maskCommentsAndStrings(src: string): string {
   while (i < n) {
     const three = src.slice(i, i + 3)
     if (three === "'''" || three === '"""') { const stop = scanQuotedWithInterp(src, i, three, '#{'); blank(i, stop); i = stop; continue }
-    if (three === '###') { const end = src.indexOf('###', i + 3); const stop = end === -1 ? n : end + 3; blank(i, stop); i = stop; continue }
+    if (opensHashBlock(src, i)) { const end = src.indexOf('###', i + 3); const stop = end === -1 ? n : end + 3; blank(i, stop); i = stop; continue }
     const two = src.slice(i, i + 2)
     if (two === '//') { const end = src.indexOf('\n', i); const stop = end === -1 ? n : end; blank(i, stop); i = stop; continue }
     if (two === '/*') { const end = src.indexOf('*/', i + 2); const stop = end === -1 ? n : end + 2; blank(i, stop); i = stop; continue }
@@ -336,8 +335,8 @@ function maskCommentsAndStrings(src: string): string {
 // refermé n'est pas dans l'arbre. Un fichier que l'arbre ne lit pas, ou pas sûrement (faute de syntaxe, lettre réservée,
 // chaîne `"…#{…"` du dialecte passée à la ligne, `###` resté au code hors Civet nu), comme toute panne du lecteur (pile
 // débordée par une expression de milliers de termes…), n'a que le masque fait main, et son compilateur dit ce qui ne va pas.
-// `dialecte` : compileServerFile, où un fichier qui n'est pas en CoffeeScript passe par le dialecte de MJS (un `####` y ouvre
-// un bloc) ; hors du dialecte, un `.civet` brut est lu en Civet nu (`#` y est du code). Une ligne que le masque fait main seul
+// `dialecte` : compileServerFile, où un fichier qui n'est pas en CoffeeScript passe par le dialecte de MJS (un `####` n'y
+// commente que sa ligne) ; hors du dialecte, un `.civet` brut est lu en Civet nu (`#` y est du code). Une ligne que le masque fait main seul
 // fait commencer par une directive dont l'arobase est du code pour l'arbre (hors de tout texte) reprend la vue de ce masque :
 // la directive y est refusée comme sans l'arbre, même quand l'arbre lit autrement ce qui la précède (`### a ### @css 'a.css'`
 // d'un `.civet` brut, où `###` est du code). Une directive que le masque fait main refusait reste donc refusée, sauf si
@@ -345,69 +344,74 @@ function maskCommentsAndStrings(src: string): string {
 // dialecte, qui les referment au premier `###` qui suit, même en milieu de ligne (`### aide = 1`) : un `###` qu'il laisse au
 // code dit le contraire, sa lecture n'est pas sûre, comme en CoffeeScript une regex que son lexeur ne lit pas de même (`2 /b`
 // y divise). Le source arrive sans marque d'ordre des octets (retirée à la lecture du fichier)
-function sansTextes(src: string, absPath: string, dialecte = false): string {
+function withoutTexts(src: string, absPath: string, dialect = false): string {
   const coffee             = /\.coffee(?:\.mjs)?$/.test(absPath)
-  let arbre: string | null = null
-  try { arbre = masqueDesTextes(src, coffee ? 'coffee' : dialecte ? 'civet' : 'civet-nu', dialecte && !coffee) } catch { /* panne du lecteur : le masque fait main seul */ }
-  let masque = maskCommentsAndStrings(arbre ?? src)
-  if (arbre !== null) {
-    const seul = maskCommentsAndStrings(src)
-    for (const m of seul.matchAll(/^[ \t]*@(?:import|css|routes|i18n|display|lang)/gm)) {
+  let tree: string | null = null
+  try { tree = textMask(src, coffee ? 'coffee' : dialect ? 'civet' : 'civet-bare', dialect && !coffee) } catch { /* panne du lecteur : le masque fait main seul */ }
+  let mask = maskCommentsAndStrings(tree ?? src)
+  if (tree !== null) {
+    const alone = maskCommentsAndStrings(src)
+    for (const m of alone.matchAll(/^[ \t]*@(?:import|css|routes|i18n|display|lang)/gm)) {
       const p = m.index + m[0].indexOf('@')
-      if (arbre[p] !== '@') continue
-      let fin = p
-      while (fin < seul.length && seul[fin] !== '\n' && seul[fin] !== '\r') fin++
-      masque = masque.slice(0, m.index) + seul.slice(m.index, fin) + masque.slice(fin)
+      if (tree[p] !== '@') continue
+      let end = p
+      while (end < alone.length && alone[end] !== '\n' && alone[end] !== '\r') end++
+      mask = mask.slice(0, m.index) + alone.slice(m.index, end) + mask.slice(end)
     }
   }
-  return masque
+  return mask
 }
 
 // `fichier:ligne` d'une directive refusée ; `text` a les lignes du fichier (une ligne @import retirée y laisse son saut de
 // ligne), comptées comme dans un éditeur : `\r\n`, `\r` seul ou `\n`
 function withLine(file: string, text: string, index: number): string {
-  return `${file}:${text.slice(0, index).split(/\r\n?|\n/).length}`
+  return `${file}:${lineAt(text, index)}`
+}
+
+// numéro de la ligne (à partir de 1) où tombe `index` dans `text`, même compte que withLine
+function lineAt(text: string, index: number): number {
+  return text.slice(0, index).split(/\r\n?|\n/).length
 }
 
 // retire les lignes @import du source (en partant de la FIN pour ne jamais décaler les indices
 // des matches précédents), résout chaque cible, rend les clauses `import` natives à préfixer + le
 // source nettoyé. Toute AUTRE directive en colonne 0 (hors @import) → erreur explicite : seule
-// @import a un sens hors DOM (cf. commentaire de tête du fichier). `masque` : le source, ses textes blanchis (sansTextes),
+// @import a un sens hors DOM (cf. commentaire de tête du fichier). `mask` : le source, ses textes blanchis (withoutTexts),
 // dont les lignes @import retirées partent aussi : le source nettoyé n'est pas relu
-async function extractServerImports(src: string, masque: string, absPath: string, root: string, ctx: ServerCompileCtx): Promise<{ cleaned: string, importClauses: string[] }> {
+async function extractServerImports(src: string, mask: string, absPath: string, root: string, ctx: ServerCompileCtx): Promise<{ cleaned: string, importClauses: string[] }> {
   // chaînes et commentaires masqués ; mêmes refus et mêmes messages que dans un composant (plusieurs lignes, virgule,
   // accolades après `default`, cible vide ou douteuse) — la cible s'insère ici dans un SIMPLE guillemet, jamais
   // interpolée, mais une cible `x#{1+1}y` serait un import mort : refusée de même. Un nom en µ ou § reste tel quel
-  const lues      = readImportDirectives(src, masque)
+  const readDirectives      = readImportDirectives(src, mask)
   // un singleton (`µ$$x`) vit dans la page : une entrée serveur n'en a pas, la directive est refusée avec cette raison
-  const singleton = lues.find(d => d.noms.includes('µ$$'))
-  if (singleton) throw new Error(t('cli.entry-import-singleton', { entryPath: absPath, ligne: singleton.texte.trim() }))
-  const directives              = lues.filter(d => !/[µ§]/.test(d.noms))
+  const singleton = readDirectives.find(d => d.names.includes('µ$$'))
+  if (singleton) throw new Error(t('cli.entry-import-singleton', { entryPath: absPath, line: singleton.text.trim() }))
+  const directives              = readDirectives.filter(d => !/[µ§]/.test(d.names))
   const importClauses: string[] = []
   let cleaned                   = src
-  let masqueNet                 = masque
+  let cleanMask                 = mask
   for (let i = directives.length - 1; i >= 0; i--) {
     const d             = directives[i]
     const dollar        = importDollarName(d)
     // un nom en `$x` : refusé comme dans un composant (un singleton s'importe et se consomme par `µ$$x`)
-    if (dollar) throw new Error(t('transpiler.import-nom-dollar', { nom: dollar, base: dollar.slice(1) }))
-    const noms          = importNames(d)
-    const fromSpecifier = await resolveImportTarget(d.cible, absPath, root, ctx)
+    if (dollar) throw new Error(t('transpiler.import-name-dollar', { name: dollar, base: dollar.slice(1) }))
+    const names          = importNames(d)
+    const fromSpecifier = await resolveImportTarget(d.target, absPath, root, ctx)
     // Node ≥ 20.10 exige l'attribut `with { type: 'json' }` sur un `import` statique
     // ciblant du `.json` (assertion d'import), sinon `ERR_IMPORT_ATTRIBUTE_MISSING` au chargement
     // — extension prise sur la cible ÉCRITE, jamais sur `fromSpecifier` (une cible
     // `.civet`/`.coffee`/`.mjs` compilée finit toujours en `.js`, jamais en `.json`)
-    const attrs = d.cible.endsWith('.json') ? ` with { type: 'json' }` : ''
-    importClauses.unshift(importClause(d, noms, `'${fromSpecifier}'${attrs}`))
-    cleaned   = cleaned.slice(0, d.index) + cleaned.slice(d.index + d.texte.length)
-    masqueNet = masqueNet.slice(0, d.index) + masqueNet.slice(d.index + d.texte.length)
+    const attrs = d.target.endsWith('.json') ? ` with { type: 'json' }` : ''
+    importClauses.unshift(importClause(d, names, `'${fromSpecifier}'${attrs}`))
+    cleaned   = cleaned.slice(0, d.index) + cleaned.slice(d.index + d.text.length)
+    cleanMask = cleanMask.slice(0, d.index) + cleanMask.slice(d.index + d.text.length)
   }
   // seules les directives CONNUES sont refusées : `@n = 0`, `@n++` (this.n) sont du Civet ordinaire,
   // comme une propriété suivie d'un mot-opérateur (`@lang or "fr"`, `@display if @display?`)
-  const otherDirective = masqueNet.match(/^[ \t]*(@(?:import|css|routes|i18nPlaceholder|i18n|display|lang))(?=[ \t]+(?!(?:or|and|xor|not|is|isnt|in|of|instanceof|if|unless|then|else|for|while|until|when|by|as|satisfies)\b)[^\s=+\-*\/%&|^<>!?.,;:)\]}]|[ \t]*$)/m)
+  const otherDirective = cleanMask.match(/^[ \t]*(@(?:import|css|routes|i18nPlaceholder|i18n|display|lang))(?=[ \t]+(?!(?:or|and|xor|not|is|isnt|in|of|instanceof|if|unless|then|else|for|while|until|when|by|as|satisfies)\b)[^\s=+\-*\/%&|^<>!?.,;:)\]}]|[ \t]*$)/m)
   // `@import` qu'aucune lecture ne reconnaît (`@import nom` sans chemin…) : la ligne est citée, jamais « seule @import est admise »
-  if (otherDirective?.[1] === '@import') throw new Error(t('cli.entry-import-illisible', { entryPath: withLine(absPath, cleaned, otherDirective.index ?? 0), ligne: cleaned.slice(otherDirective.index ?? 0).split('\n')[0].trim() }))
-  if (otherDirective) throw new Error(t('cli.entry-directive-interdite', { entryPath: withLine(absPath, cleaned, otherDirective.index ?? 0), directive: otherDirective[1] }))
+  if (otherDirective?.[1] === '@import') throw new Error(t('cli.entry-import-unreadable', { entryPath: withLine(absPath, cleaned, otherDirective.index ?? 0), line: cleaned.slice(otherDirective.index ?? 0).split('\n')[0].trim() }))
+  if (otherDirective) throw new Error(t('cli.entry-directive-forbidden', { entryPath: withLine(absPath, cleaned, otherDirective.index ?? 0), directive: otherDirective[1] }))
   return { cleaned, importClauses }
 }
 
@@ -416,9 +420,9 @@ async function extractServerImports(src: string, masque: string, absPath: string
 // constante Civet (`:=` → `const`) réaffectée, même depuis une fonction imbriquée ou une boucle :
 // refusée à la compilation, comme pour un composant, plutôt qu'un TypeError au chargement du
 // serveur (portées exactes, cf. transpiler/const-reassign.ts)
-function refuserConstanteReaffectee(js: string): void {
-  const constante = findConstReassignment(js)
-  if (constante) throw new Error(t('transpiler.civet-reaffectation-constante', { nom: constante.name, ligne: constante.line, code: true }))
+function rejectReassignedConstant(js: string): void {
+  const constant = findConstReassignment(js)
+  if (constant) throw new Error(t('transpiler.civet-reassignment-constant', { name: constant.name, line: constant.line, code: true }))
 }
 
 // compile un fichier `.server.mjs`/`.mjs` — MÊME dialecte Civet que le <script> des composants
@@ -428,11 +432,11 @@ function refuserConstanteReaffectee(js: string): void {
 // cycle par la pile `ctx.visiting` (DFS classique) — `ctx` frais par défaut, PARTAGÉ explicitement
 // entre l'appel racine et ses dépendances (cf. `resolveImportTarget` ci-dessus).
 export async function compileServerFile(absPath: string, root: string, ctx: ServerCompileCtx = newCtx()): Promise<string> {
-  const deja = ctx.compiled.get(absPath)
-  if (deja !== undefined) return deja
+  const already = ctx.compiled.get(absPath)
+  if (already !== undefined) return already
   if (ctx.visiting.includes(absPath)) {
     const chain = [...ctx.visiting, absPath].map(p => relative(root, p) || p).join(' → ')
-    throw new Error(t('cli.entry-import-cycle', { entryPath: absPath, chaine: chain }))
+    throw new Error(t('cli.entry-import-cycle', { entryPath: absPath, chain }))
   }
   ctx.visiting.push(absPath)
   try {
@@ -440,32 +444,32 @@ export async function compileServerFile(absPath: string, root: string, ctx: Serv
     // compileRawCivetFile : une directive @import juste sur la première ligne est lue comme sans elle, au contrôle comme à
     // la compilation
     const source = readFileSync(absPath, 'utf8').replace(/^\uFEFF/, '')
-    const masque = sansTextes(source, absPath, true)
+    const mask = withoutTexts(source, absPath, true)
     if (extname(absPath) === '.mjs') {
       // chaînes et commentaires masqués : un gabarit de courriel `"""<style>…"""` n'est pas du markup
-      const hint = findComponentMarkupHint(masque)
-      if (hint) throw new Error(t('cli.ws.entry-markup-composant', { entryPath: absPath, indice: hint }))
+      const hint = findComponentMarkupHint(mask)
+      if (hint) throw new Error(t('cli.ws.entry-markup-component', { entryPath: absPath, hint }))
     }
-    const { cleaned, importClauses } = await extractServerImports(source, masque, absPath, root, ctx)
+    const { cleaned, importClauses } = await extractServerImports(source, mask, absPath, root, ctx)
     const withImports                = importClauses.length > 0 ? `${importClauses.join('\n')}\n${cleaned}` : cleaned
     const { applyCivetDialectSugar, lintNoRawImport } = await import('../transpiler/index.js')
     const { getAdapter }                              = await import('../languages/index.js')
     let result: CompileResult
     try {
-      const passe = declarationsDeLaPasse()
+      const pass = passDeclarations()
       // un module .coffee importé se compile en CoffeeScript, hors du dialecte Civet
       result      = /\.coffee(?:\.mjs)?$/.test(absPath)
         ? await getAdapter('coffee').compileToJs(withImports, { fileName: absPath, bare: true })
-        : await getAdapter('civet').compileToJs(applyCivetDialectSugar(withImports, 'civet', undefined, 1, undefined, passe), { fileName: absPath, declarerAffectations: true, declarationsDeLaPasse: passe })
-      refuserConstanteReaffectee(result.code)
+        : await getAdapter('civet').compileToJs(applyCivetDialectSugar(withImports, 'civet', undefined, 1, undefined, pass), { fileName: absPath, declareAssignments: true, passDeclarations: pass })
+      rejectReassignedConstant(result.code)
     } catch (err) {
       // paramètre lu autrement par Civet : les imports placés devant décalent les lignes du texte compilé
-      const { ErreurParametreLuAutrement } = await import('../languages/civet-parametres.js')
-      const lignesAjoutees                 = importClauses.length > 0 ? importClauses.join('\n').split('\n').length : 0
-      const erreur                         = err instanceof ErreurParametreLuAutrement && err.parametre.ligne !== null ? new ErreurParametreLuAutrement(err.parametre, absPath, err.js, err.parametre.ligne - lignesAjoutees) : err
-      throw new Error(t('cli.ws.erreur-compilation', { entryPath: absPath, erreur: errText(erreur) }))
+      const { ParamReadOtherwiseError } = await import('../languages/civet-params.js')
+      const addedLines                 = importClauses.length > 0 ? importClauses.join('\n').split('\n').length : 0
+      const error                         = err instanceof ParamReadOtherwiseError && err.param.line !== null ? new ParamReadOtherwiseError(err.param, absPath, err.js, err.param.line - addedLines) : err
+      throw new Error(t('cli.ws.error-compilation', { entryPath: absPath, error: errText(error) }))
     }
-    lintNoRawImport(result.code, relative(root, absPath) || absPath, importClauses.length, undefined, { static: 'cli.entry-import-natif-interdit', dynamic: 'cli.entry-import-dynamique-interdit', reexport: 'cli.entry-reexport-interdit' })
+    lintNoRawImport(result.code, relative(root, absPath) || absPath, importClauses.length, undefined, { static: 'cli.entry-import-native-forbidden', dynamic: 'cli.entry-import-dynamic-forbidden', reexport: 'cli.entry-reexport-forbidden' })
     const url = writeCacheFile(absPath, root, result.code, result.map)
     ctx.compiled.set(absPath, url)
     return url
@@ -480,7 +484,7 @@ export async function compileServerFile(absPath: string, root: string, ctx: Serv
 // une directive MJS reste toutefois REFUSÉE explicitement (cf. juste en
 // dessous), plutôt que de compiler en silence vers un appel de méthode ordinaire.
 // `bibliotheque` : un `.civet` / `.coffee` importé par une entrée serveur, compilé par son seul langage — une directive y dit de le nommer `nom.civet.mjs`
-export async function compileRawCivetFile(absPath: string, root: string, bibliotheque = false): Promise<string> {
+export async function compileRawCivetFile(absPath: string, root: string, library = false): Promise<string> {
   // un BOM UTF-8 (U+FEFF) en tête de fichier
   // (PowerShell `Out-File`/Notepad sous Windows, MÊME cause que sections.ts:282) n'est ni un
   // espace ni un `@` : la garde `^[ \t]*@…` juste en dessous ne le voit pas, la directive file
@@ -495,15 +499,24 @@ export async function compileRawCivetFile(absPath: string, root: string, bibliot
   // (même garde que extractServerImports plus haut) : un `# @import x '...'` affiché en exemple ne
   // doit jamais déclencher ce refus.
   // même règle que extractServerImports : une propriété suivie d'un mot-opérateur (`@lang or "fr"`) ou d'un opérateur est du Civet ordinaire
-  const directiveMatch = sansTextes(source, absPath).match(/^[ \t]*@(import|css|routes|i18nPlaceholder|i18n|display|lang)(?=[ \t]+(?!(?:or|and|xor|not|is|isnt|in|of|instanceof|if|unless|then|else|for|while|until|when|by|as|satisfies)\b)[^\s=+\-*\/%&|^<>!?.,;:)\]}]|[ \t]*$)/m)
-  if (directiveMatch) throw new Error(bibliotheque ? t('bundler.index.bibliotheque-se-sert-de-mjs', { fichier: withLine(basename(absPath), source, directiveMatch.index ?? 0), nom: basename(absPath) + '.mjs', sorte: 'directive', detail: directiveMatch[0].trim() }) : t('cli.entry-civet-brut-directive', { entryPath: withLine(absPath, source, directiveMatch.index ?? 0), directive: `@${directiveMatch[1]}` }))
+  const directiveMatch = withoutTexts(source, absPath).match(DIRECTIVE_LINE_RE)
+  if (directiveMatch && library) {
+    // une bibliothèque : le refus de la construction, par ses fonctions (bundler/index.ts) — toutes ses directives, chacune à sa ligne,
+    // dans l'ordre du fichier ; chargées seulement quand le fichier est refusé
+    const lang                                  = absPath.endsWith('.coffee') ? 'coffee' : 'civet'
+    const { extractDirectives }                 = await import('../transpiler/directives.js')
+    const { libraryDirectives, libraryRefusal } = await import('../bundler/index.js')
+    const patterns                              = libraryDirectives(source, extractDirectives(source, lang).cleaned, lang)
+    throw libraryRefusal(absPath, patterns.length > 0 ? patterns : [{ kind: 'directive', line: lineAt(source, directiveMatch.index ?? 0), detail: directiveMatch[0].trim() }], false, lang)
+  }
+  if (directiveMatch) throw new Error(t('cli.entry-civet-raw-directive', { entryPath: withLine(absPath, source, directiveMatch.index ?? 0), directive: `@${directiveMatch[1]}` }))
   const { getAdapter } = await import('../languages/index.js')
   let result: CompileResult
   try {
     result = absPath.endsWith('.coffee') ? await getAdapter('coffee').compileToJs(source, { fileName: absPath, bare: true }) : await getAdapter('civet').compileToJs(source, { fileName: absPath })
-    refuserConstanteReaffectee(result.code)
+    rejectReassignedConstant(result.code)
   } catch (err) {
-    throw new Error(t('cli.ws.erreur-compilation-civet', { entryPath: absPath, erreur: errText(err) }))
+    throw new Error(t('cli.ws.error-compilation-civet', { entryPath: absPath, error: errText(err) }))
   }
   return writeCacheFile(absPath, root, result.code, result.map)
 }

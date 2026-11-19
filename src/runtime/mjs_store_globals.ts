@@ -23,19 +23,28 @@
 //   µ._mjs_storeSetOn/_mjs_storeCallOn/_mjs_storeDeleteOn — même mutation, sur un objet déjà atteint (élément trouvé par `find`…)
 //   µ._mjs_softSetOn/_mjs_softCallOn/_mjs_softDeleteOn — écriture comme JavaScript, qui refuse seulement un prototype du langage (variable du même nom qu'une variable du magasin)
 //   _mjsStoreWrite        — l'écriture commune (µ._mjs_storeSetOn), fonction locale au fichier
-//   _mjsStoreRefus        — avertissement d'un nom réservé, ou d'un objet écrit refusé (fonction, prototype), dans une écriture profonde, fonction locale au fichier
+//   _mjsStoreReject        — avertissement d'un nom réservé, ou d'un objet écrit refusé (fonction, prototype), dans une écriture profonde, fonction locale au fichier
 //   µ._mjs_storeSubscribe/_mjs_storeUnsubscribe — abonnement composant par clés (posé au montage, mjs_element.ts)
 //   µ._mjs_storeWatch     — abonné générique non-composant (callback), retourne un désabonneur
 
-if (!µ._mjs_storeRaw) { µ._mjs_storeRaw = {}; }
-if (!µ.store) { µ.store = {}; }
+// sans prototype : une clé jamais posée qui porte le nom d'une méthode d'objet (`$$valueOf`, `$$toString`) se lit absente, jamais la
+// fonction native
+if (!µ._mjs_storeRaw) { µ._mjs_storeRaw = Object.create(null); }
+// objet vide et gelé que rend une lecture refusée du magasin (ci-dessous) ; les aides d'écriture du magasin l'ignorent (cf. _mjsStoreWrite)
+var _mjsStoreEmpty = Object.freeze({});
+// `__proto__`, `constructor` et `prototype` qui ne sont pas des clés du magasin, lus par tout chemin (`µ.store[k]`, `s = µ.store; s[k]`,
+// `µ['store'][k]`, clé venue de données) : l'objet vide et gelé, avec l'avertissement d'un chemin refusé — jamais Object.prototype ni
+// la fonction Object ; écrits (`µ.store[k] = v`), refusés de même. Posés sur un prototype à part, entre le magasin et Object.prototype :
+// une clé du magasin (propriété propre) se lit sans rien de plus, une clé absente passe un maillon de plus
+var _mjsStoreName = (k) => ({ get: () => (_mjsStoreReject(k), _mjsStoreEmpty), set: () => { _mjsStoreReject(k); } });
+if (!µ.store) { µ.store = Object.create(Object.create(Object.prototype, { ['__proto__']: _mjsStoreName('__proto__'), constructor: _mjsStoreName('constructor'), prototype: _mjsStoreName('prototype') })); }
 
 // Registres d'abonnement : Map<clé (ou '*' = structure), Set<abonné>>. Les
 // composants s'abonnent via `_mjs_storeSubscribe` (clés nues connues du
 // compilateur) ; `_mjs_storeWatch` sert aux abonnés non-composant (i18n & co).
 if (!µ._mjs_storeSubs) { µ._mjs_storeSubs = new Map(); }
 if (!µ._mjs_storeWatchers) { µ._mjs_storeWatchers = new Map(); }
-// <signaux>
+// <signals>
 // propriétaire des boîtes des clés du magasin dans le graphe des signaux (mjs_signals.ts) : un objet à part, jamais parcouru avec les
 // clés ; une boîte n'y naît qu'à la première lecture notée d'une clé (`*` : l'énumération du magasin). Les écritures l'avancent aux mêmes
 // points que l'horloge des valeurs dérivées des composants abonnés ; sans lecteur, une lecture et un test
@@ -56,22 +65,22 @@ function _mjsStoreGone(key, v) {
   b.gone = v;
   µ._mjs_sigGone += v ? 1 : -1;
 }
-// </signaux>
+// </signals>
 
 // Notifie TOUS les abonnés d'UNE clé : composants (`_mjs_invalidate('$$'+clé)`) et
 // watchers génériques (callback reçoit la valeur COURANTE, déballée comme
 // `µ.store[clé]`, donc les computed y arrivent résolus).
 // nom sous lequel un composant suit une clé (`$$clé`) : fait une fois par clé, le même texte à chaque écriture — une boucle
 // d'écritures ne refabrique pas le nom à chaque tour
-const _mjsStoreNoms = new Map();
+const _mjsStoreNames = new Map();
 µ._mjs_storeNotifyKey = function(key) {
-  // <signaux>
+  // <signals>
   if (_mjsStoreSig._mjs_sigBoxes) µ._mjs_sigWrite(_mjsStoreSig, key);
-  // </signaux>
+  // </signals>
   var subs = µ._mjs_storeSubs.get(key);
   if (subs) {
-    var sk = _mjsStoreNoms.get(key);
-    if (sk === void 0) _mjsStoreNoms.set(key, sk = '$$' + key);
+    var sk = _mjsStoreNames.get(key);
+    if (sk === void 0) _mjsStoreNames.set(key, sk = '$$' + key);
     for (var comp of subs) {
       comp._mjs_invalidate(sk);
       // écriture faite hors de tout effet (`µ._mjs_effRun`, posé par _mjs_runEffectsV2, mjs_element.ts) : elle relance aussi les
@@ -90,16 +99,16 @@ const _mjsStoreNoms = new Map();
 
 // Notifie les abonnés STRUCTURE ('*') — énumération du store (`{for k in $$}`).
 µ._mjs_storeNotifyStruct = function() {
-  // <signaux>
+  // <signals>
   if (_mjsStoreSig._mjs_sigBoxes) µ._mjs_sigWrite(_mjsStoreSig, '*');
-  // </signaux>
+  // </signals>
   var subs = µ._mjs_storeSubs.get('*');
   if (subs) {
     for (var comp of subs) { comp._mjs_invalidate('$$*'); }
   }
 };
 
-// <rafraichir>
+// <refresh>
 // `µrefresh($$x)`, que la construction compile ainsi (MU_REFRESH_STORE_OUT, sigils.ts) : le signal
 // d'un changement fait hors de MJS dans l'objet que tient la clé, comme `µrefresh($x)` pour une variable (µ._mjs_refresh, mjs_element.ts).
 // Les composants qui lisent la clé, ou une autre clé qui tient le même objet, se redessinent et refont leurs valeurs dérivées ; aucun
@@ -107,7 +116,7 @@ const _mjsStoreNoms = new Map();
 // valeur dérivée : appliqué juste après, comme une écriture faite par un effet
 µ._mjs_storeRefresh = function(key) {
   var raw = µ._mjs_storeRaw, o = raw[key], f = µ._mjs_inEffect, k, c, s;
-  µ._mjs_inEffect = f || !!(µ._mjs_rendu || µ._mjs_computing);
+  µ._mjs_inEffect = f || !!(µ._mjs_rendering || µ._mjs_computing);
   // <collections>
   // index des clés des collections de l'état (µ._mjs_keyAlt, mjs_init.ts) : oubliés, refaits au prochain raté — une collection a pu changer
   µ._mjs_keyIdx = new WeakMap();
@@ -115,10 +124,10 @@ const _mjsStoreNoms = new Map();
   try {
     for (k in raw) {
       if (k !== key && (raw[k] !== o || o === null || typeof o !== 'object')) continue;
-      // <signaux>
+      // <signals>
       // un rafraîchissement : les valeurs dérivées repartent, aucun reffet
       if (_mjsStoreSig._mjs_sigBoxes) µ._mjs_sigWrite(_mjsStoreSig, k, 1);
-      // </signaux>
+      // </signals>
       s = µ._mjs_storeSubs.get(k);
       // un composant seulement (`_state`) : le reffet du fichier d'un magasin s'abonne aussi à ses clés (mjs_effect.ts)
       if (s) for (c of s) { if (c._state) c._mjs_invalidate('$$' + k, 1); }
@@ -128,39 +137,39 @@ const _mjsStoreNoms = new Map();
     µ._mjs_inEffect = f;
   }
 };
-// </rafraichir>
+// </refresh>
 
 // `µwrite $$x, v` (lexer : `µ._mjs_storeRawWrite.x = v`) : la valeur brute écrite sans prévenir personne (ni rendu, ni effet,
 // ni observateur), mais les valeurs dérivées des composants qui lisent la clé, ou énumèrent le magasin, se recalculent à leur
-// prochaine lecture — un compte de plus à leur horloge (`_mjsCompte`, mjs_element.ts), comme après `µwrite $x, v`
-function _mjsStorePerime(subs, k) {
+// prochaine lecture — un compte de plus à leur horloge (`_mjsCount`, mjs_element.ts), comme après `µwrite $x, v`
+function _mjsStoreStale(subs, k) {
   if (!subs) return;
-  // <derivees>
+  // <derived-values>
   for (var comp of subs) {
-    if (comp._mjs_computeds) _mjsCompte(comp._mjs_computeds, k);
+    if (comp._mjs_computeds) _mjsCount(comp._mjs_computeds, k);
   }
-  // </derivees>
+  // </derived-values>
 }
 if (!µ._mjs_storeRawWrite) {
   µ._mjs_storeRawWrite = new Proxy({}, {
     set: function(t, key, value) {
       µ._mjs_storeRaw[key] = value;
-      _mjsStorePerime(µ._mjs_storeSubs.get(key), '$$' + key);
-      _mjsStorePerime(µ._mjs_storeSubs.get('*'), '$$*');
-      // <signaux>
+      _mjsStoreStale(µ._mjs_storeSubs.get(key), '$$' + key);
+      _mjsStoreStale(µ._mjs_storeSubs.get('*'), '$$*');
+      // <signals>
       // comme l'horloge : la clé et l'énumération, même valeur comprise ; aucun reffet ne repart (`µwrite`)
       if (_mjsStoreSig._mjs_sigBoxes) {
         µ._mjs_sigWrite(_mjsStoreSig, key, 1);
         µ._mjs_sigWrite(_mjsStoreSig, '*', 1);
       }
-      // </signaux>
+      // </signals>
       return true;
     }
   });
 }
 
 // `µ._storeDeclare(['session','game'])` : crée les accesseurs manquants sur
-// `µ.store` — get déballe les computed (`_mjs_c`, parité mjs_runes.ts
+// `µ.store` — get déballe les computed (`_mjs_c`, parité mjs_state.ts
 // µ.state), set délègue à `µ._storeSet`. Idempotent : rejouer sur une clé
 // déjà déclarée est un no-op (chaque module compilé appelle ceci au chargement).
 //
@@ -208,9 +217,9 @@ if (!µ._mjs_storeRawWrite) {
         configurable: true,
         get: function() {
           var v = µ._mjs_storeRaw[key];
-          // <signaux>
+          // <signals>
           if (µ._mjs_sigCur) _mjsStoreNote(key);
-          // </signaux>
+          // </signals>
           // un dérivé compilé porte sa fonction `f` : une donnée reçue qui a la clé `_mjs_c` n'en est pas un
           if (v != null && v._mjs_c && typeof v.f === 'function') {
             if (v._mjs_evaluating) {
@@ -226,16 +235,16 @@ if (!µ._mjs_storeRawWrite) {
         set: function(value) { µ._storeSet(key, value); }
       });
     })(k);
-    // <signaux>
+    // <signals>
     if (µ._mjs_sigGone) _mjsStoreGone(k, 0);
-    // </signaux>
+    // </signals>
   }
 };
 
 // `µ._storeSet(key, value)` : écriture top-level notifiante. Garde anti
 // prototype-pollution (parité avec l'ancien trap `set` du Proxy) ; skip si
-// valeur identique (idem trap Proxy, mjs_runes.ts:351) ; notifie la clé PUIS
-// la structure — TOUJOURS, même sur simple mise à jour (parité :356-362 : un
+// valeur identique (idem trap `set` de µ.state, mjs_state.ts) ; notifie la clé PUIS
+// la structure — TOUJOURS, même sur simple mise à jour (parité avec ce même trap : un
 // lecteur d'énumération peut dépendre de valeurs qui bougent, pas seulement
 // de l'ajout/retrait de clés) — SAUF clé CACHÉE (`_storeDeclare(keys, true)`,
 // cf. plus haut) : son accesseur est non-énumérable, elle n'appartient donc
@@ -253,7 +262,9 @@ if (!µ._mjs_storeRawWrite) {
     value = µ._mjs_tstore(key, value);
     if (value === µ._mjs_TNO) return;
   }
-  if (µ._mjs_storeRaw[key] === value) return;
+  // `NaN` réécrit sur `NaN` : inchangé, comme toute autre valeur (`NaN !== NaN` prévenait à chaque écriture)
+  var __o = µ._mjs_storeRaw[key];
+  if (__o === value || (Number.isNaN(__o) && Number.isNaN(value))) return;
   µ._mjs_storeRaw[key] = value;
   µ._mjs_storeIdxAdd(key, value);
   if (!Object.prototype.hasOwnProperty.call(µ.store, key)) { µ._storeDeclare([key]); }
@@ -263,14 +274,14 @@ if (!µ._mjs_storeRawWrite) {
 };
 
 // `µ._mjs_storeDelete(key)` : supprime raw + accesseur, notifie clé + structure
-// SEULEMENT si la clé existait (parité trap `deleteProperty` de µ.state, mjs_runes.ts). Rend `true`, comme `delete`
+// SEULEMENT si la clé existait (parité trap `deleteProperty` de µ.state, mjs_state.ts). Rend `true`, comme `delete`
 µ._mjs_storeDelete = function(key) {
   var had = Object.prototype.hasOwnProperty.call(µ._mjs_storeRaw, key);
   delete µ._mjs_storeRaw[key];
   if (Object.prototype.hasOwnProperty.call(µ.store, key)) { delete µ.store[key]; }
-  // <signaux>
+  // <signals>
   _mjsStoreGone(key, 1);
-  // </signaux>
+  // </signals>
   if (had) {
     µ._mjs_storeNotifyKey(key);
     µ._mjs_storeNotifyStruct();
@@ -296,42 +307,53 @@ if (!µ._mjs_storeIdx) { µ._mjs_storeIdx = new WeakMap(); }
 // (`$$autre = $$cfg.a`), l'ancien objet d'une clé réaffectée que tient encore un alias (`$$pb = $$pa`, `sb := $$pa`,
 // `$$pa = autre`, `sb.x = 1`). `a` : les objets traversés par un chemin entre la racine et l'objet écrit, rangés sous une
 // autre clé (`$$autre = $$cfg.a`, puis `$$cfg.a.l.push(x)`, cf. _mjs_storeDeepSet) — leurs clés aussi
-// <carnet>
-// objets gardés (µ._mjs_carnet) que le chemin d'une écriture traverse sous la racine, relevés par l'aide qui navigue, et l'objet qu'elle
+// <ledger>
+// objets gardés (µ._mjs_ledger) que le chemin d'une écriture traverse sous la racine, relevés par l'aide qui navigue, et l'objet qu'elle
 // atteint : lus une fois par µ._mjs_storeNotifyDeep, qui les oublie
-var _mjsCarnetChemin, _mjsCarnetBout;
-// </carnet>
+var _mjsLedgerPath, _mjsLedgerEnd;
+// </ledger>
 µ._mjs_storeNotifyDeep = function(rootKey, w, a) {
-  // <fin>
+  // <fine-grained>
   // lignes propres (mjs_for.ts) : l'objet écrit peut être montré par la liste propre d'un composant qui le tient dans une variable `$`
   // (`$data = $$items`) : sa prochaine passe relit toutes ses lignes (cf. µ._mjs_extW, mjs_init.ts)
   µ._mjs_extW++;
-  // </fin>
-  // clé `null` : écriture d'un nom qui lit plusieurs clés du magasin (path-tracker.ts), gardée, rien n'est prévenu
-  if (rootKey === null) return;
-  // <carnet>
+  // </fine-grained>
+  // clé `null` : écriture gardée sans clé connue à la construction (path-tracker.ts) — par une clé calculée à la racine
+  // (`µ.store[k].x = v`), ou par un nom qui lit plusieurs clés du magasin : les clés qui rangent l'objet écrit (son index) sont prévenues,
+  // et celles qui rangent l'objet racine que µ._mjs_keyStore vient de lire, quand l'écriture va plus bas (`µ.store[k].sous.x = v`)
+  if (rootKey === null) {
+    var n = w != null ? µ._mjs_storeIdx.get(w) : void 0, c, read;
+    if (n) for (c of n) { if (µ._mjs_storeRaw[c] === w) µ._mjs_storeNotifyKey(c); }
+    // <store-key>
+    read              = _mjsStoreRootRead;
+    _mjsStoreRootRead = void 0;
+    if (read != null && read !== w && (n = µ._mjs_storeIdx.get(read))) for (c of n) { if (µ._mjs_storeRaw[c] === read) µ._mjs_storeNotifyKey(c); }
+    // </store-key>
+    return;
+  }
+  // <ledger>
   // objet écrit, objets gardés que son chemin traverse et racine de la clé : chacun prévient les composants qui le tiennent dans une
-  // variable `$`, prop comprise (µ._mjs_carnetVoit, mjs_init.ts) ; son époque avance, que l'enfant compare quand le parent lui repose
+  // variable `$`, prop comprise (µ._mjs_ledgerSees, mjs_init.ts) ; son époque avance, que l'enfant compare quand le parent lui repose
   // l'objet — un écho. Sans `µ._mjs_bumpEpoch` : l'écriture est déjà comptée une fois pour les lignes propres, plus haut. Le chemin
   // relevé par l'aide qui a navigué (_mjs_storeDeepSet…) ne vaut que pour l'objet qu'elle a atteint
   if (w != null) {
-    var ch = _mjsCarnetBout === w ? _mjsCarnetChemin : void 0, r = µ._mjs_storeRaw[rootKey], j;
-    _mjsCarnetChemin = _mjsCarnetBout = void 0;
-    µ._mjs_carnetVoit(w);
-    if (ch !== void 0) for (j = 0; j < ch.length; j++) µ._mjs_carnetVoit(ch[j]);
-    if (r !== w && r !== null && typeof r === 'object') µ._mjs_carnetVoit(r);
+    var ch = _mjsLedgerEnd === w ? _mjsLedgerPath : void 0, r = µ._mjs_storeRaw[rootKey], j;
+    _mjsLedgerPath = _mjsLedgerEnd = void 0;
+    µ._mjs_ledgerSees(w);
+    if (ch !== void 0) for (j = 0; j < ch.length; j++) µ._mjs_ledgerSees(ch[j]);
+    if (r !== w && r !== null && typeof r === 'object') µ._mjs_ledgerSees(r);
   }
-  // </carnet>
-  // <sans-carnet>
+  // </ledger>
+  // <no-ledger>
   // // objet écrit tenu par un composant (`item={$$m[0]}`, `item={r}` d'une ligne de `{for r in $$m}`, `item={$$m}`) : son époque avance,
-  // // que l'enfant compare quand l'objet lui revient — il y voit une mutation, pas un écho (cf. _mjsDeepEpoque, mjs_deep.ts). Sans
+  // // que l'enfant compare quand l'objet lui revient — il y voit une mutation, pas un écho (cf. _mjsDeepEpoch, mjs_deep.ts). Sans
   // // `µ._mjs_bumpEpoch` : l'écriture est déjà comptée une fois pour les lignes propres, plus haut. Gardé dans une variable
   // // (`@click={$sel = $$m[0]}`), personne ne le lui repose : la variable est prévenue ici (cf. _mjsStoreTenants)
-  // if (w != null && µ._mjs_tenus.has(w)) {
+  // if (w != null && µ._mjs_holders.has(w)) {
   //   µ._mjs_epochs.set(w, (µ._mjs_epochs.get(w) || 0) + 1);
   //   _mjsStoreTenants(rootKey, w);
   // }
-  // </sans-carnet>
+  // </no-ledger>
   var raw = µ._mjs_storeRaw, idx = µ._mjs_storeIdx, o = raw[rootKey], s = idx.get(o), k, t, i;
   if (w !== o && w != null && (t = idx.get(w))) {
     for (k of t) { if (raw[k] === w) µ._mjs_storeNotifyKey(k); }
@@ -354,15 +376,15 @@ var _mjsCarnetChemin, _mjsCarnetBout;
   }
 };
 
-// <sans-carnet>
+// <no-ledger>
 // // objet du magasin écrit, gardé dans une variable d'un composant (`@click={$sel = $$m[0]}`, `$sel = r` d'une ligne) : la variable est
 // // prévenue comme si le composant l'avait écrit lui-même, et son époque suit l'objet — repris tel quel ensuite, ou reposé par une prop,
-// // l'objet est un écho. Détenteurs cherchés : le premier composant qui l'a rangé, tant qu'il vit (`µ._mjs_tenus`, sa référence faible, cf. _mjsFaible, mjs_element.ts) et les composants qui
+// // l'objet est un écho. Détenteurs cherchés : le premier composant qui l'a rangé, tant qu'il vit (`µ._mjs_holders`, sa référence faible, cf. _mjsWeak, mjs_element.ts) et les composants qui
 // // lisent la clé écrite dans leur gabarit (son abonnement) ; dans chacun, les variables qui l'atteignent (relevé de `_mjs_wrapDeep`, avec ou
 // // sans enveloppe). Un second détenteur qui ne lit pas la clé n'est pas trouvé : la table ne garde que le premier. Coût par écriture : une lecture de la
 // // table des détenteurs, une de l'abonnement, puis par composant abonné une lecture et une recherche ; une variable prévenue de plus par variable qui le tient
 // function _mjsStoreTenants(rootKey, w) {
-//   var e = µ._mjs_epochs.get(w), t = µ._mjs_tenus.get(w)?.deref(), subs = µ._mjs_storeSubs.get(rootKey), c;
+//   var e = µ._mjs_epochs.get(w), t = µ._mjs_holders.get(w)?.deref(), subs = µ._mjs_storeSubs.get(rootKey), c;
 //   if (t) _mjsStoreTenant(t, w, e);
 //   if (subs) for (c of subs) { if (c !== t) _mjsStoreTenant(c, w, e); }
 // }
@@ -378,7 +400,7 @@ var _mjsCarnetChemin, _mjsCarnetBout;
 //     el._mjs_notifyMutation(k, el._state[k]);
 //   }
 // }
-// </sans-carnet>
+// </no-ledger>
 
 // nom réservé (CWE-1321) : une clé qui vaut `__proto__`, `constructor` ou `prototype` — clé d'un chemin, clé écrite, nom
 // de la méthode appelée — est refusée dans toute écriture profonde du magasin : rien n'est écrit, un avertissement nomme
@@ -387,56 +409,80 @@ var _mjsCarnetChemin, _mjsCarnetBout;
 // passe le même refus : lu par le code avant l'aide (`?.`, variable de travail de CoffeeScript, élément trouvé suivi
 // d'une clé calculée, clé faite d'une expression, variable, objet fait d'une expression) ou rangé par une lecture
 // (`$$o.p = $$o[k]`), il est là où JavaScript mène — un prototype (`Object.prototype`, où mène `__proto__` : l'objet que
-// range son propre constructeur) ou une fonction du navigateur (`Object`, où mène `constructor`, cf. _mjsNatif) ne reçoit
+// range son propre constructeur) ou une fonction du navigateur (`Object`, où mène `constructor`, cf. _mjsNatFn) ne reçoit
 // rien ; l'avertissement d'un prototype nomme le segment qui y mène, celui d'une fonction du navigateur explique le piège
 // (cf. _mjsStoreNavVars). Une fonction de l'appli reçoit l'écriture (`$$outils.format.appels = 0`). Les comparaisons restent
 // dans chaque aide, sans appel ni allocation : seul le refus appelle cette fonction
-function _mjsStoreRefus(k) {
+function _mjsStoreReject(k) {
   µ.warn(µ._mjs_msg('initPath', { seg: k }, 'chemin d\'état refusé (segment « {seg} ») — mutation ignorée.'));
 }
 
+// <development>
+// clé racine d'une écriture refusée sans clé connue à la construction (clé calculée à la racine, alias) : celle qui range l'objet racine
+// que µ._mjs_keyStore vient de lire, sinon celle qui range l'objet écrit ; inconnue : null, et l'avertissement se tait
+function _mjsStoreKnownKey(o) {
+  var x, c;
+  for (x of [_mjsStoreRootRead, o]) for (c of µ._mjs_storeIdx.get(x) || []) { if (µ._mjs_storeRaw[c] === x) return c; }
+  return null;
+}
+// </development>
 // avertissement d'une écriture refusée dans une fonction du navigateur, comme celui d'un composant (mjs_deep.ts) : le chemin écrit
 // (`$$sel.values`), la clé qui tient la fonction (`$$sel`) et son nom (`Object`). Le chemin de l'objet atteint vient de l'aide d'un
-// chemin, relevé en développement seulement avec l'objet (`µ._mjs_storeVu`, `µ._mjs_storeVo`, cf. _mjs_storeDeepSet) ; un objet
+// chemin, relevé en développement seulement avec l'objet (`µ._mjs_storeSeen`, `µ._mjs_storeVo`, cf. _mjs_storeDeepSet) ; un objet
 // atteint autrement (élément trouvé, variable) : la clé racine quand il en est la valeur, sinon la clé suivie de `…`. `m` : la
 // méthode appelée, rien pour une clé écrite ou supprimée (`k`) ; un symbole se montre par son texte (`Symbol(s)`). Lu seulement par
 // l'avertissement, retiré avec lui
 function _mjsStoreNavVars(rootKey, o, k, m) {
-  var u     = µ._mjs_storeVo === o ? µ._mjs_storeVu : null;
-  var s     = [rootKey].concat(u ? (m === void 0 ? u.slice(0, -1) : u) : o === µ._mjs_storeRaw[rootKey] ? [] : ['…']);
-  var ecrit = (t) => ('$$' + t.map(String).join('.')).replace(/\.(\d+)(?=\.|$)/g, '[$1]');
-  return { path: ecrit(s) + '.' + String(m === void 0 ? k : String(m) + '(…)'), fn: ecrit(s), name: o.name };
+  var u       = µ._mjs_storeVo === o ? µ._mjs_storeSeen : null;
+  var s       = [rootKey].concat(u ? (m === void 0 ? u.slice(0, -1) : u) : o === µ._mjs_storeRaw[rootKey] ? [] : ['…']);
+  var written = (t) => ('$$' + t.map(String).join('.')).replace(/\.(\d+)(?=\.|$)/g, '[$1]');
+  return { path: written(s) + '.' + String(m === void 0 ? k : String(m) + '(…)'), fn: written(s), name: o.name };
 }
 
 // écritures SUR un objet du store déjà atteint : par un chemin (`_mjs_storeDeepSet/Call/Delete` plus bas, après leur
 // navigation), ou par un élément trouvé (`$$taches.find(f).fait = true`, `$$m.get(k).tags.push(x)`, variable qui garde
 // cet élément, alias du magasin — path-tracker.ts). L'écriture va à l'objet reçu, comme en JavaScript ; la clé écrite,
 // ou la méthode, passe le refus d'un nom réservé, et l'objet celui d'une fonction ou d'un prototype (cf.
-// _mjsStoreRefus), payé une fois par écriture, quelle que soit la longueur du chemin. Puis la clé racine et les clés qui rangent le
+// _mjsStoreReject), payé une fois par écriture, quelle que soit la longueur du chemin. Puis la clé racine et les clés qui rangent le
 // même objet, ou l'objet écrit, sont prévenues (cf. _mjs_storeNotifyDeep). Un objet absent (`find` qui ne trouve rien,
 // alias jamais pris) lève la TypeError de JavaScript, celle de l'écriture (« Cannot set properties of undefined »),
 // comme sans MJS
 // `µ._mjs_storeSetOn('taches', objet, 'fait', v)` (_mjsStoreWrite) : rend la valeur écrite par le code (sémantique
 // d'une affectation), même convertie ou refusée par la règle d'un store typé ; valeur identique : rien n'est écrit ni
 // prévenu. Fonction locale, que _mjs_storeDeepSet appelle sans recherche sur `µ`
-function _mjsStoreWrite(rootKey, o, prop, value, a, ctor) {
+// <wrapper>
+// `claim` : écriture par un objet trouvé (cf. µ._mjs_storeSetOn), dont les détenteurs sont prévenus
+function _mjsStoreWrite(rootKey, o, prop, value, a, ctor, claim) {
+// </wrapper>
+// <no-wrapper>
+// function _mjsStoreWrite(rootKey, o, prop, value, a, ctor) {
+// </no-wrapper>
   var v = value, __treg = µ._mjs_storeTreg, c;
   // <precision>
-  // <derivees>
+  // <derived-values>
   // objet du magasin changé : une valeur précise d'un composant qui le tient doute (mjs_element.ts)
-  if (o !== null && typeof o === 'object') µ._mjs_mefiance?.(o);
-  // </derivees>
+  if (o !== null && typeof o === 'object') µ._mjs_distrust?.(o);
+  // </derived-values>
   // </precision>
   // objet absent : l'écriture native lève sa propre erreur
   if (o == null) { o[prop] = v; }
+  // objet vide et gelé d'une lecture refusée du magasin (`µ.store[k].x = v`, `k` valant `constructor`) : déjà dit, rien n'est écrit
+  if (o === _mjsStoreEmpty) return value;
   // clé convertie une fois, comme JavaScript la convertit (`['nom']`, objet dont `toString` rend le nom) : le refus d'un nom
   // réservé, la comparaison, la règle d'un store typé et l'écriture voient la même clé
   if (typeof prop === 'object' || typeof prop === 'function') prop = String(prop);
-  if (prop === '__proto__' || prop === 'constructor' || prop === 'prototype') { _mjsStoreRefus(prop); return value; }
-  // objet écrit : ni un prototype ni une fonction du navigateur (cf. _mjsStoreRefus) ; le prototype d'abord, `Function.prototype`
+  if (prop === '__proto__' || prop === 'constructor' || prop === 'prototype') { _mjsStoreReject(prop); return value; }
+  // objet écrit : ni un prototype ni une fonction du navigateur (cf. _mjsStoreReject) ; le prototype d'abord, `Function.prototype`
   // étant aussi une fonction du navigateur
-  if ((c = o.constructor) && c.prototype === o) { _mjsStoreRefus(ctor ? 'constructor' : '__proto__'); return value; }
-  if (_mjsStoreNatif(o)) { µ.warn(ctor ? µ._mjs_msg('initFnCtor', _mjsStoreNavVars(rootKey, o, prop), '{path} : `constructor`, écrit dans le code, mène à la fonction {name} du navigateur, que partage toute la page ; rien n\'est écrit. Écrivez dans l\'objet lui-même, sans `constructor`.') : µ._mjs_msg('initFn', _mjsStoreNavVars(rootKey, o, prop), '{path} : {fn} contient la fonction {name} du navigateur, sans doute amenée par une clé venue de l\'extérieur (adresse, formulaire, données reçues) ; rien n\'est écrit. Vérifiez cette clé.')); return value; }
+  if ((c = o.constructor) && c.prototype === o) { _mjsStoreReject(ctor ? 'constructor' : '__proto__'); return value; }
+  if (_mjsStoreNative(o)) {
+    // <development>
+    // clé racine inconnue à la construction (clé calculée à la racine, alias) : l'avertissement nomme la vraie clé, ou se tait
+    if (rootKey !== null || (rootKey = _mjsStoreKnownKey(o)) !== null)
+    // </development>
+    µ.warn(ctor ? µ._mjs_msg('initFnCtor', _mjsStoreNavVars(rootKey, o, prop), '{path} : `constructor`, écrit dans le code, mène à la fonction {name} du navigateur, que partage toute la page ; rien n\'est écrit. Écrivez dans l\'objet lui-même, sans `constructor`.') : µ._mjs_msg('initFn', _mjsStoreNavVars(rootKey, o, prop), '{path} : {fn} contient la fonction {name} du navigateur, sans doute amenée par une clé venue de l\'extérieur (adresse, formulaire, données reçues) ; rien n\'est écrit. Vérifiez cette clé.'));
+    return value;
+  }
   // types : un champ ou un élément sous un store typé passe la règle de son conteneur
   if (__treg !== void 0 && __treg.has(o)) {
     v = µ._mjs_tdeep(null, __treg, o, prop, v);
@@ -445,62 +491,128 @@ function _mjsStoreWrite(rootKey, o, prop, value, a, ctor) {
   if (o[prop] !== v) {
     o[prop] = v;
     µ._mjs_storeNotifyDeep(rootKey, o, a);
+    // <wrapper>
+    if (claim) _mjsStoreClaim(rootKey, o);
+    // </wrapper>
   }
   return value;
 }
-µ._mjs_storeSetOn = _mjsStoreWrite;
+// <wrapper>
+µ._mjs_storeSetOn = (rootKey, o, prop, value, a, ctor) => _mjsStoreWrite(rootKey, o, prop, value, a, ctor, 1);
+// écriture par un objet trouvé (champ, méthode, suppression : `claim`) : les variables qui tiennent l'objet écrit, ou la racine de la clé,
+// viennent d'être prévenues par le magasin ; un composant qui atteint l'objet par un autre (`item={t}` d'une ligne, puis l'écriture plus
+// bas) l'apprend du registre des détenteurs (µ._mjs_claimNotice, mjs_element.ts), le magasin ne sachant pas par quel chemin l'objet a été
+// trouvé. Les aides par chemin (_mjs_storeDeepSet…) n'en préviennent aucun : le carnet suit leur chemin
+function _mjsStoreClaim(rootKey, o) {
+  if (µ._mjs_claimNotice === void 0) return;
+  const w = µ._mjs_toRaw(o);
+  // <ledger>
+  µ._mjs_claimNotice(null, w, w, µ._mjs_storeRaw[rootKey]);
+  // </ledger>
+  // <no-ledger>
+  // µ._mjs_claimNotice(null, w, w);
+  // </no-ledger>
+}
+// </wrapper>
+// <no-wrapper>
+// µ._mjs_storeSetOn = _mjsStoreWrite;
+// </no-wrapper>
 
 // `µ._mjs_storeCallOn('taches', liste, 'push', [x])` : méthode mutative appelée sur l'objet, rend son retour (ex.
 // `.push()` → nouvelle longueur)
-µ._mjs_storeCallOn = function(rootKey, o, methodName, args, a, ctor) {
+// <wrapper>
+// corps commun : `claim`, appel sur un objet trouvé (µ._mjs_storeCallOn), dont les détenteurs sont prévenus (cf. _mjsStoreClaim)
+function _mjsStoreCall(rootKey, o, methodName, args, a, ctor, claim) {
+// </wrapper>
+// <no-wrapper>
+// µ._mjs_storeCallOn = function(rootKey, o, methodName, args, a, ctor) {
+// </no-wrapper>
   var c;
   // <precision>
-  // <derivees>
-  if (o !== null && typeof o === 'object') µ._mjs_mefiance?.(o);
-  // </derivees>
+  // <derived-values>
+  if (o !== null && typeof o === 'object') µ._mjs_distrust?.(o);
+  // </derived-values>
   // </precision>
   // objet absent : la lecture native lève sa propre erreur
   if (o == null) { return o[methodName].apply(o, args); }
-  if (methodName === '__proto__' || methodName === 'constructor' || methodName === 'prototype') { _mjsStoreRefus(methodName); return void 0; }
-  // objet modifié : ni un prototype ni une fonction du navigateur (cf. _mjsStoreRefus)
-  if ((c = o.constructor) && c.prototype === o) { _mjsStoreRefus(ctor ? 'constructor' : '__proto__'); return void 0; }
-  if (_mjsStoreNatif(o)) { µ.warn(ctor ? µ._mjs_msg('initFnCtor', _mjsStoreNavVars(rootKey, o, null, methodName), '{path} : `constructor`, écrit dans le code, mène à la fonction {name} du navigateur, que partage toute la page ; rien n\'est écrit. Écrivez dans l\'objet lui-même, sans `constructor`.') : µ._mjs_msg('initFn', _mjsStoreNavVars(rootKey, o, null, methodName), '{path} : {fn} contient la fonction {name} du navigateur, sans doute amenée par une clé venue de l\'extérieur (adresse, formulaire, données reçues) ; rien n\'est écrit. Vérifiez cette clé.')); return void 0; }
+  if (methodName === '__proto__' || methodName === 'constructor' || methodName === 'prototype') { _mjsStoreReject(methodName); return void 0; }
+  // objet modifié : ni un prototype ni une fonction du navigateur (cf. _mjsStoreReject)
+  if ((c = o.constructor) && c.prototype === o) { _mjsStoreReject(ctor ? 'constructor' : '__proto__'); return void 0; }
+  if (_mjsStoreNative(o)) {
+    // <development>
+    // clé racine inconnue à la construction (clé calculée à la racine, alias) : l'avertissement nomme la vraie clé, ou se tait
+    if (rootKey !== null || (rootKey = _mjsStoreKnownKey(o)) !== null)
+    // </development>
+    µ.warn(ctor ? µ._mjs_msg('initFnCtor', _mjsStoreNavVars(rootKey, o, null, methodName), '{path} : `constructor`, écrit dans le code, mène à la fonction {name} du navigateur, que partage toute la page ; rien n\'est écrit. Écrivez dans l\'objet lui-même, sans `constructor`.') : µ._mjs_msg('initFn', _mjsStoreNavVars(rootKey, o, null, methodName), '{path} : {fn} contient la fonction {name} du navigateur, sans doute amenée par une clé venue de l\'extérieur (adresse, formulaire, données reçues) ; rien n\'est écrit. Vérifiez cette clé.'));
+    return void 0;
+  }
   // méthode absente : la TypeError de JavaScript
   var f = o[methodName];
   if (typeof f !== 'function') { throw new TypeError(methodName + ' is not a function'); }
   // types : une liste typée modifiée par une méthode fait contrôler ce qu'elle a changé ; refusée, la
   // méthode est défaite
-  var __treg  = µ._mjs_storeTreg;
-  var __avant = (__treg !== void 0 && Array.isArray(o) && __treg.has(o)) ? µ._mjs_tbefore(o, methodName) : void 0;
-  var result  = f.apply(o, args);
-  if (__avant !== void 0 && !µ._mjs_tafter(null, __treg, o, __avant, methodName, args, result)) return result;
+  var __treg   = µ._mjs_storeTreg;
+  var __before = (__treg !== void 0 && Array.isArray(o) && __treg.has(o)) ? µ._mjs_tbefore(o, methodName) : void 0;
+  var result   = f.apply(o, args);
+  if (__before !== void 0 && !µ._mjs_tafter(null, __treg, o, __before, methodName, args, result)) return result;
   µ._mjs_storeNotifyDeep(rootKey, o, a);
+  // <wrapper>
+  if (claim) _mjsStoreClaim(rootKey, o);
+  // </wrapper>
   return result;
-};
+// <wrapper>
+}
+µ._mjs_storeCallOn = (rootKey, o, methodName, args, a, ctor) => _mjsStoreCall(rootKey, o, methodName, args, a, ctor, 1);
+// </wrapper>
+// <no-wrapper>
+// };
+// </no-wrapper>
 
 // `µ._mjs_storeDeleteOn('taches', objet, 'note')` : supprime la propriété (pas la structure du store : ses clés
 // top-level ne bougent pas) et rend `true`, comme `delete` — refusée (champ obligatoire d'un store typé), la
 // suppression est ignorée et rend `true` aussi, comme une écriture refusée rend sa valeur
-µ._mjs_storeDeleteOn = function(rootKey, o, prop, a, ctor) {
+// <wrapper>
+// corps commun : `claim`, appel sur un objet trouvé (µ._mjs_storeDeleteOn), dont les détenteurs sont prévenus (cf. _mjsStoreClaim)
+function _mjsStoreDelete(rootKey, o, prop, a, ctor, claim) {
+// </wrapper>
+// <no-wrapper>
+// µ._mjs_storeDeleteOn = function(rootKey, o, prop, a, ctor) {
+// </no-wrapper>
   // <precision>
-  // <derivees>
-  if (o !== null && typeof o === 'object') µ._mjs_mefiance?.(o);
-  // </derivees>
+  // <derived-values>
+  if (o !== null && typeof o === 'object') µ._mjs_distrust?.(o);
+  // </derived-values>
   // </precision>
   var __treg = µ._mjs_storeTreg, c;
   // objet absent : la suppression native lève sa propre erreur
   if (o == null) { delete o[prop]; }
   // clé convertie une fois (cf. _mjsStoreWrite) ; types : un champ obligatoire d'un store typé ne se supprime pas
   if (typeof prop === 'object' || typeof prop === 'function') prop = String(prop);
-  if (prop === '__proto__' || prop === 'constructor' || prop === 'prototype') { _mjsStoreRefus(prop); return true; }
-  // objet modifié : ni un prototype ni une fonction du navigateur (cf. _mjsStoreRefus)
-  if ((c = o.constructor) && c.prototype === o) { _mjsStoreRefus(ctor ? 'constructor' : '__proto__'); return true; }
-  if (_mjsStoreNatif(o)) { µ.warn(ctor ? µ._mjs_msg('initFnCtor', _mjsStoreNavVars(rootKey, o, prop), '{path} : `constructor`, écrit dans le code, mène à la fonction {name} du navigateur, que partage toute la page ; rien n\'est écrit. Écrivez dans l\'objet lui-même, sans `constructor`.') : µ._mjs_msg('initFn', _mjsStoreNavVars(rootKey, o, prop), '{path} : {fn} contient la fonction {name} du navigateur, sans doute amenée par une clé venue de l\'extérieur (adresse, formulaire, données reçues) ; rien n\'est écrit. Vérifiez cette clé.')); return true; }
+  if (prop === '__proto__' || prop === 'constructor' || prop === 'prototype') { _mjsStoreReject(prop); return true; }
+  // objet modifié : ni un prototype ni une fonction du navigateur (cf. _mjsStoreReject)
+  if ((c = o.constructor) && c.prototype === o) { _mjsStoreReject(ctor ? 'constructor' : '__proto__'); return true; }
+  if (_mjsStoreNative(o)) {
+    // <development>
+    // clé racine inconnue à la construction (clé calculée à la racine, alias) : l'avertissement nomme la vraie clé, ou se tait
+    if (rootKey !== null || (rootKey = _mjsStoreKnownKey(o)) !== null)
+    // </development>
+    µ.warn(ctor ? µ._mjs_msg('initFnCtor', _mjsStoreNavVars(rootKey, o, prop), '{path} : `constructor`, écrit dans le code, mène à la fonction {name} du navigateur, que partage toute la page ; rien n\'est écrit. Écrivez dans l\'objet lui-même, sans `constructor`.') : µ._mjs_msg('initFn', _mjsStoreNavVars(rootKey, o, prop), '{path} : {fn} contient la fonction {name} du navigateur, sans doute amenée par une clé venue de l\'extérieur (adresse, formulaire, données reçues) ; rien n\'est écrit. Vérifiez cette clé.'));
+    return true;
+  }
   if (__treg !== void 0 && !µ._mjs_tdelete(null, __treg, o, prop)) return true;
   delete o[prop];
   µ._mjs_storeNotifyDeep(rootKey, o, a);
+  // <wrapper>
+  if (claim) _mjsStoreClaim(rootKey, o);
+  // </wrapper>
   return true;
-};
+// <wrapper>
+}
+µ._mjs_storeDeleteOn = (rootKey, o, prop, a, ctor) => _mjsStoreDelete(rootKey, o, prop, a, ctor, 1);
+// </wrapper>
+// <no-wrapper>
+// };
+// </no-wrapper>
 // `constructor` écrit dans l'objet de l'écriture (`$$taches.find(f).constructor.x = v`, `t['constructor'].x = v`, path-tracker.ts) :
 // les mêmes aides, `ctor` à 1 en dernier argument (`a` à 0) — une fonction du navigateur atteinte, l'avertissement nomme ce
 // `constructor` écrit dans le code, pas une clé venue de l'extérieur
@@ -509,113 +621,119 @@ function _mjsStoreWrite(rootKey, o, prop, value, a, ctor) {
 // magasin sans en tenir une (paramètre, autre fonction) — elle écrit comme JavaScript : accesseur appelé, valeur égale
 // écrite, prototype d'une classe de l'appli ou clé `constructor` d'un objet ordinaire permis, aucune clé prévenue. Seuls
 // un prototype d'une classe du langage (`Object.prototype`, où mène une clé `'__proto__'` venue de données) et une classe
-// du langage (`Object`, où mène `constructor`) sont refusés : une classe native, reconnue à son code (`[native code]`, _mjsNatif de mjs_init.ts),
+// du langage (`Object`, où mène `constructor`) sont refusés : une classe native, reconnue à son code (`[native code]`, _mjsNatFn de mjs_init.ts),
 // celle d'une autre page (iframe, rendu serveur) comprise. Un objet ordinaire n'en paie qu'une lecture de son
 // `constructor`. Objet absent : l'erreur de JavaScript. Une fonction liée (`f.bind(…)`) a aussi un code natif, mais l'appli
 // la fabrique : elle n'est pas du navigateur (les aides gardées, plus haut, la laissent écrire comme toute fonction de l'appli)
-// une valeur quelconque : fonction du navigateur (le contrôle commun, _mjsNatif de mjs_init.ts, ne lit qu'une fonction)
-var _mjsStoreNatif = (v) => typeof v === 'function' && _mjsNatif(v);
-function _mjsLangueRefus(o) {
+// une valeur quelconque : fonction du navigateur (le contrôle commun, _mjsNatFn de mjs_init.ts, ne lit qu'une fonction)
+var _mjsStoreNative = (v) => typeof v === 'function' && _mjsNatFn(v);
+function _mjsLangReject(o) {
   var c, p, seg;
   if (o === null || (typeof o !== 'object' && typeof o !== 'function')) return false;
-  if ((c = o.constructor) && c.prototype === o && _mjsStoreNatif(c)) seg = '__proto__';
-  else if (typeof o === 'function' && (p = o.prototype) && p.constructor === o && _mjsNatif(o)) seg = 'constructor';
+  if ((c = o.constructor) && c.prototype === o && _mjsStoreNative(c)) seg = '__proto__';
+  else if (typeof o === 'function' && (p = o.prototype) && p.constructor === o && _mjsNatFn(o)) seg = 'constructor';
   else return false;
-  _mjsStoreRefus(seg);
+  _mjsStoreReject(seg);
   return true;
 }
 µ._mjs_softSetOn = function(o, prop, value) {
-  if (_mjsLangueRefus(o)) return value;
+  if (_mjsLangReject(o)) return value;
   return o[prop] = value;
 };
 µ._mjs_softCallOn = function(o, methodName, args) {
-  if (_mjsLangueRefus(o)) return void 0;
+  if (_mjsLangReject(o)) return void 0;
   var f = o[methodName];
   if (typeof f !== 'function') { throw new TypeError(methodName + ' is not a function'); }
   return f.apply(o, args);
 };
 µ._mjs_softDeleteOn = function(o, prop) {
-  if (_mjsLangueRefus(o)) return true;
+  if (_mjsLangReject(o)) return true;
   return delete o[prop];
 };
 
-// <garde-magasin>
+// <store-guard>
 // aides gardées du magasin (path-tracker.ts), chacune dans son bloc : seulement pour l'appli dont le code compilé l'appelle, toujours en
-// développement (bundler, clés `garde-magasin` et `cle-magasin`) — une appli qui n'en appelle aucune n'en porte rien
+// développement (bundler, clés `store-guard` et `store-key`) — une appli qui n'en appelle aucune n'en porte rien
 // objet que modifie ou fige une fonction (`Object.assign($$prefs, d)`, `Reflect.set`, `Object.freeze`, `Array.prototype.push.call(o, v)`,
 // `Object.assign(...[o], …)`, `Object.assign.apply`…), pris dans le magasin, ou objet d'une écriture relue avec `yield` : un prototype ou
 // une fonction du navigateur (`$$t.find(f).constructor`) est refusé comme par les aides d'écriture, et la fonction reçoit un objet gelé —
 // elle échoue comme avec l'enveloppe (`Object.assign`, `Object.defineProperty` : TypeError ; `Reflect.set` : `false`). `r` : `$` et la clé
 // racine (`$…` quand elle n'est pas connue) ; `s` : le nom réservé écrit dans le code avant l'objet
-var _mjsStoreGele = Object.freeze({});
-µ._mjs_storeSur = function(r, o, s) {
+var _mjsStoreFrozen = Object.freeze({});
+µ._mjs_storeSafe = function(r, o, s) {
   var c;
   if (o === null || (typeof o !== 'object' && typeof o !== 'function')) return o;
-  if ((c = o.constructor) && c.prototype === o) _mjsStoreRefus(s || '__proto__');
-  else if (!_mjsStoreNatif(o)) return o;
-  // <developpement>
+  if ((c = o.constructor) && c.prototype === o) _mjsStoreReject(s || '__proto__');
+  else if (!_mjsStoreNative(o)) return o;
+  // <development>
   // `constructor` écrit dans le code : l'avertissement de ce cas ; sinon celui d'une clé venue de l'extérieur
   else µ.warn(s === 'constructor' ? µ._mjs_msg('initFnCtor', { path: '$' + r + '.…', name: o.name }, '{path} : `constructor`, écrit dans le code, mène à la fonction {name} du navigateur, que partage toute la page ; rien n\'est écrit. Écrivez dans l\'objet lui-même, sans `constructor`.') : µ._mjs_msg('initFn', { path: '$' + r + '.…', fn: '$' + r + '.…', name: o.name }, '{path} : {fn} contient la fonction {name} du navigateur, sans doute amenée par une clé venue de l\'extérieur (adresse, formulaire, données reçues) ; rien n\'est écrit. Vérifiez cette clé.'));
-  // </developpement>
-  return _mjsStoreGele;
+  // </development>
+  return _mjsStoreFrozen;
 };
-// </garde-magasin>
-// <cle-magasin>
+// </store-guard>
+// <store-key>
+// objet racine lu par µ._mjs_keyStore à la racine du magasin : l'écriture qui suit, sans clé connue à la construction, prévient les clés
+// qui le rangent (cf. µ._mjs_storeNotifyDeep), même quand elle va plus bas (`µ.store[k].sous.x = v`, `µ.store[k].l.push(x)`)
+var _mjsStoreRootRead;
 // clé calculée de la chaîne d'une écriture par un objet du magasin (`$$l.find(f)[k].x = v`, `?.[k]` compris) : la valeur lue, comme
 // JavaScript la lit. Une clé réservée (`constructor`, `__proto__`, `prototype`) que l'objet n'a pas en propre et qui mène ailleurs qu'à
 // une fonction ou un prototype du navigateur (que les aides d'écriture refusent déjà, sans erreur) — une classe de l'appli, son
 // prototype — est refusée, comme par l'enveloppe : la chaîne lit `undefined`, l'écriture lève la TypeError de JavaScript. Objet absent :
-// l'erreur de la lecture, celle de JavaScript (la clé telle qu'écrite)
-µ._mjs_storeCle = function(o, k) {
+// l'erreur de la lecture, celle de JavaScript (la clé telle qu'écrite). À la racine (`o` : le magasin), l'objet lu est relevé pour
+// l'écriture qui suit (cf. _mjsStoreRootRead), et l'objet vide et gelé d'un nom que le magasin refuse passe tel quel : l'écriture
+// l'ignore (cf. _mjsStoreWrite)
+µ._mjs_keyStore = function(o, k) {
   var v, c;
   if (o == null) return o[k];
   if (typeof k === 'object' || typeof k === 'function') k = String(k);
   v = o[k];
-  if ((k === '__proto__' || k === 'constructor' || k === 'prototype') && v != null && !Object.prototype.hasOwnProperty.call(o, k) && !_mjsStoreNatif(v) && !((c = v.constructor) && c.prototype === v && _mjsStoreNatif(c))) {
-    _mjsStoreRefus(k);
+  if (o === µ.store) _mjsStoreRootRead = v;
+  if ((k === '__proto__' || k === 'constructor' || k === 'prototype') && v != null && v !== _mjsStoreEmpty && !Object.prototype.hasOwnProperty.call(o, k) && !_mjsStoreNative(v) && !((c = v.constructor) && c.prototype === v && _mjsStoreNative(c))) {
+    _mjsStoreReject(k);
     return void 0;
   }
   return v;
 };
-// </cle-magasin>
+// </store-key>
 
 // `µ._mjs_storeDeepSet('game', ['a', 'score'], v)` : mutation profonde SANS Proxy, par un chemin aux clés écrites dans
 // le code ou calculées (`$$game.a.score = v`, `$$game[cle].score = v`, path-tracker.ts) — navigue
 // `µ._mjs_storeRaw[rootKey]` (cible brute ; racine absente : rien n'est écrit) comme JavaScript navigue, chaque clé
-// convertie une fois puis passée au refus d'un nom réservé (cf. _mjsStoreRefus), puis écrit par _mjsStoreWrite. Seules
+// convertie une fois puis passée au refus d'un nom réservé (cf. _mjsStoreReject), puis écrit par _mjsStoreWrite. Seules
 // la clé racine et les clés qui rangent le même objet sont prévenues (pas la structure : l'ajout
-// profond ne touche pas les clés top-level du store, parité trap imbriqué mjs_runes.ts:282-288). La navigation relève
+// profond ne touche pas les clés top-level du store, parité trap imbriqué de µ.state, mjs_state.ts). La navigation relève
 // les objets qu'elle traverse sous la racine rangés sous une autre clé (index, `$$autre = $$cfg.a`) : ces clés sont
 // prévenues aussi (cf. _mjs_storeNotifyDeep) — aucune allocation sans eux
 µ._mjs_storeDeepSet = function(rootKey, path, value) {
   var o = µ._mjs_storeRaw[rootKey], n = path.length - 1, i, a, k;
   if (o == null) return;
-  // <carnet>
-  _mjsCarnetChemin = void 0;
-  // </carnet>
+  // <ledger>
+  _mjsLedgerPath = void 0;
+  // </ledger>
   for (i = 0; i < n; i++) {
     k = path[i];
     if (typeof k === 'object' || typeof k === 'function') k = String(k);
-    if (k === '__proto__' || k === 'constructor' || k === 'prototype') { _mjsStoreRefus(k); return; }
+    if (k === '__proto__' || k === 'constructor' || k === 'prototype') { _mjsStoreReject(k); return; }
     if (i > 0 && µ._mjs_storeIdx.has(o)) { a = a || []; a.push(o); }
-    // <carnet>
-    if (i > 0 && µ._mjs_carnet.has(o)) (_mjsCarnetChemin ||= []).push(o);
-    // </carnet>
+    // <ledger>
+    if (i > 0 && µ._mjs_ledger.has(o)) (_mjsLedgerPath ||= []).push(o);
+    // </ledger>
     o = o[k];
   }
-  // <carnet>
-  _mjsCarnetBout = o;
-  // </carnet>
-  // <developpement>
+  // <ledger>
+  _mjsLedgerEnd = o;
+  // </ledger>
+  // <development>
   // le chemin de l'objet atteint, que montre l'avertissement d'une fonction du navigateur (cf. _mjsStoreNavVars)
-  µ._mjs_storeVu = path;
+  µ._mjs_storeSeen = path;
   µ._mjs_storeVo = o;
-  // </developpement>
+  // </development>
   _mjsStoreWrite(rootKey, o, path[n], value, a);
   // l'objet atteint relevé pour l'avertissement, lâché après l'écriture : il ne retient pas un objet que l'appli a lâché
-  // <developpement>
+  // <development>
   µ._mjs_storeVo = void 0;
-  // </developpement>
+  // </development>
 };
 
 // `µ._mjs_storeDeepCall('list', ['items'], 'push', [x])` : appelle une méthode
@@ -623,72 +741,94 @@ var _mjsStoreGele = Object.freeze({});
 µ._mjs_storeDeepCall = function(rootKey, path, methodName, args) {
   var o = µ._mjs_storeRaw[rootKey], i, a, k;
   if (o == null) return void 0;
-  // <carnet>
-  _mjsCarnetChemin = void 0;
-  // </carnet>
+  // <ledger>
+  _mjsLedgerPath = void 0;
+  // </ledger>
   for (i = 0; i < path.length; i++) {
     k = path[i];
     if (typeof k === 'object' || typeof k === 'function') k = String(k);
-    if (k === '__proto__' || k === 'constructor' || k === 'prototype') { _mjsStoreRefus(k); return void 0; }
+    if (k === '__proto__' || k === 'constructor' || k === 'prototype') { _mjsStoreReject(k); return void 0; }
     if (i > 0 && µ._mjs_storeIdx.has(o)) { a = a || []; a.push(o); }
-    // <carnet>
-    if (i > 0 && µ._mjs_carnet.has(o)) (_mjsCarnetChemin ||= []).push(o);
-    // </carnet>
+    // <ledger>
+    if (i > 0 && µ._mjs_ledger.has(o)) (_mjsLedgerPath ||= []).push(o);
+    // </ledger>
     o = o[k];
   }
-  // <carnet>
-  _mjsCarnetBout = o;
-  // </carnet>
-  // <developpement>
-  µ._mjs_storeVu = path;
+  // <ledger>
+  _mjsLedgerEnd = o;
+  // </ledger>
+  // <development>
+  µ._mjs_storeSeen = path;
   µ._mjs_storeVo = o;
   // l'objet atteint, lâché après l'écriture (cf. _mjs_storeDeepSet)
   try {
-    return µ._mjs_storeCallOn(rootKey, o, methodName, args, a);
+    // <wrapper>
+    return _mjsStoreCall(rootKey, o, methodName, args, a);
+    // </wrapper>
+    // <no-wrapper>
+    // return µ._mjs_storeCallOn(rootKey, o, methodName, args, a);
+    // </no-wrapper>
   }
   finally {
     µ._mjs_storeVo = void 0;
   }
-  // </developpement>
+  // </development>
   // la production seule y arrive : le bloc de développement, retiré par la construction, rend la main avant
+  // <wrapper>
   // eslint-disable-next-line no-unreachable
-  return µ._mjs_storeCallOn(rootKey, o, methodName, args, a);
+  return _mjsStoreCall(rootKey, o, methodName, args, a);
+  // </wrapper>
+  // <no-wrapper>
+  // // eslint-disable-next-line no-unreachable
+  // return µ._mjs_storeCallOn(rootKey, o, methodName, args, a);
+  // </no-wrapper>
 };
 
 // `µ._mjs_storeDeepDelete('obj', ['clé'])` : supprime une sous-propriété (_mjs_storeDeleteOn), rend `true` comme `delete`
 µ._mjs_storeDeepDelete = function(rootKey, path) {
   var o = µ._mjs_storeRaw[rootKey], n = path.length - 1, i, a, k;
   if (o == null || n < 0) return true;
-  // <carnet>
-  _mjsCarnetChemin = void 0;
-  // </carnet>
+  // <ledger>
+  _mjsLedgerPath = void 0;
+  // </ledger>
   for (i = 0; i < n; i++) {
     k = path[i];
     if (typeof k === 'object' || typeof k === 'function') k = String(k);
-    if (k === '__proto__' || k === 'constructor' || k === 'prototype') { _mjsStoreRefus(k); return true; }
+    if (k === '__proto__' || k === 'constructor' || k === 'prototype') { _mjsStoreReject(k); return true; }
     if (i > 0 && µ._mjs_storeIdx.has(o)) { a = a || []; a.push(o); }
-    // <carnet>
-    if (i > 0 && µ._mjs_carnet.has(o)) (_mjsCarnetChemin ||= []).push(o);
-    // </carnet>
+    // <ledger>
+    if (i > 0 && µ._mjs_ledger.has(o)) (_mjsLedgerPath ||= []).push(o);
+    // </ledger>
     o = o[k];
   }
-  // <carnet>
-  _mjsCarnetBout = o;
-  // </carnet>
-  // <developpement>
-  µ._mjs_storeVu = path;
+  // <ledger>
+  _mjsLedgerEnd = o;
+  // </ledger>
+  // <development>
+  µ._mjs_storeSeen = path;
   µ._mjs_storeVo = o;
   // l'objet atteint, lâché après l'écriture (cf. _mjs_storeDeepSet)
   try {
-    return µ._mjs_storeDeleteOn(rootKey, o, path[n], a);
+    // <wrapper>
+    return _mjsStoreDelete(rootKey, o, path[n], a);
+    // </wrapper>
+    // <no-wrapper>
+    // return µ._mjs_storeDeleteOn(rootKey, o, path[n], a);
+    // </no-wrapper>
   }
   finally {
     µ._mjs_storeVo = void 0;
   }
-  // </developpement>
+  // </development>
   // la production seule y arrive : le bloc de développement, retiré par la construction, rend la main avant
+  // <wrapper>
   // eslint-disable-next-line no-unreachable
-  return µ._mjs_storeDeleteOn(rootKey, o, path[n], a);
+  return _mjsStoreDelete(rootKey, o, path[n], a);
+  // </wrapper>
+  // <no-wrapper>
+  // // eslint-disable-next-line no-unreachable
+  // return µ._mjs_storeDeleteOn(rootKey, o, path[n], a);
+  // </no-wrapper>
 };
 
 // `µ._mjs_storeSubscribe(comp, ['session','game'])` : abonne un composant à des
@@ -755,7 +895,7 @@ try {
             // `__mjsLang` — clé CACHÉE (cf. `_storeDeclare(keys, hidden)`
             // ci-dessus) : la PRÉ-déclarer non-énumérable AVANT `_storeSet`,
             // sinon celui-ci l'auto-déclare ÉNUMÉRABLE faute d'accesseur
-            // existant (ligne 132 plus haut) — et `_storeDeclare` skip
+            // existant (cf. `µ._storeSet` plus haut) — et `_storeDeclare` skip
             // ensuite silencieusement toute clé déjà accesseur (elle
             // resterait visible pour de bon). Exécuté AVANT que mjs_i18n.ts
             // (chargé après ce module) ne pose son propre watcher : aucun
@@ -833,8 +973,8 @@ if (µ._mjs_storeRaw && µ._mjs_storeRaw.__mjsTheme === undefined) {
   µ._storeSet = function(key, value) {
     if (key !== '__mjsTheme') { return __mjsThemeOrigStoreSet.apply(this, arguments); }
     if (!__mjsThemeIsKnown(value)) {
-      var __mjsThemeConnus = ['light', 'dark'].concat(Array.isArray(µ._themes) ? µ._themes : []);
-      µ.warn(µ._mjs_msg('storeGTheme', { value: value, themes: __mjsThemeConnus.join(', ') }, 'µtheme : « {value} » n\'est pas un thème déclaré — ignorée. Thèmes connus : {themes}.'));
+      var __mjsKnownThemes = ['light', 'dark'].concat(Array.isArray(µ._themes) ? µ._themes : []);
+      µ.warn(µ._mjs_msg('storeGTheme', { value: value, themes: __mjsKnownThemes.join(', ') }, 'µtheme : « {value} » n\'est pas un thème déclaré — ignorée. Thèmes connus : {themes}.'));
       return;
     }
     if (!__mjsThemeInternalWrite && __mjsThemeOsUnwatch) { __mjsThemeOsUnwatch(); __mjsThemeOsUnwatch = null; }

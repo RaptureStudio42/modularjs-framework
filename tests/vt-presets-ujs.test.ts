@@ -44,7 +44,7 @@ describe('mjs_vt_presets — bibliothèque de préréglages', function () {
     const µ: any = { warn() {} }
     poserMessages(µ)
     loadVtPresets(µ, makeFakeDocument())
-    assert.deepEqual(Object.keys(µ._vtPresets).sort(), ['cube', 'fade', 'flip', 'reveal', 'slide', 'turn', 'volet', 'zoom', 'zoom-out'].sort())
+    assert.deepEqual(Object.keys(µ._vtPresets).sort(), ['cube', 'fade', 'flip', 'reveal', 'slide', 'turn', 'cover', 'zoom', 'zoom-out'].sort())
     assert.deepEqual(Object.keys(µ._mjs_vtCurtains).sort(), ['bars', 'blocks', 'iris', 'swipe'].sort())
   })
 
@@ -261,7 +261,7 @@ describe('préréglages — invariants CSS (fabriques directionnelles, fidélit�
     const µ: any = { warn() {} }
     poserMessages(µ)
     loadVtPresets(µ, makeFakeDocument())
-    for (const base of ['volet', 'reveal', 'flip', 'cube', 'turn']) for (const dir of ['left', 'right', 'up', 'down']) assert.match(gen(µ, base, dir), /mix-blend-mode:normal/, `${base}:${dir}`)
+    for (const base of ['cover', 'reveal', 'flip', 'cube', 'turn']) for (const dir of ['left', 'right', 'up', 'down']) assert.match(gen(µ, base, dir), /mix-blend-mode:normal/, `${base}:${dir}`)
     for (const base of ['zoom', 'zoom-out']) assert.match(gen(µ, base, 'left'), /mix-blend-mode:normal/, base)
   })
   it('z-index:1 sur l\'ancienne quand c\'est elle qui révèle (reveal/turn, 4 directions)', () => {
@@ -324,11 +324,11 @@ describe('µ._mjs_vtResolvePage — résolution PAGE (attribut du lien > config)
     installVt(µ)
     assert.equal(µ._mjs_vtResolvePage({ getAttribute: () => 'off' }), false)
   })
-  it('attribut mjs-vt="volet" (nom de préréglage) → "volet" (chaîne, pas un booléen)', () => {
+  it('attribut mjs-vt="cover" (nom de préréglage) → "cover" (chaîne, pas un booléen)', () => {
     const µ: any = {}
     poserMessages(µ)
     installVt(µ)
-    assert.equal(µ._mjs_vtResolvePage({ getAttribute: () => 'volet' }), 'volet')
+    assert.equal(µ._mjs_vtResolvePage({ getAttribute: () => 'cover' }), 'cover')
   })
   it('pas d\'attribut sur le lien → repli sur µ.viewTransition (config)', () => {
     const µ: any = { viewTransition: 'reveal' }
@@ -747,7 +747,7 @@ describe('mjs_ujs — swap du contenant de navigation réellement enveloppé (in
     let vtStarted = false
     doc.startViewTransition = (cb: any) => { vtStarted = true; cb() }
     const µ = makeIntegrationMu(doc, true)
-    µ.viewTransition = 'volet'
+    µ.viewTransition = 'cover'
     µ.pageCache = { clear() {} }
     µ._mjs_preloadCache = { clear() {} }
     µ._mjs_preloaded = { clear() {} }
@@ -761,7 +761,7 @@ describe('mjs_ujs — swap du contenant de navigation réellement enveloppé (in
     capturedSuccess('<html><body>ok</body></html>', 'http://x/posts')
 
     assert.equal(vtStarted, true)
-    assert.deepEqual(µ._applyCalls, ['volet'])
+    assert.deepEqual(µ._applyCalls, ['cover'])
     assert.equal(liveRoot.by, newNode)
   })
 })
@@ -829,7 +829,7 @@ describe('compilateur — @pageTransition (lien) → mjs-vt', function () {
     assert.match(off.output, /mjs-vt=['"]off['"]/)
   })
 
-  // Même MESSAGE (transpiler.vt-direction-plus-dans-nom)
+  // Même MESSAGE (transpiler.vt-direction-no-longer-in-name)
   // que les 4 autres positions, mais PAS le même EXEMPLE : @pageTransition n'a pas de forme à
   // point sur un lien (`@pageTransition.cube={...}` n'existe pas), la vraie forme est une CHAÎNE
   // (signe égal, guillemets) — l'exemple proposé doit donc être PROPRE à cette position.

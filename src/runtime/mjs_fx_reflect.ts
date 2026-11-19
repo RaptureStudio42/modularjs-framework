@@ -88,7 +88,7 @@ function _mjsFxReflectWarn(el, inner) {
   return µ._mjs_msg('reflectBlur', { tag: el.localName }, '*reflect : sur un composant (<{tag}>), blur et water ne sont pas possibles dans votre navigateur — le reflet reste simple');
 }
 
-var _MJS_FX_REFLECT_SENS = [['down', 'below', 'bottom'], ['up', 'above', 'top'], ['left', 'left', 'left'], ['right', 'right', 'right']];
+var _MJS_FX_REFLECT_DIRS = [['down', 'below', 'bottom'], ['up', 'above', 'top'], ['left', 'left', 'left'], ['right', 'right', 'right']];
 
 // le fondu : opaque contre la balise, transparent après `size` % ; le même dégradé sert au reflet
 // natif et à la copie (le masque se pose avant le retournement)
@@ -98,8 +98,8 @@ function _mjsFxReflectFade(to) {
 
 function _mjsFxReflectCss() {
   var css = '';
-  for (var i = 0; i < _MJS_FX_REFLECT_SENS.length; i++) {
-    var d = _MJS_FX_REFLECT_SENS[i];
+  for (var i = 0; i < _MJS_FX_REFLECT_DIRS.length; i++) {
+    var d = _MJS_FX_REFLECT_DIRS[i];
     var f = _mjsFxReflectFade(d[2]);
     css += '[mjs-fx-reflect-mode="box"][mjs-fx-reflect-dir="' + d[0] + '"]{-webkit-box-reflect:' + d[1] + ' var(--mjs-reflect-gap,4px) ' + f + '}';
     css += '[mjs-fx-layer="reflect"][mjs-fx-reflect-dir="' + d[0] + '"]{-webkit-mask-image:' + f + ';mask-image:' + f + '}';
@@ -131,17 +131,17 @@ function _mjsFxReflectCss() {
     var host  = (el.localName || '').indexOf('-') > 0 || !!el._shadow;
     // un composant dans la balise : sa copie le ferait naître une seconde fois (constructeur et connectedCallback
     // relancés, puis encore à chaque changement du contenu) — la balise ne se copie pas plus qu'un composant
-    var inner = host ? '' : _mjsFxReflectInner(el);
-    var whole = host || inner !== '';
-    var sup   = function(a, b) { try { return typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports(a, b); } catch { return false; } };
-    var natif = sup('-webkit-box-reflect', 'below 0');
-    var moz   = sup('background', '-moz-element(#a)');
-    var fancy = blur > 0 || water;
+    var inner  = host ? '' : _mjsFxReflectInner(el);
+    var whole  = host || inner !== '';
+    var sup    = function(a, b) { try { return typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports(a, b); } catch { return false; } };
+    var native = sup('-webkit-box-reflect', 'below 0');
+    var moz    = sup('background', '-moz-element(#a)');
+    var fancy  = blur > 0 || water;
     var mode;
-    if (!fancy) mode = natif ? 'box' : moz ? 'moz' : whole ? '' : 'copy';
+    if (!fancy) mode = native ? 'box' : moz ? 'moz' : whole ? '' : 'copy';
     else if (moz) mode = 'moz';
     else if (whole) {
-      mode = natif ? 'box' : '';
+      mode = native ? 'box' : '';
       µ.warn(_mjsFxReflectWarn(el, inner));
     }
     else mode = 'copy';
@@ -182,13 +182,13 @@ function _mjsFxReflectCss() {
         for (var a in at) µ._mjs_dom.setAttribute(n, a, at[a]);
         return n;
       };
-      filter = 'mjs-fx-reflect-' + (++_mjsFxReflectN);
-      svg = mk('svg', { 'aria-hidden': 'true', width: '0', height: '0', 'mjs-fx-layer': 'reflect-filter' });
-      var f    = mk('filter', { id: filter, x: '-10%', y: '-10%', width: '120%', height: '120%', 'color-interpolation-filters': 'sRGB' });
-      var vert = dir === 'up' || dir === 'down';
-      var lo   = vert ? [0.004, 0.04] : [0.04, 0.004];
-      var hi   = vert ? [0.008, 0.07] : [0.07, 0.008];
-      var turb = mk('feTurbulence', { type: 'fractalNoise', baseFrequency: lo.join(' '), numOctaves: '1', seed: '3', result: 'n' });
+      filter       = 'mjs-fx-reflect-' + (++_mjsFxReflectN);
+      svg          = mk('svg', { 'aria-hidden': 'true', width: '0', height: '0', 'mjs-fx-layer': 'reflect-filter' });
+      var f        = mk('filter', { id: filter, x: '-10%', y: '-10%', width: '120%', height: '120%', 'color-interpolation-filters': 'sRGB' });
+      var vertical = dir === 'up' || dir === 'down';
+      var lo       = vertical ? [0.004, 0.04] : [0.04, 0.004];
+      var hi       = vertical ? [0.008, 0.07] : [0.07, 0.008];
+      var turb     = mk('feTurbulence', { type: 'fractalNoise', baseFrequency: lo.join(' '), numOctaves: '1', seed: '3', result: 'n' });
       f.appendChild(turb);
       f.appendChild(mk('feDisplacementMap', { 'in': 'SourceGraphic', in2: 'n', scale: '12', xChannelSelector: 'R', yChannelSelector: 'G' }));
       svg.appendChild(f);
@@ -346,7 +346,7 @@ function _mjsFxReflectCss() {
         }
         stop();
         µ.warn(_mjsFxReflectWarn(el, late));
-        if (natif) {
+        if (native) {
           µ._mjs_dom.setAttribute(el, 'mjs-fx-reflect-mode', 'box');
           µ._mjs_dom.setAttribute(el, 'mjs-fx-reflect-dir', dir);
         }

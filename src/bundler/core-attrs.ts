@@ -40,11 +40,11 @@ export function coreCamelProps(source: string): string[] {
 export function camelAttrProblems(ref: { file: string, kind: string, name: string, attrs?: TagRefAttrs }, props: readonly string[]): string[] {
   const attrs = ref.attrs
   if (!attrs?.texts || props.length === 0) return []
-  const tag = ref.kind === 'litteral-coeur' ? `mjs-core-${ref.name}` : `@@${ref.name}`
+  const tag = ref.kind === 'literal-core' ? `mjs-core-${ref.name}` : `@@${ref.name}`
   const out: string[] = []
   for (const name of attrs.names) {
     if (!props.includes(name) || typeof attrs.texts[name.toLowerCase()] !== 'string') continue
-    out.push(t('bundler.index.coeur-attribut-camel', { fichier: ref.file, tag, attribut: name, kebab: name.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase()), minuscules: name.toLowerCase() }))
+    out.push(t('bundler.index.core-attribute-camel', { file: ref.file, tag, attribute: name, kebab: name.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase()), lowercase: name.toLowerCase() }))
   }
   return out
 }

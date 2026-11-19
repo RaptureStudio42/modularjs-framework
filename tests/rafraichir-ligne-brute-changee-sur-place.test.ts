@@ -60,7 +60,7 @@ async function mount(opts: Record<string, unknown>): Promise<{ window: any, host
 
 const tick = async () => { await pause(0); await pause(0); await pause(0) }
 
-const ENVS: [string, Record<string, unknown>][] = [['dev', {}], ['prod', { env: 'prod', minify: false }], ['prodProp', { env: 'prod', minify: false, prop: true }], ['sansProxy', { proxy: false }]]
+const ENVS: [string, Record<string, unknown>][] = [['dev', {}], ['prod', { env: 'prod', minify: false }], ['prodProp', { env: 'prod', minify: false, prop: true }], ['withoutProxy', { proxy: false }]]
 
 describe('µrefresh($rows) redessine une ligne brute changée sur place', function () {
   this.timeout(120000)

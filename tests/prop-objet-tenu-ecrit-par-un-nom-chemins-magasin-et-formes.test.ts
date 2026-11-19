@@ -64,7 +64,7 @@ const CAS: Record<string, [string, Pas[]]> = {
   'zc-civet': ['<script>\n$o = { a: { b: { c: { d: 0 } } } }\n@ecrire = (v) ->\n  t := $o.a.b.c\n  t.d = v\n  return\n@rafraichir = ->\n  µrefresh($o)\n  return\n</script>\n<@zv item={$o.a}></@zv>', [['ecrire', 5, 'nom']]],
 }
 // accesseurs propres lus par µrefresh
-const ACCES = js(['window.__lu = 0;', '$o = { a: { c: 0 }, get lourd() { window.__lu++; return 1; } };', RAF], '<@zv item={$o.a}></@zv>')
+const ACCES = js(['window.__read = 0;', '$o = { a: { c: 0 }, get lourd() { window.__read++; return 1; } };', RAF], '<@zv item={$o.a}></@zv>')
 const BOUM  = js(['$o = { a: { c: 0 }, get boum() { throw new Error("accesseur de l appli"); } };', RAF], '<@zv item={$o.a}></@zv>')
 
 const SOURCES: Record<string, string> = { 'zv.mjs': js(['$item = null;'], '<em>{window.__ser($item)}</em>'), 'zc-acces.mjs': ACCES, 'zc-boum.mjs': BOUM }
@@ -120,10 +120,10 @@ for (const [nom, opts] of REGLAGES) describe(`objet tenu par un enfant, écrit p
   })
   it('zc-acces : µrefresh($o) ne lit aucun accesseur de l\'appli', async () => {
     const { win, el } = await appli('zc-acces')
-    const avant = win.__lu
+    const avant = win.__read
     el.rafraichir(); el.rafraichir(); el.rafraichir()
     await tic()
-    assert.equal(win.__lu - avant, 0)
+    assert.equal(win.__read - avant, 0)
   })
   it('zc-boum : µrefresh($o) ne lève pas l\'exception d\'un accesseur de l\'appli', async () => {
     const { el } = await appli('zc-boum')

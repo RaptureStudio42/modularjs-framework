@@ -4,7 +4,7 @@
 // réglages (avec le réglage `proxy: false`, l'écriture par un nom se signale aussi par `µrefresh($o)`). De même pour la prop d'un composant
 // dynamique (`<@module $comp item={$o.a}>`). L'enfant qui a changé d'objet (`item={$o[$k]}`, puis `$k = 'b'`) n'est plus prévenu par une
 // écriture dans l'objet qu'il ne tient plus : son reffet ne repart pas. Deux frères qui tiennent le même objet : celui qui écrit dedans, par un
-// nom ou directement, ne redessine pas l'autre — le même écran dans les deux cas. Un enfant détruit n'est plus appelé. Une boucle qui écrit par un nom dans chaque ligne d'une
+// nom ou directement, redessine l'autre (sans l'enveloppe, non) — le même écran dans les deux cas. Un enfant détruit n'est plus appelé. Une boucle qui écrit par un nom dans chaque ligne d'une
 // liste dont chaque ligne va à un enfant : chaque enfant suit. Cœur construit, monté dans happy-dom
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs'
@@ -115,7 +115,7 @@ for (const [nom, opts] of REGLAGES) describe(`objet de l'état redonné plus bas
     ecartsDe(win, el, 'nomB(3)', ecarts)
     assert.deepEqual(ecarts, [])
   })
-  it('zi-freres : le frère qui tient le même objet ne suit ni l\'écriture directe ni l\'écriture par un nom de l\'autre, le même écran', async () => {
+  it('zi-freres : le frère qui tient le même objet suit l\'écriture directe et l\'écriture par un nom de l\'autre (sans enveloppe, ni l\'une ni l\'autre), le même écran', async () => {
     const ecran = async (m: string) => {
       const { el } = await appli('zi-freres')
       const [e1, e2] = tous(el)
@@ -125,7 +125,7 @@ for (const [nom, opts] of REGLAGES) describe(`objet de l'état redonné plus bas
     }
     const nom = await ecran('nomE'), direct = await ecran('directE')
     assert.deepEqual(nom, direct)
-    assert.deepEqual(direct, ['{"b":{"c":4}}', '{"b":{"c":0}}'])
+    assert.deepEqual(direct, sans ? ['{"b":{"c":4}}', '{"b":{"c":0}}'] : ['{"b":{"c":4}}', '{"b":{"c":4}}'])
   })
   it('zi-detruit : l\'enfant détruit n\'est plus appelé', async () => {
     const { el } = await appli('zi-detruit')

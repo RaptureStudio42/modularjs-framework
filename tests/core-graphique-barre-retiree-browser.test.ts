@@ -224,7 +224,7 @@ for (const nom of NAVIGATEURS) describe(`<@@chart> sans barre : serveur en déve
     page.on('console', (m: any) => { if (m.type() === 'error' || m.type() === 'warning') avis.push(m.text().slice(0, 300)) })
     await page.addInitScript('window.__name = function (f) { return f };')
     // avant tout script : le tracé et le nombre de pièces que le serveur a écrits
-    const avant = `<script>(() => { const g = document.querySelector('mjs-gs-page').shadowRoot.querySelector('mjs-core-chart.g1').shadowRoot; window.__avant = { d: g.querySelector('path.line').getAttribute('d'), n: g.querySelectorAll('.chart *').length } })()</script>`
+    const avant = `<script>(() => { const g = document.querySelector('mjs-gs-page').shadowRoot.querySelector('mjs-core-chart.g1').shadowRoot; window.__before = { d: g.querySelector('path.line').getAttribute('d'), n: g.querySelectorAll('.chart *').length } })()</script>`
     const contenu = `<!doctype html><html lang="fr"><head><meta charset="utf-8"></head><body style="margin:0;padding:0 8px">${fait.html}\n${avant}\n${fait.hydrateScript}\n<script type="module" src="/out/bundle.js"></script></body></html>`
     await page.route('http://x.test/**', (route: any) => {
       const chemin = decodeURIComponent(new URL(route.request().url()).pathname)
@@ -236,7 +236,7 @@ for (const nom of NAVIGATEURS) describe(`<@@chart> sans barre : serveur en déve
     await page.goto('http://x.test/', { waitUntil: 'load' })
     await page.waitForFunction(() => { const h = document.querySelector('mjs-gs-page') as any; const c = h?.shadowRoot?.querySelectorAll('mjs-core-chart'); return !!customElements.get('mjs-core-chart') && !!c && c.length === 7 && [...c].every((x: any) => x.shadowRoot?.querySelector('.hit, .ring, .heat, .dial, .calendar, .blank')) }, null, { timeout: 15000 }).catch(() => { throw new Error(`la page servie ne démarre pas : ${erreurs.join(' | ') || 'aucune erreur'} / console : ${avis.join(' | ') || 'rien'}`) })
     await page.waitForTimeout(300)
-    const apres = await page.evaluate(() => { const g = (document.querySelector('mjs-gs-page') as any).shadowRoot.querySelector('mjs-core-chart.g1').shadowRoot; const w = window as any; return { d: g.querySelector('path.line').getAttribute('d'), dAvant: w.__avant.d, n: g.querySelectorAll('.chart *').length, nAvant: w.__avant.n, lignes: g.querySelectorAll('path.line').length } })
+    const apres = await page.evaluate(() => { const g = (document.querySelector('mjs-gs-page') as any).shadowRoot.querySelector('mjs-core-chart.g1').shadowRoot; const w = window as any; return { d: g.querySelector('path.line').getAttribute('d'), dAvant: w.__before.d, n: g.querySelectorAll('.chart *').length, nAvant: w.__before.n, lignes: g.querySelectorAll('path.line').length } })
     assert.equal(apres.n, apres.nAvant, 'le graphique a le même nombre de pièces')
     assert.equal(apres.lignes, 1, 'une seule courbe, jamais doublée')
     assert.equal(apres.d, apres.dAvant, 'le tracé ne bouge pas')

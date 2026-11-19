@@ -73,7 +73,7 @@ describe('i18n : tables par nom de langue, de section et de couleur sans prototy
   })
 
   it('la feuille des barres d\'attente d\'une couleur nommée comme un membre d\'Object est une vraie feuille', () => {
-    const m = /var __i18nSkelSheets = [^\n]*\n[\s\S]*?\nfunction __i18nSkelSheet\(couleur\) \{[\s\S]*?\n\}\n/.exec(I18N_SRC)
+    const m = /var __i18nSkelSheets = [^\n]*\n[\s\S]*?\nfunction __i18nSkelSheet\(color\) \{[\s\S]*?\n\}\n/.exec(I18N_SRC)
     assert.ok(m, 'la table et la fonction des feuilles se trouvent dans mjs_i18n.ts')
     class Feuille { texte = ''; replaceSync(t: string) { this.texte = t } }
     const feuille = new Function('CSSStyleSheet', m![0] + '\nreturn __i18nSkelSheet;')(Feuille)

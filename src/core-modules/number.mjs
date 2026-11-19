@@ -31,6 +31,7 @@
   $big          = false
   $bigLessLabel = ''
   $bigMoreLabel = ''
+  $stack        = false
   $draft        = null
 
   # un attribut booléen écrit vaut vrai quelle que soit sa valeur ; absent, posé à `null`, `undefined` ou `false` (`readonly={$x ? true : null}`) ou à
@@ -158,6 +159,11 @@
   $keypad   = if $digits > 0 then 'decimal' else 'numeric'
   $mark     = markIn($separator) ?? markOf(µlang)
   $cur      = toNum($value)
+
+  # `stack` : « + » au-dessus de « − », collés au bord de fin du champ (à droite ; à gauche dans un bloc écrit de droite à gauche) ; `stack="start"` : au bord de
+  # début ; une autre valeur les colle au bord de fin, et la console le dit (cf. le µeffect des fautes)
+  $stacked = boolAttr($stack)
+  $start   = $stacked and placesIn($stack) is 'start'
 
   $labelText = $label ?? tr('numberLabel', µlang)
   $lessText  = $lessLabel ?? tr('numberLess', µlang)
@@ -366,6 +372,13 @@
   µeffect ->
     µ.error(µ._mjs_msg('coreNumberSeparator', { value: placesIn($separator) }, '<@@number> : separator « {value} » est ignoré — écrivez « , » ou « . » ; sans separator, le séparateur est celui de la langue de la page.')) if placesIn($separator) isnt '' and markIn($separator) is null
 
+  # une valeur de `stack` inconnue est ignorée, les boutons s'empilent au bord de fin : un avertissement le dit au montage, puis à chaque changement qui la laisse inconnue ;
+  # le build de production ne l'envoie qu'à une application dont une page écrit `stack` (repères `@@`)
+  # @@ stack
+  µeffect ->
+    µ.warn(µ._mjs_msg('coreNumberStack', { value: placesIn($stack) }, '<@@number> : stack « {value} » est ignoré, les boutons s\'empilent au bord de fin — écrivez stack seul (au bord de fin : à droite, à gauche dans un bloc écrit de droite à gauche) ou stack="start" (au bord de début).')) if $stacked and $stack isnt true and placesIn($stack) isnt '' and not $start
+  # @@
+
   # un min plus grand que le max bloque la valeur sur le min : un avertissement le dit au montage, puis à chaque changement de bornes qui les laisse inversées
   µeffect ->
     µ.warn(µ._mjs_msg('coreRangeInverted', { tag: 'number', min: show($min), max: show($max) }, '<@@{tag}> : min « {min} » est plus grand que max « {max} », la valeur reste bloquée sur une borne. Écrivez un min plus petit que max.')) if toNum($min) isnt null and toNum($max) isnt null and toNum($min) > toNum($max)
@@ -397,7 +410,7 @@
     window.removeEventListener('blur', release)
 </script>
 
-<div class="field" part="field" role="group" aria-label={$labelText} :class{$off}="off" :class{$wide}="wide">
+<div class="field" part="field" role="group" aria-label={$labelText} :class{$off}="off" :class{$wide}="wide" :class{$stacked}="stack" :class{$start}="start">
   {if $wide}
     <button type="button" class="step less big" part="button" tabindex="-1" aria-label={$bigLess} disabled={($off or $ro or $atMin) ? true : null} @pointerdown={press(-1, e, true)} @click={activate(-1, e, true)}>−−</button>
   {end}
@@ -457,11 +470,12 @@
       opacity: .35
       cursor: default
 
+  // le trait entre chaque bouton et la saisie, du côté de la saisie dans les deux sens d'écriture (dans un bloc écrit de droite à gauche, « − » est à droite)
   .less
-    border-right: 1px solid var(--mjs-number-border, var(--mjs-border, #888))
+    border-inline-end: 1px solid var(--mjs-number-border, var(--mjs-border, #888))
 
   .more
-    border-left: 1px solid var(--mjs-number-border, var(--mjs-border, #888))
+    border-inline-start: 1px solid var(--mjs-number-border, var(--mjs-border, #888))
 
   // `.field .input` : passe devant une feuille partagée de la page qui style `input[type="text"]`
   .field .input
@@ -484,4 +498,53 @@
 
     &:disabled
       cursor: not-allowed
+
+  // `stack` : « + » au-dessus de « − », collés au bord de fin du champ (à droite ; à gauche dans un bloc écrit de droite à gauche), la saisie de l'autre côté, sur toute la hauteur ;
+  // `stack="start"` : au bord de début. Chaque bouton prend la moitié de la hauteur, 24px au moins (une cible qui se touche) ; avec `big`, « ++ » au-dessus de « −− », une colonne
+  // plus loin vers le bord. Empilé, le champ s'arrondit moins que la pilule en ligne : le coin d'un bouton collé au bord reste touchable. L'ordre du HTML ne change pas : le clavier, la tabulation et ce que lit un lecteur d'écran sont ceux du champ en ligne. Le champ garde la place de sa saisie
+  .field.stack
+    display: grid
+    border-radius: var(--mjs-number-radius, 12px)
+    grid-template-areas: "input more" "input less"
+    grid-template-rows: minmax(24px, 1fr) minmax(24px, 1fr)
+    grid-template-columns: minmax(0, 1fr) 40px
+    width: var(--mjs-number-width, 120px)
+
+  .field.stack.wide
+    grid-template-areas: "input more big-more" "input less big-less"
+    grid-template-columns: minmax(0, 1fr) 40px 40px
+    width: var(--mjs-number-width, 160px)
+
+  .field.stack.start
+    grid-template-areas: "more input" "less input"
+    grid-template-columns: 40px minmax(0, 1fr)
+
+  .field.stack.start.wide
+    grid-template-areas: "big-more more input" "big-less less input"
+    grid-template-columns: 40px 40px minmax(0, 1fr)
+
+  .field.stack .step
+    box-sizing: border-box
+    border: 0
+    border-inline-start: 1px solid var(--mjs-number-border, var(--mjs-border, #888))
+
+  .field.stack.start .step
+    border-inline-start: 0
+    border-inline-end: 1px solid var(--mjs-number-border, var(--mjs-border, #888))
+
+  .field.stack .more
+    grid-area: more
+    border-block-end: 1px solid var(--mjs-number-border, var(--mjs-border, #888))
+
+  .field.stack .less
+    grid-area: less
+
+  .field.stack .more.big
+    grid-area: big-more
+
+  .field.stack .less.big
+    grid-area: big-less
+
+  .field.stack .input
+    grid-area: input
 </style>

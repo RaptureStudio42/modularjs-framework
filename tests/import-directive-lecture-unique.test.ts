@@ -40,16 +40,15 @@ function sources(dir: string): string[] {
 const AUTRES_MOTIFS: [string, string, string][] = [
   ['src/runtime/mjs_modal.ts', '|@import|', 'règle CSS @import refusée dans un style venu du contenu'],
   ['src/runtime/mjs_fx.ts', '|@import|', "règle CSS @import refusée dans une valeur d'effet"],
-  ['src/server/sorties-rendu.ts', 'css.replace(/@import', 'règle CSS @import retirée du texte prérendu'],
+  ['src/server/render-outputs.ts', 'css.replace(/@import', 'règle CSS @import retirée du texte prérendu'],
   ['src/transpiler/index.ts', '.test(css)', 'règle CSS @import restée dans la feuille compilée'],
   ['src/transpiler/build-checks.ts', '(?:@import|µimport|mjsimport)', "repérage prudent d'une adresse importée : force la voie sûre, ne lit aucune directive"],
   ['src/reader/disguise.ts', "'@import': ", "lettre réservée du lecteur d'arbre (outils) : une ligne de script déguisée, jamais importée"],
-  ['src/reader/disguise.ts', "LETTRES_RESERVEES['@import']", 'idem'],
+  ['src/reader/disguise.ts', "RESERVED_LETTERS['@import']", 'idem'],
   ['src/reader/disguise.ts', '@(import|i18n|persist|preload)', 'idem'],
-  ['src/reader/code.ts', "LETTRES_RESERVEES['@import']", 'idem'],
+  ['src/reader/code.ts', "RESERVED_LETTERS['@import']", 'idem'],
   ['src/cli/server-entry.ts', '(@(?:import|css|', "refus des lignes de directive restées APRÈS la lecture partagée : la ligne est citée"],
   ['src/cli/server-entry.ts', "=== '@import'", 'idem'],
-  ['src/cli/server-entry.ts', '@(import|css|routes', "refus de toute directive dans une entrée brute, un fichier ordinaire"],
   ['src/cli/server-entry.ts', '@(?:import|css|routes|i18n|display|lang)/gm', "ligne de directive du masque fait main seul, reprise quand l'arbre lit son arobase comme du code : refusée comme sans lui"],
   ['src/bundler/class-files.ts', "src.replace(/^[ \\t]*@import\\b", "lignes `@import` d'un fichier de classe blanchies, même longueur, avant sa lecture par l'arbre de Civet : la directive se lit ailleurs, par la lecture partagée"]
 ]

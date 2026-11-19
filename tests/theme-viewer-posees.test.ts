@@ -109,52 +109,52 @@ describe('theme-viewer.mjs — variables posées par le composant, singulier, li
     })
 
     it('chaque source a ses groupes : valeurs par défaut, posées, déclarations — les posées sont repliées, en lecture seule', () => {
-      assert.deepEqual(texte('.tete .source'), ['core-carousel', 'core-carousel', 'core-cube', 'core-field', 'core-field', 'hote'])
-      assert.deepEqual(texte('.tete .variante'), ['valeurs par défaut', 'posées par le composant', 'posées par le composant', 'valeurs par défaut'])
-      assert.equal(c.findAll('.tete .lecture-seule').length, 4, 'les deux groupes de valeurs par défaut et les deux groupes de variables posées')
-      assert.deepEqual(c.findAll('.tete .plier').map((n: any) => n.getAttribute('aria-expanded')), ['false', 'false'], 'seuls les groupes de variables posées se plient, repliés au départ')
-      assert.deepEqual(texte('.variable .nom'), ['carousel-shadow', 'field-pad', 'field-ok-color', 'gap', 'sans-ligne'], 'les variables posées ne sont pas listées tant que leur groupe est replié')
+      assert.deepEqual(texte('.head .source'), ['core-carousel', 'core-carousel', 'core-cube', 'core-field', 'core-field', 'hote'])
+      assert.deepEqual(texte('.head .variant'), ['valeurs par défaut', 'posées par le composant', 'posées par le composant', 'valeurs par défaut'])
+      assert.equal(c.findAll('.head .read-only').length, 4, 'les deux groupes de valeurs par défaut et les deux groupes de variables posées')
+      assert.deepEqual(c.findAll('.head .fold').map((n: any) => n.getAttribute('aria-expanded')), ['false', 'false'], 'seuls les groupes de variables posées se plient, repliés au départ')
+      assert.deepEqual(texte('.variable .name'), ['carousel-shadow', 'field-pad', 'field-ok-color', 'gap', 'sans-ligne'], 'les variables posées ne sont pas listées tant que leur groupe est replié')
     })
 
     it('un composant qui lit et déclare a deux groupes, jamais un groupe mélangé', () => {
-      const groupes = c.findAll('.groupe').filter((g: any) => g.querySelector('.source').textContent === 'core-field')
+      const groupes = c.findAll('.group').filter((g: any) => g.querySelector('.source').textContent === 'core-field')
       assert.equal(groupes.length, 2)
-      const noms = groupes.map((g: any) => [...g.querySelectorAll('.nom')].map((n: any) => n.textContent))
+      const noms = groupes.map((g: any) => [...g.querySelectorAll('.name')].map((n: any) => n.textContent))
       assert.deepEqual(noms, [['field-pad'], ['field-ok-color']])
-      assert.deepEqual(groupes.map((g: any) => g.querySelector('.variante')?.textContent ?? ''), ['', 'valeurs par défaut'])
+      assert.deepEqual(groupes.map((g: any) => g.querySelector('.variant')?.textContent ?? ''), ['', 'valeurs par défaut'])
     })
 
     it('déplier un groupe de variables posées en montre les lignes, sans sélecteur de couleur, et dit qui les pose', async () => {
-      await c.click('.groupes section:nth-child(2) .plier')
-      assert.equal(c.find('.groupes section:nth-child(2) .plier').getAttribute('aria-expanded'), 'true')
-      assert.deepEqual(c.findAll('.groupes section:nth-child(2) .nom').map((n: any) => n.textContent), ['carousel-x', 'carousel-z'])
-      assert.deepEqual(c.findAll('.groupes section:nth-child(2) .ligne .emplacement').map((n: any) => n.textContent), ['par défaut', 'par défaut'])
-      assert.equal(c.findAll('.groupes section:nth-child(2) input.pastille').length, 0, 'pas de sélecteur de couleur : le composant remet sa valeur')
-      await c.click('.groupes section:nth-child(2) .variable:nth-child(1)')
-      const detail = c.find('.groupes section:nth-child(2) .variable:nth-child(1) .detail')
+      await c.click('.groups section:nth-child(2) .fold')
+      assert.equal(c.find('.groups section:nth-child(2) .fold').getAttribute('aria-expanded'), 'true')
+      assert.deepEqual(c.findAll('.groups section:nth-child(2) .name').map((n: any) => n.textContent), ['carousel-x', 'carousel-z'])
+      assert.deepEqual(c.findAll('.groups section:nth-child(2) .row .location').map((n: any) => n.textContent), ['par défaut', 'par défaut'])
+      assert.equal(c.findAll('.groups section:nth-child(2) input.swatch').length, 0, 'pas de sélecteur de couleur : le composant remet sa valeur')
+      await c.click('.groups section:nth-child(2) .variable:nth-child(1)')
+      const detail = c.find('.groups section:nth-child(2) .variable:nth-child(1) .detail')
       assert.match(detail.textContent, /core-carousel pose cette variable lui-même, dans son script, son gabarit ou son CSS : ce que vous déclarez dessus peut ne rien changer\./)
       assert.doesNotMatch(detail.textContent, /Aucun lecteur|Pour la régler/)
-      assert.deepEqual([...detail.querySelectorAll('.lecteur')].map((n: any) => n.textContent), ['core-carousel'])
+      assert.deepEqual([...detail.querySelectorAll('.reader')].map((n: any) => n.textContent), ['core-carousel'])
     })
 
     it('une variable posée sur un élément interne (une déclaration, pas une lecture) dit sa ligne inconnue', async () => {
-      await c.click('.groupes section:nth-child(3) .plier')
-      assert.deepEqual(c.findAll('.groupes section:nth-child(3) .ligne .emplacement').map((n: any) => n.textContent), ['ligne inconnue'])
+      await c.click('.groups section:nth-child(3) .fold')
+      assert.deepEqual(c.findAll('.groups section:nth-child(3) .row .location').map((n: any) => n.textContent), ['ligne inconnue'])
     })
 
     it('une déclaration de CSS brut dit « ligne inconnue », jamais « ligne 0 », et sa cible d\'enregistrement n\'a pas de « :0 »', async () => {
-      assert.deepEqual(texte('.groupes section:nth-child(6) .ligne .emplacement'), ['ligne 2', 'ligne inconnue'])
-      c.find('.bascule input').checked = true
-      await c.fire('.bascule input', 'change')
-      await c.click('.groupes section:nth-child(6) .variable:nth-child(1)')
-      await c.click('.groupes section:nth-child(6) .variable:nth-child(2)')
-      const cibles = c.findAll('.groupes section:nth-child(6) .cible').map((n: any) => n.textContent)
+      assert.deepEqual(texte('.groups section:nth-child(6) .row .location'), ['ligne 2', 'ligne inconnue'])
+      c.find('.toggle input').checked = true
+      await c.fire('.toggle input', 'change')
+      await c.click('.groups section:nth-child(6) .variable:nth-child(1)')
+      await c.click('.groups section:nth-child(6) .variable:nth-child(2)')
+      const cibles = c.findAll('.groups section:nth-child(6) .target').map((n: any) => n.textContent)
       assert.deepEqual(cibles, ['Enregistrement vers src/hote.mjs:2', 'Enregistrement vers src/hote.mjs — ligne cherchée dans le fichier'])
     })
 
     it('la cible d\'une variable posée dit qu\'aucune écriture n\'est possible', async () => {
-      await c.click('.groupes section:nth-child(3) .variable:nth-child(1)')
-      assert.equal(c.find('.groupes section:nth-child(3) .cible').textContent, 'Aucune écriture possible : cette variable est posée par le composant.')
+      await c.click('.groups section:nth-child(3) .variable:nth-child(1)')
+      assert.equal(c.find('.groups section:nth-child(3) .target').textContent, 'Aucune écriture possible : cette variable est posée par le composant.')
     })
   })
 
@@ -177,10 +177,10 @@ describe('theme-viewer.mjs — variables posées par le composant, singulier, li
     })
 
     it('« Rétablir » s\'accorde : une couleur modifiée, puis deux', async () => {
-      await c.type('.groupes section:nth-child(1) input.pastille', '#ff0000')
-      assert.equal(c.find('.retablir-tout').textContent.trim(), 'Rétablir la couleur modifiée')
-      await c.type('.groupes section:nth-child(2) input.pastille', '#00ff00')
-      assert.equal(c.find('.retablir-tout').textContent.trim(), 'Rétablir les 2 couleurs modifiées')
+      await c.type('.groups section:nth-child(1) input.swatch', '#ff0000')
+      assert.equal(c.find('.restore-all').textContent.trim(), 'Rétablir la couleur modifiée')
+      await c.type('.groups section:nth-child(2) input.swatch', '#00ff00')
+      assert.equal(c.find('.restore-all').textContent.trim(), 'Rétablir les 2 couleurs modifiées')
     })
   })
 
@@ -192,10 +192,10 @@ describe('theme-viewer.mjs — variables posées par le composant, singulier, li
 
     it('sont trois lignes, que l\'on déplie une à une', async () => {
       assert.equal(c.findAll('.variable').length, 3)
-      await c.click('.groupes section:nth-child(1) .variable:nth-child(2)')
+      await c.click('.groups section:nth-child(1) .variable:nth-child(2)')
       const ouverts = c.findAll('.variable').map((n: any) => n.querySelector('.detail') ? 'ouvert' : 'fermé')
       assert.deepEqual(ouverts, ['fermé', 'ouvert', 'fermé'], 'la ligne cliquée s\'ouvre, pas une autre')
-      await c.click('.groupes section:nth-child(1) .variable:nth-child(3)')
+      await c.click('.groups section:nth-child(1) .variable:nth-child(3)')
       assert.deepEqual(c.findAll('.variable').map((n: any) => n.querySelector('.detail') ? 'ouvert' : 'fermé'), ['fermé', 'ouvert', 'ouvert'])
     })
   })

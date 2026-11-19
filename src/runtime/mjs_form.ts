@@ -130,10 +130,10 @@ function _mjsFormKey(v) {
       for (var k in el._state) {
         var d = Object.getOwnPropertyDescriptor(el._state, k);
         if (d && 'value' in d && (d.value === f || _mjsFormRaw(d.value) === f)) {
-          // <signaux>
+          // <signals>
           // les reffets qui lisent la variable repartent, comme à son écriture (graphe des signaux, mjs_signals.ts)
           if (el._mjs_sigBoxes) µ._mjs_sigWrite(el, k);
-          // </signaux>
+          // </signals>
           el._mjs_invalidate(k);
         }
       }
@@ -241,10 +241,10 @@ function _mjsFormKey(v) {
       var v = _mjsFormCopy(vars[k]);
       if (S[k]['~standard'].validate(v).issues) {
         µ._mjs_rawWrite(el)[k] = v;
-        // <signaux>
+        // <signals>
         // l'écriture brute ne relance aucun reffet : ceux qui lisent la variable repartent, comme à son écriture (graphe des signaux, mjs_signals.ts)
         if (el._mjs_sigBoxes) µ._mjs_sigWrite(el, k);
-        // </signaux>
+        // </signals>
         el._mjs_invalidate(k);
       }
       else el._set(k, v);

@@ -37,7 +37,7 @@
       var r  = a * Math.PI / 180;
       var px = function(v) { return (+v.toFixed(3)) + 'px'; };
       // le motif avance d'un nombre entier de tuiles : la boucle se raccorde
-      var pas = function(w, h) {
+      var step = function(w, h) {
         var ux = Math.round(Math.sin(r));
         var uy = Math.round(-Math.cos(r));
         var k  = Math.max(1, Math.round(120 / Math.max(w, h)));
@@ -46,7 +46,7 @@
       var img, size, from, to, w, h, d;
       if (s.pattern === 'dots') {
         w    = 14;
-        d    = pas(w, w);
+        d    = step(w, w);
         img  = 'radial-gradient(circle,' + list[0] + ' 0 3px,transparent 3.5px),radial-gradient(circle,' + c1 + ' 0 3px,transparent 3.5px),linear-gradient(' + c2 + ',' + c2 + ')';
         size = '14px 14px,14px 14px,100% 100%';
         from = '0px 0px,7px 7px,0px 0px';
@@ -54,14 +54,14 @@
       }
       else if (s.pattern === 'checks') {
         w    = 16;
-        d    = pas(w, w);
+        d    = step(w, w);
         img  = 'conic-gradient(' + list[0] + ' 25%,' + c1 + ' 0 50%,' + list[0] + ' 0 75%,' + c1 + ' 0)';
         size = '16px 16px';
         from = '0px 0px';
         to   = px(d[0]) + ' ' + px(d[1]);
       }
       else if (s.pattern === 'waves') {
-        d    = pas(16, 20);
+        d    = step(16, 20);
         img  = 'radial-gradient(circle at 100% 50%,transparent 20%,' + list[0] + ' 21% 34%,transparent 35%),radial-gradient(circle at 0% 50%,transparent 20%,' + c2 + ' 21% 34%,transparent 35%),linear-gradient(' + c1 + ',' + c1 + ')';
         size = '16px 20px,16px 20px,100% 100%';
         from = '0px 0px,0px -10px,0px 0px';
@@ -88,12 +88,12 @@
       put('-to', to);
     }
     else if (url !== '' || typeof s.size === 'number' || typeof s.angle === 'number') {
-      var tsize = typeof s.size === 'number' ? s.size : 200;
-      var dir   = ['up', 'right', 'down', 'left'][Math.round(deg / 90) % 4];
-      var horiz = dir === 'left' || dir === 'right';
-      var ta    = typeof s.angle === 'number' ? µ._mjs_fxDeg(s.angle, deg) : deg;
+      var tsize    = typeof s.size === 'number' ? s.size : 200;
+      var dir      = ['up', 'right', 'down', 'left'][Math.round(deg / 90) % 4];
+      var horiz    = dir === 'left' || dir === 'right';
+      var ta       = typeof s.angle === 'number' ? µ._mjs_fxDeg(s.angle, deg) : deg;
       var gradient = 'linear-gradient(' + ta + 'deg,' + list.concat([list[0]]).join(',') + ')';
-      var pose = function(image) {
+      var sets     = function(image) {
         µ._mjs_dom.removeAttribute(el, 'mjs-fx-gradient-flow');
         // le fond : l'image, ou le dégradé ; sa tuile fait `size` % de la balise sur l'axe du défilé
         var tile = image ? 'auto' : '100%';
@@ -122,12 +122,12 @@
         if (seam) el.style.removeProperty('--mjs-fx-gradient-way');
         else put('-way', 'alternate');
       };
-      pose(url !== '');
+      sets(url !== '');
       if (url !== '' && typeof Image === 'function') {
         probe = new Image();
         probe.onerror = function() {
           µ.warn(µ._mjs_msg('gradientImage', { url: url }, '*gradient : l\'image {url} est introuvable, le dégradé la remplace'));
-          pose(false);
+          sets(false);
         };
         probe.src = url;
       }

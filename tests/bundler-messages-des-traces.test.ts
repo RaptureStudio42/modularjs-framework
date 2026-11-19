@@ -7,8 +7,10 @@
 //    du runtime partent aussi, et les textes qu'eux seuls lisent (WARNING_ONLY_MESSAGES) ; aux trois niveaux, ceux du développement
 //    seul aussi (DEV_ONLY_MESSAGES). Les autres messages n'en bougent pas
 //  - niveau 'log' : les traces restent, leur texte part avec le manifeste (groupe `err` réduit à ces textes), si bien que
-//    la première trace s'écrit en texte, tout de suite, dans la langue de la page. Les fichiers de messages restent complets
-//  - sans minification les traces restent dans le code : les fichiers aussi. En développement, rien ne change
+//    la première trace s'écrit en texte, tout de suite, dans la langue de la page. Les fichiers de messages restent complets,
+//    sauf les textes que seul un bloc du développement lit (DEV_BLOCK_MESSAGES) : la production n'emporte pas ces blocs, leurs
+//    textes partent à tous les niveaux
+//  - sans minification les traces restent dans le code : les fichiers aussi, sans ces mêmes textes. En développement, rien ne change
 //  - une appli qui n'a pas le routeur ne paie rien
 
 import assert from 'node:assert/strict'
@@ -16,7 +18,7 @@ import { mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { RUNTIME_LABELS } from '../src/runtime-labels.js'
-import { WARNING_ONLY_MESSAGES, DEV_ONLY_MESSAGES } from '../src/bundler/minify.js'
+import { WARNING_ONLY_MESSAGES, DEV_ONLY_MESSAGES, DEV_BLOCK_MESSAGES } from '../src/bundler/minify.js'
 import { mjsTmp } from './helpers/tmp.js'
 
 // les textes que seules des traces du routeur lisent
@@ -75,6 +77,8 @@ async function construire(opts: Record<string, unknown>, sources: Record<string,
 
 const cles = (o: Record<string, unknown>) => Object.keys(o).sort()
 const sans = (liste: string[], retire: string[]) => liste.filter((k) => !retire.includes(k))
+// la table d'une langue sans les textes que seul un bloc du développement lit : ce que porte au plus un fichier de messages de production
+const sansBlocs = (table: Record<string, unknown>) => Object.fromEntries(Object.entries(table).filter(([k]) => !DEV_BLOCK_MESSAGES.includes(k)))
 
 describe('textes des traces du routeur — fichiers de messages et manifeste, builds réels', function () {
   this.timeout(240000)
@@ -87,7 +91,7 @@ describe('textes des traces du routeur — fichiers de messages et manifeste, bu
         const complet = cles(RUNTIME_LABELS[lang].err)
         // aux niveaux qui retirent les avertissements (le défaut 'error', et 'silent'), leurs textes partent aussi ; au niveau 'warn', ceux du développement seul
         const avertissements = niveau === 'warn' ? [...DEV_ONLY_MESSAGES] : [...WARNING_ONLY_MESSAGES]
-        assert.deepEqual(cles(b.fichiers[lang]), sans(complet, [...ROUTEUR, AWAIT, SOCKET, RUNES, ...avertissements]), `fichier ${lang}`)
+        assert.deepEqual(cles(b.fichiers[lang]), sans(complet, [...ROUTEUR, AWAIT, SOCKET, RUNES, ...avertissements, ...DEV_BLOCK_MESSAGES]), `fichier ${lang}`)
         assert.ok(b.fichiers[lang][UJS], 'le texte de l\'avertissement d\'UJS reste')
         assert.equal(b.table[lang].err, undefined, `manifeste ${lang} : aucun message`)
         // le reste du fichier est la table, mot pour mot
@@ -98,13 +102,13 @@ describe('textes des traces du routeur — fichiers de messages et manifeste, bu
 
   it('production, niveau error, fichier unique : mêmes fichiers de messages', async () => {
     const b = await construire({ env: 'prod', logLevel: 'error', js: 'bundle' })
-    for (const lang of ['fr', 'en'] as const) assert.deepEqual(cles(b.fichiers[lang]), sans(cles(RUNTIME_LABELS[lang].err), [...ROUTEUR, AWAIT, SOCKET, RUNES, ...WARNING_ONLY_MESSAGES]))
+    for (const lang of ['fr', 'en'] as const) assert.deepEqual(cles(b.fichiers[lang]), sans(cles(RUNTIME_LABELS[lang].err), [...ROUTEUR, AWAIT, SOCKET, RUNES, ...WARNING_ONLY_MESSAGES, ...DEV_BLOCK_MESSAGES]))
   })
 
-  it('production, niveau log : les fichiers de messages sont complets, le manifeste porte le texte des traces dans les deux langues', async () => {
+  it('production, niveau log : les fichiers de messages sont complets, sauf les textes des seuls blocs du développement, le manifeste porte le texte des traces dans les deux langues', async () => {
     const b = await construire({ env: 'prod', logLevel: 'log' })
     for (const lang of ['fr', 'en'] as const) {
-      assert.deepEqual(b.fichiers[lang], RUNTIME_LABELS[lang].err, `fichier ${lang} complet`)
+      assert.deepEqual(b.fichiers[lang], sansBlocs(RUNTIME_LABELS[lang].err), `fichier ${lang} complet`)
       // l'appli ne se sert pas du socket : le cœur ne l'a pas, le texte de sa trace ne part pas au manifeste
       assert.deepEqual(cles(b.table[lang].err ?? {}), [...ROUTEUR, UJS, RUNES].sort(), `manifeste ${lang} : les textes des traces, et eux seuls`)
       for (const k of [...ROUTEUR, UJS, RUNES]) assert.equal(b.table[lang].err?.[k], (RUNTIME_LABELS[lang].err as any)[k], `${lang} ${k}`)
@@ -124,10 +128,10 @@ describe('textes des traces du routeur — fichiers de messages et manifeste, bu
     }
   })
 
-  it('production sans minification, niveau par défaut : les traces restent dans le code, les fichiers de messages sont complets, le manifeste sans message', async () => {
+  it('production sans minification, niveau par défaut : les traces restent dans le code, les fichiers de messages sont complets (sauf les textes des seuls blocs du développement), le manifeste sans message', async () => {
     const b = await construire({ env: 'prod', minify: false })
     for (const lang of ['fr', 'en'] as const) {
-      assert.deepEqual(b.fichiers[lang], RUNTIME_LABELS[lang].err, `fichier ${lang} complet`)
+      assert.deepEqual(b.fichiers[lang], sansBlocs(RUNTIME_LABELS[lang].err), `fichier ${lang} complet`)
       assert.equal(b.table[lang].err, undefined)
     }
   })
@@ -135,7 +139,7 @@ describe('textes des traces du routeur — fichiers de messages et manifeste, bu
   it('production sans minification, niveau log : fichiers complets et textes des traces au manifeste', async () => {
     const b = await construire({ env: 'prod', minify: false, logLevel: 'log' })
     for (const lang of ['fr', 'en'] as const) {
-      assert.deepEqual(b.fichiers[lang], RUNTIME_LABELS[lang].err)
+      assert.deepEqual(b.fichiers[lang], sansBlocs(RUNTIME_LABELS[lang].err))
       assert.deepEqual(cles(b.table[lang].err ?? {}), [...ROUTEUR, UJS, RUNES].sort())
     }
   })

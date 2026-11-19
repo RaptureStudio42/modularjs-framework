@@ -158,7 +158,7 @@ describe('MJS-WS — garde de présence optionnelle (rooms.canSeePresence)', () 
     assert.equal(msgs.length, 1)
     assert.equal(msgs[0].t, 'µ:error')
     assert.ok(!/explosé/.test(msgs[0].p.message), 'le détail interne ne doit JAMAIS atteindre le client')
-    assert.equal(msgs[0].p.message, t('ws.rooms.acces-presence-refuse'), 'même message générique que le refus explicite (false)')
+    assert.equal(msgs[0].p.message, t('ws.rooms.access-presence-refused'), 'même message générique que le refus explicite (false)')
     await app.stop()
   })
 

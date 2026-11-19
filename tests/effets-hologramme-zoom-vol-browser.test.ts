@@ -9,6 +9,7 @@
 import assert from 'node:assert/strict'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { navigateurPresent, construire, ouvrir, boite, agrandit, fly, measure, page, PENTE, type Construit } from './helpers/hologramme-zoom.js'
+import { playTogether } from './helpers/engines-together.js'
 
 // la règle de l'auteur : une transition de `transform` (et une d'opacité), et deux états qui la jouent
 const AUTEUR = '.carte\n  transition: transform .4s, opacity .5s\n.penche\n  transform: rotate(10deg)\n.pale\n  opacity: .3\n'
@@ -39,7 +40,7 @@ const distance = (a: string, b: string) => {
 }
 
 for (const nom of ['chromium', 'firefox'] as const) {
-  describe(`*hologram(zoom), le vol de la carte (${nom} réel)`, function () {
+  playTogether(describe(`*hologram(zoom), le vol de la carte (${nom} réel)`, function () {
     this.timeout(300000)
     let present = false
     let construit: Construit
@@ -264,5 +265,5 @@ for (const nom of ['chromium', 'firefox'] as const) {
         await browser.close()
       }
     })
-  })
+  }))
 }

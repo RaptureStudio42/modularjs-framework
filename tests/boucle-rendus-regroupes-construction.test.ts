@@ -1,4 +1,4 @@
-// Construction : la file des boucles qui écrivent l'état (bloc balisé `<boucles>` du cœur, dans runtime/mjs_init.ts et dans
+// Construction : la file des boucles qui écrivent l'état (bloc balisé `<loops>` du cœur, dans runtime/mjs_init.ts et dans
 // `_mjs_invalidate` de runtime/mjs_element.ts, et ses champs hors garde du rechargement à chaud dans runtime/mjs_hotswap.ts) n'entre au cœur que si le compilateur a enveloppé une boucle
 // (generator/loop-batch.ts) dans une unité du build ; sans boucle enveloppée, le cœur n'en porte pas un octet.
 
@@ -37,10 +37,10 @@ describe('rendus d\'une boucle regroupés — la construction', function () {
 
   it('signal : seule une boucle qui écrit l\'état le pose', async () => {
     const sortie = async (nom: string, source: string) => (await transpile(source, { moduleName: 'mjs-boucle-' + nom })).output
-    assert.equal(typeof features.BOUCLES, 'string', 'le signal est publié par le module des signaux')
-    assert.equal(features.scanCompiledFeatures(await sortie('ecrit', ECRIT)).has(features.BOUCLES), true, 'une boucle qui écrit l\'état')
-    assert.equal(features.scanCompiledFeatures(await sortie('lit', LIT)).has(features.BOUCLES), false, 'une boucle qui lit l\'état sans l\'écrire')
-    assert.equal(features.scanCompiledFeatures(await sortie('sans', SANS)).has(features.BOUCLES), false, 'aucune boucle')
+    assert.equal(typeof features.LOOPS, 'string', 'le signal est publié par le module des signaux')
+    assert.equal(features.scanCompiledFeatures(await sortie('ecrit', ECRIT)).has(features.LOOPS), true, 'une boucle qui écrit l\'état')
+    assert.equal(features.scanCompiledFeatures(await sortie('lit', LIT)).has(features.LOOPS), false, 'une boucle qui lit l\'état sans l\'écrire')
+    assert.equal(features.scanCompiledFeatures(await sortie('sans', SANS)).has(features.LOOPS), false, 'aucune boucle')
   })
 
   it('le cœur construit ne porte la file des boucles que si une boucle est enveloppée', async () => {
@@ -48,8 +48,8 @@ describe('rendus d\'une boucle regroupés — la construction', function () {
     const sans = await coeur('sans', SANS)
     assert.equal(avec.includes('µ._mjs_lqF = function'), true, 'une boucle enveloppée : la file est dans le cœur')
     assert.equal(avec.includes('if (µ._mjs_lq && '), true, 'une boucle enveloppée : son entrée dans `_mjs_invalidate` aussi')
-    assert.equal(avec.includes('Object.assign(_mjsHotInternes, { _mjs_lqb: 1, _mjs_lqk: 1 })'), true, 'une boucle enveloppée : ses champs restent hors garde du rechargement à chaud')
+    assert.equal(avec.includes('Object.assign(_mjsHotInternal, { _mjs_lqb: 1, _mjs_lqk: 1 })'), true, 'une boucle enveloppée : ses champs restent hors garde du rechargement à chaud')
     assert.equal(sans.includes('_mjs_lq'), false, 'aucune boucle enveloppée : rien de la file dans le cœur')
-    assert.equal(sans.includes('<boucles>'), false, 'aucune boucle enveloppée : le bloc balisé est retiré')
+    assert.equal(sans.includes('<loops>'), false, 'aucune boucle enveloppée : le bloc balisé est retiré')
   })
 })

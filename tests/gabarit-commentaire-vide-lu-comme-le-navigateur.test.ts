@@ -10,7 +10,7 @@ import { join } from 'node:path'
 import { Window } from 'happy-dom'
 import { extractPaths, generateCreateFnBody } from '../src/generator/paths.js'
 import { extractDirectives } from '../src/transpiler/directives.js'
-import { gabaritNommeRoutes, vuesDuGabarit } from '../src/transpiler/build-checks.js'
+import { templateNamesRoutes, templateViews } from '../src/transpiler/build-checks.js'
 import * as masque from '../src/mask.js'
 import { monterHote } from './helpers/coeur-monter.js'
 
@@ -84,16 +84,16 @@ describe('gabarit — un commentaire se referme là où le navigateur le referme
   })
 
   it('contrôles de la construction : un `routes` écrit après un commentaire vide compte, comme le navigateur l\'affiche', () => {
-    assert.equal(gabaritNommeRoutes('<!--><p>{routes}</p><!-- fin -->'), true)
+    assert.equal(templateNamesRoutes('<!--><p>{routes}</p><!-- fin -->'), true)
     // contre-cas : dans un vrai commentaire, il ne compte pas
-    assert.equal(gabaritNommeRoutes('<!-- <p>{routes}</p> -->'), false)
+    assert.equal(templateNamesRoutes('<!-- <p>{routes}</p> -->'), false)
   })
 
   it('contrôles de la construction : une vue écrite après un commentaire vide compte, comme le navigateur l\'affiche', () => {
-    assert.deepEqual(vuesDuGabarit('<!--><@view liste></@view><!-- fin -->'), ['liste'])
-    assert.deepEqual(vuesDuGabarit('<!---><@view liste></@view><!-- fin -->'), ['liste'])
+    assert.deepEqual(templateViews('<!--><@view liste></@view><!-- fin -->'), ['liste'])
+    assert.deepEqual(templateViews('<!---><@view liste></@view><!-- fin -->'), ['liste'])
     // contre-cas : dans un vrai commentaire, elle ne compte pas
-    assert.deepEqual(vuesDuGabarit('<!-- <@view liste></@view> --><@view fiche></@view>'), ['fiche'])
+    assert.deepEqual(templateViews('<!-- <@view liste></@view> --><@view fiche></@view>'), ['fiche'])
   })
 
   it('aucune passe du compilateur ne cherche plus le `-->` suivant à la main', () => {

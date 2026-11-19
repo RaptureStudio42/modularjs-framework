@@ -438,10 +438,10 @@ describe('MJS-WS — flux à journal borné + resync incrémental (boucle compl�
     const { transport, app } = await startApp()
     const s1 = app.stream('partie-1', { public: true })
     s1.add('e1', { x: 1 })
-    assert.equal(app.stats().flux.nombre, 1)
+    assert.equal(app.stats().streams.count, 1)
 
     s1.destroy()
-    assert.equal(app.stats().flux.nombre, 0, 'le flux détruit ne compte plus dans le registre')
+    assert.equal(app.stats().streams.count, 0, 'le flux détruit ne compte plus dans le registre')
 
     const µ = makeClient(transport)
     const s = µ.socket('memory://destroy1')

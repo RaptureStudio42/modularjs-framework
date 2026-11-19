@@ -133,15 +133,15 @@ describe('mjs_devpanel — le panneau d\'inspection', function () {
 
     window.µ.console(true)
     const racine = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
-    racine.querySelectorAll('.ligne')[0].dispatchEvent(new window.Event('click', { bubbles: true }))
+    racine.querySelectorAll('.line')[0].dispatchEvent(new window.Event('click', { bubbles: true }))
 
     // onglet État (par défaut) — les $ propres au composant, rendus par l'inspecteur générique
-    const etatTexte = racine.querySelector('.onglet-corps').textContent
+    const etatTexte = racine.querySelector('.tab-body').textContent
     assert.match(etatTexte, /\$?price/, etatTexte)
 
     // onglet Dérivés — sa propre section, avec les dépendances venues du COMPILATEUR
-    racine.querySelector('.onglet[data-onglet="derives"]').dispatchEvent(new window.Event('click', { bubbles: true }))
-    const derivesTexte = racine.querySelector('.onglet-corps').textContent
+    racine.querySelector('.tab[data-tab="derived"]').dispatchEvent(new window.Event('click', { bubbles: true }))
+    const derivesTexte = racine.querySelector('.tab-body').textContent
     assert.match(derivesTexte, /\$total/, derivesTexte)
     assert.match(derivesTexte, /←\s*\$price,\s*\$quantity|←\s*\$quantity,\s*\$price/, `les dépendances du dérivé doivent être affichées :\n${derivesTexte}`)
     window.µ.console(false)
@@ -160,7 +160,7 @@ describe('mjs_devpanel — le panneau d\'inspection', function () {
 
     window.µ.console(true)
     const racine = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
-    const hauteur = racine.querySelector('.panneau').style.height
+    const hauteur = racine.querySelector('.panel').style.height
     assert.equal(defilant.style.paddingBottom, hauteur, `la page doit gagner la hauteur du panneau (${hauteur})`)
     // une page en `height: 100vh` ne défile pas — le padding ne peut rien pour elle ; elle lit
     // cette variable et se rétrécit d'elle-même (le tuto du site le fait : 900 px → 580 px)
@@ -168,11 +168,11 @@ describe('mjs_devpanel — le panneau d\'inspection', function () {
     assert.equal(window.document.documentElement.hasAttribute('data-mjs-devpanel-dock'), true, 'et l\'attribut doit marquer le mode ancré')
 
     // détaché : le panneau ne masque plus le bas, la page n'a plus rien à compenser
-    racine.querySelector('[data-action="ancrer"]').dispatchEvent(new window.Event('click', { bubbles: true }))
+    racine.querySelector('[data-action="dock"]').dispatchEvent(new window.Event('click', { bubbles: true }))
     assert.equal(defilant.style.paddingBottom, '', 'en flottant, la place doit être rendue')
     assert.equal(window.document.documentElement.hasAttribute('data-mjs-devpanel-dock'), false, 'et le marqueur doit disparaître avec elle')
 
-    racine.querySelector('[data-action="ancrer"]').dispatchEvent(new window.Event('click', { bubbles: true }))
+    racine.querySelector('[data-action="dock"]').dispatchEvent(new window.Event('click', { bubbles: true }))
     assert.notEqual(defilant.style.paddingBottom, '', 're-ancré, la place doit être reprise')
     window.µ.console(false)
     assert.equal(defilant.style.paddingBottom, '', 'fermé, la page doit retrouver son bas')
@@ -189,8 +189,8 @@ describe('mjs_devpanel — le panneau d\'inspection', function () {
 
     window.µ.console(true)
     const racine = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
-    racine.querySelectorAll('.ligne')[0].dispatchEvent(new window.Event('click', { bubbles: true }))
-    const champ: any = racine.querySelector('input.di-valeur[data-di-key="quantity"]')
+    racine.querySelectorAll('.line')[0].dispatchEvent(new window.Event('click', { bubbles: true }))
+    const champ: any = racine.querySelector('input.di-value[data-di-key="quantity"]')
     assert.ok(champ, 'la quantité doit être éditable dans le panneau')
 
     champ.focus()
@@ -214,9 +214,9 @@ describe('mjs_devpanel — le panneau d\'inspection', function () {
     await new Promise(r => setTimeout(r, 60))
     window.µ.console(true)
     const racine = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
-    racine.querySelector('.arbre').scrollTop = 42
+    racine.querySelector('.tree').scrollTop = 42
     await new Promise(r => setTimeout(r, 900))
-    assert.equal(racine.querySelector('.arbre').scrollTop, 42, 'l\'arbre ne doit pas remonter en haut tout seul')
+    assert.equal(racine.querySelector('.tree').scrollTop, 42, 'l\'arbre ne doit pas remonter en haut tout seul')
     window.µ.console(false)
   })
 
@@ -241,7 +241,7 @@ describe('mjs_devpanel — le panneau d\'inspection', function () {
     window.document.body.insertAdjacentHTML('beforeend', '<mjs-dp-enfant></mjs-dp-enfant>')
     await new Promise(r => setTimeout(r, 900))   // > 700 ms : le battement doit avoir vu le nouveau venu
 
-    assert.match(racine.querySelector('.compte').textContent, /2 composants montés/, 'le panneau doit continuer à suivre la page')
+    assert.match(racine.querySelector('.count').textContent, /2 composants montés/, 'le panneau doit continuer à suivre la page')
     window.µ.console(false)
   })
 
@@ -255,8 +255,8 @@ describe('mjs_devpanel — le panneau d\'inspection', function () {
 
     window.µ.console(true)
     const racine = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
-    racine.querySelectorAll('.ligne')[0].dispatchEvent(new window.Event('click', { bubbles: true }))
-    const champ = racine.querySelector('input.di-valeur[data-di-key="quantity"]')
+    racine.querySelectorAll('.line')[0].dispatchEvent(new window.Event('click', { bubbles: true }))
+    const champ = racine.querySelector('input.di-value[data-di-key="quantity"]')
     assert.ok(champ, 'la quantité doit être éditable dans le panneau')
     champ.value = '10'
     champ.dispatchEvent(new window.Event('change', { bubbles: true }))

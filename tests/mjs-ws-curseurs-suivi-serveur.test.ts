@@ -46,7 +46,7 @@ function fauxServeur(pkg: any) {
       }
     },
   }
-  pkg.installer(app)
+  pkg.install(app)
   const entre = (nom: string, c: any) => { if (!salons.has(nom)) salons.set(nom, new Set()); salons.get(nom)!.add(c) }
   const sort  = (nom: string, c: any) => { salons.get(nom)?.delete(c) }
   return { serves, ons, envoyes, entre, sort }

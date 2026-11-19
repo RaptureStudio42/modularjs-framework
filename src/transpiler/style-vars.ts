@@ -48,6 +48,7 @@ export interface StyleVarsResult {
   rootDecl: StyleVarDecl[]   // déclarations à la RACINE (colonne 0, hors accolade) : légales en <theme>, fautives en <style>
   sassRead:     string[]   // variables SASS ordinaires LUES (`$x`) — sert à adosser `$x` à `$$x` (cf. transpiler/index)
   sassDeclared: string[]   // variables SASS ordinaires DÉCLARÉES ici (`$x:` en tête de ligne) : elles gardent la main
+  misplaced:    StyleVarDecl[]   // `$$x:` écrit après un autre code sur sa ligne (`:host { $$x: red }`) : refusé par l'appelant
 }
 
 /** Une variable de thème déclarée par un bloc `<theme>`, telle qu'elle part au registre du build. */
@@ -67,8 +68,9 @@ export function rewriteStyleVars(source: string, opts: StyleVarsOpts = {}): Styl
   const declared: StyleVarDecl[] = []
   const read:     string[]       = []
   const rootDecl: StyleVarDecl[] = []
-  const sassRead:     string[]   = []
-  const sassDeclared: string[]   = []
+  const sassRead:     string[]       = []
+  const sassDeclared: string[]       = []
+  const misplaced:    StyleVarDecl[] = []
 
   let out       = ''
   let i         = 0
@@ -135,8 +137,8 @@ export function rewriteStyleVars(source: string, opts: StyleVarsOpts = {}): Styl
       // le bloc peut enjamber des lignes : sans ce recalage, `lineStart` restait celui de la
       // ligne du `/*` et faisait passer la ligne d'APRÈS pour celle d'avant (numéro de ligne
       // faux au registre, et commentaire d'une autre ligne pris pour valeur de custom property)
-      const dernierSaut = chunk.lastIndexOf('\n')
-      if (dernierSaut !== -1) lineStart = i + dernierSaut + 1
+      const lastNewline = chunk.lastIndexOf('\n')
+      if (lastNewline !== -1) lineStart = i + lastNewline + 1
       i = stop
       continue
     }
@@ -149,8 +151,8 @@ export function rewriteStyleVars(source: string, opts: StyleVarsOpts = {}): Styl
       // valeur de custom property : dart-sass ne retirera PAS ce commentaire (cf. CUSTOM_PROP_LINE_RE).
       // Sauf si le `//` OUVRE la valeur (`--cdn: //cdn.tld/lib.js`, URL sans protocole) : là c'est
       // la valeur elle-même, et la manger laissait une déclaration VIDE
-      const avantLigne = source.slice(lineStart, i)
-      if (lineHasCode && !/:[ \t]*$/.test(avantLigne) && CUSTOM_PROP_LINE_RE.test(avantLigne)) {
+      const lineBefore = source.slice(lineStart, i)
+      if (lineHasCode && !/:[ \t]*$/.test(lineBefore) && CUSTOM_PROP_LINE_RE.test(lineBefore)) {
         out = out.replace(/[ \t]+$/, '')   // le blanc qui le précédait partirait dans la valeur
         i = stop
         continue
@@ -167,15 +169,15 @@ export function rewriteStyleVars(source: string, opts: StyleVarsOpts = {}): Styl
       if (m) {
         const name = m[0].replace(/-+$/, '')
         if (name !== '') {
-          const after     = i + 2 + name.length
-          const avant     = source.slice(lineStart, i)
-          let   j         = after
+          const after  = i + 2 + name.length
+          const before = source.slice(lineStart, i)
+          let   j      = after
           while (j < source.length && (source[j] === ' ' || source[j] === '\t')) j++
           // seul critère : rien d'autre que du blanc avant sur la ligne, et un `:` juste après.
           // `::` exclu — `$$x::after` est un SÉLECTEUR, pas une déclaration ; sans ce garde il
           // sortait en `--mjs-x::after`, propriété custom sans valeur, muette à l'écran
-          const estDecl   = avant.trim() === '' && source[j] === ':' && source[j + 1] !== ':'
-          if (estDecl) {
+          const isDecl   = before.trim() === '' && source[j] === ':' && source[j + 1] !== ':'
+          if (isDecl) {
             const decl = { name, line: lineNo, doc: lastDoc, value: '' }
             declared.push(decl)
             // RACINE = colonne 0 (SASS indenté : pas d'indentation donc pas de sélecteur au-dessus)
@@ -183,12 +185,15 @@ export function rewriteStyleVars(source: string, opts: StyleVarsOpts = {}): Styl
             // deux dialectes sans avoir à leur demander lequel ils sont. Légal dans un <theme>, qui
             // se pose à plat et reçoit son sélecteur après coup ; faute dans un <style>, où l'appelant
             // en fait une erreur MJS plutôt que de laisser dart-sass dire « Expected identifier »
-            if (avant === '' && depth === 0) rootDecl.push(decl)
+            if (before === '' && depth === 0) rootDecl.push(decl)
             lastDoc = ''
             closePending()   // AVANT d'écrire le nom : sinon la valeur précédente encore ouverte l'avalait
             out += `--${prefix}-${name}`
             pending = { decl, from: out.length, depth0: depth, paren0: paren }
           } else {
+            // `$$x:` après un autre code sur sa ligne (`:host { $$x: red }`) : une déclaration ne se lit qu'en tête de ligne, celle-ci
+            // sortait en `var(--…): red`, que le navigateur ignore ; relevée pour que l'appelant la refuse
+            if (source[j] === ':' && source[j + 1] !== ':') misplaced.push({ name, line: lineNo, doc: '', value: '' })
             if (!read.includes(name)) read.push(name)
             out += `var(--${prefix}-${name})`
           }
@@ -208,16 +213,16 @@ export function rewriteStyleVars(source: string, opts: StyleVarsOpts = {}): Styl
       if (m) {
         const name = m[0].replace(/-+$/, '')
         if (name !== '') {
-          const after = i + 1 + name.length
-          const avant = source.slice(lineStart, i)
-          let   j     = after
+          const after  = i + 1 + name.length
+          const before = source.slice(lineStart, i)
+          let   j      = after
           while (j < source.length && (source[j] === ' ' || source[j] === '\t')) j++
-          const estDecl = avant.trim() === '' && source[j] === ':' && source[j + 1] !== ':'
+          const isDecl = before.trim() === '' && source[j] === ':' && source[j + 1] !== ':'
           // RACINE seulement pour « déclaré » : un `$gap: 2px` posé sous un sélecteur est LOCAL à ce
           // sélecteur (portée SASS ordinaire) et ne doit pas priver le reste du bloc de l'adossage —
           // sinon un `$gap` local dans `.a` faisait échouer `.b { margin: $gap }`, qui n'a rien à voir
-          if (estDecl) {
-            if (avant === '' && depth === 0 && !sassDeclared.includes(name)) sassDeclared.push(name)
+          if (isDecl) {
+            if (before === '' && depth === 0 && !sassDeclared.includes(name)) sassDeclared.push(name)
           } else if (!sassRead.includes(name)) {
             sassRead.push(name)
           }
@@ -244,7 +249,7 @@ export function rewriteStyleVars(source: string, opts: StyleVarsOpts = {}): Styl
   }
   closePending()
 
-  return { code: out, declared, read, rootDecl, sassRead, sassDeclared }
+  return { code: out, declared, read, rootDecl, sassRead, sassDeclared, misplaced }
 }
 
 // ----------------------------------------------------------------------------

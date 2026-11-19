@@ -13,34 +13,34 @@
 import assert from 'node:assert/strict'
 import { transpile } from '../src/transpiler/index.js'
 
-interface Raison { code: string; nom?: string; par?: string }
-interface Classee { nom: string; classe: 'precise' | 'horloge'; raisons: Raison[] }
+interface Raison { code: string; name?: string; by?: string }
+interface Classee { name: string; class: 'precise' | 'clock'; reasons: Raison[] }
 
 async function classer(src: string, moduleName: string): Promise<Map<string, Classee>> {
   const r     = await transpile(src, { moduleName, derived: true })
-  const liste = (r.data as any).derivees as Classee[] | undefined
+  const liste = (r.data as any).derivedClasses as Classee[] | undefined
   assert.ok(Array.isArray(liste), 'transpile(…, { derived: true }) rend le classement des dérivées dans data.derivees')
-  return new Map(liste.map((d) => [d.nom, d]))
+  return new Map(liste.map((d) => [d.name, d]))
 }
 
 function precise(m: Map<string, Classee>, nom: string): void {
   const d = m.get(nom)
   assert.ok(d, `dérivée $${nom} classée`)
-  assert.equal(d.classe, 'precise', `$${nom} précise, raisons : ${JSON.stringify(d.raisons)}`)
-  assert.deepEqual(d.raisons, [])
+  assert.equal(d.class, 'precise', `$${nom} précise, raisons : ${JSON.stringify(d.reasons)}`)
+  assert.deepEqual(d.reasons, [])
 }
 
 // à l'horloge parce qu'une forme sort de la liste courte : `lu`, la forme nommée
 function liste(m: Map<string, Classee>, nom: string, lu: string): void {
-  horloge(m, nom, 'liste', lu)
+  horloge(m, nom, 'list', lu)
 }
 
 function horloge(m: Map<string, Classee>, nom: string, code: string, lu?: string, par?: string): void {
   const d = m.get(nom)
   assert.ok(d, `dérivée $${nom} classée`)
-  assert.equal(d.classe, 'horloge', `$${nom} à l'horloge`)
-  const trouvee = d.raisons.some((x) => x.code === code && (lu === undefined || x.nom === lu) && (par === undefined || x.par === par))
-  assert.ok(trouvee, `$${nom} : raison ${code} ${lu ?? ''} ${par ? 'par ' + par : ''} attendue, reçu ${JSON.stringify(d.raisons)}`)
+  assert.equal(d.class, 'clock', `$${nom} à l'horloge`)
+  const trouvee = d.reasons.some((x) => x.code === code && (lu === undefined || x.name === lu) && (par === undefined || x.by === par))
+  assert.ok(trouvee, `$${nom} : raison ${code} ${lu ?? ''} ${par ? 'par ' + par : ''} attendue, reçu ${JSON.stringify(d.reasons)}`)
 }
 
 describe('classement des dérivées : précise ou horloge (mjs check --derived)', function () {
@@ -66,7 +66,7 @@ $apres = $total + 1
     precise(m, 'found')
     horloge(m, 'banner', 'simple', '$banner')
     liste(m, 'double', 'taux')
-    horloge(m, 'apres', 'derivee', '$total')
+    horloge(m, 'apres', 'derived', '$total')
   })
 
   it('variable ordinaire changée en membre, passée à une fonction, ou écrite par un gestionnaire du gabarit : horloge', async () => {
@@ -109,13 +109,13 @@ $dateFixe = new Date($a).getTime()
 </script>
 <p>{$maintenant} {$jour} {$tirage} {$largeur} {$garde} {$titre} {$borne} {$dateFixe}</p>
 `, 'globales')
-    horloge(m, 'maintenant', 'heure', 'Date.now()')
-    horloge(m, 'jour', 'heure', 'new Date()')
-    horloge(m, 'tirage', 'hasard', 'Math.random()')
-    horloge(m, 'largeur', 'globale', 'window')
-    horloge(m, 'garde', 'globale', 'localStorage')
+    horloge(m, 'maintenant', 'time', 'Date.now()')
+    horloge(m, 'jour', 'time', 'new Date()')
+    horloge(m, 'tirage', 'random', 'Math.random()')
+    horloge(m, 'largeur', 'global', 'window')
+    horloge(m, 'garde', 'global', 'localStorage')
     horloge(m, 'titre', 'instance', '@nom')
-    horloge(m, 'charge', 'attente')
+    horloge(m, 'charge', 'await')
     liste(m, 'borne', '.stringify()')
     liste(m, 'dateFixe', '.getTime()')
   })
@@ -151,7 +151,7 @@ $cachee = lireFenetre() + $b
 `, 'fonctions')
     liste(m, 'total', 'somme()')
     liste(m, 'parFonction', 'lireTotal()')
-    horloge(m, 'cachee', 'globale', 'window', 'lireFenetre')
+    horloge(m, 'cachee', 'global', 'window', 'lireFenetre')
   })
 
   it('chemins profonds : précise ; magasins, contextes réactifs, µread et constantes du <script module> : hors de la liste courte', async () => {
@@ -179,7 +179,7 @@ $horodate = maintenant() + $m
     liste(m, 'theme', '§§theme')
     liste(m, 'lu', 'µread $n')
     liste(m, 'table', 'TABLE')
-    horloge(m, 'horodate', 'heure', 'Date.now()', 'maintenant')
+    horloge(m, 'horodate', 'time', 'Date.now()', 'maintenant')
   })
 
   it('CoffeeScript : le même piège, la même raison', async () => {
@@ -229,9 +229,9 @@ $cache = @lire() + $a
     const prudent = await classer(src, 'methodes')
     horloge(prudent, 'prix', 'instance', '@fmt()')
     const r       = await transpile(src, { moduleName: 'methodes', derived: true, derivedMethods: true })
-    const suivies = new Map(((r.data as any).derivees as Classee[]).map((d) => [d.nom, d]))
+    const suivies = new Map(((r.data as any).derivedClasses as Classee[]).map((d) => [d.name, d]))
     liste(suivies, 'prix', '.fmt()')
-    horloge(suivies, 'cache', 'globale', 'window', '@lire')
+    horloge(suivies, 'cache', 'global', 'window', '@lire')
   })
 
   it('variable qui reçoit un objet que le script garde (`$l = garde`) : la valeur qui la lit reste à l\'horloge, avec cette raison', async () => {
@@ -246,7 +246,7 @@ $u = [$k].join('')
 </script>
 <p>{$t} {$u}</p>
 `, 'gardee')
-    horloge(m, 't', 'garde', '$l')
+    horloge(m, 't', 'guard', '$l')
     precise(m, 'u')
   })
 
@@ -262,8 +262,8 @@ $total = $cart * dailyPrice
 `
     const sans = await transpile(src, { moduleName: 'temoin' })
     const avec = await transpile(src, { moduleName: 'temoin', derived: true })
-    assert.equal((sans.data as any).derivees, undefined, 'rien de calculé sans l\'option')
-    assert.ok(Array.isArray((avec.data as any).derivees), 'le classement avec l\'option')
+    assert.equal((sans.data as any).derivedClasses, undefined, 'rien de calculé sans l\'option')
+    assert.ok(Array.isArray((avec.data as any).derivedClasses), 'le classement avec l\'option')
     assert.equal(avec.output, sans.output, 'même code produit avec et sans l\'option')
   })
 })

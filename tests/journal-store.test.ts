@@ -35,34 +35,34 @@ describe('journal — magasin NDJSON (src/server/journal.ts)', () => {
   it('groupement par signature : occurrences répétées → n++, dernier mis à jour, premier inchangé', () => {
     const dir = mjsTmp('journal-group')
     const j = makeJournal({ dir })
-    j.record('server', { message: 'boom', pile: 'Error: boom\n  at x', url: '/a' })
+    j.record('server', { message: 'boom', stack: 'Error: boom\n  at x', url: '/a' })
     const premiereListe = j.list()
     assert.equal(premiereListe.length, 1)
-    const premier = premiereListe[0].premier
-    j.record('server', { message: 'boom', pile: 'Error: boom\n  at x', url: '/a' })
-    j.record('server', { message: 'boom', pile: 'Error: boom\n  at x', url: '/a' })
+    const premier = premiereListe[0].first
+    j.record('server', { message: 'boom', stack: 'Error: boom\n  at x', url: '/a' })
+    j.record('server', { message: 'boom', stack: 'Error: boom\n  at x', url: '/a' })
     const liste = j.list()
     assert.equal(liste.length, 1, 'une SEULE ligne pour 3 occurrences de la même signature')
     assert.equal(liste[0].n, 3)
-    assert.equal(liste[0].premier, premier, 'premier ne bouge jamais après la 1ère occurrence')
-    assert.ok(liste[0].dernier >= premier, 'dernier avance (ou égal, horloge grossière)')
+    assert.equal(liste[0].first, premier, 'premier ne bouge jamais après la 1ère occurrence')
+    assert.ok(liste[0].last >= premier, 'dernier avance (ou égal, horloge grossière)')
   })
 
   it('signatures DIFFÉRENTES (message, url, ou 1ère ligne de pile) → lignes séparées', () => {
     const dir = mjsTmp('journal-sig')
     const j = makeJournal({ dir })
-    j.record('server', { message: 'a', pile: 'X', url: '/1' })
-    j.record('server', { message: 'b', pile: 'X', url: '/1' })
-    j.record('server', { message: 'a', pile: 'X', url: '/2' })
-    j.record('server', { message: 'a', pile: 'Y', url: '/1' })
+    j.record('server', { message: 'a', stack: 'X', url: '/1' })
+    j.record('server', { message: 'b', stack: 'X', url: '/1' })
+    j.record('server', { message: 'a', stack: 'X', url: '/2' })
+    j.record('server', { message: 'a', stack: 'Y', url: '/1' })
     assert.equal(j.list().length, 4)
   })
 
   it('server et client sont deux magasins INDÉPENDANTS (même signature textuelle, sources différentes)', () => {
     const dir = mjsTmp('journal-src')
     const j = makeJournal({ dir })
-    j.record('server', { message: 'x', pile: '', url: '/x' })
-    j.record('client', { message: 'x', pile: '', url: '/x' })
+    j.record('server', { message: 'x', stack: '', url: '/x' })
+    j.record('client', { message: 'x', stack: '', url: '/x' })
     const liste = j.list()
     assert.equal(liste.length, 2)
     assert.deepEqual(liste.map((e) => e.source).sort(), ['client', 'server'])
@@ -100,7 +100,7 @@ describe('journal — magasin NDJSON (src/server/journal.ts)', () => {
     // dépassent sûrement un plafond de 900 octets, sans dépendre d'un calcul de taille exact.
     const j = makeJournal({ dir, maxEntries: 1000, maxBytes: 900 })
     for (let i = 0; i < 5; i++) {
-      j.record('server', { message: 'msg' + i, pile: 'x'.repeat(300), url: '/' + i })
+      j.record('server', { message: 'msg' + i, stack: 'x'.repeat(300), url: '/' + i })
     }
     j.flush()
     const contenu = readFileSync(join(dir, 'mjs-errors-server.ndjson'), 'utf-8')
@@ -112,7 +112,7 @@ describe('journal — magasin NDJSON (src/server/journal.ts)', () => {
     const dir = mjsTmp('journal-corrupt')
     mkdirSync(dir, { recursive: true })
     const maintenant = Date.now()
-    const valide = { ts: maintenant, source: 'server', signature: 'ok\n\n/x', message: 'ok', pile: '', url: '/x', version: null, n: 1, premier: maintenant, dernier: maintenant }
+    const valide = { ts: maintenant, source: 'server', signature: 'ok\n\n/x', message: 'ok', stack: '', url: '/x', version: null, n: 1, first: maintenant, last: maintenant }
     const contenu = '{"json invalide sans fermeture\n' + JSON.stringify(valide) + '\n\n[1,2,3]\n"une simple chaine JSON valide mais pas un objet"\n'
     writeFileSync(join(dir, 'mjs-errors-server.ndjson'), contenu, 'utf-8')
     const j = makeJournal({ dir })
@@ -215,7 +215,7 @@ describe('journal — magasin NDJSON (src/server/journal.ts)', () => {
     assert.doesNotThrow(() => j.record('server', { message: 'sans-rien' } as any))
     const e = j.list()[0]
     assert.equal(e.message, 'sans-rien')
-    assert.equal(e.pile, '')
+    assert.equal(e.stack, '')
     assert.equal(e.url, '')
     assert.equal(e.version, null)
   })

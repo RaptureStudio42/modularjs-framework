@@ -29,7 +29,7 @@ describe('cli.ts — USAGE (--help) liste bien `mjs serve`', function () {
     assert.equal(status, 0)
     assert.match(stdout, /^\s+mjs serve\s+Sert le rendu SSR\/prérendu par requête/m,
       "AVANT le fix : `mjs serve` (commande pourtant implémentée, cli.ts case 'serve') était absente de l'USAGE")
-    for (const cmd of ['init', 'build', 'dev', 'check', 'ws', 'serveur']) {
+    for (const cmd of ['init', 'build', 'dev', 'check', 'ws', 'server']) {
       assert.match(stdout, new RegExp(`^\\s+mjs ${cmd}\\s`, 'm'), `mjs ${cmd} doit rester listé (non-régression)`)
     }
   })

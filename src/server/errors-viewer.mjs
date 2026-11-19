@@ -1,10 +1,10 @@
 <script>
-oterJeton = ->
+removeToken = ->
   params := new URLSearchParams(location.search)
   return unless params.has('token')
   params.delete('token')
-  reste := params.toString()
-  history.replaceState(null, '', location.pathname + (if reste then '?' + reste else '') + location.hash)
+  rest := params.toString()
+  history.replaceState(null, '', location.pathname + (if rest then '?' + rest else '') + location.hash)
 
 formatDate = (ms) ->
   return '' unless ms
@@ -13,15 +13,15 @@ formatDate = (ms) ->
 $entries = []
 $filter = 'all'
 $expanded = {}
-$echec = false
+$failed = false
 
-marquerEchec = (err) ->
-  $echec = true
+markFailed = (err) ->
+  $failed = true
   µ.error(err)
 
 refresh = ->
-  $echec = false
-  fetch('/__mjs/errors.json').then((r) -> r.json()).then((data) -> $entries = data ?? []).catch(marquerEchec)
+  $failed = false
+  fetch('/__mjs/errors.json').then((r) -> r.json()).then((data) -> $entries = data ?? []).catch(markFailed)
 
 toggle = (sig) ->
   $expanded[sig] = not $expanded[sig]
@@ -32,7 +32,7 @@ toggleKey = (e, sig) ->
   toggle(sig)
 
 doPurge = (source) ->
-  question = if source then ⟪journal.purger-source-question⟫.replace('{source}', source) else ⟪journal.purger-tout-question⟫
+  question = if source then ⟪journal.purge-source-question⟫.replace('{source}', source) else ⟪journal.purge-all-question⟫
   return unless window.confirm(question)
   qs = source ? ('?source=' + source) : ''
   fetch('/__mjs/errors' + qs, { method: 'DELETE' }).then((-> refresh())).catch((err) -> µ.error(err))
@@ -40,43 +40,43 @@ doPurge = (source) ->
 filtered = (entries, filter) -> entries.filter (e) -> filter == 'all' or e.source == filter
 
 µmount ->
-  oterJeton()
+  removeToken()
   refresh()
 </script>
 
-<div class="panneau">
-  <div class="barre">
-    <h1>⟪journal.titre⟫</h1>
-    <div class="filtres">
-      <button :class{$filter == 'all'}="actif" @click={$filter = 'all'}>⟪journal.tous⟫</button>
-      <button :class{$filter == 'server'}="actif" @click={$filter = 'server'}>⟪journal.serveur⟫</button>
-      <button :class{$filter == 'client'}="actif" @click={$filter = 'client'}>⟪journal.client⟫</button>
+<div class="panel">
+  <div class="bar">
+    <h1>⟪journal.title⟫</h1>
+    <div class="filters">
+      <button :class{$filter == 'all'}="active" @click={$filter = 'all'}>⟪journal.all⟫</button>
+      <button :class{$filter == 'server'}="active" @click={$filter = 'server'}>⟪journal.server⟫</button>
+      <button :class{$filter == 'client'}="active" @click={$filter = 'client'}>⟪journal.client⟫</button>
     </div>
     <div class="actions">
-      <button @click={refresh()}>⟪journal.rafraichir⟫</button>
-      <button class="danger" @click={doPurge('server')}>⟪journal.purger-serveur⟫</button>
-      <button class="danger" @click={doPurge('client')}>⟪journal.purger-client⟫</button>
-      <button class="danger" @click={doPurge(null)}>⟪journal.purger-tout⟫</button>
+      <button @click={refresh()}>⟪journal.refresh⟫</button>
+      <button class="danger" @click={doPurge('server')}>⟪journal.purge-server⟫</button>
+      <button class="danger" @click={doPurge('client')}>⟪journal.purge-client⟫</button>
+      <button class="danger" @click={doPurge(null)}>⟪journal.purge-all⟫</button>
     </div>
   </div>
 
-  {if $echec}
-    <p class="vide echec">⟪journal.echec⟫</p>
+  {if $failed}
+    <p class="empty failed">⟪journal.failed⟫</p>
   {elsif filtered($entries, $filter).length == 0}
-    <p class="vide">⟪journal.vide⟫</p>
+    <p class="empty">⟪journal.empty⟫</p>
   {else}
-    <div class="liste">
+    <div class="list">
       {for ent in filtered($entries, $filter) by signature}
-        <div class="entree" role="button" tabindex="0" @click={toggle(ent.signature)} @keydown={toggleKey(e, ent.signature)}>
-          <div class="ligne">
+        <div class="entry" role="button" tabindex="0" @click={toggle(ent.signature)} @keydown={toggleKey(e, ent.signature)}>
+          <div class="row">
             <span class="badge badge-{ent.source}">{ent.source}</span>
-            <span class="compteur">×{ent.n}</span>
+            <span class="counter">×{ent.n}</span>
             <span class="message">{ent.message}</span>
             {if ent.version}<span class="version">{ent.version}</span>{end}
           </div>
-          <div class="dates">⟪journal.premier⟫ {formatDate(ent.premier)} — ⟪journal.dernier⟫ {formatDate(ent.dernier)}{if ent.url} — {ent.url}{end}</div>
+          <div class="dates">⟪journal.first⟫ {formatDate(ent.first)} — ⟪journal.last⟫ {formatDate(ent.last)}{if ent.url} — {ent.url}{end}</div>
           {if $expanded[ent.signature]}
-            <pre class="pile">{ent.pile}</pre>
+            <pre class="stack">{ent.stack}</pre>
           {end}
         </div>
       {end}
@@ -85,7 +85,7 @@ filtered = (entries, filter) -> entries.filter (e) -> filter == 'all' or e.sourc
 </div>
 
 <style>
-  .panneau
+  .panel
     display: block
     background: #14171f
     color: #e4e6ec
@@ -93,7 +93,7 @@ filtered = (entries, filter) -> entries.filter (e) -> filter == 'all' or e.sourc
     min-height: 100vh
     padding: 1.5rem
     box-sizing: border-box
-  .barre
+  .bar
     display: flex
     flex-wrap: wrap
     align-items: center
@@ -104,7 +104,7 @@ filtered = (entries, filter) -> entries.filter (e) -> filter == 'all' or e.sourc
     margin: 0
     margin-right: auto
     color: #f4f4f5
-  .filtres
+  .filters
     display: flex
     gap: 0.4rem
   .actions
@@ -120,7 +120,7 @@ filtered = (entries, filter) -> entries.filter (e) -> filter == 'all' or e.sourc
     font: inherit
     &:hover
       background: #2c3140
-  button.actif
+  button.active
     background: #3a6df0
     border-color: #3a6df0
     color: #fff
@@ -128,15 +128,15 @@ filtered = (entries, filter) -> entries.filter (e) -> filter == 'all' or e.sourc
     color: #ff8a8a
     &:hover
       background: #3a1f24
-  .vide
+  .empty
     color: #8a8f9c
-  .vide.echec
+  .empty.failed
     color: #ff8a8a
-  .liste
+  .list
     display: flex
     flex-direction: column
     gap: 0.4rem
-  .entree
+  .entry
     background: #1b1f29
     border: 1px solid #2a2f3c
     border-radius: 8px
@@ -144,7 +144,7 @@ filtered = (entries, filter) -> entries.filter (e) -> filter == 'all' or e.sourc
     cursor: pointer
     &:hover
       border-color: #3a6df0
-  .ligne
+  .row
     display: flex
     align-items: baseline
     gap: 0.6rem
@@ -159,7 +159,7 @@ filtered = (entries, filter) -> entries.filter (e) -> filter == 'all' or e.sourc
     background: #5a3a8a
   .badge-client
     background: #2a6f5f
-  .compteur
+  .counter
     color: #8a8f9c
     font-variant-numeric: tabular-nums
   .message
@@ -177,7 +177,7 @@ filtered = (entries, filter) -> entries.filter (e) -> filter == 'all' or e.sourc
     overflow: hidden
     text-overflow: ellipsis
     white-space: nowrap
-  .pile
+  .stack
     margin-top: 0.5rem
     padding: 0.5rem
     background: #0d0f14

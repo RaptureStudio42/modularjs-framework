@@ -10,7 +10,7 @@ describe('effets — un nom hérité n\'est pas un nom du catalogue', () => {
   it('*constructor, *toString : effet inconnu', () => {
     for (const nom of ['constructor', 'toString', 'hasOwnProperty']) {
       assert.equal(effectSpec(nom), undefined, nom)
-      assert.throws(() => parseEffect(nom, ''), (e: any) => e.message.startsWith(t('effets.inconnu', { nom, liste: '' }).split('—')[0]), nom)
+      assert.throws(() => parseEffect(nom, ''), (e: any) => e.message.startsWith(t('effects.unknown', { name: nom, list: '' }).split('—')[0]), nom)
     }
   })
 

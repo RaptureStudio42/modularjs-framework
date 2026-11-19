@@ -113,7 +113,7 @@ let uwsModulePromise: Promise<UwsModule> | null = null
 function loadRealUws(): Promise<UwsModule> {
   if (!uwsModulePromise) {
     uwsModulePromise = import(UWS_PACKAGE_NAME).then((m) => m as UwsModule).catch((err) => {
-      throw new Error(t('ws.transport-uws.paquet-requis'), { cause: err })
+      throw new Error(t('ws.transport-uws.package-required'), { cause: err })
     })
   }
   return uwsModulePromise
@@ -180,7 +180,7 @@ const DEFAULT_SOCKET_MODE = 0o660
 // seul ce texte les distingue (relevé sur uWS v20.52.0, trame texte, binaire ou fragmentée) — rapportée au cœur en 1009,
 // comme par transport-ws.ts, elle compte pour la mise au banc, une coupure ordinaire jamais ; la variante
 // « …, or other inflation error » suppose la compression, jamais activée ici
-const UWS_TROP_GRANDE = 'Received too big message'
+const UWS_TOO_BIG = 'Received too big message'
 
 class UwsConnection implements MjsWsConnection {
   onMessage: ((data: string | Uint8Array) => void) | null = null
@@ -287,9 +287,9 @@ export class UwsTransport implements MjsWsTransport {
         const conn = ws.getUserData().conn
         if (!conn) return
         conn._markClosed()   // AVANT tout — cf. PIÈGE MAJEUR (commentaire de tête)
-        const raison = Buffer.from(message).toString('utf8')
-        // trame trop grande : 1009 pour le cœur, comme sous `ws` — cf. UWS_TROP_GRANDE
-        if (conn.onClose) conn.onClose(code === 1006 && raison === UWS_TROP_GRANDE ? 1009 : code, raison)
+        const reason = Buffer.from(message).toString('utf8')
+        // trame trop grande : 1009 pour le cœur, comme sous `ws` — cf. UWS_TOO_BIG
+        if (conn.onClose) conn.onClose(code === 1006 && reason === UWS_TOO_BIG ? 1009 : code, reason)
       },
       drain: () => {
         // MjsWsConnection n'expose pas de callback drain — guard.ts (core.ts) relit
@@ -326,13 +326,13 @@ async function listenTcp(app: UwsTemplatedApp, port: number, host: string | unde
     if (host) app.listen(host, port, resolve)
     else app.listen(port, resolve)
   })
-  if (token === false) throw new Error(t('ws.transport-uws.echec-ecoute', { port, host }))
+  if (token === false) throw new Error(t('ws.transport-uws.failed-listen', { port, host }))
   return token
 }
 
 async function listenUnix(uws: UwsModule, app: UwsTemplatedApp, path: string, mode: number): Promise<UwsListenSocket> {
   const bytes = Buffer.byteLength(path)
-  if (bytes > SUN_PATH_MAX) throw new Error(t('ws.transport-uws.socket-trop-longue', { path, bytes, max: SUN_PATH_MAX }))
+  if (bytes > SUN_PATH_MAX) throw new Error(t('ws.transport-uws.socket-too-long', { path, bytes, max: SUN_PATH_MAX }))
 
   // FILET, PAS BESOIN : le repertoire d'accueil existe presque toujours (tmp/sockets/ d'une app rails,
   // par exemple). `dirname` et PAS une expression reguliere : sur un chemin sans slash, un `replace`
@@ -340,7 +340,7 @@ async function listenUnix(uws: UwsModule, app: UwsTemplatedApp, path: string, mo
   mkdirSync(dirname(path), { recursive: true })
 
   const token = await new Promise<UwsListenSocket | false>((resolve) => { app.listen_unix(resolve, path) })
-  if (token === false) throw new Error(t('ws.transport-uws.echec-ecoute-socket', { path }))
+  if (token === false) throw new Error(t('ws.transport-uws.failed-listen-socket', { path }))
 
   // LE CHMOD NE SE RATTRAPE JAMAIS EN SILENCE — une socket restee en 0700 est une socket que le
   // reverse-proxy ne peut pas joindre, et l'avaler donnerait un service « demarre » que personne

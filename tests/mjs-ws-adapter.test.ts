@@ -15,15 +15,15 @@ import { MemoryAdapter, createMemoryAdapterBus } from '../src/mjs-ws/adapter.js'
 import type { MemoryAdapterBus, MjsWsAdapter } from '../src/mjs-ws/adapter.js'
 import type { MjsWsApp, MjsWsOptions } from '../src/mjs-ws/index.js'
 
-// --- adaptateur factice EXPOSANT ignoresOrigin/reconnexions (tests 9-10) — implémente
+// --- adaptateur factice EXPOSANT ignoredOrigin/reconnects (tests 9-10) — implémente
 // MjsWsAdapter au minimum + 2 getters NUMÉRIQUES EN PLUS, jamais déclarés dans l'interface elle-même :
 // c'est tout le sens du duck typing sobre câblé dans core.ts (app.stats()), pas un besoin d'étendre
 // le contrat MjsWsAdapter pour le prouver.
 class FakeAdapterWithLocalCounters implements MjsWsAdapter {
   readonly processId = 'fake-proc-1'
   readonly prefix    = 'mjs-ws'
-  ignoresOrigin = 3
-  reconnexions  = 2
+  ignoredOrigin = 3
+  reconnects    = 2
   async start(): Promise<void> {}
   async stop(): Promise<void> {}
   publish(): void {}
@@ -311,14 +311,14 @@ describe('MJS-WS — adaptateur multi-processus (MemoryAdapter, boucle complète
   })
 
   // Une lacune connue est désormais comblée — adapter-redis.ts expose désormais
-  // ignoresOrigin/reconnexions (getters LOCAUX), câblés dans app.stats() au moment du snapshot.
-  it('9. adaptateur exposant ignoresOrigin/reconnexions (duck typing) → visibles dans app.stats()', async () => {
+  // ignoredOrigin/reconnects (getters LOCAUX), câblés dans app.stats() au moment du snapshot.
+  it('9. adaptateur exposant ignoredOrigin/reconnects (duck typing) → visibles dans app.stats()', async () => {
     const transport = new MemoryTransport()
     const app = mjsWs({ transport, heartbeat: 0, adapter: new FakeAdapterWithLocalCounters() })
     await app.listen()
     const snap = app.stats()
-    assert.equal(snap.adaptateur.ignoresOrigin, 3)
-    assert.equal(snap.adaptateur.reconnexions, 2)
+    assert.equal(snap.adapter.ignoredOrigin, 3)
+    assert.equal(snap.adapter.reconnects, 2)
     await app.stop()
   })
 
@@ -326,8 +326,8 @@ describe('MJS-WS — adaptateur multi-processus (MemoryAdapter, boucle complète
     const bus = createMemoryAdapterBus()
     const { app } = await startApp(bus)
     const snap = app.stats()
-    assert.equal(snap.adaptateur.ignoresOrigin, 0)
-    assert.equal(snap.adaptateur.reconnexions, 0)
+    assert.equal(snap.adapter.ignoredOrigin, 0)
+    assert.equal(snap.adapter.reconnects, 0)
     await app.stop()
   })
 })

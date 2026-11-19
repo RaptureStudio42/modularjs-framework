@@ -132,6 +132,10 @@ Les casts s'appliquent aussi : `:group.number=!{$scoops}` remonterait des nombre
 
 > ⚠️ La `value` de chaque entrée est posée en **one-way** (`value={number}`), c'est `:group` qui porte le `=!`. Ne mettez pas `value=!` sur des radios groupées.
 
+Dans un `{for}` dont le groupe suit la ligne (`:group=!{q.rep}`), un `name` dont une expression entre accolades lit la variable de ligne que lit le groupe (`name="r-{q.id}"`, `name="reponse[{q.id}]"`) part tel quel avec le formulaire. Un `name` fixe (`name="rep"`), ou dont aucune expression ne lit cette variable — `name="q-{$suf}"`, dont le `q-` est du texte, ou `name="r-{g.id}"` d'une boucle intérieure quand le groupe lit `q` —, vaudrait le même texte sur des lignes de groupes différents : il est remplacé par un nom propre à chaque ligne, pour que les lignes ne se décochent pas entre elles, et c'est ce nom-là que le formulaire envoie.
+
+Le `name` gardé doit être unique sur toute la page. En boucles imbriquées (`{for g in $gs}{for q in g.qs}`), `name="r-{q.id}"` lit bien la ligne du groupe, mais revient d'une ligne extérieure à l'autre quand `q.id` s'y répète (deux groupes qui ont chacun une question 7) : le navigateur lie alors les boutons de ces lignes, cocher l'un décoche l'autre, l'état garde `oui` sans case cochée, et le formulaire n'envoie que le dernier choix (`r-7=non`). Écrivez un `name` unique, par exemple `name="r-{g.id}-{q.id}"`.
+
 ## Listes déroulantes — `<select>`
 
 Sur un `<select>`, `value=!{$x}` lie l'option choisie. Avec l'attribut `multiple`, `$x` devient un **tableau**.

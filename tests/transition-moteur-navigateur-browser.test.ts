@@ -201,13 +201,13 @@ describe('moteur des transitions : navigateurs réels', function () {
           const tenu = lire()
           const crochet = typeof (n as any)._mjs_pendingFillRelease
           ;(n as any)._mjs_pendingFillRelease()
-          return { avant, apres, d1, enCours, d2, tenu, crochet, libere: lire(), actives: n.getAnimations().length }
+          return { avant, apres, d1, pending: enCours, d2, tenu, crochet, libere: lire(), actives: n.getAnimations().length }
         })
         assert.ok(r.avant > 0.1 && r.avant < 0.9, nom + ' : à la coupure ' + r.avant)
         assert.ok(Math.abs(r.avant - r.apres) < continuite, nom + ' : continuité ' + r.avant + ' → ' + r.apres)
         assert.equal(r.d1, 'in')
         // même tolérance que la continuité : dans WebKit, l'intro peut avancer d'une milliseconde entre la lecture de `avant` et la coupure
-        assert.ok(r.enCours <= r.avant + continuite, nom + ' : redescend ' + r.avant + ' → ' + r.enCours)
+        assert.ok(r.pending <= r.avant + continuite, nom + ' : redescend ' + r.avant + ' → ' + r.pending)
         assert.equal(r.d2, 'out')
         assert.equal(r.tenu, 0)
         assert.equal(r.crochet, 'function')

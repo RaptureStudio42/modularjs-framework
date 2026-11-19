@@ -91,7 +91,9 @@ describe('mjs_ajax — une réponse en erreur arrive toujours dans error, avec s
   })
 
   it('envoi de formulaire UJS refusé par un 500 à corps vide : effet d\'échec, avertissement et message', async function () {
-    const win: any = new Window({ url: 'http://localhost/page' })
+    // la page sur l'hôte qui répond (`reponse()` : https://app.example) — une réponse d'une autre origine n'est jamais rendue
+    // à la navigation comme un refus du site, l'envoi part alors par le navigateur
+    const win: any = new Window({ url: 'https://app.example/page' })
     const document: any = win.document
     document.body.innerHTML = '<p>page</p>'
     const dits: boolean[] = [], avertissements: string[] = [], messages: string[] = []

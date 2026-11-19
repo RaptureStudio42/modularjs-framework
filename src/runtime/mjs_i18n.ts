@@ -46,9 +46,9 @@
 //   '*loader'       — comme 'wait', et l'effet *loader est affiché à la place du module le temps de
 //                     l'attente (bloc <i18n-loader>, retiré de même)
 // Une page prérendue (hôtes `mjs-ssr`) n'est jamais cachée ni habillée d'un indicateur : ses textes sont déjà dans le HTML.
-// SECOURS : en 'wait', des textes toujours absents au bout de 3 s (ou de `i18n.timeout`, cf. `__i18nSecours`) (une requête qui ne répond jamais, un manifeste jamais reçu)
+// SECOURS : en 'wait', des textes toujours absents au bout de 3 s (ou de `i18n.timeout`, cf. `__i18nRescue`) (une requête qui ne répond jamais, un manifeste jamais reçu)
 // ne laissent pas le module caché pour toujours : il paraît avec les barres de '*skeleton', que les vrais textes remplacent
-// à leur arrivée (cf. `__i18nSecours`).
+// à leur arrivée (cf. `__i18nRescue`).
 //
 // µ._i18nData ABSENT (build sans i18n, test isolé) : on retombe sur un objet
 // par défaut inerte (root/sections vides) — MÊME code de résolution, aucune
@@ -73,9 +73,9 @@ if (!µ._i18nData) {
 if (!µ._i18nLangs) { µ._i18nLangs = Object.create(null); }
 
 // Chargements EN ÉCHEC (404, réseau coupé, JSON illisible), `{langue: true}` pour le fichier d'une langue et `{'langue/section': true}` pour le
-// fragment d'une section : un texte que l'échec laisse sans valeur paraît en barres (`__i18nEnEchec`), jamais en vide. La marque tombe quand le
+// fragment d'une section : un texte que l'échec laisse sans valeur paraît en barres (`__i18nHasFailed`), jamais en vide. La marque tombe quand le
 // chargement aboutit (un montage qui redemande le fragment, `µ._i18nLang` qui reçoit la langue).
-var __i18nEchecs = Object.create(null);
+var __i18nFailures = Object.create(null);
 
 // les lecteurs d'un libellé du framework (`mjs.<groupe>.<clé>`, cf. µ._mjs_i18nLookup) lu avant l'arrivée du fichier de sa langue, rangés
 // par langue, chacun avec les groupes qu'il a lus : la surcharge que ce fichier peut porter ne s'est pas vue (un module cœur passé à la
@@ -92,26 +92,26 @@ var __i18nLabelWriter  = null;
 // les récrit avec la page. Un toast tiré pendant le chargement passe à la langue de l'adresse en même temps qu'elle, jamais avant
 var __i18nBootWriters = new Set();
 function __i18nBootRewrite() {
-  var ecrits = __i18nBootWriters;
+  var written = __i18nBootWriters;
   __i18nBootWriters = new Set();
-  ecrits.forEach(function(l) {
+  written.forEach(function(l) {
     // une écriture qui lève n'arrête ni les autres ni la bascule
     try { µ._mjs_labelKeep(l); }
     catch (e) { µ.error(e); }
   });
 }
-function __i18nWakeLabelReaders(lang, racine) {
-  var lecteurs = __i18nLabelReaders.get(lang);
-  if (!lecteurs) { return; }
+function __i18nWakeLabelReaders(lang, root) {
+  var readers = __i18nLabelReaders.get(lang);
+  if (!readers) { return; }
   __i18nLabelReaders.delete(lang);
-  var mjs = racine && racine.mjs;
+  var mjs = root && root.mjs;
   // un groupe que ce fichier surcharge
-  var surcharge = function(g) {
+  var override = function(g) {
     var t = mjs && mjs[g];
     return !!t && typeof t === 'object' && Object.keys(t).length > 0;
   };
-  lecteurs.forEach(function(groupes, l) {
-    if (!Object.keys(groupes).some(surcharge)) { return; }
+  readers.forEach(function(groups, l) {
+    if (!Object.keys(groups).some(override)) { return; }
     if (typeof l === 'function') {
       // une écriture qui lève n'arrête ni les autres ni l'arrivée de la langue
       try { µ._mjs_labelKeep(l); }
@@ -125,17 +125,17 @@ function __i18nWakeLabelReaders(lang, racine) {
 // un affichage du runtime qui dure (toast, modale, panneau du routeur, effet) écrit ses libellés du framework par `fn`, appelée aussitôt :
 // un libellé qu'elle lit sans le fichier de sa langue la fait rappeler à l'arrivée d'un fichier qui surcharge son groupe
 µ._mjs_labelKeep = function(fn) {
-  var avant = __i18nLabelWriter;
+  var before = __i18nLabelWriter;
   __i18nLabelWriter = fn;
   try { fn(); }
-  finally { __i18nLabelWriter = avant; }
+  finally { __i18nLabelWriter = before; }
 };
 
 // Point d'entrée des données d'une langue (fichier de langue, rendu serveur).
 // Rejouable : un second appel remplace la table (HMR, test qui ré-évalue).
 µ._i18nLang = function(lang, data) {
   if (!lang) { return; }
-  delete __i18nEchecs[lang];
+  delete __i18nFailures[lang];
   µ._i18nLangs[lang] = { root: (data && data.root) || {}, sections: (data && data.sections) || {} };
   __i18nMergeRootIntoExistingDicts();  // dict déjà créé (graine ssr, langue rechargée) : backfill
   __i18nWakeLabelReaders(lang, data && data.root);
@@ -163,8 +163,8 @@ function __i18nSectionName(sections, section) {
 // URL d'un fragment de section — SEUL endroit qui connaisse la formule (miroir de
 // `scanI18n`, bundler/index.ts) : la table ne porte que le nom compact du fragment
 // (hash en prod, nom clair en dév), le préfixe est publié une fois au manifeste.
-function __i18nSectionUrl(lang, nom) {
-  return µ._i18nData.prefix + '/' + lang + '/' + nom + '.json';
+function __i18nSectionUrl(lang, name) {
+  return µ._i18nData.prefix + '/' + lang + '/' + name + '.json';
 }
 // Langue SÉLECTIONNABLE ? (`?lang=`, localStorage, navigateur) — `langs` remplace ici
 // l'ancien test sur `root` : les dictionnaires ne sont plus là pour répondre.
@@ -194,16 +194,16 @@ if (!µ._i18nDict) { µ._i18nDict = Object.create(null); }
 // une donnée du dictionnaire recopiée en tables SANS prototype, à tous les niveaux, une fois à son arrivée (racine de la
 // langue, fragment de section, graine du serveur) : un chemin ne descend que dans les clés du dictionnaire —
 // `constructor.name`, `toString.name` n'y trouvent rien, sans contrôle à chaque traduction. Une liste reste une liste
-function __i18nNu(v) {
+function __i18nBare(v) {
   var r, k, i;
   if (!v || typeof v !== 'object') return v;
   if (Array.isArray(v)) {
     r = [];
-    for (i = 0; i < v.length; i++) r.push(__i18nNu(v[i]));
+    for (i = 0; i < v.length; i++) r.push(__i18nBare(v[i]));
     return r;
   }
   r = Object.create(null);
-  for (k in v) { if (Object.prototype.hasOwnProperty.call(v, k)) r[k] = __i18nNu(v[k]); }
+  for (k in v) { if (Object.prototype.hasOwnProperty.call(v, k)) r[k] = __i18nBare(v[k]); }
   return r;
 }
 µ._mjs_i18nDictOf = function(lang) {
@@ -212,7 +212,7 @@ function __i18nNu(v) {
     d = Object.create(null);
     var r = __i18nRootOf(lang);
     if (r) {
-      for (var k in r) { if (Object.prototype.hasOwnProperty.call(r, k)) d[k] = __i18nNu(r[k]); }
+      for (var k in r) { if (Object.prototype.hasOwnProperty.call(r, k)) d[k] = __i18nBare(r[k]); }
     }
     µ._i18nDict[lang] = d;
   }
@@ -231,7 +231,7 @@ function __i18nNu(v) {
 function __i18nFill(d, r) {
   for (var k in r) {
     if (!Object.prototype.hasOwnProperty.call(r, k) || k === '__proto__') continue;
-    if (!Object.prototype.hasOwnProperty.call(d, k)) { d[k] = __i18nNu(r[k]); }
+    if (!Object.prototype.hasOwnProperty.call(d, k)) { d[k] = __i18nBare(r[k]); }
     else if (d[k] && r[k] && typeof d[k] === 'object' && typeof r[k] === 'object' && !Array.isArray(d[k]) && !Array.isArray(r[k])) { __i18nFill(d[k], r[k]); }
   }
 }
@@ -248,9 +248,9 @@ function __i18nMergeRootIntoExistingDicts() {
 // Résolution d'un chemin `a.b.c` dans le dict de LA langue donnée.
 // `undefined` si un segment intermédiaire manque (jamais de throw). Le chemin suit JavaScript (`constructor.name` rend
 // « Object », comme `dict.constructor.name`), sauf qu'une chaîne n'a pas de clés (`titre.0` ne rend pas sa première lettre)
-function __i18nResolve(lang, cle) {
+function __i18nResolve(lang, key) {
   var node = µ._mjs_i18nDictOf(lang);
-  var parts = cle.split('.');
+  var parts = key.split('.');
   for (var i = 0; i < parts.length && node != null; i++) {
     node = typeof node === 'string' ? undefined : node[parts[i]];
   }
@@ -275,24 +275,24 @@ function __i18nWaits(mode) {
 // (µ._i18nData.dev) ; en prod, une barre grise prend la place d'un texte EN ROUTE sous '*skeleton' (sa langue ou sa section en cours de
 // chargement, ou le fragment de la langue par défaut qui porte son repli), et d'un texte que l'ÉCHEC de son chargement laisse sans valeur sous
 // 'wait', '*skeleton' et '*loader' ; un texte encore en route sous 'wait' ou '*loader', rien — une barre quand le premier rendu a attendu ses fragments
-// de repli au-delà du délai de secours (cf. `__i18nAttentePremier`) ; une clé absente pour de bon (ni la langue de la page ni la langue par défaut),
+// de repli au-delà du délai de secours (cf. `__i18nWaitFirst`) ; une clé absente pour de bon (ni la langue de la page ni la langue par défaut),
 // son nom, comme en dev
-function __i18nPlaceholder(cle, modeOverride, lang) {
+function __i18nPlaceholder(key, modeOverride, lang) {
   var mode = __i18nMode(modeOverride);
   if (mode !== 'key' && !µ._i18nData.dev) {
-    // un module sauvé après 3 s d'attente (cf. `__i18nSecours`) : des barres à la place de tout ce qui manque encore ; de même pour un texte que
-    // l'échec de son chargement a laissé sans valeur, et pour un texte en route d'un module paru au délai sans ses fragments de repli (`_mjs_i18nTard`)
-    var c       = µ.activeComponent;
-    var secours = mode === 'wait' && c && c._mjs_i18nRescue;
-    var enRoute = __i18nEnRoute(lang, cle);
-    if (secours || ((mode === '*skeleton' || c && c._mjs_i18nTard) && enRoute) || __i18nEnEchec(lang, cle)) {
+    // un module sauvé après 3 s d'attente (cf. `__i18nRescue`) : des barres à la place de tout ce qui manque encore ; de même pour un texte que
+    // l'échec de son chargement a laissé sans valeur, et pour un texte en route d'un module paru au délai sans ses fragments de repli (`_mjs_i18nLate`)
+    var c        = µ.activeComponent;
+    var backup   = mode === 'wait' && c && c._mjs_i18nRescue;
+    var inFlight = __i18nInFlight(lang, key);
+    if (backup || ((mode === '*skeleton' || c && c._mjs_i18nLate) && inFlight) || __i18nHasFailed(lang, key)) {
       __i18nSkelLater();
       return __i18nSkel;
     }
     // données pas encore reçues (objet inerte) : rien encore, comme un texte en route
-    if (enRoute || µ._i18nData === __i18nInertFallback) return '';
+    if (inFlight || µ._i18nData === __i18nInertFallback) return '';
   }
-  return '⟦' + cle + '⟧';
+  return '⟦' + key + '⟧';
 }
 
 // SQUELETTE DES TEXTES EN ROUTE (`*skeleton`) — douze espaces de chiffre (U+2007) à la place du texte, qu'un
@@ -309,66 +309,66 @@ function __i18nSkelColor(comp) {
 }
 // un texte en route : avant le démarrage (le fichier de la langue pas encore arrivé, tout texte
 // l'est), la langue elle-même en chargement, ou la section de la clé (son premier segment) dont le
-// fragment n'est pas encore là, dans la langue affichée ou dans la langue par défaut qui porte son repli (cf. `__i18nRepli`)
-function __i18nEnRoute(lang, cle) {
-  var section = String(cle).split('.')[0], def = µ._i18nData.default, c = µ.activeComponent;
+// fragment n'est pas encore là, dans la langue affichée ou dans la langue par défaut qui porte son repli (cf. `__i18nFallback`)
+function __i18nInFlight(lang, key) {
+  var section = String(key).split('.')[0], def = µ._i18nData.default, c = µ.activeComponent;
   if (µ._i18nData === __i18nInertFallback) return false;
   // avant le démarrage, un module rendu par le serveur (ou créé par le rendu d'un hôte qu'il a rendu) se rend avec la graine de la page : le fragment
   // d'une section que le serveur a lue y est entier, une clé racine qu'il a lue sans la trouver y est à `null` (cf. `__i18nNoteRoot`) : un tel texte
   // manquait déjà au serveur, qui a écrit son nom — la reprise écrit le même. Une section se juge sur le fragment de la langue par défaut, qui porte le
   // repli (le serveur l'a semé s'il a lu une clé que la langue de la page n'a pas), ou sur celui de la page quand c'est elle. Un texte que le serveur
   // n'a pas lu (rendu par le navigateur seul) reste en route jusqu'au démarrage
-  if (!µ._mjs_i18nBooted) return !(__i18nProvLang && c && (c.hasAttribute('mjs-ssr') || __i18nSousHote(c)) && (__i18nDansGraine(def, section) || lang === def && __i18nDansGraine(lang, section) || __i18nNul(lang, cle)));
+  if (!µ._mjs_i18nBooted) return !(__i18nProvLang && c && (c.hasAttribute('mjs-ssr') || __i18nUnderHost(c)) && (__i18nInSeed(def, section) || lang === def && __i18nInSeed(lang, section) || __i18nNone(lang, key)));
   if (!lang) return false;
   if (__i18nLangPromises[lang] && !__i18nLangReady(lang)) return true;
-  return __i18nPasLa(lang, section) || __i18nPasLa(def, section);
+  return __i18nAbsent(lang, section) || __i18nAbsent(def, section);
 }
 // une clé racine que le serveur a lue sans la trouver : `null` sous un nœud de la graine ; `a.x` sous un `a: null` n'en est pas une
-function __i18nNul(lang, cle) {
-  var p = String(cle).split('.'), k = p.pop(), n = p.length ? __i18nResolve(lang, p.join('.')) : µ._mjs_i18nDictOf(lang);
+function __i18nNone(lang, key) {
+  var p = String(key).split('.'), k = p.pop(), n = p.length ? __i18nResolve(lang, p.join('.')) : µ._mjs_i18nDictOf(lang);
   return !!n && typeof n === 'object' && n[k] === null;
 }
 // le fragment d'une section pas encore là : en route, ou pas encore demandé alors que la table de la langue le porte (`µt` dans un <script>, le
 // repli de la langue par défaut avant sa demande)
-function __i18nPasLa(lang, section) {
+function __i18nAbsent(lang, section) {
   var e = µ._i18nCache.get(lang + '/' + section);
   return e ? e.data == null : !!__i18nSectionName(__i18nSectionsOf(lang), section);
 }
 // quelque chose est-il encore en route (langue, fragment) ? Sinon, une barre qui reste est un texte
 // figé trop tôt (µt dans un <script>, gardé dans une variable) : plus rien ne la remplacera
-function __i18nRienEnRoute() {
+function __i18nNothingInFlight() {
   if (µ._i18nData === __i18nInertFallback) return true;
   if (!µ._mjs_i18nBooted) return false;
   for (var l in __i18nLangPromises) { if (!__i18nLangReady(l)) return false; }
-  var vide = true;
-  µ._i18nCache.forEach(function(e) { if (e.data == null) vide = false; });
-  return vide;
+  var empty = true;
+  µ._i18nCache.forEach(function(e) { if (e.data == null) empty = false; });
+  return empty;
 }
 // un texte que l'échec d'un chargement laisse sans valeur : le fichier de sa langue, ou le fragment de sa section, a échoué — dans la langue affichée ou
 // dans la langue par défaut, qui porte les replis (un repli qui n'a pas pu venir laisse le texte manquant tout autant)
-function __i18nEnEchec(lang, cle) {
-  var section = String(cle).split('.')[0];
-  var langues = [lang, µ._i18nData.default];
-  for (var i = 0; i < langues.length; i++) {
-    var l = langues[i];
-    if (l && (__i18nEchecs[l] || __i18nEchecs[l + '/' + section])) return true;
+function __i18nHasFailed(lang, key) {
+  var section = String(key).split('.')[0];
+  var langs   = [lang, µ._i18nData.default];
+  for (var i = 0; i < langs.length; i++) {
+    var l = langs[i];
+    if (l && (__i18nFailures[l] || __i18nFailures[l + '/' + section])) return true;
   }
   return false;
 }
 // un chargement est-il en échec, quel qu'il soit ?
-function __i18nUnEchec() {
-  for (var k in __i18nEchecs) { if (Object.prototype.hasOwnProperty.call(__i18nEchecs, k)) return true; }
+function __i18nAnyFailure() {
+  for (var k in __i18nFailures) { if (Object.prototype.hasOwnProperty.call(__i18nFailures, k)) return true; }
   return false;
 }
 var __i18nSkelTimer = 0;
 var __i18nSkelRoots = typeof WeakMap === 'function' ? new WeakMap() : null;
 var __i18nSkelSheets = Object.create(null);
 // la feuille qui peint les barres d'une couleur ('' : le gris d'avant) ; table sans prototype, une couleur `constructor` y trouve sa feuille
-function __i18nSkelSheet(couleur) {
-  var f = __i18nSkelSheets[couleur];
+function __i18nSkelSheet(color) {
+  var f = __i18nSkelSheets[color];
   if (!f) {
-    f = __i18nSkelSheets[couleur] = new CSSStyleSheet();
-    f.replaceSync('::highlight(mjs-i18n-skel){background-color:' + (couleur || 'rgba(127,127,127,.28)') + ';color:transparent}');
+    f = __i18nSkelSheets[color] = new CSSStyleSheet();
+    f.replaceSync('::highlight(mjs-i18n-skel){background-color:' + (color || 'rgba(127,127,127,.28)') + ';color:transparent}');
     f._mjs_keep = true;
   }
   return f;
@@ -380,32 +380,32 @@ function __i18nSkelLater() {
 function __i18nSkelPaint() {
   __i18nSkelTimer = 0;
   var h = new window.Highlight();
-  var racines = [document];
-  var couleurs = [__i18nSkelColor(null)];
+  var roots = [document];
+  var colors = [__i18nSkelColor(null)];
   // composants déjà vus ; l'état des balises pendant la peinture : vrai pour une racine de la liste et ce qui est sous elle (son
   // parcours en lit le texte), faux sous aucune ; chaque question en temps constant, la peinture reste proportionnelle au nombre de
   // légers inscrits, même par milliers
-  var vus  = new Set();
-  var etat = new Map([[document, true]]);
-  var ajoute = function(c) { if (c && !vus.has(c)) { vus.add(c); var r = c._shadow || c.shadowRoot; if (r) { racines.push(r); etat.set(r, true); couleurs.push(__i18nSkelColor(c)); } } };
+  var seen  = new Set();
+  var state = new Map([[document, true]]);
+  var adds  = function(c) { if (c && !seen.has(c)) { seen.add(c); var r = c._shadow || c.shadowRoot; if (r) { roots.push(r); state.set(r, true); colors.push(__i18nSkelColor(c)); } } };
   // un léger est sa propre ombre (`_shadow`, l'élément lui-même) : son texte est dans l'arbre qui le porte, lu une fois ; sauté quand
   // cet arbre, ou un léger qui le contient, est déjà dans la liste ; les parents traversés gardent la réponse, le léger suivant
   // s'arrête au premier déjà connu
-  var couvert = function(n) {
+  var covered = function(n) {
     var p = n.parentNode;
-    while (p && !etat.has(p)) p = p.parentNode;
-    var c = p ? etat.get(p) : false;
-    for (var q = n.parentNode; q !== p; q = q.parentNode) etat.set(q, c);
+    while (p && !state.has(p)) p = p.parentNode;
+    var c = p ? state.get(p) : false;
+    for (var q = n.parentNode; q !== p; q = q.parentNode) state.set(q, c);
     return c;
   };
-  if (µ._mjs_i18nComps) µ._mjs_i18nComps.forEach(ajoute);
-  µ._mjs_i18nSectionComps.forEach(function(set) { set.forEach(ajoute); });
-  if (µ._mjs_i18nPendingMounts) µ._mjs_i18nPendingMounts.forEach(ajoute);
-  for (var i = 0; i < racines.length; i++) {
-    var r = racines[i];
-    if (r.nodeType === 1 && couvert(r)) continue;
+  if (µ._mjs_i18nComps) µ._mjs_i18nComps.forEach(adds);
+  µ._mjs_i18nSectionComps.forEach(function(set) { set.forEach(adds); });
+  if (µ._mjs_i18nPendingMounts) µ._mjs_i18nPendingMounts.forEach(adds);
+  for (var i = 0; i < roots.length; i++) {
+    var r = roots[i];
+    if (r.nodeType === 1 && covered(r)) continue;
     var w = document.createTreeWalker(r, 4);
-    var peint = false;
+    var painted = false;
     for (var t = w.nextNode(); t; t = w.nextNode()) {
       var k = t.data.indexOf(__i18nSkel);
       if (k < 0) continue;
@@ -413,19 +413,19 @@ function __i18nSkelPaint() {
       rg.setStart(t, k);
       rg.setEnd(t, k + __i18nSkel.length);
       h.add(rg);
-      peint = true;
+      painted = true;
     }
-    if (peint && __i18nSkelRoots && r.adoptedStyleSheets && !__i18nSkelRoots.has(r)) {
-      __i18nSkelRoots.set(r, couleurs[i]);
-      r.adoptedStyleSheets = r.adoptedStyleSheets.concat([__i18nSkelSheet(couleurs[i])]);
+    if (painted && __i18nSkelRoots && r.adoptedStyleSheets && !__i18nSkelRoots.has(r)) {
+      __i18nSkelRoots.set(r, colors[i]);
+      r.adoptedStyleSheets = r.adoptedStyleSheets.concat([__i18nSkelSheet(colors[i])]);
     }
   }
   // peintes et repeintes toutes les 400 ms tant que quelque chose est en route (un texte arrivé remplace ses espaces : sa barre part) ; celles d'un
   // chargement en échec restent peintes sans minuterie, plus rien n'arrivera : chaque rendu qui en pose de nouvelles (`__i18nSkelLater`) les repeint
-  var enRoute = !__i18nRienEnRoute();
-  if (h.size > 0 && (enRoute || __i18nUnEchec())) {
+  var inFlight = !__i18nNothingInFlight();
+  if (h.size > 0 && (inFlight || __i18nAnyFailure())) {
     CSS.highlights.set('mjs-i18n-skel', h);
-    if (enRoute) { __i18nSkelTimer = setTimeout(__i18nSkelPaint, 400); }
+    if (inFlight) { __i18nSkelTimer = setTimeout(__i18nSkelPaint, 400); }
   }
   else CSS.highlights.delete('mjs-i18n-skel');
 }
@@ -436,58 +436,58 @@ function __i18nSkelPaint() {
 // textes arrivent (ou que le module part) : rien ne reste armé. Ni sur le serveur ni sur un hôte prérendu (`mjs-ssr`, ses textes sont
 // déjà là) ; `*loader` n'en a pas besoin, son indicateur reste visible. Le mode est jugé à l'échéance : avant le démarrage, le config
 // n'est pas toujours connu
-var __I18N_SECOURS = 3000;
-function __i18nDelai() { return µ._i18nData.timeout != null ? µ._i18nData.timeout : __I18N_SECOURS; }
-function __i18nSecours(comp) {
+var __I18N_RESCUE = 3000;
+function __i18nDelay() { return µ._i18nData.timeout != null ? µ._i18nData.timeout : __I18N_RESCUE; }
+function __i18nRescue(comp) {
   comp._mjs_i18nTimer = 0;
   if (!comp._mjs_i18n_hold || !comp._mjs_is_mounted || comp._mjs_dead || __i18nMode(comp._mjs_i18n[1]) !== 'wait') return;
   comp._mjs_i18nRescue = true;
   comp._mjs_i18n_hold = false;
-  if (µ._i18nData.dev) { µ.warn(µ._mjs_msg('i18nSecours', { ms: __i18nDelai() }, 'i18n : textes toujours absents après {ms} ms — le module paraît avec ⟦clé⟧ à la place de chaque texte absent, les textes les remplaceront à leur arrivée')); }
+  if (µ._i18nData.dev) { µ.warn(µ._mjs_msg('i18nRescue', { ms: __i18nDelay() }, 'i18n : textes toujours absents après {ms} ms — le module paraît avec ⟦clé⟧ à la place de chaque texte absent, les textes les remplaceront à leur arrivée')); }
   comp._mjs_invalidate('_awaits_');
   // la retenue de `mjs-loading` ne tombe plus avec l'attente : après le rendu qui vient d'être planifié, par le chemin de
   // `_dropLoading` (sans transition, et les composants qui attendent ce retrait sortent avec lui)
-  queueMicrotask(function sortir() { if (comp._mjs_is_mounted) µ._mjs_unshield(comp, sortir); });
+  queueMicrotask(function exit() { if (comp._mjs_is_mounted) µ._mjs_unshield(comp, exit); });
 }
-// le premier rendu attend les fragments de repli qu'il a demandés (`_mjs_i18nPremier`, cf. `__i18nRepli`), jusqu'à leur arrivée ou leur échec, au
-// plus le délai de secours : passé ce délai, le module paraît, chaque texte encore en route en barre (`_mjs_i18nTard`, cf. `__i18nPlaceholder`),
+// le premier rendu attend les fragments de repli qu'il a demandés (`_mjs_i18nFirst`, cf. `__i18nFallback`), jusqu'à leur arrivée ou leur échec, au
+// plus le délai de secours : passé ce délai, le module paraît, chaque texte encore en route en barre (`_mjs_i18nLate`, cf. `__i18nPlaceholder`),
 // remplacée par le texte à l'arrivée du fragment. Rend la promesse de cette attente, rien quand le premier rendu n'a rien demandé
-function __i18nAttentePremier(comp) {
-  var p = comp._mjs_i18nPremier, fait;
-  comp._mjs_i18nPremier = null;
+function __i18nWaitFirst(comp) {
+  var p = comp._mjs_i18nFirst, done;
+  comp._mjs_i18nFirst = null;
   return p && p.length && new Promise(function(r) {
-    var fin = function() { fait = 1; comp._mjs_i18nTard = false; r(); };
-    Promise.all(p).then(fin, fin);
+    var end = function() { done = 1; comp._mjs_i18nLate = false; r(); };
+    Promise.all(p).then(end, end);
     setTimeout(function() {
-      if (!fait && comp._mjs_is_mounted && !comp._mjs_dead) { comp._mjs_i18nTard = true; comp._mjs_invalidate('_awaits_'); }
+      if (!done && comp._mjs_is_mounted && !comp._mjs_dead) { comp._mjs_i18nLate = true; comp._mjs_invalidate('_awaits_'); }
       r();
-    }, __i18nDelai());
+    }, __i18nDelay());
   });
 }
 // fragment déjà là, à la première connexion d'un module créé après le démarrage (changement de route, affichage conditionnel, liste qui grandit) :
-// son premier rendu, déjà planifié, peut demander le fragment de repli d'une clé qui manque (cf. `__i18nRepli`). Sous `wait` et `*loader`, le module
+// son premier rendu, déjà planifié, peut demander le fragment de repli d'une clé qui manque (cf. `__i18nFallback`). Sous `wait` et `*loader`, le module
 // reste alors caché, l'indicateur de *loader à sa place, jusqu'à l'arrivée ou l'échec de ce fragment, au plus le délai de secours, comme un module
 // qui attend son propre fragment. Rien dans la langue par défaut (rien ne s'y replie) ni sur le serveur. La feuille d'attente (`µ._mjs_waits`) ne
 // se pose que si le premier rendu attend vraiment : sans repli demandé, le module sort comme un module sans attente, dans la même suite de microtâches.
 // La retenue lue par la connexion (`_mjs_cssPending`) retombe ensuite, comme celle d'une feuille paresseuse adoptée : une reconnexion n'attend rien
-function __i18nPremierEnCache(comp) {
-  var def = µ._i18nData.default, seul, vu;
+function __i18nFirstCached(comp) {
+  var def = µ._i18nData.default, alone, seen;
   if (comp._mjs_mjsInitialized || µ.server || µ._isServer || !µ._mjs_i18nBooted || !def || __i18nEffectiveLang() === def || !__i18nWaits(__i18nMode(comp._mjs_i18n[1]))) return;
-  seul = !comp._mjs_cssPending;
-  comp._mjs_i18nPremier = [];
-  if (seul) { comp._mjs_waited = true; }
-  vu = new Promise(function(r) { queueMicrotask(r); }).then(function() {
-    var p = __i18nAttentePremier(comp);
-    if (seul) { comp._mjs_waited = false; comp._mjs_cssPending = null; }
+  alone = !comp._mjs_cssPending;
+  comp._mjs_i18nFirst = [];
+  if (alone) { comp._mjs_waited = true; }
+  seen = new Promise(function(r) { queueMicrotask(r); }).then(function() {
+    var p = __i18nWaitFirst(comp);
+    if (alone) { comp._mjs_waited = false; comp._mjs_cssPending = null; }
     if (!p) return;
-    if (seul) { µ._mjs_waits(comp); }
-    // <i18n-loader-appel>
+    if (alone) { µ._mjs_waits(comp); }
+    // <i18n-loader-call>
     __i18nLoaderOn(comp);
     p.then(function() { __i18nLoaderOff(comp); });
-    // </i18n-loader-appel>
+    // </i18n-loader-call>
     return p;
   });
-  comp._mjs_cssPending = seul ? vu : Promise.all([comp._mjs_cssPending, vu]);
+  comp._mjs_cssPending = alone ? seen : Promise.all([comp._mjs_cssPending, seen]);
 }
 
 // <i18n-loader>
@@ -543,12 +543,12 @@ function __i18nProvDecide() {
   __i18nProvLang = __i18nSeedLang;
 }
 // la bascule du démarrage : l'indicateur « la prochaine bascule de `__mjsLang` est celle du démarrage » (cf. `__i18nBoot`) et les modules gelés que cette bascule relâche à sa fin
-var __i18nDemarrage = false;
-var __i18nApres = [];
+var __i18nStartup = false;
+var __i18nAfter = [];
 // les noms des sections de la graine, ce que le serveur a lu (qu'un module déclare la section ou non) : la bascule du démarrage les assure toutes dans la langue voulue
-var __i18nSeedNoms = [];
+var __i18nSeedNames = [];
 // l'attente d'un fragment qu'un échec (déjà signalé) ne fait pas rejeter : la bascule du démarrage les attend tous
-function __i18nSansEchec(p) { return p.then(null, function() {}); }
+function __i18nNoFailure(p) { return p.then(null, function() {}); }
 
 // `µ.i18n._ensure` en vol suite à une bascule NON encore résolue : tant que
 // `true`, toute résolution (µ.t/__i18nResolve) reste sur `µ._mjs_i18nPrevLang`
@@ -588,22 +588,22 @@ function __i18nLabelLang() {
 // doit surtout pas hériter de l'override français du projet). Jamais de placeholder, jamais de warn,
 // jamais de throw — y compris quand `µ._i18nData` est le repli inerte ou quand `µ._mjs_storeRaw` n'existe
 // pas (module vault absent du build).
-µ._mjs_i18nLookup = function(cle) {
+µ._mjs_i18nLookup = function(key) {
   var lang = (µ._mjs_storeRaw && µ._mjs_storeRaw.__mjsLang) || __i18nLabelLang() || µ._i18nData.default;
   if (!lang) { return undefined; }
-  var node = __i18nResolve(lang, cle);
+  var node = __i18nResolve(lang, key);
   // libellé lu pendant l'attente du fichier de sa langue (une langue du projet, que ce fichier n'a pas encore apportée) : son lecteur se
   // rendra à nouveau, ou se récrira, à l'arrivée de CE fichier (cf. __i18nWakeLabelReaders). Lecteur d'un libellé du cœur : le rendu, ou la
   // valeur dérivée qui le lit (`$labelText = $label ?? tr(…, µlang)`, calculée hors du rendu à une bascule) ; d'un autre groupe : l'écriture
   // en cours (µ._mjs_labelKeep), jamais le composant actif
-  var g = typeof node !== 'string' && !µ._isServer && !__i18nLangOf(lang) && Object.prototype.hasOwnProperty.call(µ._i18nData.files || {}, lang) && /^mjs\.(\w+)\./.exec(cle);
-  var lecteur = g && (g[1] === 'core' ? µ._mjs_computing || µ.activeComponent : __i18nLabelWriter);
+  var g = typeof node !== 'string' && !µ._isServer && !__i18nLangOf(lang) && Object.prototype.hasOwnProperty.call(µ._i18nData.files || {}, lang) && /^mjs\.(\w+)\./.exec(key);
+  var reader = g && (g[1] === 'core' ? µ._mjs_computing || µ.activeComponent : __i18nLabelWriter);
   // écriture d'un affichage qui dure avant le démarrage d'une page rendue par le serveur : récrite par la bascule du démarrage
   if (__i18nLabelWriter && __i18nSeedLang && !µ._mjs_i18nBooted && !µ._isServer) { __i18nBootWriters.add(__i18nLabelWriter); }
-  if (lecteur) {
-    var lecteurs = __i18nLabelReaders.get(lang) || __i18nLabelReaders.set(lang, new Map()).get(lang);
-    var groupes  = lecteurs.get(lecteur) || lecteurs.set(lecteur, {}).get(lecteur);
-    groupes[g[1]] = 1;
+  if (reader) {
+    var readers  = __i18nLabelReaders.get(lang) || __i18nLabelReaders.set(lang, new Map()).get(lang);
+    var groups   = readers.get(reader) || readers.set(reader, {}).get(reader);
+    groups[g[1]] = 1;
   }
   return typeof node === 'string' ? node : undefined;
 };
@@ -623,19 +623,19 @@ function __i18nPluralRulesFor(lang) {
 // rendu serveur (`µ._i18nTrackRoot`, posé par les deux moteurs) : note les clés RACINE lues, celles dont le premier mot n'est pas une
 // section, `{langue: {clé: true}}` ; la graine les transmet au navigateur, qui n'attend plus le fichier de langue pour elles. Une clé lue que ni la
 // langue de la page ni la langue par défaut ne portent se note `false` : la graine la porte à `null`, et la reprise sait qu'elle manquait déjà au
-// serveur (cf. `__i18nEnRoute`)
-function __i18nNoteRoot(lang, cle, absente) {
-  var s = String(cle).split('.')[0];
-  if (__i18nSectionName(__i18nSectionsOf(lang), s) !== undefined || (absente && __i18nSectionName(__i18nSectionsOf(µ._i18nData.default), s) !== undefined)) { return; }
+// serveur (cf. `__i18nInFlight`)
+function __i18nNoteRoot(lang, key, absent) {
+  var s = String(key).split('.')[0];
+  if (__i18nSectionName(__i18nSectionsOf(lang), s) !== undefined || (absent && __i18nSectionName(__i18nSectionsOf(µ._i18nData.default), s) !== undefined)) { return; }
   var u = µ._i18nUsedRoot || (µ._i18nUsedRoot = {});
   var l = u[lang] || (u[lang] = {});
-  if (!l[cle]) { l[cle] = !absente; }
+  if (!l[key]) { l[key] = !absent; }
 }
 // les sections d'un module : la sienne (avec `@i18n 'a' 'b'`, les autres aussi : le bloc des plusieurs sections par module remplace cette fonction,
 // d'où une variable et non une déclaration de fonction)
 var __i18nSections = function(comp) { return [comp._mjs_i18n[0]]; };
 // la graine porte-t-elle ce fragment (semé par le rendu serveur, ou servi en repli sous une autre langue) ?
-function __i18nDansGraine(lang, section) {
+function __i18nInSeed(lang, section) {
   var e = lang && µ._i18nCache.get(lang + '/' + section);
   return !!e && e.data != null;
 }
@@ -643,10 +643,10 @@ function __i18nDansGraine(lang, section) {
 // n'ont plus l'attribut, mais la graine porte déjà leurs textes (ceux que le serveur a lus) ; il se rend aussitôt comme son hôte, sans attendre le fichier de langue.
 // Seulement si ses sections y sont toutes : un module que le serveur n'a pas rendu (dans le slot de l'hôte, créé plus tard) et dont une section n'est pas lue suit
 // le chemin de son réglage, `wait` le garde caché jusqu'à ses textes ; une clé racine absente de la graine, elle, se relit au démarrage (`_mjs_i18nRedo`)
-function __i18nSousHote(comp) {
-  var noms = __i18nSections(comp);
-  for (var i = 0; i < noms.length; i++) {
-    if (noms[i] && !__i18nDansGraine(__i18nSeedLang, noms[i]) && !__i18nDansGraine(µ._i18nData.default, noms[i])) { return false; }
+function __i18nUnderHost(comp) {
+  var names = __i18nSections(comp);
+  for (var i = 0; i < names.length; i++) {
+    if (names[i] && !__i18nInSeed(__i18nSeedLang, names[i]) && !__i18nInSeed(µ._i18nData.default, names[i])) { return false; }
   }
   for (var n = comp.parentNode; n; n = n.parentNode || n.host) {
     if (n.hasAttribute && n.hasAttribute('mjs-ssr')) { return true; }
@@ -669,17 +669,17 @@ function __i18nSousHote(comp) {
 // la réactivité passe par le registre (`_mjs_invalidate`), pas par un abonnement
 // store de l'appelant.
 // clé `zero` explicite prioritaire à n=0 si présente dans le dictionnaire
-µ.t = function(cle, vars, modeOverride) {
+µ.t = function(key, vars, modeOverride) {
   var lang = __i18nEffectiveLang();
-  var node = __i18nResolve(lang, cle);
+  var node = __i18nResolve(lang, key);
   var resolvedLang = lang;
   var fellBack = false;
   // clé d'une section que rien n'a encore demandée : demandée ici (cf. __i18nAskSection) — arrivée
   // aussitôt (lecture disque du rendu serveur), elle se relit dans le même appel
-  if (node == null && __i18nAskSection(lang, cle)) { node = __i18nResolve(lang, cle); }
+  if (node == null && __i18nAskSection(lang, key)) { node = __i18nResolve(lang, key); }
   if (node == null && µ._i18nData.default && lang !== µ._i18nData.default) {
-    node = __i18nResolve(µ._i18nData.default, cle);
-    if (node == null && __i18nRepli(lang, cle)) { node = __i18nResolve(µ._i18nData.default, cle); }
+    node = __i18nResolve(µ._i18nData.default, key);
+    if (node == null && __i18nFallback(lang, key)) { node = __i18nResolve(µ._i18nData.default, key); }
     fellBack = node != null;
     if (fellBack) { resolvedLang = µ._i18nData.default; }
   }
@@ -700,13 +700,13 @@ function __i18nSousHote(comp) {
       if (__c) { __c._mjs_i18nRedo = true; }
       else { __i18nRedoAll = true; }
     }
-    if (µ._i18nTrackRoot && node == null) { __i18nNoteRoot(lang, cle, true); }
-    return __i18nPlaceholder(cle, modeOverride, lang);
+    if (µ._i18nTrackRoot && node == null) { __i18nNoteRoot(lang, key, true); }
+    return __i18nPlaceholder(key, modeOverride, lang);
   }
-  if (µ._i18nTrackRoot) { __i18nNoteRoot(resolvedLang, cle); }
+  if (µ._i18nTrackRoot) { __i18nNoteRoot(resolvedLang, key); }
   if (fellBack && µ._i18nData.dev) {
-    var __k = lang + '|' + cle;
-    if (!__i18nFallbackWarned.has(__k)) { __i18nFallbackWarned.add(__k); µ.warn(µ._mjs_msg('i18nMissing', { key: cle, lang: lang, def: µ._i18nData.default }, 'i18n : clé « {key} » absente en « {lang} », repli sur « {def} »')); }
+    var __k = lang + '|' + key;
+    if (!__i18nFallbackWarned.has(__k)) { __i18nFallbackWarned.add(__k); µ.warn(µ._mjs_msg('i18nMissing', { key: key, lang: lang, def: µ._i18nData.default }, 'i18n : clé « {key} » absente en « {lang} », repli sur « {def} »')); }
   }
   if (vars) {
     node = node.replace(/%\{(\w+)\}/g, function(m, name) {
@@ -750,27 +750,27 @@ function __i18nSeedFrom(doc) {
     if (!el) return;
     var seed = JSON.parse(el.textContent);
     if (!seed || typeof seed.lang !== 'string' || !seed.sections || typeof seed.sections !== 'object') return null;
-    var interdit = ['__proto__', 'constructor', 'prototype'];
+    var forbidden = ['__proto__', 'constructor', 'prototype'];
     for (var lang in seed.sections) {
-      if (!Object.prototype.hasOwnProperty.call(seed.sections, lang) || interdit.indexOf(lang) !== -1) continue;
-      var parLangue = seed.sections[lang];
-      if (!parLangue || typeof parLangue !== 'object') continue;
-      for (var section in parLangue) {
-        if (!Object.prototype.hasOwnProperty.call(parLangue, section) || interdit.indexOf(section) !== -1) continue;
-        var data = parLangue[section];
-        var cle = lang + '/' + section;
-        if (!data || typeof data !== 'object' || Array.isArray(data) || µ._i18nCache.has(cle)) continue;
-        data = __i18nNu(data);
-        µ._i18nCache.set(cle, { promise: Promise.resolve(data), data: data });
+      if (!Object.prototype.hasOwnProperty.call(seed.sections, lang) || forbidden.indexOf(lang) !== -1) continue;
+      var byLang = seed.sections[lang];
+      if (!byLang || typeof byLang !== 'object') continue;
+      for (var section in byLang) {
+        if (!Object.prototype.hasOwnProperty.call(byLang, section) || forbidden.indexOf(section) !== -1) continue;
+        var data = byLang[section];
+        var key = lang + '/' + section;
+        if (!data || typeof data !== 'object' || Array.isArray(data) || µ._i18nCache.has(key)) continue;
+        data = __i18nBare(data);
+        µ._i18nCache.set(key, { promise: Promise.resolve(data), data: data });
         µ._mjs_i18nDictOf(lang)[section] = data;
-        if (__i18nSeedNoms.indexOf(section) === -1) { __i18nSeedNoms.push(section); }
+        if (__i18nSeedNames.indexOf(section) === -1) { __i18nSeedNames.push(section); }
       }
     }
     // clés racine lues par la page (arbre partiel par langue) : rangées dans le dictionnaire de leur langue, sans remplacer l'existant
-    var racine = seed.root;
-    if (racine && typeof racine === 'object') {
-      for (var rl in racine) {
-        if (Object.prototype.hasOwnProperty.call(racine, rl) && interdit.indexOf(rl) === -1 && racine[rl] && typeof racine[rl] === 'object') { __i18nFill(µ._mjs_i18nDictOf(rl), racine[rl]); }
+    var root = seed.root;
+    if (root && typeof root === 'object') {
+      for (var rl in root) {
+        if (Object.prototype.hasOwnProperty.call(root, rl) && forbidden.indexOf(rl) === -1 && root[rl] && typeof root[rl] === 'object') { __i18nFill(µ._mjs_i18nDictOf(rl), root[rl]); }
       }
     }
     return seed.lang;
@@ -814,6 +814,18 @@ function __i18nCheckZombie() {
 var __i18nFallbackWarned = new Set();
 
 µ.i18n = {
+  // chargements de textes encore en route (fichier de langue, fragment de section) : leur nombre, 0 quand plus rien n'est
+  // attendu ; `end` est appelé à la fin de chacun, arrivée ou échec (le contrôle « aucune route » du routeur, cf. mjs_router.ts)
+  _mjs_inFlight: function(end) {
+    var n = 0, lang;
+    for (lang in __i18nLangPromises) {
+      if (!__i18nLangReady(lang)) { n++; __i18nLangPromises[lang].then(end, end); }
+    }
+    µ._i18nCache.forEach(function(e) {
+      if (e.data == null) { n++; e.promise.then(end, end); }
+    });
+    return n;
+  },
   // `_mjs_i18nMount(comp)` : lit `comp._mjs_i18n = [section, override]`. Si le boot
   // (`__i18nBoot`, cf. plus bas) n'a PAS ENCORE tourné, la vraie langue
   // (`µlang`) n'est pas fiable — enregistrer/assurer maintenant fetcherait
@@ -837,8 +849,8 @@ var __i18nFallbackWarned = new Set();
       }
       // un hôte de page prérendue (`mjs-ssr`) n'attend rien : il se rend aussitôt avec la graine, et `__i18nBoot` le réinvalide
       // pour les textes qu'elle ne porte pas (clé racine, section non lue par le serveur)
-      // de même un composant créé par le rendu d'un tel hôte (cf. `__i18nSousHote`)
-      if (__i18nSousHote(comp)) { return null; }
+      // de même un composant créé par le rendu d'un tel hôte (cf. `__i18nUnderHost`)
+      if (__i18nUnderHost(comp)) { return null; }
       if (__i18nWaits(__i18nMode(info[1])) && !comp.hasAttribute('mjs-ssr')) {
         if (!comp._mjs_i18nBootWaitPromise) {
           comp._mjs_i18nBootWaitPromise = new Promise(function(resolve) { comp._mjs_i18nBootWaitResolve = resolve; });
@@ -860,7 +872,7 @@ var __i18nFallbackWarned = new Set();
     // un hôte de page prérendue (`mjs-ssr`) ne gèle jamais : le constructeur a déjà remplacé son HTML par le gabarit
     // vide, le geler le laisserait vide (ou en barres) jusqu'à l'arrivée du fichier de langue
     if (comp.hasAttribute('mjs-ssr')) return;
-    if (!wait) { __i18nPremierEnCache(comp); return; }
+    if (!wait) { __i18nFirstCached(comp); return; }
     comp._mjs_pending_full = false;
     if (comp._mjs_pending) { comp._mjs_pending.clear(); }
     // GEL, et pas seulement annulation du rendu programmé : n'importe quelle
@@ -872,21 +884,21 @@ var __i18nFallbackWarned = new Set();
     // le module reste CACHÉ (`[mjs-loading]`) tant que le gel tient : l'attente rejoint la retenue que
     // connectedCallback lit juste après (`_mjs_cssPending`, celle des feuilles paresseuses), sinon le navigateur
     // peint le gabarit brut (liaisons vides) le temps de l'attente. Exception : le rendu serveur (la capture ne doit rien porter de masqué)
-    // Le premier rendu, une microtâche après le réveil (plus bas), peut attendre le fragment de repli d'une clé qui manque (cf. `__i18nRepli`) : le
-    // module reste caché, l'indicateur de *loader en place, jusqu'à son arrivée ou son échec — au plus le délai de secours (cf. `__i18nAttentePremier`)
-    var vu = wait.then(function() { return new Promise(function(r) { queueMicrotask(r); }); }).then(function() { return __i18nAttentePremier(comp); });
-    if (!µ.server && !µ._isServer) { comp._mjs_cssPending = comp._mjs_cssPending ? Promise.all([comp._mjs_cssPending, vu]) : vu; }
-    // <i18n-loader-appel>
+    // Le premier rendu, une microtâche après le réveil (plus bas), peut attendre le fragment de repli d'une clé qui manque (cf. `__i18nFallback`) : le
+    // module reste caché, l'indicateur de *loader en place, jusqu'à son arrivée ou son échec — au plus le délai de secours (cf. `__i18nWaitFirst`)
+    var seen = wait.then(function() { return new Promise(function(r) { queueMicrotask(r); }); }).then(function() { return __i18nWaitFirst(comp); });
+    if (!µ.server && !µ._isServer) { comp._mjs_cssPending = comp._mjs_cssPending ? Promise.all([comp._mjs_cssPending, seen]) : seen; }
+    // <i18n-loader-call>
     __i18nLoaderOn(comp);
-    vu.then(function() { __i18nLoaderOff(comp); });
-    // </i18n-loader-appel>
-    if (!µ.server && !µ._isServer && __i18nMode(comp._mjs_i18n[1]) === 'wait') { comp._mjs_i18nTimer = setTimeout(function() { __i18nSecours(comp); }, __i18nDelai()); }
+    seen.then(function() { __i18nLoaderOff(comp); });
+    // </i18n-loader-call>
+    if (!µ.server && !µ._isServer && __i18nMode(comp._mjs_i18n[1]) === 'wait') { comp._mjs_i18nTimer = setTimeout(function() { __i18nRescue(comp); }, __i18nDelay()); }
     wait.then(function() {
       comp._mjs_i18n_hold = false;                          // levé AVANT toute sortie : un composant démonté entre-temps ne doit pas rester gelé à vie
       if (comp._mjs_i18nTimer) { clearTimeout(comp._mjs_i18nTimer); comp._mjs_i18nTimer = 0; }
       comp._mjs_i18nRescue = false;
       if (!comp._mjs_is_mounted || comp._mjs_dead) return;
-      comp._mjs_i18nPremier = [];
+      comp._mjs_i18nFirst = [];
       comp._mjs_invalidate('_awaits_');
     });
   },
@@ -927,9 +939,9 @@ var __i18nFallbackWarned = new Set();
   // démontage AVANT que `__i18nBoot()` n'ait rejoué son montage réel).
   _mjs_unmount: function(comp) {
     if (comp._mjs_i18nTimer) { clearTimeout(comp._mjs_i18nTimer); comp._mjs_i18nTimer = 0; }
-    // <i18n-loader-appel>
+    // <i18n-loader-call>
     __i18nLoaderOff(comp);
-    // </i18n-loader-appel>
+    // </i18n-loader-call>
     µ._mjs_i18nComps.delete(comp);
     µ._mjs_i18nSectionComps.forEach(function(set) { set.delete(comp); });
     µ._mjs_i18nPendingMounts.delete(comp);
@@ -961,8 +973,8 @@ var __i18nFallbackWarned = new Set();
     // table de CETTE langue (fichier de langue chargé au démarrage) : nom compact du
     // fragment, l'URL se reconstitue ici — un seul endroit, cf. __i18nSectionUrl.
     var sections = __i18nSectionsOf(lang);
-    var nom = __i18nSectionName(sections, section);
-    var path = nom ? __i18nSectionUrl(lang, nom) : null;
+    var name = __i18nSectionName(sections, section);
+    var path = name ? __i18nSectionUrl(lang, name) : null;
     if (!path) {
       var defLang = µ._i18nData.default;
       var defSections = (defLang && defLang !== lang) ? __i18nSectionsOf(defLang) : null;
@@ -977,7 +989,7 @@ var __i18nFallbackWarned = new Set();
           return µ._i18nCache.get(key).promise;
         }
         var fallbackPromise = µ.i18n._ensure(defLang, section).then(function(json) {
-          __i18nReveil(lang, section);
+          __i18nWake(lang, section);
           return json;
         });
         µ._i18nCache.set(key, { promise: fallbackPromise, data: null });
@@ -1002,7 +1014,7 @@ var __i18nFallbackWarned = new Set();
         if (µ._isServer && typeof µ._i18nLoadSync === 'function' && !µ._i18nCache.get(key)) {
           var syncData = µ._i18nLoadSync(lang, section);
           if (syncData != null) {
-            syncData = __i18nNu(syncData);
+            syncData = __i18nBare(syncData);
             µ._mjs_i18nDictOf(lang)[section] = syncData;
             µ._i18nCache.set(key, { promise: Promise.resolve(syncData), data: syncData });
             return Promise.resolve(syncData);
@@ -1015,9 +1027,9 @@ var __i18nFallbackWarned = new Set();
       if (!res || !res.ok) { throw new Error(µ._mjs_txt('i18nHttp', { status: (res && res.status), path: path }, 'i18n : HTTP {status} sur {path}')); }
       return res.json();
     }).then(function(json) {
-      json = __i18nNu(json);
+      json = __i18nBare(json);
       µ._mjs_i18nDictOf(lang)[section] = json;
-      delete __i18nEchecs[key];
+      delete __i18nFailures[key];
       var e = µ._i18nCache.get(key);
       if (e) { e.data = json; }
       // swap atomique — PENDANT une bascule en vol, ne PAS notifier ici
@@ -1039,12 +1051,12 @@ var __i18nFallbackWarned = new Set();
       // dans cette closure). `!µ._mjs_i18nSwapPending` seul ne suffit plus : au
       // moment de CE `.then`, un swap peut avoir COMPLÈTEMENT abouti (donc
       // retombé à `false`) vers une AUTRE langue que `lang`.
-      __i18nReveil(lang, section);
+      __i18nWake(lang, section);
       return json;
     }).catch(function(err) {
       __i18nFailed(err, function() {
         µ.error(µ._mjs_msg('i18nLoadSection', { section: section, lang: lang, reason: (err && err.message ? err.message : err) }, 'i18n : échec de chargement de « {section} » ({lang}) — {reason}'));
-        __i18nEchecs[key] = true;
+        __i18nFailures[key] = true;
       });
       µ._i18nCache.delete(key);
       throw err;
@@ -1054,7 +1066,7 @@ var __i18nFallbackWarned = new Set();
   }
 };
 
-// <i18n-paquets>
+// <i18n-packs>
 // PLUSIEURS SECTIONS PAR MODULE — `@i18n 'accueil' 'onglets-admin'`. Bloc retiré du cœur par le build (bundleRuntime) tant qu'aucune unité
 // ne l'écrit : le cœur d'une appli dont aucun module n'écrit plusieurs sections reste identique, à l'octet, à celui d'avant ce bloc.
 // Le compilateur pose `_mjs_i18n = [section, mode, [sections en plus]]` et passe, en 4e argument de `µ.t`, la même clé relative pour
@@ -1064,7 +1076,7 @@ var __i18nFallbackWarned = new Set();
 // déclare l'une d'elles la trouve au cache, sans seconde requête ni seconde attente. Restent la lecture d'une section non déclarée
 // (`__i18nAskSection`) : elle apprend que les sections en plus sont déclarées elles aussi, par une ligne à elle dans la fonction, balisée de
 // même et retirée du cœur dans les mêmes conditions ; et le rejeu du démarrage (`__i18nBoot`) : il apprend qu'une section en plus encore en
-// route compte comme la première (`__i18nPaquetsVol`, plus bas), par une ligne balisée de même.
+// route compte comme la première (`__i18nPacksInFlight`, plus bas), par une ligne balisée de même.
 (function() {
   var mountReal = µ.i18n._mjs_mountReal;
   // les sections d'un module pour la reprise des textes d'une page rendue : la sienne, puis les autres
@@ -1096,47 +1108,47 @@ var __i18nFallbackWarned = new Set();
   // lecture : la clé de la première section qui porte le texte (langue affichée, puis langue par défaut : le repli de langue reste celui de
   // chaque section) ; à défaut, celle de la première dont le fragment est encore en route ou a échoué (les repères « en route » et « en
   // échec » doivent la voir) ; à défaut, la première : le repère d'une clé absente de toutes nomme la section du module
-  function pick(cle, more) {
+  function pick(key, more) {
     var lang = __i18nEffectiveLang();
     var def = µ._i18nData.default;
-    var cles = [cle].concat(more);
-    var i, n, demande;
-    if (!lang) { return cle; }
+    var keys = [key].concat(more);
+    var i, n, request;
+    if (!lang) { return key; }
     for (n = 0; ; n++) {
-      for (i = 0; i < cles.length; i++) {
-        if (__i18nResolve(lang, cles[i]) != null || __i18nResolve(def, cles[i]) != null) { return cles[i]; }
+      for (i = 0; i < keys.length; i++) {
+        if (__i18nResolve(lang, keys[i]) != null || __i18nResolve(def, keys[i]) != null) { return keys[i]; }
       }
       if (n) { break; }
       // aucune ne la porte : les fragments de repli qui manquent sont demandés, une fois par section (relus aussitôt au rendu serveur)
-      for (demande = false, i = 0; i < cles.length; i++) { demande = __i18nRepli(lang, cles[i]) || demande; }
-      if (!demande) { break; }
+      for (request = false, i = 0; i < keys.length; i++) { request = __i18nFallback(lang, keys[i]) || request; }
+      if (!request) { break; }
     }
-    for (i = 0; i < cles.length; i++) {
-      if (__i18nEnRoute(lang, cles[i]) || __i18nEnEchec(lang, cles[i])) { return cles[i]; }
+    for (i = 0; i < keys.length; i++) {
+      if (__i18nInFlight(lang, keys[i]) || __i18nHasFailed(lang, keys[i])) { return keys[i]; }
     }
-    return cle;
+    return key;
   }
   var t = µ.t;
-  µ.t = function(cle, vars, modeOverride, more) {
-    return t(more ? pick(cle, more) : cle, vars, modeOverride);
+  µ.t = function(key, vars, modeOverride, more) {
+    return t(more ? pick(key, more) : key, vars, modeOverride);
   };
 })();
 
 // rejeu du démarrage (`__i18nBoot`) : le fragment « en vol » d'un module est celui de la première de ses sections encore en route, pas
 // seulement de la première écrite. Sa première déjà là (semée par le rendu serveur) et une autre en route : l'arrivée de celle-ci rendra le
 // module, un rendu de plus n'afficherait que les mêmes repères
-function __i18nPaquetsVol(comp, vol) {
+function __i18nPacksInFlight(comp, inFlight) {
   var more = comp._mjs_i18n && comp._mjs_i18n[2];
   var lang, entry;
-  if (!more || (vol && vol.data == null)) { return vol; }
+  if (!more || (inFlight && inFlight.data == null)) { return inFlight; }
   lang = __i18nEffectiveLang();
   for (var i = 0; i < more.length; i++) {
     entry = µ._i18nCache.get(lang + '/' + more[i]);
     if (entry && entry.data == null) { return entry; }
   }
-  return vol;
+  return inFlight;
 }
-// </i18n-paquets>
+// </i18n-packs>
 
 // SECTION LUE SANS ÊTRE DÉCLARÉE — clé dont le premier mot est une section du dictionnaire, lue
 // depuis un module qui ne la déclare pas (`µt('format.locale')` sans `@i18n`, `µt('/format.locale')`
@@ -1164,11 +1176,11 @@ function __i18nWakeReaders(section) {
     if (!declared || !declared.has(c)) { c._mjs_invalidate('_awaits_'); }
   });
 }
-// l'arrivée d'un fragment de la langue affichée, ou d'un fragment de repli (`repli`, cf. `__i18nRepli` : il sert toute langue affichée, celle d'une
+// l'arrivée d'un fragment de la langue affichée, ou d'un fragment de repli (`repli`, cf. `__i18nFallback` : il sert toute langue affichée, celle d'une
 // bascule faite pendant qu'il était en route comprise) : ses modules et ses lecteurs se rendent à nouveau — rien pendant une bascule, ni pour une
 // langue qui n'est plus affichée (un fragment tardif d'une langue quittée)
-function __i18nReveil(lang, section, repli) {
-  if (µ._mjs_i18nSwapPending || !repli && lang !== __i18nEffectiveLang()) return;
+function __i18nWake(lang, section, fallback) {
+  if (µ._mjs_i18nSwapPending || !fallback && lang !== __i18nEffectiveLang()) return;
   var set = µ._mjs_i18nSectionComps.get(section);
   if (set) { set.forEach(function(c) { c._mjs_invalidate('_awaits_'); }); }
   if (__i18nAskedSections.has(section)) { __i18nWakeReaders(section); }
@@ -1176,22 +1188,22 @@ function __i18nReveil(lang, section, repli) {
 // le fragment de la langue par défaut, qui porte le repli d'une clé que le fragment ARRIVÉ de la langue affichée n'a pas : demandé à la première
 // clé qui manque, une fois par section (le cache le garde ; un échec, déjà dit, ne se redemande pas), jamais quand rien ne manque ; son arrivée
 // (`_ensure`) ou son échec rend à nouveau les modules de la section. Le premier rendu d'un module qui attend ses textes (`wait`, `*loader`) l'attend
-// aussi, en vol ou demandé ici (cf. `_mjs_connect`, `__i18nPremierEnCache`). Rend `true` s'il vient d'être demandé : arrivé aussitôt (lecture disque du rendu serveur), il se
+// aussi, en vol ou demandé ici (cf. `_mjs_connect`, `__i18nFirstCached`). Rend `true` s'il vient d'être demandé : arrivé aussitôt (lecture disque du rendu serveur), il se
 // relit dans le même appel
-function __i18nRepli(lang, cle) {
-  var def = µ._i18nData.default, section = String(cle).split('.')[0], key = def + '/' + section, e = µ._i18nCache.get(key), c = µ.activeComponent, p;
-  if (!µ._mjs_i18nBooted || !__i18nDansGraine(lang, section) || (e ? e.data != null : __i18nEchecs[key] || !__i18nSectionName(__i18nSectionsOf(def), section))) return false;
+function __i18nFallback(lang, msgKey) {
+  var def = µ._i18nData.default, section = String(msgKey).split('.')[0], key = def + '/' + section, e = µ._i18nCache.get(key), c = µ.activeComponent, p;
+  if (!µ._mjs_i18nBooted || !__i18nInSeed(lang, section) || (e ? e.data != null : __i18nFailures[key] || !__i18nSectionName(__i18nSectionsOf(def), section))) return false;
   p = e ? e.promise : µ.i18n._ensure(def, section);
-  if (c && c._mjs_i18nPremier) { c._mjs_i18nPremier.push(p); }
+  if (c && c._mjs_i18nFirst) { c._mjs_i18nFirst.push(p); }
   if (e || µ._isServer) return !e;
-  e = function() { __i18nReveil(def, section, 1); };
+  e = function() { __i18nWake(def, section, 1); };
   p.then(e, e);
   return true;
 }
-function __i18nAskSection(lang, cle) {
+function __i18nAskSection(lang, msgKey) {
   var section, own, def, defs, key, entry, comp, promise;
   if (!µ._mjs_i18nBooted || !lang) return false;
-  section = String(cle).split('.')[0];
+  section = String(msgKey).split('.')[0];
   own = __i18nSectionsOf(lang);
   def = µ._i18nData.default;
   defs = def && def !== lang ? __i18nSectionsOf(def) : null;
@@ -1201,9 +1213,9 @@ function __i18nAskSection(lang, cle) {
   if (entry && entry.data != null) return false;
   comp = µ.activeComponent;
   if (comp && comp._mjs_i18n && comp._mjs_i18n[0] === section) return false; // module qui la déclare : rien de neuf ici
-  // <i18n-paquets-lecture>
+  // <i18n-packs-read>
   if (comp && comp._mjs_i18n && comp._mjs_i18n[2] && comp._mjs_i18n[2].indexOf(section) !== -1) return false; // une section en plus : la sienne aussi
-  // </i18n-paquets-lecture>
+  // </i18n-packs-read>
   if (__i18nAsked[key]) return true;
   __i18nAsked[key] = true;
   __i18nAskedSections.add(section);
@@ -1335,7 +1347,7 @@ function __i18nLangReady(lang) {
 }
 function __i18nLoadLang(lang, strict) {
   if (!lang) { return Promise.resolve(null); }
-  if (__i18nLangReady(lang) && !(strict && __i18nEchecs[lang])) { return Promise.resolve(µ._i18nLangs[lang]); }
+  if (__i18nLangReady(lang) && !(strict && __i18nFailures[lang])) { return Promise.resolve(µ._i18nLangs[lang]); }
   if (__i18nLangPromises[lang]) { return __i18nLangPromises[lang]; }
   // le fichier propre de la langue : aucun pour une langue inconnue, jamais une adresse héritée
   var files = µ._i18nData.files;
@@ -1345,9 +1357,9 @@ function __i18nLoadLang(lang, strict) {
     µ._i18nLang(lang, null);
     p = Promise.resolve(µ._i18nLangs[lang]);
   } else {
-    var charger = (typeof µ._i18nImport === 'function') ? µ._i18nImport(url) : import(url);
-    if (µ._mjs_loading) { µ._mjs_loading(charger); }
-    p = Promise.resolve(charger).then(function(mod) {
+    var load = (typeof µ._i18nImport === 'function') ? µ._i18nImport(url) : import(url);
+    if (µ._mjs_loading) { µ._mjs_loading(load); }
+    p = Promise.resolve(load).then(function(mod) {
       µ._i18nLang(lang, (mod && mod.default) || mod);
       return µ._i18nLangs[lang];
     }, function(err) {
@@ -1355,21 +1367,21 @@ function __i18nLoadLang(lang, strict) {
       __i18nLabelReaders.delete(lang); // ses lecteurs ne l'attendent plus, même quand la bascule est annulée
       // l'échec dit, et ce que le défaut ne porte pas paraît en barres (marque posée APRÈS `_i18nLang`, qui l'efface) — rien
       // quand la page s'en va
-      var dire = function() {
+      var tell = function() {
         µ.error(µ._mjs_msg('i18nLoadLang', { lang: lang, url: url, reason: (err && err.message ? err.message : err) }, 'i18n : échec de chargement de la langue « {lang} » ({url}) — {reason}'));
-        if (!strict) { __i18nEchecs[lang] = true; }
+        if (!strict) { __i18nFailures[lang] = true; }
       };
-      if (strict) { __i18nFailed(err, dire); throw err; } // bascule annulée
+      if (strict) { __i18nFailed(err, tell); throw err; } // bascule annulée
       // langue vide : repli sur le défaut, jamais de gel. Départ annoncé (µ._mjs_leaveWait, mjs_init.ts) : le repli, et les fragments
       // de la langue par défaut qu'il demande, attendent comme le message — Safari refuse tout fichier demandé pendant que la page
       // s'en va, et l'écrit lui-même en console ; la page partie, rien ne part
-      var vide = function() {
+      var empty = function() {
         µ._i18nLang(lang, null);
-        __i18nFailed(err, dire);
+        __i18nFailed(err, tell);
         return µ._i18nLangs[lang];
       };
-      var reste = µ._mjs_leaveWait ? µ._mjs_leaveWait() : 0;
-      return reste > 0 ? new Promise(function(r) { setTimeout(r, reste); }).then(vide) : vide();
+      var rest = µ._mjs_leaveWait ? µ._mjs_leaveWait() : 0;
+      return rest > 0 ? new Promise(function(r) { setTimeout(r, rest); }).then(empty) : empty();
     });
   }
   __i18nLangPromises[lang] = p;
@@ -1400,9 +1412,9 @@ function __i18nBoot() {
   if (!__i18nLangReady(lang) || (defLang && defLang !== lang && !__i18nLangReady(defLang))) {
     if (!__i18nBootLoading) {
       __i18nBootLoading = true;
-      var attentes = [__i18nLoadLang(lang)];
-      if (defLang && defLang !== lang) { attentes.push(__i18nLoadLang(defLang)); }
-      Promise.all(attentes).then(function() { __i18nBootLoading = false; __i18nBoot(); });
+      var waits = [__i18nLoadLang(lang)];
+      if (defLang && defLang !== lang) { waits.push(__i18nLoadLang(defLang)); }
+      Promise.all(waits).then(function() { __i18nBootLoading = false; __i18nBoot(); });
     }
     return;
   }
@@ -1452,63 +1464,63 @@ function __i18nBoot() {
       var myGen = ++__i18nSwapGen;
       µ._mjs_i18nSwapPending = true;
       µ._mjs_i18nPrevLang = prevLang;
-      var demarrage = __i18nDemarrage;
-      __i18nDemarrage = false;
+      var startup = __i18nStartup;
+      __i18nStartup = false;
 
       // Sections à assurer : relevées TOUT DE SUITE (liste figée à l'instant de la
       // bascule, comme avant) ; leur chargement, lui, attend le FICHIER de la langue
       // cible — sans sa table, `_ensure` ne saurait même pas quel fragment demander.
       // Langue déjà chargée (retour vers une langue déjà vue) : promesse immédiate,
       // aucun aller-retour réseau.
-      var aAssurer = [];
+      var sectionsToEnsure = [];
       µ._mjs_i18nSectionComps.forEach(function(set, section) {
-        if (set.size > 0) { aAssurer.push(section); }
+        if (set.size > 0) { sectionsToEnsure.push(section); }
       });
       // sections lues sans déclaration (cf. __i18nAskSection) : assurées elles aussi dans la langue cible
       __i18nAskedSections.forEach(function(section) {
-        if (aAssurer.indexOf(section) === -1) { aAssurer.push(section); }
+        if (sectionsToEnsure.indexOf(section) === -1) { sectionsToEnsure.push(section); }
       });
       // au démarrage, la graine nomme ce que le serveur a lu, qu'un module déclare la section ou non (`µt('/extra.nom')`) : la page en a besoin dans la langue voulue
-      if (demarrage) {
-        __i18nSeedNoms.forEach(function(section) {
-          if (aAssurer.indexOf(section) === -1) { aAssurer.push(section); }
+      if (startup) {
+        __i18nSeedNames.forEach(function(section) {
+          if (sectionsToEnsure.indexOf(section) === -1) { sectionsToEnsure.push(section); }
         });
       }
-      var pret = __i18nLoadLang(newLang, !demarrage).then(function() {
+      var ready = __i18nLoadLang(newLang, !startup).then(function() {
         var toEnsure = [];
-        for (var i = 0; i < aAssurer.length; i++) {
-          var section = aAssurer[i];
+        for (var i = 0; i < sectionsToEnsure.length; i++) {
+          var section = sectionsToEnsure[i];
           var entry = µ._i18nCache.get(newLang + '/' + section);
           if (!entry || entry.data == null) { toEnsure.push(µ.i18n._ensure(newLang, section)); }
         }
         // au démarrage la bascule attend TOUS ses fragments, réussis ou en échec : le premier qui échoue (déjà signalé) ne la clôt pas pendant que les autres sont en vol
-        if (demarrage) { toEnsure = toEnsure.map(__i18nSansEchec); }
+        if (startup) { toEnsure = toEnsure.map(__i18nNoFailure); }
         return Promise.all(toEnsure);
       });
-      if (demarrage) {
+      if (startup) {
         // un module monté pendant l'attente (créé par un hôte, une minuterie) a sa section à assurer lui aussi avant la vague
-        var vues = {};
-        var rassurer = function() {
-          var reste = [];
+        var seen = {};
+        var reassure = function() {
+          var rest = [];
           µ._mjs_i18nSectionComps.forEach(function(set, section) {
-            if (set.size > 0 && !vues[section] && aAssurer.indexOf(section) === -1) { vues[section] = true; reste.push(µ.i18n._ensure(newLang, section)); }
+            if (set.size > 0 && !seen[section] && sectionsToEnsure.indexOf(section) === -1) { seen[section] = true; rest.push(µ.i18n._ensure(newLang, section)); }
           });
-          return reste.length ? Promise.all(reste.map(__i18nSansEchec)).then(rassurer) : null;
+          return rest.length ? Promise.all(rest.map(__i18nNoFailure)).then(reassure) : null;
         };
         // au démarrage la bascule va toujours au bout : un fragment qui échoue est attendu comme les autres (son module garde le texte de la langue par défaut), et rien ne revient en arrière
-        pret = pret.then(rassurer).then(null, function() {});
+        ready = ready.then(reassure).then(null, function() {});
       }
 
-      pret.then(function() {
+      ready.then(function() {
         if (myGen !== __i18nSwapGen) return; // bascule périmée, une plus récente a pris le relais
         µ._mjs_i18nSwapPending = false;
         µ._mjs_i18nPrevLang = null;
         __i18nDisplayedLang = newLang;
         // les modules gelés depuis le démarrage se rendent dans la langue voulue ; celle du démarrage ne se voit pas comme un changement : ni crochets
         // (`*lang`), ni mémoire de la langue, ni adresse (la page n'a rien demandé de plus que son adresse)
-        __i18nApres.splice(0).forEach(function(r) { r(); });
+        __i18nAfter.splice(0).forEach(function(r) { r(); });
         __i18nBootRewrite();
-        if (demarrage) {
+        if (startup) {
           µ._mjs_i18nComps.forEach(function(comp) { comp._mjs_invalidate('_awaits_'); });
           return;
         }
@@ -1552,14 +1564,14 @@ function __i18nBoot() {
   }
   // le guetteur de `µlang` que ce démarrage vient d'inscrire, le dernier du magasin (ceux de l'application, inscrits avant lui, ont déjà vu la langue
   // voulue) : la bascule du démarrage l'appelle tout droit, sans repasser par `µ._storeSet` qui la ferait voir une seconde fois aux autres
-  var guetteur = null;
-  var inscrits = typeof µ._mjs_storeWatch === 'function' && µ._mjs_storeWatchers && µ._mjs_storeWatchers.get('__mjsLang');
-  if (inscrits) { inscrits.forEach(function(f) { guetteur = f; }); }
+  var watcher  = null;
+  var enrolled = typeof µ._mjs_storeWatch === 'function' && µ._mjs_storeWatchers && µ._mjs_storeWatchers.get('__mjsLang');
+  if (enrolled) { enrolled.forEach(function(f) { watcher = f; }); }
   // page rendue dans une autre langue que la voulue : elle garde celle de la graine, la bascule du démarrage (celle du guetteur de `µlang`, déclenchée
   // plus bas, une fois les modules inscrits) la fait passer d'un coup quand les textes voulus sont là
-  var voulue = __i18nDisplayedLang;
-  var depart = !!__i18nSeedLang && !!voulue && voulue !== __i18nSeedLang && !!guetteur;
-  if (depart) { __i18nDisplayedLang = __i18nSeedLang; }
+  var wanted = __i18nDisplayedLang;
+  var start  = !!__i18nSeedLang && !!wanted && wanted !== __i18nSeedLang && !!watcher;
+  if (start) { __i18nDisplayedLang = __i18nSeedLang; }
   else { __i18nBootWriters.clear(); } // sans bascule du démarrage, la page garde la langue du serveur : ce qui s'y est écrit est déjà juste
   // Rejoue la VRAIE logique de montage pour chaque
   // composant mis en file AVANT ce boot (registre + `_ensure` + notification
@@ -1571,21 +1583,21 @@ function __i18nBoot() {
     µ._mjs_i18nPendingMounts = new Set();
     toMount.forEach(function(comp) {
       // un module gelé n'était pas dans la photo du serveur : il s'inscrit pour la langue voulue (ses fragments partent avec ceux de la bascule) et ne paraît qu'à la fin de celle-ci
-      var gele = depart && !!comp._mjs_i18nBootWaitResolve;
-      if (gele) { __i18nDisplayedLang = voulue; }
+      var frozen = start && !!comp._mjs_i18nBootWaitResolve;
+      if (frozen) { __i18nDisplayedLang = wanted; }
       var p = µ.i18n._mjs_mountReal(comp);
-      if (gele) {
+      if (frozen) {
         __i18nDisplayedLang = __i18nSeedLang;
-        p = new Promise(function(r) { __i18nApres.push(r); });
+        p = new Promise(function(r) { __i18nAfter.push(r); });
       }
       var resolve = comp._mjs_i18nBootWaitResolve;
       if (resolve) {
         comp._mjs_i18nBootWaitResolve = null;
         comp._mjs_i18nBootWaitPromise = null;
         // le config est connu depuis le démarrage seulement : l'indicateur d'un module monté avant lui paraît ici
-        // <i18n-loader-appel>
+        // <i18n-loader-call>
         if (p) { __i18nLoaderOn(comp); }
-        // </i18n-loader-appel>
+        // </i18n-loader-call>
         if (p) { p.then(resolve, function() { resolve(null); }); } else { resolve(null); }
       } else {
         // 'key'/'*skeleton' — ce composant s'est rendu EN PLACEHOLDER pendant l'attente du
@@ -1595,16 +1607,16 @@ function __i18nBoot() {
         // composant est EN VOL : l'arrivée du fragment le rendra (`_ensure`), un rendu de plus
         // ici n'afficherait que le même placeholder (3 rendus au lieu de 2 au montage à froid).
         var section = comp._mjs_i18n && comp._mjs_i18n[0];
-        var vol = section ? µ._i18nCache.get(__i18nEffectiveLang() + '/' + section) : null;
-        // <i18n-paquets-demarrage>
-        vol = __i18nPaquetsVol(comp, vol);
-        // </i18n-paquets-demarrage>
+        var inFlight = section ? µ._i18nCache.get(__i18nEffectiveLang() + '/' + section) : null;
+        // <i18n-packs-startup>
+        inFlight = __i18nPacksInFlight(comp, inFlight);
+        // </i18n-packs-startup>
         // rendu avec la graine dans la langue qui s'est confirmée, et rien n'a manqué : il est déjà juste
-        var graineSuffit = comp._mjs_i18nProv && comp._mjs_i18nProv === __i18nDisplayedLang && !comp._mjs_i18nRedo && !__i18nRedoAll;
-        if (!graineSuffit) {
+        var seedSuffices = comp._mjs_i18nProv && comp._mjs_i18nProv === __i18nDisplayedLang && !comp._mjs_i18nRedo && !__i18nRedoAll;
+        if (!seedSuffices) {
           // fragment en vol qui ÉCHOUE : personne ne préviendrait ce composant, ses autres textes (clé
           // racine, autre section) resteraient en attente — il est alors rendu à l'échec
-          if (vol && vol.data == null) { vol.promise.catch(function() { if (comp.isConnected) { comp._mjs_invalidate('_awaits_'); } }); }
+          if (inFlight && inFlight.data == null) { inFlight.promise.catch(function() { if (comp.isConnected) { comp._mjs_invalidate('_awaits_'); } }); }
           else { comp._mjs_invalidate('_awaits_'); }
         }
         comp._mjs_i18nProv = null;
@@ -1613,10 +1625,10 @@ function __i18nBoot() {
     });
     __i18nRedoAll = false;
   }
-  if (depart) {
+  if (start) {
     // le guetteur voit la langue de la graine passer à la voulue, comme à un clic sur `µlang`
-    __i18nDemarrage = true;
-    guetteur(voulue);
+    __i18nStartup = true;
+    watcher(wanted);
   }
 }
 __i18nBoot();
@@ -1628,3 +1640,242 @@ if (!µ._mjs_i18nBooted) { queueMicrotask(__i18nBoot); }
 // tête de `__i18nBoot`) — un appel de trop (double manifest exécuté, HMR) ne
 // fait rien de plus qu'un `return` immédiat.
 µ._i18nRecheck = __i18nBoot;
+// <code-names>
+// LE PROGRAMME QUI MONTRE LES NOMS DU CODE DE <@@code> DANS LA LANGUE DE LA PAGE (groupe `mjs.core.code` du dictionnaire de cette langue,
+// `panier: cart`, que le module lit lui-même, core-modules/code.mjs) : parcours du code projeté, noms, colonnes, retour au texte d'origine. Au
+// cœur hors production ; en production, le build l'écrit dans son propre fichier, à empreinte, seulement quand une unité emploie <@@code> (cf.
+// codeProgramSource et compileCodeProgram, bundler/index.ts), et le module le demande à la première langue qui a une table (`µ._codeUrl`) : rien
+// d'autre que le DOM n'y est lu : le fichier rend la fonction, que le module range lui-même (µ passé en valeur à un code que la construction
+// ne lit pas lui ferait garder tout le cœur).
+// `µ._codeNames(slot, names, shared)` (nom hors de l'espace `_mjs_` : en production, ce membre n'est pas au cœur, il arrive avec le fichier) : chaque texte projeté dans `slot` prend ses noms traduits (`names`), ou rend son texte d'origine
+// (`names` nul) s'il porte encore celui que le programme a écrit ; rend vrai quand un texte reste traduit. Le texte d'origine se garde par nœud,
+// jamais dans le DOM. `shared` : appel d'une bascule, où tous les blocs se traduisent dans le même tour sans rendu entre eux : l'ensemble des
+// textes dynamiques ne s'y bâtit qu'une fois
+var _mjsCodeKept = new WeakMap();
+var _mjsCodeTurn = null;
+
+// le tour : textes dynamiques connus (`live`), contenu montré des {await} (`whole`), composants déjà lus, nœuds déjà remontés ; gardé jusqu'à la
+// fin du tour d'une bascule (`shared`), neuf sinon
+function _mjsCodeTurnOf(shared) {
+  if (shared && _mjsCodeTurn) { return _mjsCodeTurn; }
+  var turn = { live: new Set(), whole: new Set(), owners: new Set(), seen: new Set() };
+  if (shared) {
+    _mjsCodeTurn = turn;
+    queueMicrotask(function() { _mjsCodeTurn = null; });
+  }
+  return turn;
+}
+
+// textes dynamiques du composant `c` : ses _mjs_nodes, ceux des lignes de ses {for} (`__nodes` d'une ligne : liste à clés, cache des listes ;
+// sans clé, `_mjs_rows` de son ordre) et, entier, le contenu montré de chacun de ses {await}, entre ses ancres : la valeur d'une branche y est
+// fondue dans le texte de la branche, rien ne l'en sépare
+function _mjsCodeOwn(turn, c) {
+  if (!c || turn.owners.has(c)) { return; }
+  turn.owners.add(c);
+  var add = function(o) { Object.values(o || {}).forEach(function(n) { turn.live.add(n); }); };
+  add(c._mjs_nodes);
+  Object.values(c._mjs_list_cache || {}).concat(Object.values(c._mjs_list_order || {}).map(function(keys) { return keys?._mjs_rows || []; })).forEach(function(rows) {
+    rows.forEach(function(row) { add(row?.__nodes); });
+  });
+  if (c._mjs_awaitMap instanceof Map) {
+    c._mjs_awaitMap.forEach(function(p, id) {
+      var end = c._mjs_nodes?.['e-' + id];
+      for (var n = end && c._mjs_nodes['s-' + id]?.nextSibling; n && n !== end; n = n.nextSibling) { turn.whole.add(n); }
+    });
+  }
+}
+
+// textes du code projeté dans l'ordre du texte, à toute profondeur, chacun [nœud, traduisible], et `true` / `false` à l'entrée et à la sortie
+// d'une ligne en <div> (éditeur du tuto). Un texte dynamique (rangé par le composant qui l'a écrit : l'hôte de sa racine, ou un ancêtre sans
+// ombre qui porte des _mjs_nodes) n'est pas traduisible ; un commentaire coloré, une chaîne colorée qui porte un blanc (texte d'interface), le
+// contenu d'un {{…}} (son porteur), un élément montré par un {await} et un élément `translate="no"` restent entiers, marqués non traduisibles
+function _mjsCodeTexts(slot, turn) {
+  var out  = [];
+  var live = function(n, el) {
+    for (var a = n.parentNode; a && !turn.seen.has(a); a = a.parentNode) {
+      turn.seen.add(a);
+      if (a._mjs_nodes) { _mjsCodeOwn(turn, a); }
+      if (a.nodeType !== 1) { _mjsCodeOwn(turn, a.host); }
+    }
+    return turn.whole.has(n) || (turn.live.has(n) && (!el || n._mjs_h != null));
+  };
+  var visit = function(n) {
+    if (n.nodeType === 3) { out.push([n, !live(n)]); }
+    else if (n.nodeType === 1) {
+      var cl = n.classList;
+      if (cl.contains('comment') || (cl.contains('string') && /\s/.test(n.textContent)) || n.getAttribute('translate') === 'no' || live(n, true)) { out.push([n, false]); }
+      else {
+        var line = n.tagName === 'DIV';
+        if (line) { out.push(true); }
+        n.childNodes.forEach(visit);
+        if (line) { out.push(false); }
+      }
+    }
+  };
+  slot.assignedNodes({ flatten: true }).forEach(visit);
+  return out;
+}
+
+// chaînes du texte nu d'une ligne (`m` : son texte, morceaux non traduisibles masqués) qui portent un blanc, [début, fin) ; une chaîne finit au
+// guillemet de même sorte non échappé de la ligne ; un commentaire (`#` en tête ou derrière un blanc, `//`) finit la recherche
+function _mjsCodeQuoted(m) {
+  var out = [];
+  for (var i = 0, j; i < m.length; i++) {
+    var c = m[i];
+    if ((c === '#' && (!i || /\s/.test(m[i - 1]))) || (c === '/' && m[i + 1] === '/')) { break; }
+    if (c !== '\'' && c !== '"' && c !== '`') { continue; }
+    for (j = i + 1; j < m.length && m[j] !== c; j++) { if (m[j] === '\\') { j++; } }
+    if (j >= m.length) { continue; }
+    if (/\s/.test(m.slice(i + 1, j))) { out.push([i, j + 1]); }
+    i = j;
+  }
+  return out;
+}
+
+// cible qui suit le blanc `s`..`f` de la ligne `o`, derrière un texte : 0 l'opérateur d'une affectation (`=`, `:=`, `+=`, `||=`, `?=`…, ni `==`,
+// `!=`, `<=`, `>=`, `=>`), 2 la valeur d'une clé (`poids:  3`, `$fond:    #000`), 1 un commentaire de fin de ligne (deux espaces au moins
+// devant) ; -1 aucune
+function _mjsCodeTarget(o, s, f) {
+  if (!o[f] || !o.slice(0, s).trim()) { return -1; }
+  var next = o.slice(f, f + 5);
+  if (/^(?:\|\||&&|\?\?|\*\*|<<|>>>?|[-+*\/%&|^?:])?=(?![=>])/.test(next)) { return 0; }
+  if (/[\p{L}\p{Nd}_$'"]:$/u.test(o.slice(0, s))) { return 2; }
+  if (f - s >= 2 && /^(#|\/\/)/.test(next)) { return 1; }
+  return -1;
+}
+
+// longueur nouvelle de chaque blanc d'une ligne (`l.n`) : celui d'un groupe va à sa colonne (`want`) ; sinon un blanc d'au moins deux espaces
+// rattrape l'écart que les noms traduits ont laissé avant lui, une espace au moins. Avec `stop` : position traduite du début de ce blanc
+function _mjsCodeWalk(l, stop) {
+  var shift = 0, pos = 0;
+  l.n = [];
+  l.ev.some(function(e, j) {
+    var len = e.f - e.s;
+    if (j === stop) { pos = e.s + shift; }
+    else if (e.to != null) { shift += e.to.length - len; }
+    else {
+      l.n[j] = e.want ? Math.max(1, e.want - e.s - shift) : len >= 2 ? Math.max(1, len - shift) : len;
+      shift += l.n[j] - len;
+    }
+    return j === stop;
+  });
+  return pos;
+}
+
+// nouveau texte de chaque nœud traduisible de `texts` (textes d'origine `origs`), noms traduits par `names`, ligne par ligne. Restent tels quels
+// une chaîne du texte nu qui porte un blanc et les blancs d'une ligne dont un blanc derrière du texte porte une tabulation. Des lignes voisines dont une même cible (_mjsCodeTarget)
+// commence à la même colonne d'origine forment un groupe (deux lignes au moins ; pour une valeur de clé, l'une à deux espaces au moins) : la
+// cible de chacune se pose au plus long texte traduit qui la précède, plus le plus petit écart d'origine du groupe, lignes sans nom traduit
+// comprises. Le groupe prime sur la ligne ; les groupes se règlent de la colonne la plus à gauche à la plus à droite
+function _mjsCodeLayout(texts, origs, names) {
+  var lines = [], line = null, open = false;
+  var keep  = function(force) {
+    if (line && (force || line.o)) { lines.push(line); }
+    line = { o: '', m: '', p: [], ev: [], t: [] };
+  };
+  keep();
+  texts.forEach(function(t, i) {
+    if (typeof t === 'boolean') {
+      keep(open && !t);
+      open = t;
+      return;
+    }
+    origs[i].split('\n').forEach(function(part, k) {
+      if (k) { keep(true); }
+      line.p.push([i, line.o.length, part, t[1]]);
+      line.o += part;
+      line.m += t[1] ? part : '\0'.repeat(part.length);
+    });
+  });
+  keep(true);
+  // événements de chaque ligne, à l'ordre du texte : un nom traduit { s, f, to }, une suite d'espaces { s, f } (soudée à celle qui finit au bord
+  // du morceau d'avant) ; puis la première cible de chaque type, aucune derrière un commentaire
+  lines.forEach(function(l) {
+    var frozen = _mjsCodeQuoted(l.m);
+    for (var w of l.o.matchAll(/[ \t]+/g)) { if (w[0].includes('\t')) { frozen.push([w.index, w.index + w[0].length]); } }
+    // une tabulation dans un blanc derrière du texte : la ligne garde tous ses blancs, seuls ses noms changent (une tabulation d'indentation ne compte pas)
+    var tab = /\S[ \t]*\t/.test(l.m);
+    l.p.forEach(function(p) {
+      if (!p[3]) { return; }
+      for (var m of p[2].matchAll(/ +|[\p{L}\p{Nd}_]+/gu)) {
+        var a = p[1] + m.index, b = a + m[0].length, last = l.ev[l.ev.length - 1];
+        if (frozen.some(function(r) { return r[0] <= a && b <= r[1]; })) { continue; }
+        if (m[0][0] === ' ') {
+          if (tab) { continue; }
+          if (last && last.to == null && last.f === a) { last.f = b; }
+          else { l.ev.push({ s: a, f: b }); }
+        }
+        else if (typeof names[m[0]] === 'string' && !/^\p{Nd}/u.test(m[0])) { l.ev.push({ s: a, f: b, to: names[m[0]] }); }
+      }
+    });
+    l.ev.forEach(function(e, j) {
+      if (e.to != null || l.t[1] != null) { return; }
+      var kind = _mjsCodeTarget(l.o, e.s, e.f);
+      if (kind >= 0) { l.t[kind] ??= j; }
+    });
+  });
+  var groups = [];
+  [0, 1, 2].forEach(function(kind) {
+    var group = null;
+    lines.forEach(function(l, k) {
+      var f = l.t[kind] != null ? l.ev[l.t[kind]].f : -1;
+      if (group && f >= 0 && f === group.f) { group.m.push(k); }
+      else {
+        group = null;
+        if (f >= 0) {
+          group = { kind: kind, f: f, m: [k] };
+          groups.push(group);
+        }
+      }
+    });
+  });
+  var run = function(k, g) { return lines[k].ev[lines[k].t[g.kind]]; };
+  groups.filter(function(g) { return g.m.length > 1 && (g.kind !== 2 || g.m.some(function(k) { return run(k, g).f - run(k, g).s >= 2; })); }).sort(function(a, b) { return a.f - b.f; }).forEach(function(g) {
+    var at  = g.m.map(function(k) { return _mjsCodeWalk(lines[k], lines[k].t[g.kind]); });
+    var col = Math.max.apply(null, at) + Math.min.apply(null, g.m.map(function(k) { return run(k, g).f - run(k, g).s; }));
+    g.m.forEach(function(k) { run(k, g).want = col; });
+  });
+  // texte de chaque morceau : noms traduits, suites d'espaces à leur longueur nouvelle (une suite soudée sur deux nœuds va au premier, telle
+  // quelle si sa longueur ne change pas)
+  var news = [];
+  lines.forEach(function(l) {
+    _mjsCodeWalk(l);
+    l.p.forEach(function(p) {
+      if (!p[3]) { return; }
+      var at = p[1], s = p[2], end = at + s.length, text = '', cur = at;
+      l.ev.forEach(function(e, j) {
+        if (e.f <= at || e.s >= end) { return; }
+        var head = Math.max(e.s, at);
+        text += s.slice(cur - at, head - at);
+        text += e.to != null ? e.to : l.n[j] === e.f - e.s ? s.slice(head - at, Math.min(e.f, end) - at) : e.s >= at ? ' '.repeat(l.n[j]) : '';
+        cur   = Math.min(e.f, end);
+      });
+      (news[p[0]] ||= []).push(text + s.slice(cur - at));
+    });
+  });
+  return news.map(function(parts) { return parts.join('\n'); });
+}
+
+function _mjsCodeNames(slot, names, shared) {
+  var dirty = false;
+  var texts = _mjsCodeTexts(slot, _mjsCodeTurnOf(shared));
+  var origs = texts.map(function(t) {
+    if (typeof t === 'boolean') { return ''; }
+    var was = t[1] && _mjsCodeKept.get(t[0]);
+    return was && was[1] === t[0].data ? was[0] : t[0].textContent;
+  });
+  var news = names ? _mjsCodeLayout(texts, origs, names) : [];
+  texts.forEach(function(t, i) {
+    if (typeof t === 'boolean' || !t[1]) { return; }
+    var text = news[i] ?? origs[i];
+    if (text === origs[i]) { _mjsCodeKept.delete(t[0]); }
+    else {
+      _mjsCodeKept.set(t[0], [origs[i], text]);
+      dirty = true;
+    }
+    if (t[0].data !== text) { t[0].data = text; }
+  });
+  return dirty;
+}
+µ._codeNames = _mjsCodeNames;
+// </code-names>

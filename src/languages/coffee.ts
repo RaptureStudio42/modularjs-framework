@@ -31,9 +31,9 @@ export const coffeeAdapter: LanguageAdapter = {
       if (err && err.location && typeof err.location.first_line === 'number') {
         const line   = err.location.first_line + 1
         const col    = (err.location.first_column ?? 0) + 1
-        const brut   = String(err.toString?.() ?? '').split('\n')
-        const detail = brut.slice(1).join('\n')  // ligne source + caret, fournis par CoffeeScript
-        err.message = `${fileName}:${line}:${col}: ${err.message}` + (detail ? `\n${detail}` : '')
+        const raw    = String(err.toString?.() ?? '').split('\n')
+        const detail = raw.slice(1).join('\n')  // ligne source + caret, fournis par CoffeeScript
+        err.message  = `${fileName}:${line}:${col}: ${err.message}` + (detail ? `\n${detail}` : '')
       }
       throw err
     }

@@ -1,4 +1,4 @@
-// `_mjajaxMemeOrigine` (mjs_ajax.ts) résolvait
+// `_mjajaxSameOrigin` (mjs_ajax.ts) résolvait
 // une URL relative contre `location.href`, alors que `fetch()` la résout RÉELLEMENT contre
 // `document.baseURI` (spec WHATWG « API base URL »). Avec un `<base href>` vers un tiers, la
 // fonction répondait « même origine » alors que la requête partait ailleurs — fuite du jeton CSRF.
@@ -41,20 +41,20 @@ async function postAndCapture(window: any, requestUrl: string) {
   return { url: seenUrl, headers: seenHeaders }
 }
 
-describe('mjs_ajax — _mjajaxMemeOrigine résout comme fetch() (document.baseURI, pas location.href)', function () {
+describe('mjs_ajax — _mjajaxSameOrigin résout comme fetch() (document.baseURI, pas location.href)', function () {
 
-  it('<base href> cross-origin posé : _mjajaxMemeOrigine juge FAUX une URL relative (AVANT le fix : VRAI)', function () {
+  it('<base href> cross-origin posé : _mjajaxSameOrigin juge FAUX une URL relative (AVANT le fix : VRAI)', function () {
     const window = mount('http://app.example/page', 'http://tiers.example.invalid/')
     window.eval(AJAX_SRC)
     assert.equal(window.document.baseURI, 'http://tiers.example.invalid/', 'happy-dom simule bien document.baseURI sous <base href>')
-    assert.equal(window._mjajaxMemeOrigine('/api/data'), false, 'AVANT le fix : résolue via location.href, jugée « même origine » à tort')
+    assert.equal(window._mjajaxSameOrigin('/api/data'), false, 'AVANT le fix : résolue via location.href, jugée « même origine » à tort')
     window.close()
   })
 
-  it('sans <base> : _mjajaxMemeOrigine inchangée, VRAI sur une URL relative (repli sur location.href)', function () {
+  it('sans <base> : _mjajaxSameOrigin inchangée, VRAI sur une URL relative (repli sur location.href)', function () {
     const window = mount('http://app.example/page', null)
     window.eval(AJAX_SRC)
-    assert.equal(window._mjajaxMemeOrigine('/api/data'), true)
+    assert.equal(window._mjajaxSameOrigin('/api/data'), true)
     window.close()
   })
 

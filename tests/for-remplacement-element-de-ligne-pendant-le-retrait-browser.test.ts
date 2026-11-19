@@ -13,7 +13,7 @@ const ligne = (lbl: string) => `<section class="row"><input class="f" aria-label
 const script = `<script lang="coffee">
   $rows = [ { id: 1, label: 'A' }, { id: 2, label: 'B' }, { id: 3, label: 'C' } ]
   $suffixe = ''
-  noter = (r) -> window.__vu.push(if Array.isArray(r) then 'tableau' else if r? and r.label? then r.label else 'autre')
+  noter = (r) -> window.__seenMark.push(if Array.isArray(r) then 'tableau' else if r? and r.label? then r.label else 'autre')
   @tout = -> $rows = [ { id: 4, label: 'D' }, { id: 5, label: 'E' }, { id: 6, label: 'F' } ]
   @partiel = -> $rows = [ $rows[0], { id: 7, label: 'G' }, $rows[2] ]
 </script>`
@@ -50,12 +50,12 @@ for (const moteur of ['chromium', 'firefox', 'webkit'] as const) describe(`{for}
       try {
         await o.page.waitForFunction(`document.querySelector('${balise}')?._shadow?.querySelectorAll('section.row').length === 3`, null, { timeout: 10000 })
         const vu = await o.page.evaluate(`(async () => {
-          window.__vu = []
+          window.__seenMark = []
           const h = document.querySelector('${balise}'), sh = h._shadow
           sh.querySelectorAll('input.f')[1].focus()
           h.${geste}()
           await new Promise((r) => setTimeout(r, 150))
-          return { lignes: [...sh.querySelectorAll('.lbl')].map((s) => s.textContent).join(','), vu: window.__vu }
+          return { lignes: [...sh.querySelectorAll('.lbl')].map((s) => s.textContent).join(','), vu: window.__seenMark }
         })()`)
         assert.equal(vu.lignes, geste === 'tout' ? 'D,E,F' : 'A,G,C', 'liste remplacée')
         assert.ok(vu.vu.every((x: string) => x === 'B'), `le gestionnaire parti pendant le retrait lit l'élément de sa ligne : ${JSON.stringify(vu.vu)}`)

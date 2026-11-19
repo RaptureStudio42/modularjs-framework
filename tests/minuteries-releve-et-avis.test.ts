@@ -16,7 +16,7 @@ import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync } from 
 import { join, dirname } from 'node:path'
 import { Window } from 'happy-dom'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
-import { scanJsMinuteries, EVERY_ID, EVERY_PAGE } from '../src/bundler/features.js'
+import { scanJsTimers, EVERY_ID, EVERY_PAGE } from '../src/bundler/features.js'
 import { mjsTmp } from './helpers/tmp.js'
 
 // le code des noms : un registre qui a porté une minuterie nommée prend un `delete` qui libère le nom
@@ -525,7 +525,7 @@ describe('µafter / µevery — seules les formes sûres laissent la page et les
 
   it('fichier `.js` lu en script : µ écrit dans un texte en octal (hors mode strict), en hexadécimal ou par un échappement Unicode, sans autre µ ni appel de code — la page, les noms et le module entrent', () => {
     for (const forme of ['265', 'xb5', 'xB5', 'u{b5}', 'u{000B5}', 'u00B5']) {
-      const releve = scanJsMinuteries(`window['${BS}${forme}'].after(30, { id: 'x' }, function () {})\n`)
+      const releve = scanJsTimers(`window['${BS}${forme}'].after(30, { id: 'x' }, function () {})\n`)
       assert.ok(releve.includes('every') && releve.includes(EVERY_PAGE) && releve.includes(EVERY_ID), `${forme} : ${JSON.stringify(releve)}`)
     }
   })

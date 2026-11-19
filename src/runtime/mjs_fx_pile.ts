@@ -154,8 +154,8 @@
         judged = true;
         var cs = p ? getComputedStyle(p) : null;
         broken = !!p && !(/(auto|scroll)/.test(cs.overflowY || '') && p.scrollHeight > p.clientHeight + 1);
-        if (!broken || el._mjs_fxPileWarn) return;
-        el._mjs_fxPileWarn = true;
+        if (!broken || el._mjs_fxStackWarn) return;
+        el._mjs_fxStackWarn = true;
         µ.warn(µ._mjs_msg('pileOverflow', { tag: p.localName || '' }, '*pile : <{tag}> a un « overflow » (hidden, auto…) mais ne défile pas : les panneaux ne peuvent plus se coller (position: sticky). Retirez-le, ou remplacez-le par « overflow: clip ».'));
       };
       // le rapport entre l'écran et la mise en page d'une boîte (un `zoom` CSS, une échelle) : sa taille de mise en page est un entier (`offset*`, à un pixel près selon
@@ -168,8 +168,8 @@
       };
       // l'attribut style qu'on a fait naître sur un panneau (il n'en avait pas) et vidé repart avec nous
       var tidy = function(c) {
-        if (c._mjs_fxPileHad === false && µ._mjs_dom.getAttribute(c, 'style') === '') µ._mjs_dom.removeAttribute(c, 'style');
-        c._mjs_fxPileHad = void 0;
+        if (c._mjs_fxStackHad === false && µ._mjs_dom.getAttribute(c, 'style') === '') µ._mjs_dom.removeAttribute(c, 'style');
+        c._mjs_fxStackHad = void 0;
       };
 
       // toute la mise en page lue, ici et jamais dans l'image d'animation : la zone visible et son défilement, ce qui borne les panneaux
@@ -256,7 +256,7 @@
         var keptScale = [];
         for (var k = 0; k < now.length; k++) {
           var at = items.indexOf(now[k]);
-          if (at < 0) now[k]._mjs_fxPileHad = µ._mjs_dom.hasAttribute(now[k], 'style');
+          if (at < 0) now[k]._mjs_fxStackHad = µ._mjs_dom.hasAttribute(now[k], 'style');
           keptDepth[k] = at >= 0 ? depth[at] : NaN;
           keptScale[k] = at >= 0 ? sc[at] : 1;
         }
@@ -479,7 +479,7 @@
           tidy(items[i]);
         }
         ['origin', 'dim', 'blur', 'radius', 'moving'].forEach(function(k) { flag(k, false); });
-        el._mjs_fxPileWarn = false;
+        el._mjs_fxStackWarn = false;
       };
       // tous les réglages se suivent sur place : une variable CSS (le moteur) et, ici, ce que le calcul en lit
       off.set = function(k, v) {

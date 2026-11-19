@@ -91,7 +91,7 @@ describe('types — plus d\'accolades dans les règles : un objet en retrait, un
   it('aucun message ne montre une règle entre accolades : texte des règles, textes du développement, magasins, catalogues fr et en', () => {
     const defs: Record<string, any> = {}
     for (const e of parseTypesBlock(VARS(['Item', '  id  int 1..', '  meta', '    tags = []  string[]', 'Items  Item[] ..10']), 1)) defs[e.name] = e.rule
-    const ou = { bloc: '<vars>', ligne: 1 }
+    const ou = { block: '<vars>', line: 1 }
     for (const usage of ['Item', 'Item[]', 'Item | null', 'Items']) {
       const r = resolveRule(parseRule(usage, ou), defs, ou)
       for (const opts of [{}, { names: true }, { sorted: true }]) assert.doesNotMatch(storeRuleShown(ruleText(r, opts)), /[{}]/, usage)

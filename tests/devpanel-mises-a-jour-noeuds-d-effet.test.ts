@@ -72,8 +72,8 @@ describe('mjs_devpanel — « mises à jour » et les nœuds que les effets pose
     const comp = window.document.querySelector('mjs-majfx-carte')
     await attendre(() => !!comp._shadow?.querySelector('.t'))
     window.µ.console(true)
-    await attendre(() => !!racine()?.querySelector('[data-action="maj"]'))
-    if (racine().querySelector('[data-action="maj"]').getAttribute('aria-pressed') !== 'true') clic(racine().querySelector('[data-action="maj"]'))
+    await attendre(() => !!racine()?.querySelector('[data-action="updates"]'))
+    if (racine().querySelector('[data-action="updates"]').getAttribute('aria-pressed') !== 'true') clic(racine().querySelector('[data-action="updates"]'))
     await pause(120)
     eclairs.length = 0
     return comp
@@ -81,7 +81,7 @@ describe('mjs_devpanel — « mises à jour » et les nœuds que les effets pose
 
   afterEach(() => {
     if (!window?.µ?.console) return
-    if (racine()?.querySelector('[data-action="maj"][aria-pressed="true"]')) clic(racine().querySelector('[data-action="maj"]'))
+    if (racine()?.querySelector('[data-action="updates"][aria-pressed="true"]')) clic(racine().querySelector('[data-action="updates"]'))
     window.µ.console(false)
   })
 

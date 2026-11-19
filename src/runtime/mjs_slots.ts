@@ -22,11 +22,11 @@ if (µ.Element) {
   µ.Element.prototype._mjs_injectSlots = function() {
     var byDefault, indexed, named, i, kids, node, own, childIndex;
     if (!this._mjs_has_dynamic_slots || this._mjs_slotsFixed || this._mjs_isLight) return;
-    // <props-enfants>
+    // <child-props>
     // contenu retenu hors de l'ombre jusqu'à la reprise des props (`_mjs_kf`, mjs_element.ts) : aucun slot à y voir encore, le
     // rangement se décide à son entrée
     if (this._mjs_kf) return;
-    // </props-enfants>
+    // </child-props>
     byDefault = !!this._shadow.querySelector('slot:not([name])');
     // slot par défaut vu avant tout rendu, donc hors de tout bloc : il ne partira plus
     if (byDefault && !this._mjs_slotsRendered) {

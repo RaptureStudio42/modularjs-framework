@@ -27,33 +27,33 @@
 // son `WorkingDirectory` — c'est-à-dire dans la racine de l'application — à CHAQUE gel. `LimitCORE=0`
 // et le noyau n'écrit rien du tout (les deux sens mesurés).
 
-import { spawn as spawnReel } from 'node:child_process'
+import { spawn as spawnReal } from 'node:child_process'
 import type { MjsWsLogFn } from './core.js'
 import { t } from '../messages/index.js'
 
 /** ce que les tests injectent à la place du vrai monde — jamais renseigné en production. */
 export interface MjsWsWatchdogDeps {
-  spawn?:   typeof spawnReel
-  env?:     NodeJS.ProcessEnv
-  pid?:     number
-  quitter?: (code: number) => void
+  spawn?: typeof spawnReal
+  env?:   NodeJS.ProcessEnv
+  pid?:   number
+  exit?:  (code: number) => void
 }
 
 export interface MjsWsWatchdogHandle { stop(): void }
 
-const NOTIFIER = 'systemd-notify'
+const NOTIFY_COMMAND = 'systemd-notify'
 // sous ce battement (une fenêtre de moins de 200 ms), un avertissement : presque aucune marge, et un `systemd-notify` lancé
 // au moins dix fois par seconde
-const BATTEMENT_COURT_MS = 100
+const SHORT_BEAT_MS = 100
 
 /** arme le battement, ou rend `null` quand personne ne le réclame (poste de développement, unité sans
  *  `WatchdogSec`) — l'appelant n'a rien à tester, `null` veut dire « il n'y avait rien à faire ». */
 export function armWatchdog(log: MjsWsLogFn, deps: MjsWsWatchdogDeps = {}): MjsWsWatchdogHandle | null
 {
-  const spawn   = deps.spawn   ?? spawnReel
-  const env     = deps.env     ?? process.env
-  const pid     = deps.pid     ?? process.pid
-  const quitter = deps.quitter ?? ((code: number) => process.exit(code))
+  const spawn = deps.spawn ?? spawnReal
+  const env   = deps.env   ?? process.env
+  const pid   = deps.pid   ?? process.pid
+  const exit  = deps.exit  ?? ((code: number) => process.exit(code))
 
   const usec = Number.parseInt(env.WATCHDOG_USEC || '0', 10)
   if (!Number.isFinite(usec) || usec <= 0) return null
@@ -65,35 +65,35 @@ export function armWatchdog(log: MjsWsLogFn, deps: MjsWsWatchdogDeps = {}): MjsW
   // la moitié de la fenêtre, quelle qu'elle soit, et jamais plus : c'est la marge que recommande systemd, et elle laisse
   // passer un ralentissement sans réveiller le chien. Un plancher plus haut que la moitié ferait battre un service réglé
   // court moins souvent que sa fenêtre : systemd le tuerait à coup sûr. Une fenêtre courte est seulement signalée
-  const periode = Math.max(1, Math.floor(usec / 2000))
-  let vivant    = true
+  const period = Math.max(1, Math.floor(usec / 2000))
+  let live     = true
 
   // LE PREMIER BATTEMENT EST VÉRIFIÉ, LES SUIVANTS NON, ET C'EST DÉLIBÉRÉ. Si `systemd-notify` est
   // introuvable ou refusé, le service serait tué toutes les `WatchdogSec` secondes sans qu'une seule
   // ligne ne dise pourquoi — la panne muette exacte qu'il s'agit d'empêcher ici. On échoue
   // donc TOUT DE SUITE, en nommant la cause : un démarrage qui s'arrête net est lisible, un service
   // abattu en boucle ne l'est pas. Ensuite, un échec ponctuel ne prouve rien et le chien tranchera.
-  function battre(premier: boolean): void {
-    const enfant = spawn(NOTIFIER, ['WATCHDOG=1'], { stdio: 'ignore' })
-    enfant.on('error', (err: Error) => { if (premier) echouer(t('ws.watchdog.notifier-introuvable', { notifier: NOTIFIER }), err) })
-    enfant.on('exit', (code: number | null) => { if (premier && code !== 0) echouer(t('ws.watchdog.notifier-refuse', { notifier: NOTIFIER, code: String(code) })) })
+  function beat(first: boolean): void {
+    const child = spawn(NOTIFY_COMMAND, ['WATCHDOG=1'], { stdio: 'ignore' })
+    child.on('error', (err: Error) => { if (first) fail(t('ws.watchdog.notifier-not-found', { notifier: NOTIFY_COMMAND }), err) })
+    child.on('exit', (code: number | null) => { if (first && code !== 0) fail(t('ws.watchdog.notifier-refused', { notifier: NOTIFY_COMMAND, code: String(code) })) })
   }
 
-  function echouer(message: string, err?: Error): void {
-    if (!vivant) return
-    vivant = false
-    clearInterval(minuterie)
+  function fail(message: string, err?: Error): void {
+    if (!live) return
+    live = false
+    clearInterval(timer)
     log('error', message, err)
-    quitter(1)
+    exit(1)
   }
 
-  battre(true)
-  const minuterie = setInterval(() => battre(false), periode)
+  beat(true)
+  const timer = setInterval(() => beat(false), period)
   // `unref` : le battement ne doit pas EMPÊCHER le process de finir. C'est l'écoute du transport qui
   // tient la boucle en vie — même choix que l'éviction périodique des salons.
-  minuterie.unref()
-  log('info', t('ws.watchdog.arme', { periode: String(periode), fenetre: String(Math.floor(usec / 1000)) }))
-  if (periode < BATTEMENT_COURT_MS) log('warn', t('ws.watchdog.fenetre-trop-courte', { periode: String(periode), fenetre: String(Math.floor(usec / 1000)) }))
+  timer.unref()
+  log('info', t('ws.watchdog.armed', { period: String(period), window: String(Math.floor(usec / 1000)) }))
+  if (period < SHORT_BEAT_MS) log('warn', t('ws.watchdog.window-too-short', { period: String(period), window: String(Math.floor(usec / 1000)) }))
 
-  return { stop() { vivant = false; clearInterval(minuterie) } }
+  return { stop() { live = false; clearInterval(timer) } }
 }

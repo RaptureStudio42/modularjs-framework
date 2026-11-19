@@ -1,6 +1,6 @@
 <script>
 KIND_LABELS := { module: ⟪theme.kind-module⟫, theme: ⟪theme.kind-theme⟫, framework: ⟪theme.kind-framework⟫, stylesheet: ⟪theme.kind-stylesheet⟫ }
-ORDRE_KIND  := { theme: 0, module: 1, stylesheet: 2, framework: 3 }
+KIND_ORDER  := { theme: 0, module: 1, stylesheet: 2, framework: 3 }
 
 formatKind = (k) -> KIND_LABELS[k] ?? k
 
@@ -8,34 +8,35 @@ COLOR_RE := new RegExp('^#|^rgb\\(|^hsl\\(|^oklch\\(|^color\\(', 'i')
 
 looksLikeColor = (v) -> COLOR_RE.test(v)
 
-MOTIFS := {
-  introuvable:        ⟪theme.motif-introuvable⟫
-  ambigu:             ⟪theme.motif-ambigu⟫
-  inchange:           ⟪theme.motif-inchange⟫
-  'hors-projet':      ⟪theme.motif-hors-projet⟫
-  'racine-inconnue':  ⟪theme.motif-racine-inconnue⟫
-  'valeur-refusee':   ⟪theme.motif-valeur-refusee⟫
-  'nom-refuse':       ⟪theme.motif-nom-refuse⟫
-  'fichier-manquant': ⟪theme.motif-fichier-manquant⟫
+REASONS := {
+  'not-found':          ⟪theme.pattern-not-found⟫
+  ambiguous:            ⟪theme.pattern-ambiguous⟫
+  unchanged:            ⟪theme.pattern-unchanged⟫
+  'outside-project':    ⟪theme.pattern-outside-project⟫
+  'local-machine-only': ⟪theme.pattern-machine-only⟫
+  'unknown-root':       ⟪theme.pattern-root-unknown⟫
+  'value-rejected':     ⟪theme.pattern-value-refused⟫
+  'name-rejected':      ⟪theme.pattern-name-refused⟫
+  'missing-file':       ⟪theme.pattern-file-missing⟫
 }
 
-LANGUE := ⟪#langue⟫
+LANG := ⟪#lang⟫
 
-COMPTES := {
-  source: [⟪theme.compte-source-1⟫, ⟪theme.compte-source-n⟫]
-  variable: [⟪theme.compte-variable-1⟫, ⟪theme.compte-variable-n⟫]
-  declaration: [⟪theme.compte-declaration-1⟫, ⟪theme.compte-declaration-n⟫]
-  defaut: [⟪theme.compte-defaut-1⟫, ⟪theme.compte-defaut-n⟫]
-  posee: [⟪theme.compte-posee-1⟫, ⟪theme.compte-posee-n⟫]
-  lue: [⟪theme.compte-lue-1⟫, ⟪theme.compte-lue-n⟫]
-  direct: [⟪theme.compte-direct-1⟫, ⟪theme.compte-direct-n⟫]
-  retablir: [⟪theme.compte-retablir-1⟫, ⟪theme.compte-retablir-n⟫]
-  lecteur: [⟪theme.compte-lecteur-1⟫, ⟪theme.compte-lecteur-n⟫]
+COUNTS := {
+  source: [⟪theme.count-source-1⟫, ⟪theme.count-source-n⟫]
+  variable: [⟪theme.count-variable-1⟫, ⟪theme.count-variable-n⟫]
+  declaration: [⟪theme.count-declaration-1⟫, ⟪theme.count-declaration-n⟫]
+  fallback: [⟪theme.count-default-1⟫, ⟪theme.count-default-n⟫]
+  set: [⟪theme.count-set-1⟫, ⟪theme.count-set-n⟫]
+  read: [⟪theme.count-read-1⟫, ⟪theme.count-read-n⟫]
+  direct: [⟪theme.count-direct-1⟫, ⟪theme.count-direct-n⟫]
+  restore: [⟪theme.count-restore-1⟫, ⟪theme.count-restore-n⟫]
+  reader: [⟪theme.count-reader-1⟫, ⟪theme.count-reader-n⟫]
 }
 
-pluriel = (n) -> LANGUE == 'en' ? n != 1 : n > 1
+plural = (n) -> LANG == 'en' ? n != 1 : n > 1
 
-compte = (n, cle) -> COMPTES[cle][pluriel(n) ? 1 : 0].replace('{n}', String(n))
+count = (n, key) -> COUNTS[key][plural(n) ? 1 : 0].replace('{n}', String(n))
 
 $vars     = []
 $query    = ''
@@ -45,65 +46,65 @@ $live     = false
 $clients  = 0
 $edits    = {}
 $write    = false
-$etats    = {}
-$ouverts  = {}
+$states    = {}
+$opened  = {}
 
-versHex = (v) ->
+toHex = (v) ->
   s := (v ?? '').trim()
-  court := s.match(/^#([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])$/)
-  return '#' + court[1] + court[1] + court[2] + court[2] + court[3] + court[3] if court
+  short := s.match(/^#([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])$/)
+  return '#' + short[1] + short[1] + short[2] + short[2] + short[3] + short[3] if short
   long := s.match(/^#([0-9A-Fa-f]{6})(?:[0-9A-Fa-f]{2})?$/)
   return '#' + long[1].toLowerCase() if long
-  canaux := s.match(/^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/)
-  return '' unless canaux
-  '#' + [1, 2, 3].map((i) -> Math.min(255, +canaux[i]).toString(16).padStart(2, '0')).join('')
+  channels := s.match(/^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/)
+  return '' unless channels
+  '#' + [1, 2, 3].map((i) -> Math.min(255, +channels[i]).toString(16).padStart(2, '0')).join('')
 
-envoyer = (name, value) ->
+send = (name, value) ->
   fetch('/__mjs/theme/edit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vars: { [name]: value } }) }).then((r) -> r.json()).then((d) -> $clients = d.clients).catch((err) -> µ.error(err))
 
 cmp = (x, y) -> x < y ? -1 : x > y ? 1 : 0
 
-ecrivable = (d) -> d.kind != 'framework' and not d.read and not d.set
+writable = (d) -> d.kind != 'framework' and not d.read and not d.set
 
-cleSource = (d) -> [d.kind, d.declaredBy, d.file, d.variant ?? '', d.set ? 'posee' : d.read ? 'lue' : ''].join('::')
+sourceKey = (d) -> [d.kind, d.declaredBy, d.file, d.variant ?? '', d.set ? 'set' : d.read ? 'read' : ''].join('::')
 
-rangGroupe = (g) -> g.posee ? 2 : g.lue ? 1 : 0
+groupRank = (g) -> g.set ? 2 : g.read ? 1 : 0
 
-grouper = (vars) ->
+buildGroups = (vars) ->
   index := new Map()
   vars.forEach (themeVar) ->
-    themeVar.declarations.forEach (d, rang) ->
-      cle := cleSource(d)
-      groupe := index.get(cle) ?? { cle, kind: d.kind, declaredBy: d.declaredBy, file: d.file, variant: d.variant ?? '', lue: !!d.read and not d.set, posee: !!d.set, lignes: [] }
-      groupe.lignes.push({ cle: cle + '::' + themeVar.name + '::' + rang, name: themeVar.name, decl: d, readBy: themeVar.readBy, autres: themeVar.declarations.filter((x) -> x != d and not x.read) })
-      index.set(cle, groupe)
-  [...index.values()].sort((a, b) -> ((ORDRE_KIND[a.kind] ?? 9) - (ORDRE_KIND[b.kind] ?? 9)) or cmp(a.declaredBy, b.declaredBy) or cmp(a.variant, b.variant) or cmp(a.file, b.file) or (rangGroupe(a) - rangGroupe(b)))
+    themeVar.declarations.forEach (d, rank) ->
+      key := sourceKey(d)
+      group := index.get(key) ?? { key, kind: d.kind, declaredBy: d.declaredBy, file: d.file, variant: d.variant ?? '', read: !!d.read and not d.set, set: !!d.set, rows: [] }
+      group.rows.push({ key: key + '::' + themeVar.name + '::' + rank, name: themeVar.name, decl: d, readBy: themeVar.readBy, others: themeVar.declarations.filter((x) -> x != d and not x.read) })
+      index.set(key, group)
+  [...index.values()].sort((a, b) -> ((KIND_ORDER[a.kind] ?? 9) - (KIND_ORDER[b.kind] ?? 9)) or cmp(a.declaredBy, b.declaredBy) or cmp(a.variant, b.variant) or cmp(a.file, b.file) or (groupRank(a) - groupRank(b)))
 
-retient = (ligne, q) -> not q or ligne.name.toLowerCase().includes(q) or ligne.decl.declaredBy.toLowerCase().includes(q) or ligne.readBy.some((r) -> r.toLowerCase().includes(q))
+matches = (row, q) -> not q or row.name.toLowerCase().includes(q) or row.decl.declaredBy.toLowerCase().includes(q) or row.readBy.some((r) -> r.toLowerCase().includes(q))
 
-enregistrer = (ligne) ->
-  return unless ecrivable(ligne.decl)
-  corps := { name: ligne.name, value: $edits[ligne.name], file: ligne.decl.file, line: ligne.decl.line }
-  fetch('/__mjs/theme/write', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corps) }).then((r) -> r.json()).then((res) -> $etats[ligne.cle] = { ok: res.written, texte: if res.written then ⟪theme.ecrit-dans⟫ + ' ' + res.file + ':' + res.line else (MOTIFS[res.reason] ?? res.reason) }).catch((err) -> µ.error(err))
+save = (row) ->
+  return unless writable(row.decl)
+  payload := { name: row.name, value: $edits[row.name], file: row.decl.file, line: row.decl.line }
+  fetch('/__mjs/theme/write', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).then((r) -> r.json()).then((res) -> $states[row.key] = { ok: res.written, text: if res.written then ⟪theme.written-in⟫ + ' ' + res.file + ':' + res.line else (REASONS[res.reason] ?? res.reason) }).catch((err) -> µ.error(err))
 
-modifier = (ligne, value) ->
-  $edits[ligne.name] = value
-  envoyer(ligne.name, value)
+applyEdit = (row, value) ->
+  $edits[row.name] = value
+  send(row.name, value)
 
-valider = (ligne) ->
-  enregistrer(ligne) if $write
+commitEdit = (row) ->
+  save(row) if $write
 
-retablir = (ligne) ->
-  delete $edits[ligne.name]
-  delete $etats[ligne.cle]
-  envoyer(ligne.name, '')
+restore = (row) ->
+  delete $edits[row.name]
+  delete $states[row.key]
+  send(row.name, '')
 
-retablirTout = ->
-  Object.keys($edits).forEach((name) -> envoyer(name, ''))
+restoreAll = ->
+  Object.keys($edits).forEach((name) -> send(name, ''))
   $edits = {}
-  $etats = {}
+  $states = {}
 
-resetFermeture = ->
+resetOnClose = ->
   return unless $live and Object.keys($edits).length > 0
   vars := {}
   Object.keys($edits).forEach((name) -> vars[name] = '')
@@ -112,174 +113,174 @@ resetFermeture = ->
 refresh = ->
   fetch('/__mjs/theme.json').then((r) -> r.json()).then((data) -> $vars = Object.keys(data ?? {}).sort().map((name) -> ({ name, declarations: data[name].declarations, readBy: data[name].readBy }))).catch((err) -> µ.error(err))
 
-etatDirect = ->
+fetchLiveState = ->
   fetch('/__mjs/theme/edit').then((r) -> r.json()).then((d) -> $live = d.live; $clients = d.clients).catch(-> $live = false)
 
-toggle = (cle) ->
-  $expanded[cle] = not $expanded[cle]
+toggle = (key) ->
+  $expanded[key] = not $expanded[key]
 
-toggleKey = (e, cle) ->
+toggleKey = (e, key) ->
   return unless e.key is 'Enter' or e.key is ' '
   e.preventDefault()
-  toggle(cle)
+  toggle(key)
 
-basculer = (g) ->
-  $ouverts[g.cle] = not g.ouvert
+toggleGroup = (g) ->
+  $opened[g.key] = not g.open
 
-$groupes = grouper($vars)
-$filtres = $groupes.filter((g) -> $kind == 'all' or g.kind == $kind).map((g) -> ({ ...g, ouvert: $ouverts[g.cle] ?? (not g.posee or $query.trim() != ''), lignes: g.lignes.filter((l) -> retient(l, $query.trim().toLowerCase())) })).filter((g) -> g.lignes.length > 0)
+$groups = buildGroups($vars)
+$filtered = $groups.filter((g) -> $kind == 'all' or g.kind == $kind).map((g) -> ({ ...g, open: $opened[g.key] ?? (not g.set or $query.trim() != ''), rows: g.rows.filter((l) -> matches(l, $query.trim().toLowerCase())) })).filter((g) -> g.rows.length > 0)
 
 $countRead   = $vars.filter((themeVar) -> themeVar.readBy.length > 0).length
 $countDecl   = $vars.reduce((n, themeVar) -> n + themeVar.declarations.filter((d) -> not d.read and not d.set).length, 0)
-$countLues   = $vars.reduce((n, themeVar) -> n + themeVar.declarations.filter((d) -> d.read and not d.set).length, 0)
-$countPosees = $vars.filter((themeVar) -> themeVar.declarations.some((d) -> d.set)).length
+$countReadVars   = $vars.reduce((n, themeVar) -> n + themeVar.declarations.filter((d) -> d.read and not d.set).length, 0)
+$countSet = $vars.filter((themeVar) -> themeVar.declarations.some((d) -> d.set)).length
 
-$nbEdits = Object.keys($edits).length
+$countEdits = Object.keys($edits).length
 
 µmount ->
   refresh()
-  etatDirect()
+  fetchLiveState()
 </script>
 
-<@window @pagehide={resetFermeture()}>
+<@window @pagehide={resetOnClose()}>
 
-<div class="atelier">
-  <div class="barre">
-    <h1>⟪theme.titre⟫</h1>
+<div class="workshop">
+  <div class="bar">
+    <h1>⟪theme.title⟫</h1>
     <div class="stats">
-      <span class="stat">{compte($groupes.length, 'source')}</span>
-      <span class="stat">{compte($vars.length, 'variable')}</span>
-      <span class="stat">{compte($countDecl, 'declaration')}</span>
-      <span class="stat">{compte($countLues, 'defaut')}</span>
-      {if $countPosees > 0}<span class="stat">{compte($countPosees, 'posee')}</span>{end}
-      <span class="stat">{compte($countRead, 'lue')}</span>
+      <span class="stat">{count($groups.length, 'source')}</span>
+      <span class="stat">{count($vars.length, 'variable')}</span>
+      <span class="stat">{count($countDecl, 'declaration')}</span>
+      <span class="stat">{count($countReadVars, 'fallback')}</span>
+      {if $countSet > 0}<span class="stat">{count($countSet, 'set')}</span>{end}
+      <span class="stat">{count($countRead, 'read')}</span>
     </div>
   </div>
 
   <div class="direct">
     {if $live}
-      <span class="temoin"></span>
-      <span class="etat">{compte($clients, 'direct')}</span>
-      <label class="bascule">
+      <span class="indicator"></span>
+      <span class="status">{count($clients, 'direct')}</span>
+      <label class="toggle">
         <input type="checkbox" checked=!{$write}>
-        <span>⟪theme.enregistrer⟫</span>
+        <span>⟪theme.save⟫</span>
       </label>
       {if $write}
-        <span class="precision ecrit">⟪theme.precision-ecrit⟫</span>
+        <span class="precision written">⟪theme.precision-written⟫</span>
       {else}
-        <span class="precision">⟪theme.precision-apercu⟫</span>
+        <span class="precision">⟪theme.precision-preview⟫</span>
       {end}
     {else}
-      <span class="temoin hors"></span>
-      <span class="etat hors">⟪theme.lecture-seule-direct⟫</span>
+      <span class="indicator off"></span>
+      <span class="status off">⟪theme.read-only-direct⟫</span>
     {end}
-    {if $nbEdits > 0}
-      <button class="retablir-tout" @click={retablirTout()}>{compte($nbEdits, 'retablir')}</button>
+    {if $countEdits > 0}
+      <button class="restore-all" @click={restoreAll()}>{count($countEdits, 'restore')}</button>
     {end}
   </div>
 
   {if $vars.length == 0}
-    <p class="vide">⟪theme.vide⟫</p>
+    <p class="empty">⟪theme.empty⟫</p>
   {else}
-    <div class="controles">
-      <input class="recherche" type="text" aria-label="⟪theme.recherche-label⟫" placeholder="⟪theme.recherche-placeholder⟫" value=!{$query}>
-      <div class="filtres">
-        <button :class{$kind == 'all'}="actif" @click={$kind = 'all'}>⟪theme.filtre-tous⟫</button>
-        <button :class{$kind == 'theme'}="actif" @click={$kind = 'theme'}>⟪theme.filtre-themes⟫</button>
-        <button :class{$kind == 'module'}="actif" @click={$kind = 'module'}>⟪theme.filtre-modules⟫</button>
-        <button :class{$kind == 'stylesheet'}="actif" @click={$kind = 'stylesheet'}>⟪theme.filtre-feuilles⟫</button>
-        <button :class{$kind == 'framework'}="actif" @click={$kind = 'framework'}>⟪theme.filtre-framework⟫</button>
+    <div class="controls">
+      <input class="search" type="text" aria-label="⟪theme.search-label⟫" placeholder="⟪theme.search-placeholder⟫" value=!{$query}>
+      <div class="filters">
+        <button :class{$kind == 'all'}="active" @click={$kind = 'all'}>⟪theme.filter-all⟫</button>
+        <button :class{$kind == 'theme'}="active" @click={$kind = 'theme'}>⟪theme.filter-themes⟫</button>
+        <button :class{$kind == 'module'}="active" @click={$kind = 'module'}>⟪theme.filter-modules⟫</button>
+        <button :class{$kind == 'stylesheet'}="active" @click={$kind = 'stylesheet'}>⟪theme.filter-sheets⟫</button>
+        <button :class{$kind == 'framework'}="active" @click={$kind = 'framework'}>⟪theme.filter-framework⟫</button>
       </div>
     </div>
 
-    {if $filtres.length == 0}
-      <p class="vide">⟪theme.aucune⟫</p>
+    {if $filtered.length == 0}
+      <p class="empty">⟪theme.none⟫</p>
     {else}
-      <div class="groupes">
-        {for g in $filtres by cle}
-          <section class="groupe">
-            <header class="tete">
+      <div class="groups">
+        {for g in $filtered by key}
+          <section class="group">
+            <header class="head">
               <span class="badge badge-{g.kind}">{formatKind(g.kind)}</span>
               <span class="source">{g.declaredBy}</span>
-              {if g.variant}<span class="variante">⟪theme.variante⟫ {g.variant}</span>{end}
-              {if g.lue}<span class="variante">⟪theme.badge-defauts⟫</span>{end}
-              {if g.posee}<span class="variante">⟪theme.badge-posees⟫</span>{end}
-              <span class="emplacement">{g.file}</span>
-              {if not ecrivable(g.lignes[0].decl)}<span class="lecture-seule">⟪theme.badge-lecture-seule⟫</span>{end}
-              <span class="compte">{compte(g.lignes.length, 'variable')}</span>
-              {if g.posee}<button class="plier" aria-label="⟪theme.plier⟫ {g.declaredBy}" aria-expanded="{g.ouvert}" @click={basculer(g)}>{if g.ouvert}▾{else}▸{end}</button>{end}
+              {if g.variant}<span class="variant">⟪theme.variant⟫ {g.variant}</span>{end}
+              {if g.read}<span class="variant">⟪theme.badge-defaults⟫</span>{end}
+              {if g.set}<span class="variant">⟪theme.badge-set⟫</span>{end}
+              <span class="location">{g.file}</span>
+              {if not writable(g.rows[0].decl)}<span class="read-only">⟪theme.badge-read-only⟫</span>{end}
+              <span class="count">{count(g.rows.length, 'variable')}</span>
+              {if g.set}<button class="fold" aria-label="⟪theme.fold⟫ {g.declaredBy}" aria-expanded="{g.open}" @click={toggleGroup(g)}>{if g.open}▾{else}▸{end}</button>{end}
             </header>
-            {if g.ouvert}
-            <div class="liste">
-              {for l in g.lignes by cle}
-                <div class="variable" role="button" tabindex="0" @click={toggle(l.cle)} @keydown={toggleKey(e, l.cle)}>
-                  {const courante = $edits[l.name] ?? l.decl.value}
-                  {const hex = $live and not l.decl.set ? versHex(courante) : ''}
-                  <div class="ligne">
+            {if g.open}
+            <div class="list">
+              {for l in g.rows by key}
+                <div class="variable" role="button" tabindex="0" @click={toggle(l.key)} @keydown={toggleKey(e, l.key)}>
+                  {const current = $edits[l.name] ?? l.decl.value}
+                  {const hex = $live and not l.decl.set ? toHex(current) : ''}
+                  <div class="row">
                     {if hex}
-                      <input class="pastille vive" type="color" aria-label="⟪theme.couleur-de⟫ {l.name}" value={hex} @click.stop={} @input.stop={modifier(l, e.target.value)} @change.stop={valider(l)}>
+                      <input class="swatch live" type="color" aria-label="⟪theme.color-of⟫ {l.name}" value={hex} @click.stop={} @input.stop={applyEdit(l, e.target.value)} @change.stop={commitEdit(l)}>
                     {else}
-                      {if looksLikeColor(courante)}<span class="pastille" :style.background={courante}></span>{end}
+                      {if looksLikeColor(current)}<span class="swatch" :style.background={current}></span>{end}
                     {end}
-                    <span class="nom">{l.name}</span>
-                    <span class="valeur">{courante}</span>
+                    <span class="name">{l.name}</span>
+                    <span class="value">{current}</span>
                     {if $edits[l.name]}
-                      <span class="valeur source-valeur">⟪theme.source⟫ {l.decl.value}</span>
-                      <button class="retablir" aria-label="⟪theme.retablir-nom⟫ {l.name}" @click.stop={retablir(l)}>⟪theme.retablir⟫</button>
+                      <span class="value source-value">⟪theme.source⟫ {l.decl.value}</span>
+                      <button class="restore" aria-label="⟪theme.restore-name⟫ {l.name}" @click.stop={restore(l)}>⟪theme.restore⟫</button>
                     {end}
-                    {if $etats[l.cle]}
-                      <span class="ecriture" :class{$etats[l.cle].ok == false}="rate">{$etats[l.cle].texte}</span>
+                    {if $states[l.key]}
+                      <span class="write" :class{$states[l.key].ok == false}="failed">{$states[l.key].text}</span>
                     {end}
-                    <span class="emplacement">{if l.decl.read}⟪theme.par-defaut⟫{elsif l.decl.line > 0}⟪theme.ligne⟫ {l.decl.line}{else}⟪theme.ligne-inconnue⟫{end}</span>
-                    {if l.autres.length > 0 and not l.decl.read}
-                      <span class="ailleurs">+{l.autres.length} ⟪theme.ailleurs⟫</span>
+                    <span class="location">{if l.decl.read}⟪theme.default⟫{elsif l.decl.line > 0}⟪theme.line⟫ {l.decl.line}{else}⟪theme.line-unknown⟫{end}</span>
+                    {if l.others.length > 0 and not l.decl.read}
+                      <span class="elsewhere">+{l.others.length} ⟪theme.elsewhere⟫</span>
                     {end}
-                    <span class="lecteurs">{compte(l.readBy.length, 'lecteur')}</span>
+                    <span class="readers">{count(l.readBy.length, 'reader')}</span>
                   </div>
-                  {if $expanded[l.cle]}
+                  {if $expanded[l.key]}
                     <div class="detail">
                       {if l.decl.doc}<p class="doc">{l.decl.doc}</p>{end}
                       {if l.decl.set}
-                        <p class="doc">{l.decl.declaredBy} ⟪theme.doc-posee⟫</p>
+                        <p class="doc">{l.decl.declaredBy} ⟪theme.doc-set⟫</p>
                       {elsif l.decl.read}
-                        <p class="doc">{l.decl.declaredBy} ⟪theme.doc-lue⟫</p>
+                        <p class="doc">{l.decl.declaredBy} ⟪theme.doc-read⟫</p>
                       {end}
                       {if $write}
                         {if l.decl.set}
-                          <p class="cible">⟪theme.cible-posee⟫</p>
+                          <p class="target">⟪theme.target-set⟫</p>
                         {elsif l.decl.read}
-                          <p class="cible">⟪theme.cible-defaut⟫</p>
-                        {elsif ecrivable(l.decl)}
-                          <p class="cible">⟪theme.cible-vers⟫ {l.decl.file}{if l.decl.line > 0}:{l.decl.line}{else} — ⟪theme.cible-ligne-cherchee⟫{end}</p>
+                          <p class="target">⟪theme.target-default⟫</p>
+                        {elsif writable(l.decl)}
+                          <p class="target">⟪theme.target-to⟫ {l.decl.file}{if l.decl.line > 0}:{l.decl.line}{else} — ⟪theme.target-line-searched⟫{end}</p>
                         {else}
-                          <p class="cible">⟪theme.cible-framework⟫</p>
+                          <p class="target">⟪theme.target-framework⟫</p>
                         {end}
                       {end}
-                      {if l.autres.length > 0}
+                      {if l.others.length > 0}
                         {if l.decl.read}
-                          <p class="cascade">⟪theme.cascade-lue⟫</p>
+                          <p class="cascade">⟪theme.cascade-read⟫</p>
                         {else}
-                          <p class="cascade">⟪theme.cascade-ailleurs⟫</p>
+                          <p class="cascade">⟪theme.cascade-elsewhere⟫</p>
                         {end}
                         <div class="declarations">
-                          {for d in l.autres}
+                          {for d in l.others}
                             <div class="declaration">
                               <span class="badge badge-{d.kind}">{formatKind(d.kind)}</span>
-                              <span class="declarant">{d.declaredBy}</span>
-                              {if d.variant}<span class="variante">⟪theme.variante⟫ {d.variant}</span>{end}
-                              <span class="valeur">{d.value}</span>
-                              <span class="emplacement">{d.file}:{d.line}</span>
+                              <span class="declared-by">{d.declaredBy}</span>
+                              {if d.variant}<span class="variant">⟪theme.variant⟫ {d.variant}</span>{end}
+                              <span class="value">{d.value}</span>
+                              <span class="location">{d.file}:{d.line}</span>
                             </div>
                           {end}
                         </div>
                       {end}
                       {if l.readBy.length == 0}
-                        <p class="sans-lecteur">⟪theme.sans-lecteur⟫</p>
+                        <p class="no-reader">⟪theme.no-reader⟫</p>
                       {else}
-                        <div class="lecteurs-liste">
-                          <span class="titre-lecteurs">⟪theme.lu-par⟫</span>
+                        <div class="reader-list">
+                          <span class="readers-title">⟪theme.read-by⟫</span>
                           {for r in l.readBy}
-                            <span class="lecteur">{r}</span>
+                            <span class="reader">{r}</span>
                           {end}
                         </div>
                       {end}
@@ -297,7 +298,7 @@ $nbEdits = Object.keys($edits).length
 </div>
 
 <style>
-  .atelier
+  .workshop
     display: block
     background: #14171f
     color: #e4e6ec
@@ -305,7 +306,7 @@ $nbEdits = Object.keys($edits).length
     min-height: 100vh
     padding: 1.5rem
     box-sizing: border-box
-  .barre
+  .bar
     display: flex
     flex-wrap: wrap
     align-items: center
@@ -321,15 +322,15 @@ $nbEdits = Object.keys($edits).length
     gap: 1rem
     color: #8a8f9c
     font-size: 0.85rem
-  .vide
+  .empty
     color: #8a8f9c
-  .controles
+  .controls
     display: flex
     flex-wrap: wrap
     align-items: center
     gap: 0.75rem
     margin-bottom: 1.25rem
-  .recherche
+  .search
     flex: 1
     min-width: 240px
     background: #1b1f29
@@ -341,7 +342,7 @@ $nbEdits = Object.keys($edits).length
     &:focus
       outline: none
       border-color: #3a6df0
-  .filtres
+  .filters
     display: flex
     flex-wrap: wrap
     gap: 0.4rem
@@ -355,20 +356,20 @@ $nbEdits = Object.keys($edits).length
     font: inherit
     &:hover
       background: #2c3140
-  button.actif
+  button.active
     background: #3a6df0
     border-color: #3a6df0
     color: #fff
-  .groupes
+  .groups
     display: flex
     flex-direction: column
     gap: 0.9rem
-  .groupe
+  .group
     background: #171b24
     border: 1px solid #2a2f3c
     border-radius: 8px
     overflow: hidden
-  .tete
+  .head
     display: flex
     flex-wrap: wrap
     align-items: center
@@ -380,21 +381,21 @@ $nbEdits = Object.keys($edits).length
     font-family: ui-monospace, monospace
     font-weight: 600
     color: #f4f4f5
-  .compte
+  .count
     margin-left: auto
     color: #6b7280
     font-size: 0.75rem
     white-space: nowrap
-  .plier
+  .fold
     background: none
     border: none
     color: #8a8f9c
     padding: 0 0.3rem
     font-size: 0.9rem
-  .lecture-seule
+  .read-only
     color: #c07a2a
     font-size: 0.75rem
-  .liste
+  .list
     display: flex
     flex-direction: column
     gap: 0.3rem
@@ -407,18 +408,18 @@ $nbEdits = Object.keys($edits).length
     cursor: pointer
     &:hover
       border-color: #3a6df0
-  .ligne
+  .row
     display: flex
     align-items: center
     gap: 0.6rem
-  .pastille
+  .swatch
     display: inline-block
     width: 12px
     height: 12px
     border-radius: 50%
     border: 1px solid rgba(255, 255, 255, 0.3)
     flex-shrink: 0
-  input.pastille.vive
+  input.swatch.live
     width: 18px
     height: 18px
     padding: 0
@@ -442,25 +443,25 @@ $nbEdits = Object.keys($edits).length
     background: #1b1f29
     border: 1px solid #2a2f3c
     border-radius: 8px
-  .temoin
+  .indicator
     width: 8px
     height: 8px
     border-radius: 50%
     background: #3fb950
     flex-shrink: 0
-  .temoin.hors
+  .indicator.off
     background: #6b7280
-  .etat
+  .status
     color: #e4e6ec
     font-size: 0.85rem
-  .etat.hors
+  .status.off
     color: #8a8f9c
   .precision
     color: #6b7280
     font-size: 0.8rem
-  .precision.ecrit
+  .precision.written
     color: #d8b34a
-  .bascule
+  .toggle
     display: inline-flex
     align-items: center
     gap: 0.35rem
@@ -468,35 +469,35 @@ $nbEdits = Object.keys($edits).length
     font-size: 0.8rem
     cursor: pointer
     user-select: none
-  .bascule input
+  .toggle input
     accent-color: #3fb950
     cursor: pointer
-  .retablir-tout
+  .restore-all
     margin-left: auto
     font-size: 0.8rem
     padding: 0.3rem 0.6rem
-  .retablir
+  .restore
     font-size: 0.7rem
     padding: 0.05rem 0.4rem
     border-radius: 4px
     flex-shrink: 0
-  .ecriture
+  .write
     color: #3fb950
     font-size: 0.75rem
     font-family: ui-monospace, monospace
-  .ecriture.rate
+  .write.failed
     color: #e5714d
-  .nom
+  .name
     font-family: ui-monospace, monospace
     font-weight: 600
-  .valeur
+  .value
     color: #a9afbc
     font-family: ui-monospace, monospace
     font-size: 0.85rem
     overflow: hidden
     text-overflow: ellipsis
     white-space: nowrap
-  .source-valeur
+  .source-value
     color: #6b7280
     font-size: 0.75rem
   .badge
@@ -515,14 +516,14 @@ $nbEdits = Object.keys($edits).length
     background: #c07a2a
   .badge-stylesheet
     background: #2a6f5f
-  .declarant
+  .declared-by
     color: #8a8f9c
     font-size: 0.8rem
-  .ailleurs
+  .elsewhere
     color: #d8b34a
     font-size: 0.75rem
     white-space: nowrap
-  .lecteurs
+  .readers
     margin-left: auto
     color: #6b7280
     font-size: 0.75rem
@@ -535,7 +536,7 @@ $nbEdits = Object.keys($edits).length
     margin: 0 0 0.5rem
     color: #d8b34a
     font-size: 0.8rem
-  .cible
+  .target
     margin: 0 0 0.5rem
     color: #8a8f9c
     font-size: 0.8rem
@@ -552,11 +553,11 @@ $nbEdits = Object.keys($edits).length
     padding: 0.4rem 0.5rem
     background: #0d0f14
     border-radius: 6px
-  .variante
+  .variant
     color: #6b7280
     font-size: 0.75rem
     font-style: italic
-  .emplacement
+  .location
     color: #6b7280
     font-size: 0.75rem
     font-family: ui-monospace, monospace
@@ -564,20 +565,20 @@ $nbEdits = Object.keys($edits).length
     margin: 0 0 0.5rem
     color: #8a8f9c
     font-size: 0.8rem
-  .sans-lecteur
+  .no-reader
     margin: 0.5rem 0 0
     color: #6b7280
     font-size: 0.8rem
-  .lecteurs-liste
+  .reader-list
     display: flex
     flex-wrap: wrap
     align-items: center
     gap: 0.4rem
     margin-top: 0.5rem
-  .titre-lecteurs
+  .readers-title
     color: #6b7280
     font-size: 0.75rem
-  .lecteur
+  .reader
     background: #232733
     border-radius: 4px
     padding: 0.1rem 0.5rem

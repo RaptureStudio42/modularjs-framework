@@ -126,9 +126,9 @@ describe('non-régression — sucre déjà fonctionnel ou hors périmètre, inch
     assert.equal(cleanJs("µimage('x.png')"), "µ.image('x.png')")
   })
 
-  it('$x → $.x, §x → this._mjs_getContext(\'x\'), &id → µ.url.params.id — intacts', () => {
+  it('$x → $.x, §x → _mjsThis._mjs_getContext(\'x\'), &id → µ.url.params.id — intacts', () => {
     assert.equal(cleanJs('$x'), '$.x')
-    assert.equal(cleanJs('§x'), "this._mjs_getContext('x')")
+    assert.equal(cleanJs('§x'), "_mjsThis._mjs_getContext('x')")
     assert.equal(cleanJs('&id'), 'µ.url.params.id')
   })
 

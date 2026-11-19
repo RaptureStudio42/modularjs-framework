@@ -1,6 +1,6 @@
 // Chargeur des fichiers serveur `.server.mjs` :
 // - avec un umask 002 (défaut Debian, Ubuntu), le dossier de cache hors projet laissé par la version
-//   précédente est en 775 : il était refusé, et `mjs ws`, `mjs serveur` ne démarraient plus. Ce qui
+//   précédente est en 775 : il était refusé, et `mjs ws`, `mjs server` ne démarraient plus. Ce qui
 //   compte : un vrai dossier, à l'utilisateur, que les AUTRES ne peuvent pas écrire ; ses droits
 //   sont alors refermés en 0700 ;
 // - du Civet ordinaire était encore pris pour une directive dès qu'une propriété nommée comme elle

@@ -6,18 +6,18 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { creerRegistre, defSchema, encode, decode, list } from '../src/schema/core.js'
+import { createRegistry, defineSchema, encode, decode, list } from '../src/schema/core.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const schemaSrc = readFileSync(join(__dirname, '../src/runtime/mjs_schema.ts'), 'utf8')
 
 function codecServeur() {
-  const registre = creerRegistre()
+  const registre = createRegistry()
   return {
-    nom: 'serveur',
-    declarer: (nom: string, champs: any) => { defSchema(registre, nom, champs) },
+    name: 'serveur',
+    declarer: (nom: string, champs: any) => { defineSchema(registre, nom, champs) },
     encoder: (nom: string, objet: any) => encode(registre, nom, objet),
-    decoder: (octets: Uint8Array) => decode(registre, octets).objet,
+    decoder: (octets: Uint8Array) => decode(registre, octets).data,
   }
 }
 
@@ -26,15 +26,15 @@ function codecClient() {
   µ._mjs_txt = (_k: string, vars: any, fr: string) => fr.replace(/\{(\w+)\}/g, (_m: string, n: string) => String(vars?.[n] ?? ''))
   const interne = new Function('µ', schemaSrc + '\nreturn { encoder: mjschemaEncode, decoder: mjschemaDecode };')(µ)
   return {
-    nom: 'client',
+    name: 'client',
     declarer: (nom: string, champs: any) => { µ.schema(nom, champs) },
-    encoder: (nom: string, objet: any) => interne.encoder(µ._mjs_mjschemaRegistre, nom, objet),
-    decoder: (octets: Uint8Array) => interne.decoder(µ._mjs_mjschemaRegistre, octets).objet,
+    encoder: (nom: string, objet: any) => interne.encoder(µ._mjs_mjschemaRegistry, nom, objet),
+    decoder: (octets: Uint8Array) => interne.decoder(µ._mjs_mjschemaRegistry, octets).object,
   }
 }
 
 for (const fabrique of [codecServeur, codecClient]) {
-  const cote = fabrique().nom
+  const cote = fabrique().name
 
   describe(`µschema (${cote}) — Infinity et NaN dans un champ entier`, () => {
     const cas: Array<[string, number]> = [['u8', Infinity], ['i32', -Infinity], ['u32', Infinity], ['i8', NaN], ['u16', NaN]]

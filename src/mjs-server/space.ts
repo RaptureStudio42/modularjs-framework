@@ -60,7 +60,7 @@ export interface MjsServerSpace {
  *  quand même vide. */
 export function createSpace(cell: number, onWarn?: (msg: string) => void): MjsServerSpace {
   if (typeof cell !== 'number' || !Number.isFinite(cell) || cell <= 0) {
-    throw new Error(t('serveur.space-cell-invalide', { received: JSON.stringify(cell) }))
+    throw new Error(t('mjs-server.space-cell-invalid', { received: JSON.stringify(cell) }))
   }
   const cells  = new Map<string, Set<string>>()
   const positions = new Map<string, { x: number; y: number }>()
@@ -106,7 +106,7 @@ export function createSpace(cell: number, onWarn?: (msg: string) => void): MjsSe
       if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(radius) || radius < 0) {
         if (!warnedInvalidQuery) {
           warnedInvalidQuery = true
-          onWarn?.(t('serveur.space-query-invalide', { x: JSON.stringify(x), y: JSON.stringify(y), radius: JSON.stringify(radius) }))
+          onWarn?.(t('mjs-server.space-query-invalid', { x: JSON.stringify(x), y: JSON.stringify(y), radius: JSON.stringify(radius) }))
         }
         return []
       }

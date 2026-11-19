@@ -38,13 +38,13 @@ describe('render-browser — le proxy de forwardOrigin ne quitte jamais l\'origi
   after(async () => { await terminateSharedWorkerPool() })
 
   it('adresse amont : un chemin ordinaire reste sur l\'origine, requête comprise', () => {
-    const adresse = (moteur as any).adresseAmontDuProxy('/api/x', '?q=1', 'https://public.example')
+    const adresse = (moteur as any).proxyUpstreamUrl('/api/x', '?q=1', 'https://public.example')
     assert.equal(adresse && adresse.href, 'https://public.example/api/x?q=1')
   })
 
   it('adresse amont : double slash, barre inverse, triple slash — aucune adresse', () => {
     for (const chemin of ['//127.0.0.1:9/x', '/\\127.0.0.1:9/x', '\\\\127.0.0.1:9/x', '///127.0.0.1:9/x', '//public.example.evil/x']) {
-      assert.equal((moteur as any).adresseAmontDuProxy(chemin, '', 'https://public.example'), null, chemin)
+      assert.equal((moteur as any).proxyUpstreamUrl(chemin, '', 'https://public.example'), null, chemin)
     }
   })
 

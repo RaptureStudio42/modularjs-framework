@@ -6,7 +6,7 @@
 // que le `)` de fermeture, seul — aucun span, aucun paramètre enregistré. Le corps réassignait
 // alors `a`/`b` comme des variables NEUVES (Civet refuse : « Identifier 'a' has already been
 // declared »), et une valeur par défaut de continuation (`b = 1`) se faisait hisser en
-// `.= undefined` fantôme comme une affectation de branche. Remède : `parenDeltaHorsChaines` +
+// `.= undefined` fantôme comme une affectation de branche. Remède : `parenDeltaOutsideStrings` +
 // pré-passe `multiLineParams` (cf. bandeaux transpiler/index.ts).
 
 import assert from 'node:assert/strict'
@@ -244,7 +244,7 @@ describe('Pass 4 — liste de paramètres MULTI-LIGNES, jamais oubliée', functi
   // le commentaire de LIGNE `//`/`#` : un commentaire de BLOC `/* … */` (mono-ligne OU multi-lignes,
   // issu d'un `###…###` Coffee) glissait encore dans `regionSrc`/`joined` et se faisait avaler par
   // `scanRegexLiteral` comme un littéral regex (refermé sur le `/` de `*/`) — pièce garbage jetée en
-  // silence par `extractParamNames`. Remède : `sansCommentaires` (remplace `sansCommentaireFinal`).
+  // silence par `extractParamNames`. Remède : `sansCommentaires` (remplace `withoutTrailingComment`).
   it('cas 13 — commentaire de bloc /* … */ seul sur sa ligne de continuation : ni a ni b promus, transpile() réussit', async function () {
     const script = [
       '  f = (',
@@ -369,8 +369,8 @@ describe('Pass 4 — liste de paramètres MULTI-LIGNES, jamais oubliée', functi
   // ligne « inerte » (ancien mécanisme `wasBlank`) : le `)` de fermeture n'était jamais compté par la
   // pré-passe `multiLineParams`, `depth` ne retombait jamais à 0, la liste de paramètres disparaissait
   // — `a`/`b` hissés en `.= undefined` fantômes (cas 19-20), ou le code après un commentaire en tête
-  // jamais auto-déclaré (cas 21). Remède : `blanchirCommentaires` (même longueur que la ligne source,
-  // `\n` internes conservés) fournit les lignes de DÉTECTION (`lignesCode`) ; la ligne D'ORIGINE ne
+  // jamais auto-déclaré (cas 21). Remède : `blankComments` (même longueur que la ligne source,
+  // `\n` internes conservés) fournit les lignes de DÉTECTION (`codeLines`) ; la ligne D'ORIGINE ne
   // sert plus qu'à la RÉÉCRITURE, par découpe à un index calculé sur la version blanchie — d'où les
   // cas 22-23 (commentaire CONSERVÉ dans la sortie) et 24-25 (non-régression : un commentaire/une
   // chaîne multi-lignes qui couvre la ligne entière continue de neutraliser son contenu).

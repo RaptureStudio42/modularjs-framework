@@ -52,7 +52,7 @@ describe('carte de chaleur — l\'arrêt du process (src/mjs-ws/heatmap.ts)', fu
     writeFileSync(file + '.tmp', '{"v":1,"pa')
     writeFileSync(file + '.fond.tmp', '{"v":1,"pa')
     const app: any = { on() {}, stop: async () => {} }
-    ;(heatmapPackage({ file, origins: ['https://monsite.fr'], onLog: () => {} }) as any).installer(app)
+    ;(heatmapPackage({ file, origins: ['https://monsite.fr'], onLog: () => {} }) as any).install(app)
     assert.deepEqual(readdirSync(dir), [], 'ni .tmp ni .fond.tmp')
   })
 

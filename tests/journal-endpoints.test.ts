@@ -119,7 +119,7 @@ describe('POST /__mjs/errors — canal client (étage 2)', () => {
       const res = await fetch(`http://127.0.0.1:${running.port}/__mjs/errors`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'user-agent': 'sonde-test/1.0' },
-        body: JSON.stringify({ message: 'client boom', pile: 'Error: x\n  at y', url: '/page', version: 'deadbeef', source: 'server' }),
+        body: JSON.stringify({ message: 'client boom', stack: 'Error: x\n  at y', url: '/page', version: 'deadbeef', source: 'server' }),
       })
       assert.equal(res.status, 204)
       assert.equal(await res.text(), '')
@@ -142,12 +142,12 @@ describe('POST /__mjs/errors — canal client (étage 2)', () => {
     try {
       const res = await fetch(`http://127.0.0.1:${running.port}/__mjs/errors`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ message: 'm'.repeat(3000), pile: 'p'.repeat(10000), url: 'u'.repeat(3000), version: 'v'.repeat(100) }),
+        body: JSON.stringify({ message: 'm'.repeat(3000), stack: 'p'.repeat(10000), url: 'u'.repeat(3000), version: 'v'.repeat(100) }),
       })
       assert.equal(res.status, 204)
       const entries = await (await fetch(`http://127.0.0.1:${running.port}/__mjs/errors.json`)).json()
       assert.equal(entries[0].message.length, 2048)
-      assert.equal(entries[0].pile.length, 8192)
+      assert.equal(entries[0].stack.length, 8192)
       assert.equal(entries[0].url.length, 2048)
       assert.equal(entries[0].version.length, 32)
     } finally {
@@ -352,7 +352,7 @@ describe('GET /__mjs/errors.json', () => {
       const entries = await res.json()
       assert.equal(entries.length, 2)
       assert.deepEqual(entries.map((e: any) => e.source).sort(), ['client', 'server'])
-      assert.ok(entries[0].dernier >= entries[1].dernier, 'trié dernier DESC')
+      assert.ok(entries[0].last >= entries[1].last, 'trié dernier DESC')
     } finally {
       await running.close()
     }

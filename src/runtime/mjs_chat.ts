@@ -170,13 +170,13 @@ if (typeof MjsSocket !== 'undefined') {
     };
     // ouverture : à l'appel, puis au retour dans la page du composant qui l'a ouverte (cf. _mjs_ownHandle) — les messages
     // gardés absorbent le rejeu d'historique du salon par leur id
-    var ouvrir = function() {
+    var openNow = function() {
       h._mjs_room = self.room(prefix + name);
       self._mjs_chats.push(h);
       _chatMe(self, h);
     };
     // fermeture : close(), ou destruction de ce composant — les frappes en cours partent avec leurs minuteries
-    var fermer = function() {
+    var close = function() {
       var i = self._mjs_chats.indexOf(h), id;
       if (i === -1) { return false; }
       self._mjs_chats.splice(i, 1);
@@ -190,10 +190,10 @@ if (typeof MjsSocket !== 'undefined') {
     state.typing = function() { self.send('chat:typing', { room: name }); };
     state.remove = function(id) { self.send('chat:remove', { room: name, id: id }); };
     state.mute   = function(identityId, durationMs) { self.send('chat:mute', { room: name, identityId: identityId, durationMs: durationMs }); };
-    state.close  = function() { h._mjs_shut = true; fermer(); };
+    state.close  = function() { h._mjs_shut = true; close(); };
 
-    ouvrir();
-    this._mjs_ownHandle(h, fermer, ouvrir);
+    openNow();
+    this._mjs_ownHandle(h, close, openNow);
 
     return state;
   };

@@ -1109,14 +1109,14 @@
   # défaire (`back`) ou refaire : la surface reprend l'état gardé et le texte est relu comme après un geste (la valeur liée, le champ, `input`) ; avec `aside`
   # le focus est hors de la zone et y reste, la sélection gardée attend que la barre ou un clic l'y ramène
   travel = (back, aside)->
-    pile = if back then past else ahead
-    return unless pile.length
+    stack = if back then past else ahead
+    return unless stack.length
     rebuild() if waiting
     other  = if back then ahead else past
     kept   = snap()
     kept.n = ++clock
     other.push(kept)
-    restoreSnap(pile.pop(), aside)
+    restoreSnap(stack.pop(), aside)
     streak  = ''
     pending = null
     rebuild()

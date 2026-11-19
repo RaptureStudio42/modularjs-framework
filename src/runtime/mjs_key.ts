@@ -33,10 +33,10 @@ if (µ.Element) {
     this._mjs_key_cache[id] = val;
     // <transitions>
     if (this._mjs_tryReviveDying(s, e, createFn)) {
-      // <props-enfants>
+      // <child-props>
       // bloc repris en pleine sortie : ses composants reçoivent les props d'aujourd'hui, comme un bloc neuf
       if (kb) kb();
-      // </props-enfants>
+      // </child-props>
       return true;
     }
     // </transitions>
@@ -82,7 +82,7 @@ if (µ.Element) {
         outroNodes[__oi]._mjs_pairedWith = firstNew;
       }
     }
-    // <props-enfants>
+    // <child-props>
     // props des composants du bloc, posées avant son entrée dans la page (registre `µ._mjs_pend`, cf. `_mjs_updIf`) ; une liaison qui
     // lève n'empêche pas cette entrée, l'erreur repart ensuite vers le rendu du parent
     if (kb) {
@@ -93,7 +93,7 @@ if (µ.Element) {
         throw err;
       }
     }
-    // </props-enfants>
+    // </child-props>
     s.parentNode.insertBefore(built.fragment, e);
     // #10 — la clé a changé : on vient de recréer une structure NEUVE et VIDE
     // (nouveaux anchors des {if}/{key} imbriqués). Mais leurs mémos de branche

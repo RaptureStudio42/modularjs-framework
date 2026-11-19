@@ -12,6 +12,7 @@ import { existsSync } from 'node:fs'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { VARIANTES, SHOW, construire, charger, graves, enfant } from './helpers/liaison-navigateur.js'
 import type { Cible, Mode } from './helpers/liaison-navigateur.js'
+import { playTogether } from './helpers/engines-together.js'
 
 type Role = 'top' | 'mid' | 'leaf'
 
@@ -74,7 +75,7 @@ const lireChaine = (page: any, top: string, mid: string, leaf: string): Promise<
   return { top: h && h._shadow && h._shadow.querySelector('.p0') ? h._shadow.querySelector('.p0').textContent : '(absent)', mid: vu(m), leaf: vu(f), binds: window.__binds.slice() }
 })()`)
 
-for (const nomNavigateur of ['chromium', 'firefox'] as const) describe(`le parent gagne quel que soit l'ordre de définition (${nomNavigateur} réel)`, function () {
+for (const nomNavigateur of ['chromium', 'firefox'] as const) playTogether(describe(`le parent gagne quel que soit l'ordre de définition (${nomNavigateur} réel)`, function () {
   this.timeout(300000)
   let present = false
   let browser: any
@@ -151,4 +152,4 @@ for (const nomNavigateur of ['chromium', 'firefox'] as const) describe(`le paren
       }
     })
   }
-})
+}))

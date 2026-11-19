@@ -188,11 +188,11 @@ export function runInit(root: string): void {
   for (const d of dirs) {
     const path = join(root, d)
     if (existsSync(path)) {
-      console.log(t('cli.init.dossier-existe', { d }))
+      console.log(t('cli.init.dir-exists', { d }))
       skipped++
     } else {
       mkdirSync(path, { recursive: true })
-      console.log(t('cli.init.dossier-cree', { d }))
+      console.log(t('cli.init.dir-created', { d }))
       created++
     }
   }
@@ -200,35 +200,35 @@ export function runInit(root: string): void {
   // mjs.config.json
   const configPath = join(root, 'mjs.config.json')
   if (existsSync(configPath)) {
-    console.log(t('cli.init.config-existe'))
+    console.log(t('cli.init.config-exists'))
     skipped++
   } else {
     writeFileSync(configPath, DEFAULT_CONFIG)
-    console.log(t('cli.init.config-cree'))
+    console.log(t('cli.init.config-created'))
     created++
   }
 
   // hello.mjs
   const helloPath = join(root, 'app/modularjs/hello.mjs')
   if (existsSync(helloPath)) {
-    console.log(t('cli.init.hello-existe'))
+    console.log(t('cli.init.hello-exists'))
     skipped++
   } else {
     writeFileSync(helloPath, HELLO_MJS)
-    console.log(t('cli.init.hello-cree'))
+    console.log(t('cli.init.hello-created'))
     created++
   }
 
   // dossier d'exemples — le composant de référence (les 5 blocs dans l'ordre) et le
   // README qui énonce la convention. Même politique que le reste : jamais d'écrasement
-  for (const [rel, contenu] of [['app/modularjs/examples/hello-world.mjs', EXAMPLE_MJS], ['app/modularjs/examples/README.md', EXAMPLE_README]] as const) {
-    const chemin = join(root, rel)
-    if (existsSync(chemin)) {
-      console.log(t('cli.init.fichier-existe', { f: rel }))
+  for (const [rel, content] of [['app/modularjs/examples/hello-world.mjs', EXAMPLE_MJS], ['app/modularjs/examples/README.md', EXAMPLE_README]] as const) {
+    const path = join(root, rel)
+    if (existsSync(path)) {
+      console.log(t('cli.init.file-exists', { f: rel }))
       skipped++
     } else {
-      writeFileSync(chemin, contenu)
-      console.log(t('cli.init.fichier-cree', { f: rel }))
+      writeFileSync(path, content)
+      console.log(t('cli.init.file-created', { f: rel }))
       created++
     }
   }
@@ -237,9 +237,9 @@ export function runInit(root: string): void {
   if (syncAgentsMd(root, { create: true }) === 'created') created++
 
   console.log(``)
-  console.log(t('cli.init.resume', { cree: created, ignores: skipped }))
+  console.log(t('cli.init.resume', { created, ignored: skipped }))
   console.log(``)
-  console.log(t('cli.init.pour-demarrer'))
+  console.log(t('cli.init.to-start'))
   // `./bin/mjs` n'existe QUE dans le
   // dépôt source de ModularJS lui-même : un projet consommateur installe le
   // package (bin `mjs` exposé via package.json → node_modules/.bin/mjs) et

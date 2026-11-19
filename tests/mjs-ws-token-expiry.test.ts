@@ -92,7 +92,7 @@ describe('MJS-WS — suivi d\'expiration + rafraîchissement du jeton (boucle co
     assert.ok(welcomes[1].i > iErr, 'le 2e accueil (reconnexion) arrive APRÈS le µ:error de fermeture')
     // Le manque connu est désormais comblé (stats.ts) — la fermeture pour jeton expiré est désormais comptée,
     // DÉDIÉE (hors des 4 causes de MjsWsGuardCause : cette fermeture ne passe jamais par kickClient)
-    assert.equal(app.stats().garde.expirationsJeton, 1, 'fermeture pour jeton expiré comptée (compteur dédié)')
+    assert.equal(app.stats().guard.tokenExpired, 1, 'fermeture pour jeton expiré comptée (compteur dédié)')
     s.destroy(); await app.stop()
   })
 

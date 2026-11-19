@@ -86,10 +86,10 @@ if (µ.Element) {
       // reveal/flip/cube/turn) survivait à la résurrection : un node ressuscité restait
       // « apparié » à un fragment neuf qui n'existe plus
       node._mjs_pairedWith = void 0;
-      // <retour-sortie>
+      // <exit-reverse>
       // sans entrée écrite, ni `@introstart` ni `@introend`, comme Svelte : sa sortie revient sur ses pas (plus bas)
       if (node._mjs_intro)
-      // </retour-sortie>
+      // </exit-reverse>
       try {
         if (typeof node._mjs_cb_introstart === "function") {
           node._mjs_cb_introstart();
@@ -120,11 +120,11 @@ if (µ.Element) {
           µ.error(µ._mjs_msg('ifReintro', null, 'Échec re-intro:'), err);
         }
       }
-      // <retour-sortie>
+      // <exit-reverse>
       // sans entrée écrite, sa sortie revient sur ses pas, depuis là où elle en est, et celles de ses balises intérieures avec elle
       // (cf. `µ._mjs_txBack`)
       µ._mjs_txBack(node, !node._mjs_intro);
-      // </retour-sortie>
+      // </exit-reverse>
     }
     return true;
   };
@@ -156,10 +156,10 @@ if (µ.Element) {
     }
     // <transitions>
     if (this._mjs_tryReviveDying(s, e, createFn)) {
-      // <props-enfants>
+      // <child-props>
       // branche reprise en pleine sortie : ses composants reçoivent les props d'aujourd'hui, comme une branche neuve
       if (kb) kb();
-      // </props-enfants>
+      // </child-props>
       return;
     }
     // </transitions>
@@ -221,7 +221,7 @@ if (µ.Element) {
         outroNodes[__oi]._mjs_pairedWith = firstNew;
       }
     }
-    // <props-enfants>
+    // <child-props>
     // props des composants de la branche, posées avant son entrée dans la page : un composant déjà chargé, mis à niveau à
     // l'insertion, les trouve dans le registre `µ._mjs_pend` dès son `µawake`, comme une ligne de `{for}` peuplée avant la sienne. Une
     // liaison qui lève n'empêche pas cette entrée : l'erreur repart ensuite vers le rendu du parent, comme quand elle jouait après
@@ -233,7 +233,7 @@ if (µ.Element) {
         throw err;
       }
     }
-    // </props-enfants>
+    // </child-props>
     return s.parentNode.insertBefore(built.fragment, e);
   };
 

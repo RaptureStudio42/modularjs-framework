@@ -605,8 +605,8 @@ describe('render-server — chargeurs de props/actions .server.mjs + formulaires
   // SANS contorsion : un chargeur de props (.server.mjs) qui jette relance DÉLIBÉRÉMENT (contrat
   // documenté serve-entry.ts, propsFor) — l'appelant (branche GET protocole X-MJS-Nav) ne
   // l'intercepte pas, donc l'exception remonte jusqu'au catch global. entry.propsFor logue déjà
-  // 'server.entry-props-echec' AVANT de relancer : DEUX appels console.error attendus ici (le sien
-  // + le nouveau 'server.erreur-imprevue' du catch global), pas une régression.
+  // 'server.entry-props-failed' AVANT de relancer : DEUX appels console.error attendus ici (le sien
+  // + le nouveau 'server.error-unexpected' du catch global), pas une régression.
   it('33. props loader qui jette (GET X-MJS-Nav) : catch global — 500 inchangé, console.error avec chemin + message', async function () {
     this.timeout(15000)
     const { root, config } = setup()

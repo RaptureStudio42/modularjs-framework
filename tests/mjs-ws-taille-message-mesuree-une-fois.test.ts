@@ -90,7 +90,7 @@ describe('mjs-ws — la taille d\'un message reçu est contrôlée une seule foi
       const code = fermeture(ws)
       ws.send('x'.repeat(1500))
       assert.equal(await code, 1009, 'la trame au-delà de limits.maxPayload est coupée par le cœur')
-      assert.equal(app.stats().garde.kicksChargeUtile, 1, 'coupée par la garde du cœur')
+      assert.equal(app.stats().guard.kicksPayload, 1, 'coupée par la garde du cœur')
     }
     finally {
       relacher()

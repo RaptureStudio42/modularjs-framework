@@ -6,7 +6,7 @@
 // ailleurs, et la construction refusait ses propres sorties ; registre périmé ou forgé, et un fichier de l'auteur était
 // remplacé sans un mot ; une mise à jour depuis la 2.5.0 demandait trois constructions refusées de suite. Le contrôle
 // est fait au build seulement, avant toute écriture, et nomme toutes les collisions d'un coup ; la lecture de
-// mjs.config.json (mjs ws, mjs serveur, createHarness) ne regarde plus le disque.
+// mjs.config.json (mjs ws, mjs server, createHarness) ne regarde plus le disque.
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync } from 'node:fs'
@@ -150,7 +150,7 @@ describe('sortie dans le dossier des sources : la marque des fichiers produits, 
     })
   }
 
-  it('lecture de mjs.config.json : aucun refus tiré du disque (mjs ws, mjs serveur, createHarness démarrent)', () => {
+  it('lecture de mjs.config.json : aucun refus tiré du disque (mjs ws, mjs server, createHarness démarrent)', () => {
     const root = projet('marque-lecture-config')
     mkdirSync(join(root, 'public', 'modularjs'), { recursive: true })
     mkdirSync(join(root, 'src'), { recursive: true })

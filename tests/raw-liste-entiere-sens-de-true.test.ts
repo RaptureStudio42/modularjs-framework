@@ -342,7 +342,7 @@ const GROUPS: [string, string[]][] = [
   ['liste déjà rangée dans une variable `$`, marquée après coup : le chemin compilé se voit des deux façons ; par un nom, ligne à ligne seulement ; après µrefresh, des deux façons', ['suiviePuisMarquee', 'suivieEcriteParUnNom', 'suivieRafraichie']],
 ]
 const MODES: Mode[] = ['rows', 'list', 'plain']
-const ENVS: [string, Record<string, unknown>][] = [['dev', {}], ['prod', { env: 'prod', minify: false }], ['sansProxy', { proxy: false }]]
+const ENVS: [string, Record<string, unknown>][] = [['dev', {}], ['prod', { env: 'prod', minify: false }], ['withoutProxy', { proxy: false }]]
 
 describe('µraw(liste, true) — le sens de `true`, forme par forme, contre le marquage ligne à ligne', function () {
   this.timeout(300000)
@@ -415,7 +415,7 @@ describe('µraw(liste, true) — le sens de `true`, forme par forme, contre le m
   })
 
   it('réglage "proxy": false : le même tableau, aux écritures par un nom près', () => {
-    for (const key of Object.keys(table.dev.list).filter((k) => k !== 'copies')) check('sansProxy', key, NO_PROXY[key])
+    for (const key of Object.keys(table.dev.list).filter((k) => k !== 'copies')) check('withoutProxy', key, NO_PROXY[key])
   })
 
   it('production, appel écrit hors du code que la construction lit : `true` y reste sans effet, jamais une erreur', async () => {

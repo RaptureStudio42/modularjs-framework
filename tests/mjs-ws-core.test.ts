@@ -288,7 +288,7 @@ describe('MJS-WS — cœur du protocole + protections (boucle complète, vrai cl
     releaseAuth!({ id: 'devrait-rester-fantome' })
     await tick()
 
-    assert.equal(app.stats().connexions.actives, 0, 'aucune connexion active : celle-ci n\'a jamais complété son welcome')
+    assert.equal(app.stats().connections.active, 0, 'aucune connexion active : celle-ci n\'a jamais complété son welcome')
 
     // un 2e client observe la présence globale : un pair fantôme apparaîtrait ici (son PROPRE
     // hello passe aussi par `auth`, ré-affectant releaseAuth — on le débloque à son tour)
@@ -342,7 +342,7 @@ describe('MJS-WS — cœur du protocole + protections (boucle complète, vrai cl
 
     conn.onMessage!(JSON.stringify({ t: 'µ:hello', p: { protocol: 1 } }))
     await tick(10)
-    assert.equal(app.stats().connexions.actives, 1, 'sanity : le client factice est bien authentifié avant stop()')
+    assert.equal(app.stats().connections.active, 1, 'sanity : le client factice est bien authentifié avant stop()')
     assert.equal(closeFired(), false, 'sanity : onClose pas encore déclenché avant stop()')
 
     await app.stop()
@@ -406,7 +406,7 @@ describe('MJS-WS — cœur du protocole + protections (boucle complète, vrai cl
     s._mjs_ws.close(1006, 'coupure réseau')
     await tick()
     assert.equal(vus.length, 0, 'encore en grâce : pas encore définitif')
-    assert.equal(app.stats().connexions.parquees, 1)
+    assert.equal(app.stats().connections.parked, 1)
     await tick(70)   // grâce (40ms) dépassée
     assert.equal(vus.length, 1, "grâce expirée : le rappel tire MAINTENANT, pas avant")
     assert.equal(vus[0].reason, 'coupure réseau')
@@ -480,8 +480,8 @@ describe('MJS-WS — cœur du protocole + protections (boucle complète, vrai cl
 
     assert.equal(received.filter(m => m.t === 'µ:welcome').length, 0, 'le 2e hello ne doit JAMAIS authentifier — aucun µ:welcome')
     assert.equal(received.filter(m => m.t === 'µ:denied').length, 1, 'un SEUL µ:denied — le 1er refus lui-même ne doit pas être traité en double')
-    assert.equal(app.stats().connexions.accueillies, 0, 'stats accueillies non incrémentée pour ce socket')
-    assert.equal(app.stats().connexions.refusees, 1)
+    assert.equal(app.stats().connections.welcomed, 0, 'stats welcomed non incrémentée pour ce socket')
+    assert.equal(app.stats().connections.refused, 1)
     assert.equal(Array.from(app.clients).length, 0, 'aucun client authentifié enregistré')
 
     await app.stop()

@@ -1,5 +1,5 @@
 // FileAccountsPersistAdapter::save() rendait `void` — un échec d'écriture RÉEL (dossier
-// impossible à créer, ENOTDIR) était avalé par _ecrireAtomique (log + unlink du tmp, sans relancer) :
+// impossible à créer, ENOTDIR) était avalé par _writeAtomic (log + unlink du tmp, sans relancer) :
 // account-persist-failed (cf. docs/27-accounts.md §9) ne pouvait donc jamais se déclencher avec cet
 // adaptateur, contrairement à ce que la doc annonce. save() rend maintenant la promesse d'écriture
 // et la fait rejeter sur échec.

@@ -41,7 +41,8 @@ describe('preprocessHtml — directive @permanent → mjs-permanent', () => {
   })
 
   it('@permanentx (nom différent, PAS un @permanent) → non touché, aucune conversion', async () => {
-    const { output } = await transpile('<div @permanentx id="c">x</div>', { moduleName: 'perm5' })
+    // forme nue : la fonction `permanentx` du <script> est déclarée, sinon la construction refuse cette écoute morte
+    const { output } = await transpile('<script>\npermanentx = (e) -> null\n</script>\n<div @permanentx id="c">x</div>', { moduleName: 'perm5' })
     assert.doesNotMatch(output, /mjs-permanent/, '@permanentx ne doit pas être confondu avec @permanent')
   })
 

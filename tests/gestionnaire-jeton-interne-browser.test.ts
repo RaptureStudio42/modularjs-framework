@@ -1,6 +1,7 @@
-// un commentaire de plusieurs lignes qui cite une balise du langage, écrit dans une chaîne d'une interpolation, sort du DOM
-// comme le texte de l'auteur sans le commentaire (`xy`), sans aucun caractère NUL : le masque du commentaire, rangé dans celui
-// de l'interpolation, n'était jamais remis et le texte affichait un jeton interne. Chromium réel
+// un `<!-- … -->` de plusieurs lignes qui cite une balise du langage, écrit dans une chaîne d'une interpolation, n'est pas un
+// commentaire (chapitre 2, « Les commentaires ») : le DOM montre la chaîne telle que l'auteur l'a écrite, sans aucun caractère
+// NUL ni jeton interne. Le masque du commentaire, rangé dans celui de l'interpolation, n'était jamais remis et le texte
+// affichait un jeton interne. Chromium réel
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs'
@@ -18,10 +19,10 @@ async function chromium(): Promise<any> {
   }
 }
 
-describe('commentaire qui cite une balise dans une chaîne d\'interpolation : aucun jeton interne dans le DOM (Chromium)', function () {
+describe('un `<!-- … -->` qui cite une balise dans une chaîne d\'interpolation : aucun jeton interne dans le DOM (Chromium)', function () {
   this.timeout(120000)
 
-  it('le texte affiché est celui de l\'auteur sans le commentaire, sans caractère NUL', async () => {
+  it('le texte affiché est celui de l\'auteur, `<!-- … -->` compris, sans caractère NUL', async () => {
     const BT     = String.fromCharCode(96)
     const root   = mjsTmp('gestionnaire-jeton-interne')
     const srcDir = join(root, 'src')
@@ -61,7 +62,8 @@ describe('commentaire qui cite une balise dans une chaîne d\'interpolation : au
       const textes = await page.evaluate(() => [...((document.querySelector('mjs-jt') as any)?._shadow?.querySelectorAll('p') ?? [])].map((p) => p.textContent ?? ''))
       assert.deepEqual(erreurs, [])
       assert.ok(textes.every((t) => !t.includes(String.fromCharCode(0))), 'caractère NUL dans le DOM : ' + JSON.stringify(textes))
-      assert.deepEqual(textes, ['xy', 'xy'])
+      // texte exact : un jeton interne ou un vrai commentaire posé dans le DOM le changerait
+      assert.deepEqual(textes, ['x<!-- <@window>\n-->y', 'x<!-- <@w>\n-->y'])
     }
     finally {
       await browser.close()

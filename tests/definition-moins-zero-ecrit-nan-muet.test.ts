@@ -17,7 +17,7 @@ const DP = (decl: string, act: string) => `<script>
 $t = 0
 ${decl}
 $z = [$o.x].map((v) -> 1 / v).join('')
-@vu = -> window.__vu = (window.__vu or 0) + 1
+@vu = -> window.__seenMark = (window.__seenMark or 0) + 1
 @agir = -> ${act}
 @plus = -> $t++
 </script>
@@ -41,15 +41,15 @@ const SCENARIO = `(async () => {
   const pause = (ms) => new Promise((r) => setTimeout(r, ms))
   const txt = (e) => (((e._shadow || e.shadowRoot)?.querySelector('p.v'))?.textContent || '').trim()
   for (const nom of ${JSON.stringify(Object.keys(CAS))}) {
-    window.__vu = 0
+    window.__seenMark = 0
     window.__W  = []
     const e = document.createElement('mjs-' + nom)
     document.body.appendChild(e)
     await pause(200)
-    const montage = txt(e), n = window.__vu
+    const montage = txt(e), n = window.__seenMark
     e.agir()
     await pause(200)
-    const geste = txt(e), rendus = window.__vu - n
+    const geste = txt(e), rendus = window.__seenMark - n
     e.plus()
     await pause(200)
     R[nom] = { ecrans: [montage, geste, txt(e)], rendus, avis: window.__W.filter((w) => w.includes('$z')) }

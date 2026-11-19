@@ -33,7 +33,7 @@ const PAGE = `<script>
 const SUIVIS = ['mjs-core-select', 'mjs-core-editor', 'mjs-core-sortable']
 
 // avant tout script : les nœuds des modules cœur que le serveur a écrits, dans leurs ombres ; relu après la reprise
-const RELEVE = `window.__voir = function () { var out = []; var voir = function (r, m) { r.querySelectorAll('*').forEach(function (el) { if (el.shadowRoot) voir(el.shadowRoot, el.localName); if (m.indexOf('mjs-core-') === 0) out.push([el, m]) }) }; voir(document, ''); return out }; window.__avant = window.__voir()`
+const RELEVE = `window.__voir = function () { var out = []; var voir = function (r, m) { r.querySelectorAll('*').forEach(function (el) { if (el.shadowRoot) voir(el.shadowRoot, el.localName); if (m.indexOf('mjs-core-') === 0) out.push([el, m]) }) }; voir(document, ''); return out }; window.__before = window.__voir()`
 
 const fichiers = (d: string, base = d, out: string[] = []): string[] => {
   for (const f of readdirSync(d)) {
@@ -96,7 +96,7 @@ async function reprendre(browser: any, rendu: Record<Env, Rendu>, serveur: Env, 
   const etat = await page.evaluate(() => {
     const w = window as any
     const par: Record<string, { avant: number, gardes: number }> = {}
-    w.__avant.forEach((x: any) => { par[x[1]] = par[x[1]] || { avant: 0, gardes: 0 }; par[x[1]].avant++; if (x[0].isConnected) par[x[1]].gardes++ })
+    w.__before.forEach((x: any) => { par[x[1]] = par[x[1]] || { avant: 0, gardes: 0 }; par[x[1]].avant++; if (x[0].isConnected) par[x[1]].gardes++ })
     const hote = document.querySelector('mjs-rp-page') as any
     return { par, fin: String(hote?.shadowRoot?.querySelector('.fin')?.textContent) }
   })

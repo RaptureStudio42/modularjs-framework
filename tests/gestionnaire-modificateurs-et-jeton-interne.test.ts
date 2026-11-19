@@ -1,9 +1,10 @@
 // `@evt.modificateur=nom` suit la règle de `@evt=nom` dans le fallback d'un `<@failed>` et sur une balise globale : un nom que
 // rien ne fournit est refusé à la construction, avec la ligne de l'attribut, même quand un attribut voisin porte un modificateur
 // et, pour valeur sans guillemets, le nom d'un événement écrit plus bas (cette valeur posait un écouteur fantôme). Dans le
-// fallback, un modificateur, jamais posé, est refusé avec sa ligne. Un commentaire de plusieurs lignes qui cite une balise du
-// langage, écrit dans une chaîne d'une interpolation, ne laisse aucun caractère NUL dans le code ni dans le rendu serveur, et
-// les lignes qui le suivent gardent leur numéro ; un commentaire de l'auteur dans une telle chaîne y reste tel qu'écrit. `toString`, `__proto__` et `__defineGetter__` sont nommés comme des propriétés
+// fallback, un modificateur, jamais posé, est refusé avec sa ligne. Un `<!-- … -->` de plusieurs lignes qui cite une balise du
+// langage, écrit dans une chaîne d'une interpolation, n'est pas un commentaire (chapitre 2, « Les commentaires ») : la chaîne
+// reste telle qu'écrite, sans aucun caractère NUL, dans le code comme dans le rendu serveur, et les lignes qui la suivent
+// gardent leur numéro ; un `<!-- … -->` d'une ligne y reste aussi tel qu'écrit. `toString`, `__proto__` et `__defineGetter__` sont nommés comme des propriétés
 // que la fenêtre hérite, `comptime` et `arguments` comme des mots qu'aucune fonction ne peut porter
 
 import assert from 'node:assert/strict'
@@ -38,14 +39,15 @@ async function construit(src: string): Promise<{ code: string; refus: string; co
 const lignes = (msg: string): number[] => [...msg.matchAll(/\(ligne (\d+)\)/g)].map((m) => Number(m[1]))
 
 describe('gestionnaire nommé seul : modificateurs, jeton interne, derniers noms', () => {
-  it('un commentaire de plusieurs lignes qui cite une balise, dans une chaîne d\'interpolation, ne laisse aucun NUL', async () => {
+  it('un `<!-- … -->` de plusieurs lignes qui cite une balise, dans une chaîne d\'interpolation, reste tel qu\'écrit, sans aucun NUL', async () => {
     const seul = await construit(S + '<p>{' + BT + 'x<!-- <@window>\n-->y' + BT + '}</p>\n')
     assert.equal(seul.refus, '')
     assert.ok(!seul.code.includes(NUL), 'caractère NUL dans le code : ' + JSON.stringify(seul.code.slice(seul.code.indexOf('updText'), seul.code.indexOf('updText') + 60)))
-    assert.ok(seul.code.includes(BT + 'xy' + BT), 'texte attendu : xy')
+    assert.ok(seul.code.includes(BT + 'x<!-- <@window>\n-->y' + BT), 'texte attendu : celui de l\'auteur, ' + JSON.stringify(seul.code.slice(seul.code.indexOf('updText'), seul.code.indexOf('updText') + 60)))
     const apresBloc = await construit(S + '<@window\n  @keydown={-> $n++}\n/>\n<p>{"x<!-- <@w>\n-->y"}</p>\n<p>{' + BT + 'a<!-- <@head>\n\n-->b' + BT + '}</p>\n')
     assert.equal(apresBloc.refus, '')
     assert.ok(!apresBloc.code.includes(NUL), 'caractère NUL dans le code après un bloc de plusieurs lignes')
+    assert.ok(apresBloc.code.includes('"x<!-- <@w>\\n-->y"') && apresBloc.code.includes(BT + 'a<!-- <@head>\n\n-->b' + BT), 'textes de l\'auteur après un bloc de plusieurs lignes')
     const auteur = await construit(S + '<p>{"a<!-- b -->c"}</p>\n')
     assert.equal(auteur.refus, '')
     assert.ok(!auteur.code.includes(NUL) && auteur.code.includes('a<!-- b -->c'), 'commentaire de l\'auteur dans une chaîne : ' + JSON.stringify(auteur.code.slice(auteur.code.indexOf('updText'), auteur.code.indexOf('updText') + 60)))
@@ -56,7 +58,7 @@ describe('gestionnaire nommé seul : modificateurs, jeton interne, derniers noms
     assert.deepEqual(lignes(r.refus), [6], r.refus)
   })
 
-  it('rendu serveur : aucun NUL, le texte de l\'auteur sans le commentaire', async () => {
+  it('rendu serveur : aucun NUL, le texte de l\'auteur tel qu\'écrit, montré comme du texte', async () => {
     const root   = mjsTmp('jeton-interne-ssr')
     const srcDir = join(root, 'src')
     mkdirSync(srcDir, { recursive: true })
@@ -72,7 +74,9 @@ describe('gestionnaire nommé seul : modificateurs, jeton interne, derniers noms
     }
     const html = typeof rendu === 'string' ? rendu : JSON.stringify(rendu)
     assert.ok(!html.includes(NUL) && !html.includes('\\u0000'), 'caractère NUL dans le rendu serveur : ' + html.slice(0, 300))
-    assert.ok(html.includes('xy'), 'texte attendu : xy, rendu ' + html.slice(0, 300))
+    // le rendu passe en JSON (un NUL échappé s'y voit) : le texte attendu s'y cherche sous la même forme, échappé comme du texte
+    const texte = JSON.stringify('<p class="ip">x&lt;!-- &lt;@window&gt;\n--&gt;y</p>').slice(1, -1)
+    assert.ok(html.includes(texte), 'texte attendu : celui de l\'auteur, échappé, rendu ' + html.slice(0, 300))
   })
 
   it('fallback d\'un <@failed> : un nom absent avec un modificateur est refusé, avec la ligne', async () => {

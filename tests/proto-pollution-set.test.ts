@@ -16,7 +16,7 @@
 
 import assert from 'node:assert/strict'
 import { resolve } from 'node:path'
-import { lireRuntime } from './helpers/runtime-projete.js'
+import { lireRuntime, lireBloc } from './helpers/runtime-projete.js'
 
 describe('sécurité — proto-pollution via _set / _mjs_wrapDeep (guards __proto__/constructor/prototype)', () => {
   let MjsTest: any
@@ -25,6 +25,9 @@ describe('sécurité — proto-pollution via _set / _mjs_wrapDeep (guards __prot
   before(() => {
     const initJs = lireRuntime(resolve('src/runtime/mjs_init.ts'))
     const elemJs = lireRuntime(resolve('src/runtime/mjs_element.ts'))
+    // l'avis d'un état partagé à ses abonnés et l'ensemble des objets dont un composant a fait l'enveloppe (bloc <reffets-state> de
+    // mjs_runes.ts, que ce bac à sable ne charge pas) : le cœur ne garde les lignes qui les lisent qu'avec ce bloc
+    const etatJs = lireBloc(resolve('src/runtime/mjs_runes.ts'), 'reffets-state')
     const sandbox = `
       class HTMLElement {
         constructor() {}
@@ -38,6 +41,7 @@ describe('sécurité — proto-pollution via _set / _mjs_wrapDeep (guards __prot
       const customElements = { get: () => null, define: () => {} };
       const document = { adoptedStyleSheets: [] };
       ${initJs.replace(/export\s*\{[^}]*\}/, '')}
+      ${etatJs}
       ${elemJs}
       class MjsTest extends µ.Element {
         constructor() {

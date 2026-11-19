@@ -81,19 +81,19 @@ async function reqUnsigned(port: number, method: string, path: string): Promise<
 // ============================================================================================
 
 describe('mjs-ws/stats — compteurs cohérents après activité réelle (vrai client µ.socket)', () => {
-  it('welcome → connexions.accueillies/actives', async () => {
+  it('welcome → connections.welcomed/active', async () => {
     const { transport, app } = await startApp()
     const µ = makeClient(transport)
     const s = µ.socket('memory://stats-welcome')
     s.connect(); await tick()
     const snap = app.stats()
-    assert.equal(snap.connexions.accueillies, 1)
-    assert.equal(snap.connexions.actives, 1)
+    assert.equal(snap.connections.welcomed, 1)
+    assert.equal(snap.connections.active, 1)
     s.destroy(); await app.stop()
-    assert.equal(app.stats().connexions.fermees, 1, 'fermeture comptée après app.stop()')
+    assert.equal(app.stats().connections.closed, 1, 'fermeture comptée après app.stop()')
   })
 
-  it('send/serve → messages.recus/envoyes en hausse', async () => {
+  it('send/serve → messages.received/sent en hausse', async () => {
     const { transport, app } = await startApp()
     app.serve('ping', () => 'pong')
     const µ = makeClient(transport)
@@ -102,12 +102,12 @@ describe('mjs-ws/stats — compteurs cohérents après activité réelle (vrai c
     const before = app.stats().messages
     await s.request('ping', {})
     const after = app.stats().messages
-    assert.ok(after.recus > before.recus, 'au moins la requête ping reçue en plus')
-    assert.ok(after.envoyes > before.envoyes, 'au moins le µ:ack envoyé en plus')
+    assert.ok(after.received > before.received, 'au moins la requête ping reçue en plus')
+    assert.ok(after.sent > before.sent, 'au moins le µ:ack envoyé en plus')
     s.destroy(); await app.stop()
   })
 
-  it("join → salons.nombre/membresTotal", async () => {
+  it("join → rooms.count/membersTotal", async () => {
     const { transport, app } = await startApp()
     const µ = makeClient(transport)
     const s = µ.socket('memory://stats-room')
@@ -115,22 +115,22 @@ describe('mjs-ws/stats — compteurs cohérents après activité réelle (vrai c
     s.room('zone-stats')
     await tick()
     const snap = app.stats()
-    assert.equal(snap.salons.nombre, 1)
-    assert.equal(snap.salons.membresTotal, 1)
+    assert.equal(snap.rooms.count, 1)
+    assert.equal(snap.rooms.membersTotal, 1)
     s.destroy(); await app.stop()
   })
 
-  it('stream add → flux.nombre/deltasEmis', async () => {
+  it('stream add → streams.count/deltasEmitted', async () => {
     const { app } = await startApp()
     const ennemis = app.stream('ennemis-stats')
     ennemis.add('e1', { x: 1, y: 2 })
     const snap = app.stats()
-    assert.equal(snap.flux.nombre, 1)
-    assert.equal(snap.flux.deltasEmis, 1)
+    assert.equal(snap.streams.count, 1)
+    assert.equal(snap.streams.deltasEmitted, 1)
     await app.stop()
   })
 
-  it('kick de garde simulé (rafale > burst) → garde.kicksDebit', async () => {
+  it('kick de garde simulé (rafale > burst) → guard.kicksRate', async () => {
     const { transport, app } = await startApp({ limits: { rate: 5, burst: 5, kickAfter: 3 }, onLog: () => {} })   // kick INTENTIONNEL
     const µ = makeClient(transport)
     const s = µ.socket('memory://stats-garde', { reconnect: { enabled: false } })
@@ -138,25 +138,25 @@ describe('mjs-ws/stats — compteurs cohérents après activité réelle (vrai c
     for (let i = 0; i < 30; i++) s.send('spam', { i })
     await tick(60)
     const snap = app.stats()
-    assert.ok(snap.garde.kicksDebit >= 1)
-    assert.equal(snap.garde.kicksSilence, 0)
-    assert.equal(snap.garde.kicksEngorgement, 0)
-    assert.equal(snap.garde.kicksChargeUtile, 0)
+    assert.ok(snap.guard.kicksRate >= 1)
+    assert.equal(snap.guard.kicksSilence, 0)
+    assert.equal(snap.guard.kicksBackpressure, 0)
+    assert.equal(snap.guard.kicksPayload, 0)
     s.destroy(); await app.stop()
   })
 
-  it('reprise de session → sessions.reprises', async () => {
+  it('reprise de session → sessions.resumed', async () => {
     const { transport, app } = await startApp({ resume: true, onLog: () => {} })
     const µ = makeClient(transport)
     const s = µ.socket('memory://stats-resume', { reconnect: { backoff: [0], jitter: 0 } })
     s.connect(); await tick()
-    assert.equal(app.stats().sessions.emises, 1, '1re émission au welcome initial')
+    assert.equal(app.stats().sessions.issued, 1, '1re émission au welcome initial')
     s._mjs_ws.close(1006, 'coupure simulée')   // coupure réseau — PAS un close() volontaire
     await tick(30)                         // backoff [0] → reconnexion quasi immédiate
     assert.equal(s.state, 'open')
     const snap = app.stats()
-    assert.equal(snap.sessions.reprises, 1)
-    assert.equal(snap.sessions.emises, 2, '2e émission (clé tournée) au welcome de reprise')
+    assert.equal(snap.sessions.resumed, 1)
+    assert.equal(snap.sessions.issued, 2, '2e émission (clé tournée) au welcome de reprise')
     s.destroy(); await app.stop()
   })
 })
@@ -164,21 +164,21 @@ describe('mjs-ws/stats — compteurs cohérents après activité réelle (vrai c
 // ============================================================================================
 
 describe('mjs-ws/stats — app.stats() : forme complète + uptime/processId', () => {
-  it('toutes les familles présentes, uptime/processId/horodatage/mémoire du bon type', async () => {
+  it('toutes les familles présentes, uptime/processId/timestamp/memory du bon type', async () => {
     const { app } = await startApp()
     const snap = app.stats()
     assert.equal(typeof snap.uptime, 'number')
     assert.ok(snap.uptime >= 0)
     assert.equal(typeof snap.processId, 'string')
     assert.ok(snap.processId.length > 0)
-    assert.equal(typeof snap.horodatage, 'number')
-    assert.equal(typeof snap.memoire.rss, 'number')
-    assert.ok(snap.memoire.rss > 0)
-    for (const famille of ['connexions', 'messages', 'garde', 'salons', 'flux', 'pont', 'adaptateur', 'sessions', 'intervallesPing', 'erreurs']) {
+    assert.equal(typeof snap.timestamp, 'number')
+    assert.equal(typeof snap.memory.rss, 'number')
+    assert.ok(snap.memory.rss > 0)
+    for (const famille of ['connections', 'messages', 'guard', 'rooms', 'streams', 'bridge', 'adapter', 'sessions', 'pingIntervals', 'errors']) {
       assert.ok(famille in snap, `famille '${famille}' manquante dans l'instantané`)
     }
-    assert.deepEqual(Object.keys(snap.connexions).sort(), ['accueillies', 'actives', 'fermees', 'parquees', 'refusees', 'refuseesBan', 'refuseesOrigine', 'refuseesPlafond'].sort())
-    assert.deepEqual(snap.intervallesPing, { p50: null, p95: null, echantillon: 0 }, 'aucun ping encore mesuré')
+    assert.deepEqual(Object.keys(snap.connections).sort(), ['active', 'closed', 'parked', 'refused', 'refusedBan', 'refusedCap', 'refusedOrigin', 'welcomed'].sort())
+    assert.deepEqual(snap.pingIntervals, { p50: null, p95: null, samples: 0 }, 'aucun ping encore mesuré')
     await app.stop()
   })
 
@@ -189,8 +189,8 @@ describe('mjs-ws/stats — app.stats() : forme complète + uptime/processId', ()
     const s = µ.socket('memory://stats-snapshot')
     s.connect(); await tick()
     const b = app.stats()
-    assert.equal(a.connexions.actives, 0, "l'instantané PRÉCÉDENT ne doit pas avoir été muté après coup")
-    assert.equal(b.connexions.actives, 1)
+    assert.equal(a.connections.active, 0, "l'instantané PRÉCÉDENT ne doit pas avoir été muté après coup")
+    assert.equal(b.connections.active, 1)
     s.destroy(); await app.stop()
   })
 })
@@ -305,7 +305,7 @@ describe('mjs-ws/stats — LatencyReservoir : p50/p95 sur un échantillon connu,
     const r = new LatencyReservoir()
     for (let i = 1; i <= 100; i++) r.push(i)
     const p = r.percentiles()
-    assert.equal(p.echantillon, 100)
+    assert.equal(p.samples, 100)
     assert.equal(p.p50, 50)
     assert.equal(p.p95, 95)
   })
@@ -314,7 +314,7 @@ describe('mjs-ws/stats — LatencyReservoir : p50/p95 sur un échantillon connu,
     const r = new LatencyReservoir()
     for (let i = 1; i <= LATENCY_RESERVOIR_SIZE + 50; i++) r.push(i)
     const p = r.percentiles()
-    assert.equal(p.echantillon, LATENCY_RESERVOIR_SIZE, `jamais plus de ${LATENCY_RESERVOIR_SIZE} échantillons`)
+    assert.equal(p.samples, LATENCY_RESERVOIR_SIZE, `jamais plus de ${LATENCY_RESERVOIR_SIZE} échantillons`)
     // les 50 plus anciennes valeurs (1..50) ont été écrasées — il reste 51..306 (256 valeurs contiguës)
     assert.equal(p.p50, 51 + 127)
     assert.equal(p.p95, 51 + 242)
@@ -322,18 +322,18 @@ describe('mjs-ws/stats — LatencyReservoir : p50/p95 sur un échantillon connu,
 
   it('réservoir vide → p50/p95 null, échantillon 0', () => {
     const r = new LatencyReservoir()
-    assert.deepEqual(r.percentiles(), { p50: null, p95: null, echantillon: 0 })
+    assert.deepEqual(r.percentiles(), { p50: null, p95: null, samples: 0 })
   })
 
-  it('ping réel (heartbeat actif) → intervallesPing.p50/p95 numériques, échantillon ≥ 1', async () => {
+  it('ping réel (heartbeat actif) → pingIntervals.p50/p95 numériques, échantillon ≥ 1', async () => {
     const { transport, app } = await startApp({ heartbeat: 20 })
     const µ = makeClient(transport)
     const s = µ.socket('memory://stats-latency', { heartbeat: 20 })
     s.connect(); await tick()
     await tick(45)   // laisse au moins 1 aller-retour ping/pong passer (même délai que mjs-ws-core.test.ts #5)
     const snap = app.stats()
-    assert.equal(typeof snap.intervallesPing.p50, 'number')
-    assert.ok(snap.intervallesPing.echantillon >= 1)
+    assert.equal(typeof snap.pingIntervals.p50, 'number')
+    assert.ok(snap.pingIntervals.samples >= 1)
     s.destroy(); await app.stop()
   })
 })

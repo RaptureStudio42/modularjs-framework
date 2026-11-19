@@ -188,21 +188,21 @@
       µ._mjs_dom.appendChild(host, layer);
       // la balise, elle, s'annonce : la région d'abord, vide, son texte une image après (posés ensemble, plusieurs
       // lecteurs d'écran ne disent rien)
-      var role  = µ._mjs_dom.getAttribute(el, 'role');
-      var own   = role === null && !/^(?:div|span)$/.test(el.localName) && el.localName.indexOf('-') < 0;
-      var dit   = own ? null : µ._mjs_dom.getAttribute(el, 'aria-label');
-      var frame = 0;
-      var said  = null;
+      var role   = µ._mjs_dom.getAttribute(el, 'role');
+      var own    = role === null && !/^(?:div|span)$/.test(el.localName) && el.localName.indexOf('-') < 0;
+      var spoken = own ? null : µ._mjs_dom.getAttribute(el, 'aria-label');
+      var frame  = 0;
+      var said   = null;
       if (role === null && !own) µ._mjs_dom.setAttribute(el, 'role', 'status');
       // « Chargement » dans la langue de la page : récrit à l'arrivée du fichier de la langue s'il le surcharge (une image après la
       // région, comme à la pose, si son texte n'y est pas encore)
-      if (dit === null) {
+      if (spoken === null) {
         µ._mjs_fxLabelKeep(function() {
-          dit = µ._mjs_fxLabel('loading');
-          if (said && !frame) said.textContent = dit;
+          spoken = µ._mjs_fxLabel('loading');
+          if (said && !frame) said.textContent = spoken;
         });
       }
-      if (dit) {
+      if (spoken) {
         said = document.createElement('span');
         said.setAttribute('mjs-fx-loader-said', '');
         if (own) said.setAttribute('role', 'status');
@@ -210,7 +210,7 @@
         frame = requestAnimationFrame(function() {
           frame = requestAnimationFrame(function() {
             frame = 0;
-            said.textContent = dit;
+            said.textContent = spoken;
           });
         });
       }

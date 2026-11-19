@@ -116,8 +116,8 @@
       sweep([[-1, 0, a1], [-1, -1, a2], [0, -1, a1], [1, -1, a2], [-2, -1, a3], [-1, -2, a3], [1, -2, a3], [2, -1, a3]], false);
       sweep([[1, 0, a1], [1, 1, a2], [0, 1, a1], [-1, 1, a2], [2, 1, a3], [1, 2, a3], [-1, 2, a3], [-2, 1, a3]], true);
     };
-    // les moments posés sont ramenés à 0..1, puis épaissis de façon que l'épaississement dure `lent` fois le tracé
-    var tree   = function(lent) {
+    // les moments posés sont ramenés à 0..1, puis épaissis de façon que l'épaississement dure `slow` fois le tracé
+    var tree   = function(slow) {
       var tot = map.length, t1 = 0, dmax = 0, keep, q;
       for (q = 0; q < tot; q++) if (map[q] < NEAR && map[q] > t1) t1 = map[q];
       for (q = 0; q < tot; q++) if (map[q] < NEAR) map[q] /= t1 || 1;
@@ -126,7 +126,7 @@
       spread(1);
       for (q = 0; q < tot; q++) if (map[q] > dmax) dmax = map[q];
       map.set(keep);
-      spread(lent / (dmax || 1));
+      spread(slow / (dmax || 1));
     };
     // un tracé fin d'abord (le moment posé à chaque point, de 0 à T0), puis tout s'épaissit en même temps, à la même
     // vitesse, jusqu'à tout remplir (de T0 à 1) ; w : la largeur du trait fin
@@ -373,14 +373,14 @@
     else if (style === 'glitch') {
       // des bandes de hauteurs inégales (les unes très fines), coupées en blocs de largeurs inégales ; chaque bloc
       // apparaît avec l'une des `count` salves, à un souffle près
-      var salvos = [], bands = [], a1 = 0, nb, cuts, blocks;
+      var salvos = [], bands = [], a1 = 0, num, cuts, blocks;
       for (i = 0; i < count; i++) salvos.push((i + .1 + R() * .5) / count);
       while (a1 < 1) {
         var a0 = a1, bh = R() < .25 ? .004 + R() * .01 : .02 + R() * R() * .14;
         a1 = Math.min(1, a0 + bh);
-        nb = R() < .3 ? 1 : 2 + Math.floor(R() * 5);
+        num = R() < .3 ? 1 : 2 + Math.floor(R() * 5);
         cuts = [0];
-        for (i = 1; i < nb; i++) cuts.push(R());
+        for (i = 1; i < num; i++) cuts.push(R());
         cuts.sort(function(p, q) { return p - q; });
         blocks = cuts.map(function(c) { return { c: c, t: salvos[Math.floor(R() * salvos.length)] + R() * .1 }; });
         bands.push({ a1: a1, blocks: blocks });

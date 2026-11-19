@@ -79,7 +79,7 @@ for (const nom of ['chromium', 'firefox'] as const) describe(`atelier /__mjs/the
     assert.ok(total >= 10, `le registre est affiché : ${total} lignes`)
     // on clique chaque ligne dont le détail est encore fermé, comme l'utilisateur qui déplie tout
     for (let i = 0; i < total; i++) {
-      await page.evaluate(`(() => { const l = document.querySelector('mjs-theme-viewer')._shadow.querySelectorAll('.variable')[${i}]; if (!l.querySelector('.detail')) l.querySelector('.nom').click() })()`)
+      await page.evaluate(`(() => { const l = document.querySelector('mjs-theme-viewer')._shadow.querySelectorAll('.variable')[${i}]; if (!l.querySelector('.detail')) l.querySelector('.name').click() })()`)
       await page.waitForTimeout(30)
     }
     await page.waitForTimeout(400)

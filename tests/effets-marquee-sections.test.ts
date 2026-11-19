@@ -83,7 +83,7 @@ const PISTE = [...TOUT, 'enfants']
 const DEUX = Object.fromEntries(PISTE.map((p) => [p, 2]))
 
 const TEMOINS: Temoin[] = [
-  { texte: 'function _mjsFxMarqueeWrap(u, tour) {',                                          pages: TOUT },
+  { texte: 'function _mjsFxMarqueeWrap(u, turn) {',                                          pages: TOUT },
   { texte: '[mjs-fx-marquee-axis="y"] [mjs-fx-marquee-track]{flex-direction:column',          pages: VERT },
   { texte: '[mjs-fx-marquee-pause]:hover [mjs-fx-marquee-track]{animation-play-state:paused}', pages: ['pause', 'pausedrag'] },
   { texte: '@keyframes mjs-fx-marquee-y{',                                                    pages: VERT },

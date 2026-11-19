@@ -153,7 +153,7 @@ describe('µeffect — une clé du store lue devient une dépendance, jamais cel
         '$r = 1',
         'µeffect ->',
         '  window.__runs = (window.__runs or 0) + 1',
-        '  window.__vu = [($$desires or []).length, $r]',
+        '  window.__seenMark = [($$desires or []).length, $r]',
         '  return',
         '</script>',
         '<p>x</p>',
@@ -162,14 +162,14 @@ describe('µeffect — une clé du store lue devient une dépendance, jamais cel
       win.µ.store.desires = [ 1, 2 ]
       await pause()
       assert.equal(win.__runs, 2, 'la clé écrite relance l\'effet')
-      assert.equal(JSON.stringify(win.__vu), '[2,1]')
+      assert.equal(JSON.stringify(win.__seenMark), '[2,1]')
       win.µ.store.desires = [ 1, 2, 3 ]
       await pause()
       assert.equal(win.__runs, 3, 'une relance par écriture')
       el._set('r', 2)
       await pause()
       assert.equal(win.__runs, 4, 'la variable locale relance toujours')
-      assert.equal(JSON.stringify(win.__vu), '[3,2]')
+      assert.equal(JSON.stringify(win.__seenMark), '[3,2]')
       win.close?.()
     })
 

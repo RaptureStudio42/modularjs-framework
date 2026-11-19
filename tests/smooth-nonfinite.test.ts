@@ -58,7 +58,7 @@ describe('µ.smooth — échantillon non fini (Infinity/NaN) jamais retenu, aver
   it('2 échantillons Infinity consécutifs encadrant la cible → jamais de NaN dans le store affiché (AVANT le fix : NaN)', () => {
     const { µ, getTask } = makeMu()
     const source: any = { a: { x: 0, y: 0 } }
-    const out = µ.smooth(source, { retard: 5 })
+    const out = µ.smooth(source, { delay: 5 })
     const task = getTask()
     task._mjs_step(0)
     source.a = JSON.parse('{"x":1e309,"y":1}')   // delta réseau extrême → Infinity
@@ -74,7 +74,7 @@ describe('µ.smooth — échantillon non fini (Infinity/NaN) jamais retenu, aver
     const warnings: any[] = []
     const { µ, getTask } = makeMu((m) => warnings.push(m))
     const source: any = { a: { x: 0, y: 0 } }
-    µ.smooth(source, { retard: 5 })
+    µ.smooth(source, { delay: 5 })
     const task = getTask()
     task._mjs_step(0)
     for (let i = 1; i <= 5; i++) { source.a = { x: Infinity, y: i }; task._mjs_step(i * 10) }
@@ -84,7 +84,7 @@ describe('µ.smooth — échantillon non fini (Infinity/NaN) jamais retenu, aver
   it('un champ NaN isolé (pas Infinity) est également écarté (isFinite(NaN) === false)', () => {
     const { µ, getTask } = makeMu()
     const source: any = { a: { x: 0, y: 0 } }
-    const out = µ.smooth(source, { retard: 5 })
+    const out = µ.smooth(source, { delay: 5 })
     const task = getTask()
     task._mjs_step(0)
     source.a = { x: NaN, y: 3 }
@@ -96,14 +96,14 @@ describe('µ.smooth — échantillon non fini (Infinity/NaN) jamais retenu, aver
   it('un échantillon fini APRÈS un échantillon non fini reprend un lissage normal (le tampon repart proprement)', () => {
     const { µ, getTask } = makeMu()
     const source: any = { a: { x: 0, y: 0 } }
-    const out = µ.smooth(source, { retard: 5 })
+    const out = µ.smooth(source, { delay: 5 })
     const task = getTask()
     task._mjs_step(0)
     source.a = { x: Infinity, y: 1 }
     task._mjs_step(10)
     source.a = { x: 42, y: 2 }
     task._mjs_step(30)
-    task._mjs_step(200)   // « now » bien au-delà de retard+dernier échantillon → cible EXACTE, plus d'interpolation
+    task._mjs_step(200)   // « now » bien au-delà de delay + dernier échantillon → cible EXACTE, plus d'interpolation
     assert.equal(out.a.x, 42, `l'échantillon fini qui suit doit être affiché normalement — out.a=${JSON.stringify(out.a)}`)
     out.dispose()
   })

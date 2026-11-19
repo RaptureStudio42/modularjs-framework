@@ -1,6 +1,6 @@
 // core.ts — chaque refus VOLONTAIRE d'un paquet ou de l'appli (`lobby-denied`, `account-denied`, un code levé par
 // un serve()/on()) était journalisé en ERREUR avec sa pile : un client inondait le journal au débit autorisé et
-// noyait les vraies erreurs (compteur `erreurs.erreurs` gonflé). Un refus part au client sans rien journaliser ;
+// noyait les vraies erreurs (compteur `errors.errors` gonflé). Un refus part au client sans rien journaliser ;
 // une exception imprévue reste journalisée en erreur.
 import assert from 'node:assert/strict'
 import { mjsWs, lobbyPackage } from '../src/mjs-ws/index.js'
@@ -29,7 +29,7 @@ describe('MJS-WS — un refus métier ne remplit pas le journal des erreurs', ()
       for (let i = 0; i < 3; i++) ws.send(JSON.stringify({ t: 'commande', p: {}, id: 100 + i }))
       await tick(50)
       assert.equal(erreurs.length, 0, 'aucune ligne error pour des refus volontaires')
-      assert.equal(app.stats().erreurs.erreurs, 0)
+      assert.equal(app.stats().errors.errors, 0)
       assert.equal(trames.filter(f => f.t === 'µ:error' && f.p?.message === 'lobby-denied').length, 75, 'le client reçoit toujours chaque refus')
       assert.equal(trames.filter(f => f.t === 'µ:ack' && f.e === true && f.p === 'commande-refusee').length, 3)
 

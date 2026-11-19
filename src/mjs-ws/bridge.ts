@@ -120,24 +120,24 @@ const SECRET_MIN_LENGTH = 32
 
 function warnShortSecret(secret: string, label: string): void {
   if (secret.length >= SECRET_MIN_LENGTH) return
-  console.warn(t('ws.bridge.secret-court', { label, length: secret.length, min: SECRET_MIN_LENGTH }))
+  console.warn(t('ws.bridge.secret-short', { label, length: secret.length, min: SECRET_MIN_LENGTH }))
 }
 
 /** un secret littéral, ou 'env:NOM_VAR' → process.env.NOM_VAR ; vide, ou variable absente ou vide : une erreur — `manquant` et
  *  `envAbsent`, les messages de l'appelant (le pont, le proxy de décision : proxy.ts) */
-export function resolveSecretRef(raw: string | undefined, label: string, manquant: MsgKey, envAbsent: MsgKey): string {
-  if (raw == null || raw === '') throw new Error(t(manquant, { label }))
+export function resolveSecretRef(raw: string | undefined, label: string, missing: MsgKey, envMissing: MsgKey): string {
+  if (raw == null || raw === '') throw new Error(t(missing, { label }))
   if (raw.indexOf('env:') !== 0) return raw
   const varName = raw.slice(4)
   const value   = process.env[varName]
-  if (!value) throw new Error(t(envAbsent, { label, varName }))
+  if (!value) throw new Error(t(envMissing, { label, varName }))
   return value
 }
 
 // même règle pour le secret du pont et celui des webhooks (si absent côté webhooks, celui du pont est réutilisé, DÉJÀ
 // résolu ici) ; un secret court est signalé
 function resolveSecretValue(raw: string | undefined, label: string): string {
-  const value = resolveSecretRef(raw, label, 'ws.bridge.secret-manquant', 'ws.bridge.secret-env-absent')
+  const value = resolveSecretRef(raw, label, 'ws.bridge.secret-missing', 'ws.bridge.secret-env-missing')
   warnShortSecret(value, label)
   return value
 }
@@ -159,13 +159,15 @@ export function resolveBridgeOptions(userBridge: MjsWsBridgeOptions, wsPort: num
   const secret = resolveSecretValue(userBridge.secret, 'opts.bridge.secret')
   const port   = userBridge.port ?? (wsPort + 1)
   const host   = userBridge.host ?? '127.0.0.1'
+  // vide ou fait de blancs : refusé comme dans mjs.config.json (un hôte vide ferait écouter le pont sur toutes les adresses de la machine)
+  if (typeof host === 'string' && host.trim() === '') throw new Error(t('ws.bridge.host-empty', { value: JSON.stringify(host) }))
 
   let webhooks: MjsWsResolvedBridgeWebhooks | undefined
   if (userBridge.webhooks) {
     const wh = userBridge.webhooks
-    if (!wh.url) throw new Error(t('ws.bridge.webhooks-url-manquant'))
+    if (!wh.url) throw new Error(t('ws.bridge.webhooks-url-missing'))
     if (!Array.isArray(wh.events) || wh.events.length === 0) {
-      throw new Error(t('ws.bridge.webhooks-events-vide'))
+      throw new Error(t('ws.bridge.webhooks-events-empty'))
     }
     webhooks = {
       url:       wh.url,
@@ -265,25 +267,25 @@ function verifyIncomingSignature(
 ): string | null {
   const ts  = firstHeader(headers['x-mjs-ws-timestamp'])
   const sig = firstHeader(headers['x-mjs-ws-signature'])
-  if (!ts || !sig) return t('ws.bridge.signature-manquante')
+  if (!ts || !sig) return t('ws.bridge.signature-missing')
 
   const tsNum = Number(ts)
-  if (!Number.isFinite(tsNum)) return t('ws.bridge.timestamp-invalide')
-  if (Math.abs(now / 1000 - tsNum) > REPLAY_WINDOW_S) return t('ws.bridge.horodatage-hors-fenetre')
+  if (!Number.isFinite(tsNum)) return t('ws.bridge.timestamp-invalid')
+  if (Math.abs(now / 1000 - tsNum) > REPLAY_WINDOW_S) return t('ws.bridge.timestamp-outside-window')
 
   if (nonce) {
     const n = nonce.value
     // en-tête absent : une recette d'avant le nonce par défaut — le message dit quoi ajouter
-    if (n == null) return t('ws.bridge.nonce-manquant', { min: NONCE_MIN_LEN, max: NONCE_MAX_LEN })
+    if (n == null) return t('ws.bridge.nonce-missing', { min: NONCE_MIN_LEN, max: NONCE_MAX_LEN })
     if (n.length < NONCE_MIN_LEN || n.length > NONCE_MAX_LEN) {
-      return t('ws.bridge.nonce-requis', { min: NONCE_MIN_LEN, max: NONCE_MAX_LEN })
+      return t('ws.bridge.nonce-required', { min: NONCE_MIN_LEN, max: NONCE_MAX_LEN })
     }
   }
 
   // direction 'in' — une signature calculée côté back pour un webhook ('out') ne
   // vérifie plus ici, cf. canonicalString ci-dessus « Séparation de domaine »
   const expected = signCanonical(secret, canonicalString(tsNum, method, pathWithQuery, rawBody, nonce?.value, 'in'))
-  if (!safeEqual(expected, sig, 'hex')) return t('ws.bridge.signature-invalide')
+  if (!safeEqual(expected, sig, 'hex')) return t('ws.bridge.signature-invalid')
   return null
 }
 
@@ -302,10 +304,10 @@ function readBody(req: IncomingMessage): Promise<{ ok: true; body: string } | { 
       chunks.push(chunk)
     })
     req.on('end', () => {
-      if (tooLarge) resolvePromise({ ok: false, status: 413, error: t('ws.bridge.corps-trop-volumineux') })
+      if (tooLarge) resolvePromise({ ok: false, status: 413, error: t('ws.bridge.body-too-large') })
       else resolvePromise({ ok: true, body: Buffer.concat(chunks).toString('utf8') })
     })
-    req.on('error', () => resolvePromise({ ok: false, status: 400, error: t('ws.bridge.erreur-lecture-corps') }))
+    req.on('error', () => resolvePromise({ ok: false, status: 400, error: t('ws.bridge.error-read-body') }))
   })
 }
 
@@ -337,16 +339,16 @@ export interface MjsWsBridgeContext {
    */
   publishSend?: (target: { client?: string; user?: string }, type: string, p: unknown) => void
   /** `/room/kick {client}` : propage l'expulsion d'UNE connexion (son id) aux autres processus — absente hors cluster */
-  publishKickConnexion?: (room: string, clientId: string, reason: string | undefined) => void
+  publishKickConnection?: (room: string, clientId: string, reason: string | undefined) => void
   /**
    * destinataires LOCAUX d'un `/send` — une connexion par son id (`client`), ou toutes les connexions d'un utilisateur
-   * (`user`, MÊME résolution que app.sendUser) — par les index du serveur (core.ts::ciblesLocales) : le coût suit les
+   * (`user`, MÊME résolution que app.sendUser) — par les index du serveur (core.ts::localTargets) : le coût suit les
    * connexions de la cible, jamais le nombre total de connectés.
    */
-  ciblesLocales: (clientId: string | undefined, user: string | undefined) => MjsWsClient[]
+  localTargets: (clientId: string | undefined, user: string | undefined) => MjsWsClient[]
   /** connexions LOCALES désignées par un `except` : ses personnes (`identity.id`, ou `anon:` suivi de l'id de connexion —
-   *  MÊME résolution que peerIdOf) et ses connexions (par leur id seul), par les index du serveur (core.ts::connexionsDesIds) */
-  connexionsDesIds: (recu: MjsWsExceptRecu) => MjsWsClient[]
+   *  MÊME résolution que peerIdOf) et ses connexions (par leur id seul), par les index du serveur (core.ts::connectionsOfIds) */
+  connectionsOfIds: (receivedExcept: MjsWsReceivedExcept) => MjsWsClient[]
   /** état/métriques (stats.ts) — registre TOUJOURS peuplé (écriture : compteurs pont ci-dessous) ; lecture d'un instantané via `app.stats()` (déjà dans `app`). */
   stats: MjsWsStatsRegistry
   /** GET /stats, /metrics, /state actifs seulement si true (option `stats` de mjsWs(), désactivée par défaut) — le registre tourne quand même dans les deux cas. */
@@ -373,15 +375,15 @@ function isPlainObject(x: unknown): x is Record<string, unknown> { return typeof
 // 'except' (broadcast/room-send) : absente, une personne (chaîne : identity.id, ou `anon:` suivi de l'id de connexion —
 // peerIdOf), une seule connexion (`{ client: id }`, comme /room/kick), ou un tableau des deux mélangés. Jamais une chaîne
 // pour une connexion : un compte peut porter l'id d'une connexion
-function parseExcept(x: unknown): MjsWsExceptRecu | null {
-  const recu: MjsWsExceptRecu = { personnes: [], connexions: [] }
-  if (x === undefined) return recu
+function parseExcept(x: unknown): MjsWsReceivedExcept | null {
+  const receivedExcept: MjsWsReceivedExcept = { peers: [], connections: [] }
+  if (x === undefined) return receivedExcept
   for (const v of Array.isArray(x) ? x : [x]) {
-    if (typeof v === 'string') recu.personnes.push(v)
-    else if (isPlainObject(v) && typeof v.client === 'string' && Object.keys(v).length === 1) recu.connexions.push(v.client)
+    if (typeof v === 'string') receivedExcept.peers.push(v)
+    else if (isPlainObject(v) && typeof v.client === 'string' && Object.keys(v).length === 1) receivedExcept.connections.push(v.client)
     else return null
   }
-  return recu
+  return receivedExcept
 }
 
 // Bogue comblé — valide la charge (p/value/values) à L'ENTRÉE plutôt que de
@@ -416,124 +418,124 @@ function isSerializablePayload(value: unknown): boolean {
 
 // option interne d'`app.broadcast` et de `room().send` (jamais documentée) : l'`except` tel que reçu par le pont, ses
 // personnes et ses connexions à part. Les connexions résolues ici n'existent que dans CE processus ; relayées aux autres
-// processus (cf. core.ts, idsExclus), l'id d'un compte y exclut aussi ses onglets servis ailleurs
-export const EXCEPT_RECU: unique symbol = Symbol('except reçu par le pont')
+// processus (cf. core.ts, excludedIds), l'id d'un compte y exclut aussi ses onglets servis ailleurs
+export const EXCEPT_RECEIVED: unique symbol = Symbol('except reçu par le pont')
 
 /** un `except` par identifiants : des personnes (`identity.id`, ou `anon:` suivi de l'id de connexion), des connexions */
-export interface MjsWsExceptRecu {
-  personnes: string[]
-  connexions: string[]
+export interface MjsWsReceivedExcept {
+  peers: string[]
+  connections: string[]
 }
 
-// options d'envoi d'un `except` reçu : les connexions locales désignées (par les index, cf. connexionsDesIds), plus
+// options d'envoi d'un `except` reçu : les connexions locales désignées (par les index, cf. connectionsOfIds), plus
 // l'`except` reçu pour les autres processus — même quand aucun onglet du compte n'est servi ici
-function exceptRecu(ctx: MjsWsBridgeContext, recu: MjsWsExceptRecu): MjsWsBroadcastOpts | undefined {
-  if (recu.personnes.length === 0 && recu.connexions.length === 0) return undefined
-  return { except: ctx.connexionsDesIds(recu), [EXCEPT_RECU]: recu } as MjsWsBroadcastOpts
+function exceptReceived(ctx: MjsWsBridgeContext, receivedExcept: MjsWsReceivedExcept): MjsWsBroadcastOpts | undefined {
+  if (receivedExcept.peers.length === 0 && receivedExcept.connections.length === 0) return undefined
+  return { except: ctx.connectionsOfIds(receivedExcept), [EXCEPT_RECEIVED]: receivedExcept } as MjsWsBroadcastOpts
 }
 
 // --- endpoints ----------------------------------------------------------------------------
 
 function handleBroadcast(ctx: MjsWsBridgeContext, payload: any, res: ServerResponse): void {
-  if (!isStr(payload?.type)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.type-requis') }); return }
-  const recu = parseExcept(payload.except)
-  if (recu === null) { sendJson(res, 400, { ok: false, error: t('ws.bridge.except-invalide') }); return }
-  if (!isSerializablePayload(payload.p)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.charge-non-serialisable', { depth: MAX_PAYLOAD_DEPTH }) }); return }
+  if (!isStr(payload?.type)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.type-required') }); return }
+  const receivedExcept = parseExcept(payload.except)
+  if (receivedExcept === null) { sendJson(res, 400, { ok: false, error: t('ws.bridge.except-invalid') }); return }
+  if (!isSerializablePayload(payload.p)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.payload-not-serializable', { depth: MAX_PAYLOAD_DEPTH }) }); return }
   // `app.broadcast` renvoie désormais `boolean` — `false` UNIQUEMENT si la
   // charge n'a pas pu être sérialisée à l'envoi, résiduel après la validation d'entrée ci-dessus
-  const delivered = ctx.app.broadcast(payload.type, payload.p, exceptRecu(ctx, recu))
-  if (!delivered) { ctx.onLog('error', t('ws.bridge.echec-envoi')); sendJson(res, 500, { ok: false, error: t('ws.bridge.echec-envoi') }); return }
+  const delivered = ctx.app.broadcast(payload.type, payload.p, exceptReceived(ctx, receivedExcept))
+  if (!delivered) { ctx.onLog('error', t('ws.bridge.failed-send')); sendJson(res, 500, { ok: false, error: t('ws.bridge.failed-send') }); return }
   sendJson(res, 200, { ok: true })
 }
 
 // 'client' (id de connexion, AU PLUS une correspondance) OU 'user' (id agrégé, TOUTES ses connexions) — jamais les deux, jamais aucun
 function handleSend(ctx: MjsWsBridgeContext, payload: any, res: ServerResponse): void {
-  if (!isStr(payload?.type)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.type-requis') }); return }
+  if (!isStr(payload?.type)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.type-required') }); return }
   const hasClient = payload?.client !== undefined
   const hasUser   = payload?.user !== undefined
-  if (hasClient === hasUser) { sendJson(res, 400, { ok: false, error: t('ws.bridge.client-ou-user') }); return }
+  if (hasClient === hasUser) { sendJson(res, 400, { ok: false, error: t('ws.bridge.client-or-user') }); return }
   const target = hasClient ? payload.client : payload.user
-  if (!isStr(target)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.client-user-chaine') }); return }
-  if (!isSerializablePayload(payload.p)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.charge-non-serialisable', { depth: MAX_PAYLOAD_DEPTH }) }); return }
+  if (!isStr(target)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.client-user-string') }); return }
+  if (!isSerializablePayload(payload.p)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.payload-not-serializable', { depth: MAX_PAYLOAD_DEPTH }) }); return }
 
   let sent = 0
-  let echecEnvoi = false
-  // par les index (cf. MjsWsBridgeContext.ciblesLocales) — un id de connexion désigne au plus une connexion
-  for (const c of ctx.ciblesLocales(hasClient ? target : undefined, hasUser ? target : undefined)) {
+  let sendFailure = false
+  // par les index (cf. MjsWsBridgeContext.localTargets) — un id de connexion désigne au plus une connexion
+  for (const c of ctx.localTargets(hasClient ? target : undefined, hasUser ? target : undefined)) {
     // `app.send` renvoie désormais `boolean` — cf. handleBroadcast ci-dessus
-    if (!ctx.app.send(c, payload.type, payload.p)) echecEnvoi = true
+    if (!ctx.app.send(c, payload.type, payload.p)) sendFailure = true
     sent++
   }
   // cluster — un autre process peut détenir d'autres connexions (client|user)
   ctx.publishSend?.({ client: hasClient ? target : undefined, user: hasUser ? target : undefined }, payload.type, payload.p)
-  if (echecEnvoi) { ctx.onLog('error', t('ws.bridge.echec-envoi')); sendJson(res, 500, { ok: false, error: t('ws.bridge.echec-envoi') }); return }
+  if (sendFailure) { ctx.onLog('error', t('ws.bridge.failed-send')); sendJson(res, 500, { ok: false, error: t('ws.bridge.failed-send') }); return }
   sendJson(res, 200, { ok: true, sent })
 }
 
 function handleRoomSend(ctx: MjsWsBridgeContext, payload: any, res: ServerResponse): void {
-  if (!isStr(payload?.room)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.room-requis') }); return }
-  if (!isStr(payload?.type)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.type-requis') }); return }
-  const recu = parseExcept(payload.except)
-  if (recu === null) { sendJson(res, 400, { ok: false, error: t('ws.bridge.except-invalide') }); return }
-  if (!isSerializablePayload(payload.p)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.charge-non-serialisable', { depth: MAX_PAYLOAD_DEPTH }) }); return }
+  if (!isStr(payload?.room)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.room-required') }); return }
+  if (!isStr(payload?.type)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.type-required') }); return }
+  const receivedExcept = parseExcept(payload.except)
+  if (receivedExcept === null) { sendJson(res, 400, { ok: false, error: t('ws.bridge.except-invalid') }); return }
+  if (!isSerializablePayload(payload.p)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.payload-not-serializable', { depth: MAX_PAYLOAD_DEPTH }) }); return }
   try {
     // MÊME sémantique que room().send actuel — type VERBATIM, le pont ne préfixe rien (cf. docs/23-mjs-ws.md §4)
     // room().send() (rooms.ts, hors périmètre de ce module) reste `void` — CONTRAIREMENT à
     // app.broadcast/send ci-dessus, aucun signal d'échec d'encodage
     // résiduel n'est disponible ICI (accroche rooms.ts à poser) ; ce
     // try/catch reste un filet pour un throw IMPRÉVU (aucun aujourd'hui), pas un vrai signal.
-    ctx.app.room(payload.room).send(payload.type, payload.p, exceptRecu(ctx, recu))
+    ctx.app.room(payload.room).send(payload.type, payload.p, exceptReceived(ctx, receivedExcept))
   } catch (err) {
-    ctx.onLog('error', t('ws.bridge.echec-envoi'), { err })
-    sendJson(res, 500, { ok: false, error: t('ws.bridge.echec-envoi') })
+    ctx.onLog('error', t('ws.bridge.failed-send'), { err })
+    sendJson(res, 500, { ok: false, error: t('ws.bridge.failed-send') })
     return
   }
   sendJson(res, 200, { ok: true })
 }
 
 function handleRoomKick(ctx: MjsWsBridgeContext, payload: any, res: ServerResponse): void {
-  if (!isStr(payload?.room)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.room-requis') }); return }
+  if (!isStr(payload?.room)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.room-required') }); return }
   const hasClient = payload?.client !== undefined
   const hasUser   = payload?.user !== undefined
-  if (hasClient === hasUser) { sendJson(res, 400, { ok: false, error: t('ws.bridge.client-ou-user') }); return }
+  if (hasClient === hasUser) { sendJson(res, 400, { ok: false, error: t('ws.bridge.client-or-user') }); return }
   const target = hasClient ? payload.client : payload.user
-  if (!isStr(target)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.client-user-chaine') }); return }
+  if (!isStr(target)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.client-user-string') }); return }
 
   // {client} : CETTE connexion, par son id ; {user} : toutes les connexions de cette personne (peerIdOf — `anon:` suivi
   // de l'id de connexion pour un visiteur sans compte), jamais l'un pour l'autre : un compte peut porter l'id d'une
   // connexion. Comptage AVANT le kick : .kick() ne retourne rien
   const roomHandle = ctx.app.room(payload.room)
-  const cibles     = Array.from(roomHandle.clients).filter(c => hasClient ? c.id === target : peerIdOf(c) === target)
+  const targets     = Array.from(roomHandle.clients).filter(c => hasClient ? c.id === target : peerIdOf(c) === target)
   if (!hasClient) roomHandle.kick(target, payload.reason)
-  else if (cibles.length > 0) roomHandle.kick(cibles[0], payload.reason)
-  else ctx.publishKickConnexion?.(payload.room, target, payload.reason)   // servie par un autre processus
-  sendJson(res, 200, { ok: true, kicked: cibles.length })
+  else if (targets.length > 0) roomHandle.kick(targets[0], payload.reason)
+  else ctx.publishKickConnection?.(payload.room, target, payload.reason)   // servie par un autre processus
+  sendJson(res, 200, { ok: true, kicked: targets.length })
 }
 
 const STREAM_OPS = new Set(['add', 'update', 'remove', 'reset'])
 
 function handleStream(ctx: MjsWsBridgeContext, payload: any, res: ServerResponse): void {
-  if (!isStr(payload?.name)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.name-requis') }); return }
-  if (!STREAM_OPS.has(payload?.op)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.op-invalide') }); return }
+  if (!isStr(payload?.name)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.name-required') }); return }
+  if (!STREAM_OPS.has(payload?.op)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.op-invalid') }); return }
 
   // la charge se vérifie AVANT de toucher au flux : une écriture refusée ne crée rien
   switch (payload.op) {
     case 'add':
-      if (!isStr(payload.id)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.id-requis-add') }); return }
-      if (payload.value === undefined) { sendJson(res, 400, { ok: false, error: t('ws.bridge.value-requis-add') }); return }
-      if (!isSerializablePayload(payload.value)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.charge-non-serialisable', { depth: MAX_PAYLOAD_DEPTH }) }); return }
+      if (!isStr(payload.id)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.id-required-add') }); return }
+      if (payload.value === undefined) { sendJson(res, 400, { ok: false, error: t('ws.bridge.value-required-add') }); return }
+      if (!isSerializablePayload(payload.value)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.payload-not-serializable', { depth: MAX_PAYLOAD_DEPTH }) }); return }
       break
     case 'update':
-      if (!isStr(payload.id)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.id-requis-update') }); return }
-      if (!isPlainObject(payload.value)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.value-objet-update') }); return }
-      if (!isSerializablePayload(payload.value)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.charge-non-serialisable', { depth: MAX_PAYLOAD_DEPTH }) }); return }
+      if (!isStr(payload.id)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.id-required-update') }); return }
+      if (!isPlainObject(payload.value)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.value-object-update') }); return }
+      if (!isSerializablePayload(payload.value)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.payload-not-serializable', { depth: MAX_PAYLOAD_DEPTH }) }); return }
       break
     case 'remove':
-      if (!isStr(payload.id)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.id-requis-remove') }); return }
+      if (!isStr(payload.id)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.id-required-remove') }); return }
       break
     case 'reset':
-      if (!isPlainObject(payload.values)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.values-objet-reset') }); return }
-      if (!isSerializablePayload(payload.values)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.charge-non-serialisable', { depth: MAX_PAYLOAD_DEPTH }) }); return }
+      if (!isPlainObject(payload.values)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.values-object-reset') }); return }
+      if (!isSerializablePayload(payload.values)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.payload-not-serializable', { depth: MAX_PAYLOAD_DEPTH }) }); return }
       break
   }
 
@@ -558,19 +560,19 @@ function handlePresence(ctx: MjsWsBridgeContext, url: URL, res: ServerResponse):
 // call-site dans handleRequest (isLoopbackHost, seul endroit qui tranche la question).
 
 function handleStats(ctx: MjsWsBridgeContext, res: ServerResponse): void {
-  if (!ctx.statsEnabled) { sendJson(res, 404, { ok: false, error: t('ws.bridge.chemin-inconnu', { route: 'GET /stats' }) }); return }
+  if (!ctx.statsEnabled) { sendJson(res, 404, { ok: false, error: t('ws.bridge.path-unknown', { route: 'GET /stats' }) }); return }
   sendJson(res, 200, ctx.app.stats())
 }
 
 function handleMetrics(ctx: MjsWsBridgeContext, res: ServerResponse): void {
-  if (!ctx.statsEnabled) { sendJson(res, 404, { ok: false, error: t('ws.bridge.chemin-inconnu', { route: 'GET /metrics' }) }); return }
+  if (!ctx.statsEnabled) { sendJson(res, 404, { ok: false, error: t('ws.bridge.path-unknown', { route: 'GET /metrics' }) }); return }
   const text = toPrometheusText(ctx.app.stats())
   res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4; charset=utf-8', 'content-length': Buffer.byteLength(text) })
   res.end(text)
 }
 
 function handleState(ctx: MjsWsBridgeContext, res: ServerResponse): void {
-  if (!ctx.statsEnabled) { sendJson(res, 404, { ok: false, error: t('ws.bridge.chemin-inconnu', { route: 'GET /state' }) }); return }
+  if (!ctx.statsEnabled) { sendJson(res, 404, { ok: false, error: t('ws.bridge.path-unknown', { route: 'GET /state' }) }); return }
   const html = renderStatsPage(ctx.app.stats())
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': Buffer.byteLength(html) })
   res.end(html)
@@ -583,25 +585,25 @@ function handleState(ctx: MjsWsBridgeContext, res: ServerResponse): void {
 // vidange du flux) — d'un seul trait, la boucle gelait plus de 600 ms à chaque requête ; gardée entière en
 // texte, la carte nourrissait le ramasse-miettes. Un client parti : l'écriture s'arrête. Un client qui ne lit plus rien pendant
 // CLIENT_ARRETE_MS (le serveur du pont n'a aucun délai de réponse) : sa réponse est coupée, jamais tenue sans fin
-const CLIENT_PARTI     = new Error('client parti')
-const CLIENT_ARRETE_MS = 30000
+const CLIENT_GONE     = new Error('client parti')
+const CLIENT_STOPPED_MS = 30000
 async function handleHeatmap(ctx: MjsWsBridgeContext, res: ServerResponse, json: boolean): Promise<void> {
   const write = (ctx.app as any)._heatmapWrite
-  if (typeof write !== 'function') { sendJson(res, 404, { ok: false, error: t('ws.bridge.chemin-inconnu', { route: json ? 'GET /heatmap.json' : 'GET /heatmap' }) }); return }
+  if (typeof write !== 'function') { sendJson(res, 404, { ok: false, error: t('ws.bridge.path-unknown', { route: json ? 'GET /heatmap.json' : 'GET /heatmap' }) }); return }
   res.writeHead(200, { 'content-type': json ? 'application/json; charset=utf-8' : 'text/html; charset=utf-8' })
-  const envoi = (morceau: string): void | Promise<void> => {
-    if (res.destroyed) throw CLIENT_PARTI
-    if (res.write(morceau)) return
+  const delivery = (piece: string): void | Promise<void> => {
+    if (res.destroyed) throw CLIENT_GONE
+    if (res.write(piece)) return
     return new Promise<void>(ok => {
-      const delai = setTimeout(() => res.destroy(), CLIENT_ARRETE_MS)
-      const fin   = (): void => { clearTimeout(delai); res.off('drain', fin); res.off('close', fin); ok() }
-      res.on('drain', fin)
-      res.on('close', fin)
+      const delay = setTimeout(() => res.destroy(), CLIENT_STOPPED_MS)
+      const done   = (): void => { clearTimeout(delay); res.off('drain', done); res.off('close', done); ok() }
+      res.on('drain', done)
+      res.on('close', done)
     })
   }
-  try { await write(!json, envoi) }
+  try { await write(!json, delivery) }
   catch (err) {
-    if (err === CLIENT_PARTI) return
+    if (err === CLIENT_GONE) return
     throw err
   }
   res.end()
@@ -609,8 +611,8 @@ async function handleHeatmap(ctx: MjsWsBridgeContext, res: ServerResponse, json:
 
 // une carte qui échoue en cours de route : le journal le dit ; la réponse commencée est coupée (jamais un JSON tronqué pris pour entier)
 function heatmapFailed(ctx: MjsWsBridgeContext, res: ServerResponse, err: unknown): void {
-  ctx.onLog('error', t('ws.bridge.erreur-interne'), { err })
-  if (!res.headersSent) sendJson(res, 500, { ok: false, error: t('ws.bridge.erreur-interne') })
+  ctx.onLog('error', t('ws.bridge.error-internal'), { err })
+  if (!res.headersSent) sendJson(res, 500, { ok: false, error: t('ws.bridge.error-internal') })
   else res.destroy()
 }
 
@@ -759,12 +761,12 @@ export function createBridgeNonceStore(): MjsWsBridgeNonceStore {
 // défaut — un en-tête X-Forwarded-For serait trivialement falsifiable par l'appelant lui-même,
 // qui EST la source de la requête).
 function clientIp(req: IncomingMessage): string {
-  return req.socket.remoteAddress ?? 'inconnue'
+  return req.socket.remoteAddress ?? 'unknown'
 }
 
 // --- dispatch HTTP --------------------------------------------------------------------------
 
-// routes CONNUES — seules celles-ci comptent dans pont.requetesParEndpoint : un chemin
+// routes CONNUES — seules celles-ci comptent dans bridge.requestsByEndpoint : un chemin
 // bidon envoyé en rafale par un client curieux ne doit JAMAIS faire grossir le registre sans borne
 // (même esprit que le journal circulaire des flux ou la file de webhooks, toujours bornés).
 const KNOWN_ROUTES = new Set([
@@ -798,12 +800,12 @@ function rejectUnauthorized(
 ): void {
   const withinBudget = limiter ? limiter.recordFailure(ip, now) : true
   if (!withinBudget) {
-    ctx.stats.pont.rateLimited++
+    ctx.stats.bridge.rateLimited++
     sendJson(res, 429, { ok: false, error: 'rate-limited' })
     return
   }
-  ctx.stats.pont.http401++
-  ctx.onLog('warn', t('ws.bridge.requete-refusee', { error }), { method, path })
+  ctx.stats.bridge.http401++
+  ctx.onLog('warn', t('ws.bridge.request-refused', { error }), { method, path })
   sendJson(res, 401, { ok: false, error })
 }
 
@@ -814,7 +816,7 @@ async function handleRequest(
   const method = (req.method ?? 'GET').toUpperCase()
   const url    = new URL(req.url ?? '/', 'http://mjs-ws.local')   // base bidon — seuls pathname/searchParams servent
   const route  = method +' '+ url.pathname
-  if (KNOWN_ROUTES.has(route)) ctx.stats.pont.requetesParEndpoint[route] = (ctx.stats.pont.requetesParEndpoint[route] ?? 0) + 1
+  if (KNOWN_ROUTES.has(route)) ctx.stats.bridge.requestsByEndpoint[route] = (ctx.stats.bridge.requestsByEndpoint[route] ?? 0) + 1
 
   if (method === 'GET' && url.pathname === '/health') { sendText(res, 200, 'ok'); return }   // SEUL endpoint non signé ET jamais limité (sonde d'orchestrateur — hors /stats-/metrics-/state en loopback, cf. plus bas)
 
@@ -829,7 +831,7 @@ async function handleRequest(
   // AUCUNE vérification HMAC tentée
   const signed = !skipSignature && firstHeader(req.headers['x-mjs-ws-signature']) !== undefined
   if (limiter && (!limiter.admitGeneral(ip, now) || (!skipSignature && limiter.isFailBlocked(ip, now)))) {
-    ctx.stats.pont.rateLimited++
+    ctx.stats.bridge.rateLimited++
     sendJson(res, 429, { ok: false, error: 'rate-limited' })
     return
   }
@@ -841,7 +843,7 @@ async function handleRequest(
     const bad = bodyResult as { ok: false; status: number; error: string }
     // corps trop gros ou illisible sous un en-tête de signature : un échec compté, comme une signature fausse
     if (signed && limiter && !limiter.recordFailure(ip, now)) {
-      ctx.stats.pont.rateLimited++
+      ctx.stats.bridge.rateLimited++
       sendJson(res, 429, { ok: false, error: 'rate-limited' })
       return
     }
@@ -851,7 +853,7 @@ async function handleRequest(
   const rawBody = bodyResult.body
 
   if (skipSignature && !isLocalHostHeader(req.headers.host, resolved.host)) {
-    sendJson(res, 403, { ok: false, error: t('ws.bridge.hote-refuse') })
+    sendJson(res, 403, { ok: false, error: t('ws.bridge.host-refused') })
     return
   }
 
@@ -874,7 +876,7 @@ async function handleRequest(
     if (nonceStore) {
       const signedTsMs = Number(firstHeader(req.headers['x-mjs-ws-timestamp'])) * 1000
       if (!nonceStore.checkAndRecord(nonceHeader!, signedTsMs, now)) {
-        rejectUnauthorized(ctx, limiter, ip, now, res, 'nonce-rejoué', method, url.pathname)
+        rejectUnauthorized(ctx, limiter, ip, now, res, 'nonce-replayed', method, url.pathname)
         return
       }
     }
@@ -885,7 +887,7 @@ async function handleRequest(
   let payload: any = {}
   if (rawBody.length > 0) {
     try { payload = JSON.parse(rawBody) }
-    catch { sendJson(res, 400, { ok: false, error: t('ws.bridge.json-invalide') }); return }
+    catch { sendJson(res, 400, { ok: false, error: t('ws.bridge.json-invalid') }); return }
   }
 
   try {
@@ -901,10 +903,10 @@ async function handleRequest(
       case 'GET /state':        handleState(ctx, res); return
       case 'GET /heatmap':      void handleHeatmap(ctx, res, false).catch(err => heatmapFailed(ctx, res, err)); return
       case 'GET /heatmap.json': void handleHeatmap(ctx, res, true).catch(err => heatmapFailed(ctx, res, err)); return
-      default: sendJson(res, 404, { ok: false, error: t('ws.bridge.chemin-inconnu', { route }) })
+      default: sendJson(res, 404, { ok: false, error: t('ws.bridge.path-unknown', { route }) })
     }
   } catch (err) {
-    ctx.onLog('error', t('ws.bridge.erreur-interne'), { err })
+    ctx.onLog('error', t('ws.bridge.error-internal'), { err })
     sendJson(res, 400, { ok: false, error: err instanceof Error ? err.message : String(err) })
   }
 }
@@ -936,13 +938,13 @@ const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
 // webhooks.forwardHeaders — une liste de noms d'en-têtes, comparés en minuscules ; tout autre valeur refusée à la déclaration
 function resolveForwardHeaders(raw: unknown): Set<string> | undefined {
   if (raw === undefined) return undefined
-  if (!Array.isArray(raw) || !raw.every(nom => typeof nom === 'string' && HEADER_NAME.test(nom))) {
+  if (!Array.isArray(raw) || !raw.every(headerName => typeof headerName === 'string' && HEADER_NAME.test(headerName))) {
     let received: string
     try { received = JSON.stringify(raw) ?? String(raw) }
     catch { received = String(raw) }
-    throw new Error(t('ws.bridge.webhooks-forward-headers-invalide', { received }))
+    throw new Error(t('ws.bridge.webhooks-forward-headers-invalid', { received }))
   }
-  return new Set(raw.map(nom => nom.toLowerCase()))
+  return new Set(raw.map(headerName => headerName.toLowerCase()))
 }
 
 // copie de la méta pour le webhook — client.meta reste entière (opts.auth lit le cookie)
@@ -951,8 +953,8 @@ function webhookMeta(meta: MjsWsRemoteInfo, extra: ReadonlySet<string> | undefin
   if (!headers) return meta
   const kept: Record<string, string | string[] | undefined> = {}
   for (const name in headers) {
-    const nom = name.toLowerCase()
-    if (WEBHOOK_HEADERS.has(nom) || (extra !== undefined && extra.has(nom))) kept[name] = headers[name]
+    const headerName = name.toLowerCase()
+    if (WEBHOOK_HEADERS.has(headerName) || (extra !== undefined && extra.has(headerName))) kept[name] = headers[name]
   }
   return { ...meta, headers: kept }
 }
@@ -975,7 +977,7 @@ function postJson(target: URL, body: string, ts: number, sig: string, timeoutMs:
       const status = res.statusCode ?? 0
       resolvePromise(status >= 200 && status < 300)
     })
-    req.on('timeout', () => req.destroy(new Error(t('ws.bridge.delai-webhook-depasse'))))
+    req.on('timeout', () => req.destroy(new Error(t('ws.bridge.webhook-timeout'))))
     req.on('error', reject)
     req.write(body)
     req.end()
@@ -991,11 +993,11 @@ function createWebhookSender(webhooks: MjsWsResolvedBridgeWebhooks | undefined, 
   let stopped  = false
   // ce que stop() coupe : les retentatives en attente (minuterie → l'événement) et les requêtes en vol
   const retries  = new Map<ReturnType<typeof setTimeout>, WebhookJob>()
-  const requetes = new Set<AbortController>()
+  const requests = new Set<AbortController>()
   // file pleine — perdus depuis le dernier avertissement, dernier événement perdu, prochain avertissement permis
-  let perdus        = 0
-  let dernierPerdu  = ''
-  let prochainAvert = 0
+  let lost        = 0
+  let lastLost  = ''
+  let nextWarning = 0
 
   // une livraison en échec attend sa retentative HORS des places en vol : un back tombé une seconde n'immobilise plus les
   // WEBHOOK_INFLIGHT_MAX places pendant les pauses (2 s, puis 10 s), les événements suivants partent. La pause finie,
@@ -1015,7 +1017,7 @@ function createWebhookSender(webhooks: MjsWsResolvedBridgeWebhooks | undefined, 
       const job = queue.shift()!
       inflight++
       void deliver(job)
-        .catch(err => onLog('error', t('ws.bridge.erreur-interne-non-geree'), { err }))
+        .catch(err => onLog('error', t('ws.bridge.error-internal-not-handled'), { err }))
         .finally(() => { inflight--; pump() })
     }
   }
@@ -1027,48 +1029,48 @@ function createWebhookSender(webhooks: MjsWsResolvedBridgeWebhooks | undefined, 
     const sig  = signCanonical(wh.secret, canonicalString(ts, 'POST', target.pathname + target.search, job.body, undefined, 'out'))
     try {
       const controller = new AbortController()
-      requetes.add(controller)
+      requests.add(controller)
       let okStatus: boolean
       try { okStatus = await postJson(target, job.body, ts, sig, wh.timeoutMs, controller.signal) }
-      finally { requetes.delete(controller) }
-      if (!okStatus) throw new Error(t('ws.bridge.reponse-http-non-2xx'))
-      stats.pont.webhooksEnvoyes++
+      finally { requests.delete(controller) }
+      if (!okStatus) throw new Error(t('ws.bridge.response-http-not-2xx'))
+      stats.bridge.webhooksSent++
     } catch (err) {
-      stats.pont.webhooksEchoues++
+      stats.bridge.webhooksFailed++
       if (stopped) return
       if (job.attempt < WEBHOOK_RETRY_DELAYS_MS.length) {
         planRetry({ ...job, attempt: job.attempt + 1 }, WEBHOOK_RETRY_DELAYS_MS[job.attempt])
         return
       }
-      stats.pont.webhooksAbandonnes++
-      onLog('warn', t('ws.bridge.webhook-abandonne', { event: job.event, tentative: job.attempt + 1 }), { err: err instanceof Error ? err.message : String(err), url: wh.url })
+      stats.bridge.webhooksAbandoned++
+      onLog('warn', t('ws.bridge.webhook-abandoned', { event: job.event, attempt: job.attempt + 1 }), { err: err instanceof Error ? err.message : String(err), url: wh.url })
     }
   }
 
   // file pleine : la première perte se dit tout de suite, les suivantes se comptent — une ligne au plus
   // par minute avec leur nombre, le reste du compte à l'arrêt ; jamais une ligne par message perdu
-  function signalerPerte(event: string): void {
-    perdus++
-    dernierPerdu = event
+  function reportLoss(event: string): void {
+    lost++
+    lastLost = event
     const now = Date.now()
-    if (now < prochainAvert) return
-    if (perdus === 1) onLog('warn', t('ws.bridge.file-webhooks-pleine', { max: WEBHOOK_QUEUE_MAX, event }), { max: WEBHOOK_QUEUE_MAX, event, perdus })
-    else onLog('warn', t('ws.bridge.file-webhooks-pleine-compte', { max: WEBHOOK_QUEUE_MAX, event, perdus }), { max: WEBHOOK_QUEUE_MAX, event, perdus })
-    perdus        = 0
-    prochainAvert = now + WEBHOOK_FULL_WARN_MS
+    if (now < nextWarning) return
+    if (lost === 1) onLog('warn', t('ws.bridge.webhook-queue-full', { max: WEBHOOK_QUEUE_MAX, event }), { max: WEBHOOK_QUEUE_MAX, event, lost })
+    else onLog('warn', t('ws.bridge.webhook-queue-full-count', { max: WEBHOOK_QUEUE_MAX, event, lost }), { max: WEBHOOK_QUEUE_MAX, event, lost })
+    lost        = 0
+    nextWarning = now + WEBHOOK_FULL_WARN_MS
   }
 
   return {
     emit(event: string, payload: unknown): void {
       if (stopped || !wh.events.has(event)) return
-      if (queue.length + retries.size >= WEBHOOK_QUEUE_MAX) { signalerPerte(event); return }
+      if (queue.length + retries.size >= WEBHOOK_QUEUE_MAX) { reportLoss(event); return }
       // sérialisé ICI, sous garde : une identité que JSON refuse (BigInt d'une colonne de base,
       // objet cyclique d'un ORM) perd son webhook, jamais le processus
       let body: string
       try { body = JSON.stringify(payload) }
       catch (err) {
-        stats.pont.webhooksAbandonnes++
-        onLog('error', t('ws.bridge.webhook-non-serialisable', { event }), { event, err: err instanceof Error ? err.message : String(err) })
+        stats.bridge.webhooksAbandoned++
+        onLog('error', t('ws.bridge.webhook-not-serializable', { event }), { event, err: err instanceof Error ? err.message : String(err) })
         return
       }
       queue.push({ event, body, attempt: 0 })
@@ -1078,10 +1080,10 @@ function createWebhookSender(webhooks: MjsWsResolvedBridgeWebhooks | undefined, 
       stopped = true
       for (const timer of retries.keys()) clearTimeout(timer)
       retries.clear()
-      for (const controller of requetes) controller.abort()
-      if (perdus > 0) {
-        onLog('warn', t('ws.bridge.file-webhooks-pleine-compte', { max: WEBHOOK_QUEUE_MAX, event: dernierPerdu, perdus }), { max: WEBHOOK_QUEUE_MAX, event: dernierPerdu, perdus })
-        perdus = 0
+      for (const controller of requests) controller.abort()
+      if (lost > 0) {
+        onLog('warn', t('ws.bridge.webhook-queue-full-count', { max: WEBHOOK_QUEUE_MAX, event: lastLost, lost }), { max: WEBHOOK_QUEUE_MAX, event: lastLost, lost })
+        lost = 0
       }
     },
   }
@@ -1103,19 +1105,25 @@ export function createBridge(resolved: MjsWsResolvedBridgeOptions, ctx: MjsWsBri
     async start() {
       server = createServer((req, res) => {
         handleRequest(resolved, ctx, limiter, nonceStore, req, res).catch(err => {
-          ctx.onLog('error', t('ws.bridge.erreur-interne-non-geree'), { err })
+          ctx.onLog('error', t('ws.bridge.error-internal-not-handled'), { err })
           try { res.destroy() } catch { /* déjà fermée */ }
         })
       })
       await new Promise<void>((resolveStart, reject) => {
         server!.once('error', reject)
-        server!.listen(resolved.port, resolved.host, () => resolveStart())
+        server!.listen(resolved.port, resolved.host, () => {
+          // à l'écoute : une erreur tardive du serveur (accept qui échoue, fichiers ouverts épuisés) part au journal — l'écouteur
+          // du démarrage avalait la première en silence, et la seconde, sans écouteur, faisait tomber le processus
+          server!.off('error', reject)
+          server!.on('error', err => ctx.onLog('error', t('ws.bridge.error-server-http'), { err }))
+          resolveStart()
+        })
       })
       const addr       = server.address() as AddressInfo | null
       const actualPort = addr ? addr.port : resolved.port
       // mention « nonce : exigé » — mini-bannière PROPRE au pont (log de démarrage
       // bridge.ts) ; la bannière ÉLABORÉE de `mjs ws` (limite de débit, etc.) vit dans cli/ws.ts.
-      ctx.onLog('info', t('ws.bridge.ecoute-pont', { host: resolved.host, port: actualPort, nonce: resolved.nonce }), {
+      ctx.onLog('info', t('ws.bridge.listen-bridge', { host: resolved.host, port: actualPort, nonce: resolved.nonce }), {
         host: resolved.host, port: actualPort,
         webhookEvents: resolved.webhooks ? Array.from(resolved.webhooks.events) : null,
         nonce: resolved.nonce,

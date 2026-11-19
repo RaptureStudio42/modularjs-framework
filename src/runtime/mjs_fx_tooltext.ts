@@ -215,12 +215,12 @@ function _mjsFxLayerHand(st) {
   // lettres) : --i de gauche à droite, --ri de droite à gauche, --ci du centre vers les bords, --ei
   // des bords vers le centre, --xi au hasard
   var mid  = (n - 1) / 2;
-  var tire = letters.map(function(_, j) { return j; });
-  for (var k = tire.length - 1; k > 0; k--) {
+  var draw = letters.map(function(_, j) { return j; });
+  for (var k = draw.length - 1; k > 0; k--) {
     var r = Math.floor(Math.random() * (k + 1));
-    var t = tire[k];
-    tire[k] = tire[r];
-    tire[r] = t;
+    var t = draw[k];
+    draw[k] = draw[r];
+    draw[r] = t;
   }
   for (var j = 0; j < letters.length; j++) {
     var st = letters[j].style;
@@ -228,7 +228,7 @@ function _mjsFxLayerHand(st) {
     st.setProperty('--ri', String(n - 1 - j));
     st.setProperty('--ci', String(Math.round(Math.abs(j - mid))));
     st.setProperty('--ei', String(Math.round(mid - Math.abs(j - mid))));
-    st.setProperty('--xi', String(tire[j]));
+    st.setProperty('--xi', String(draw[j]));
   }
   layer.style.setProperty('--n', String(n));
 };

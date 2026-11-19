@@ -192,7 +192,7 @@ describe('µimage — les variantes (exigent sharp)', function () {
   })
 
   // une image que sharp ne sait pas décoder (en-tête seul) ne passe pas telle quelle : le build échoue
-  // l'erreur (message bundler.index.img-variante-echec) nomme l'image, la largeur et le format, jamais le seul message interne de sharp (sa phrase change d'une version à l'autre)
+  // l'erreur (message bundler.index.img-variant-failed) nomme l'image, la largeur et le format, jamais le seul message interne de sharp (sa phrase change d'une version à l'autre)
   it('une image abîmée fait ÉCHOUER le build, en nommant l\'image, la largeur de la variante et le format', async function () {
     const { resolveSharp } = await import('../src/bundler/image.js')
     if (!(await resolveSharp())) this.skip()

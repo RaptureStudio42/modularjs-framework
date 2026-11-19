@@ -55,7 +55,8 @@ describe('generator/effect-deps — annotateEffectDeps (unitaire, AST)', functio
 
   it('clé DYNAMIQUE ($[varName]) ignorée (ni crash, ni faux nom de var)', () => {
     const out = annotateEffectDeps(`µ.effect(function() { var k = 'count'; return $[k]; });`)
-    assert.match(out, /,\s*\[\]\)/)
+    // hors du relevé, et le passage ne la note pas : le reffet porte la marque du doute devant un état partagé (3e argument)
+    assert.match(out, /,\s*\[\],\s*1\)/)
   })
 
   it('scan en profondeur : $. référencé dans une fonction IMBRIQUÉE toujours détecté (même portée que fn.toString())', () => {

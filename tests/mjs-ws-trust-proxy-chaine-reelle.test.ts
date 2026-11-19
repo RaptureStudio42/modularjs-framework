@@ -278,7 +278,7 @@ describe('trustProxy : l\'avertissement « derrière un proxy sans réglage », 
 
   afterEach(() => setMessagesLang('fr'))
 
-  const hints = (run: Running): string[] => run.warnings.filter(message => message === t('ws.trust-proxy.proxy-sans-reglage'))
+  const hints = (run: Running): string[] => run.warnings.filter(message => message === t('ws.trust-proxy.proxy-no-setting'))
 
   it('option absente : un seul avertissement, malgré plusieurs connexions derrière le proxy', async () => {
     await inChain({}, async ({ proxy, run }) => {

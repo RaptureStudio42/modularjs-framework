@@ -165,14 +165,14 @@ describe('µafter / µevery `id:` — une minuterie neuve du même nom arrête l
     const el: any   = poser()
     await attendre(20)
     bouton(el, 'libre').click()
-    assert.ok(el._mjs_minuteries.noms?.has('libre'), 'le nom est pris pendant l\'attente')
+    assert.ok(el._mjs_timers.names?.has('libre'), 'le nom est pris pendant l\'attente')
     await attendre(70)
     assert.equal(el._state.libre, 1, 'premier tir')
-    assert.equal(el._mjs_minuteries.noms.has('libre'), false, 'le tir libère le nom')
+    assert.equal(el._mjs_timers.names.has('libre'), false, 'le tir libère le nom')
     bouton(el, 'libre').click()
     await attendre(70)
     assert.equal(el._state.libre, 2, 'le même nom repart après le tir')
-    assert.equal(el._mjs_minuteries.noms.size, 0, 'plus aucun nom pris une fois les minuteries finies')
+    assert.equal(el._mjs_timers.names.size, 0, 'plus aucun nom pris une fois les minuteries finies')
   })
 
   it('le nom se libère aussi quand la minuterie finit pendant sa pose : `times: 1` et son tir immédiat, `while` faux, `times: 0`', async function () {
@@ -184,7 +184,7 @@ describe('µafter / µevery `id:` — une minuterie neuve du même nom arrête l
     bouton(el, 'zero').click()
     await attendre(40)
     assert.equal(el._state.fois, 1, '`times: 1` tire une fois, tout de suite ; `while` faux et `times: 0` jamais')
-    const pris = Array.from(el._mjs_minuteries.noms?.keys() ?? []).filter((n: any) => ['fois', 'tantque', 'zero'].includes(n))
+    const pris = Array.from(el._mjs_timers.names?.keys() ?? []).filter((n: any) => ['fois', 'tantque', 'zero'].includes(n))
     assert.deepEqual(pris, [], `aucun nom gardé par une minuterie finie (${JSON.stringify(pris)})`)
   })
 
@@ -198,7 +198,7 @@ describe('µafter / µevery `id:` — une minuterie neuve du même nom arrête l
     await attendre(100)
     assert.equal(win.__rTir, 1, 'la neuve tire')
     assert.equal(win.__rOnStop, undefined, 'celle que l\'onStop de la remplacée a posée sous ce nom est arrêtée')
-    assert.equal(el._mjs_minuteries.noms.has('r'), false, 'nom libéré après le tir')
+    assert.equal(el._mjs_timers.names.has('r'), false, 'nom libéré après le tir')
   })
 
   it('module appelé depuis un gestionnaire, hors de tout composant actif : la minuterie vit au niveau de la page, avec ou sans nom', async function () {

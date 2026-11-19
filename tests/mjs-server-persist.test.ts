@@ -98,7 +98,7 @@ describe('MJS-Server — persistance (persist.ts/persist-file.ts/persist-bridge.
     assert.equal(brut.length, 1)
     assert.equal(brut[0].data.state.n, 1)
     assert.equal(brut[0].data.phase, 'jeu')
-    assert.equal(brut[0].data.turn, 'a')
+    assert.equal(brut[0].data.turn, 'b')
     assert.equal(brut[0].data.code, repA.code)
 
     const { transport: t2, app: app2 } = creerApp({ persist: { adapter: store, debounce: 20 } })
@@ -108,7 +108,7 @@ describe('MJS-Server — persistance (persist.ts/persist-file.ts/persist-bridge.
     const resync = await sA2.request('µgame:resync', { game: repA.game })
     assert.equal(resync.view.n, 1)
     assert.equal(resync.phase, 'jeu')
-    assert.equal(resync.turn, 'a')
+    assert.equal(resync.turn, 'b')
     await app2.stop()
   })
 
@@ -140,7 +140,7 @@ describe('MJS-Server — persistance (persist.ts/persist-file.ts/persist-bridge.
     const repA = await sA.request('µgame:play', { type: 'duel', code: true })
     const sB = connecter(t1, 'b'); sB.connect(); await tick()
     await sB.request('µgame:play', { type: 'duel', code: repA.code })
-    await sA.request('µgame:move', { game: repA.game, move: 'inc' })   // tour → 'a' (1er next()), µtour armé à +300ms
+    await sA.request('µgame:move', { game: repA.game, move: 'inc' })   // tour → 'b' (1er next() : le siège qui suit celui qui vient de jouer), µtour armé à +300ms
 
     await tick(120)   // largement assez pour le débounce (20ms) + l'écriture disque, largement AVANT les 300ms du tour
     // « crash » — app1 n'est JAMAIS arrêtée proprement (pas de app1.stop()) : la reprise ne doit
@@ -154,7 +154,7 @@ describe('MJS-Server — persistance (persist.ts/persist-file.ts/persist-bridge.
     const resync = await sA2.request('µgame:resync', { game: repA.game })
     assert.equal(resync.view.n, 1, 'état identique')
     assert.equal(resync.phase, 'jeu', 'phase identique')
-    assert.equal(resync.turn, 'a', 'tour identique')
+    assert.equal(resync.turn, 'b', 'tour identique')
 
     await tick(220)   // le reste du délai de tour (≈180ms au boot d'app2) doit s'épuiser et tirer
     const resync2 = await sA2.request('µgame:resync', { game: repA.game })

@@ -30,7 +30,7 @@ if (µ.Element) {
       });
     })(document);
   }
-  // <infos-serveur>
+  // <server-info>
   // ce que le rendu serveur relit d'un composant (`µ._ssrInfo`, mjs_element.ts), plus son variant appliqué (adresse et texte) : le
   // serveur l'écrit dans la page après la feuille propre ; un variant encore en route tient le rendu pour inachevé (le serveur
   // attend son arrivée avant d'écrire la page)
@@ -44,7 +44,7 @@ if (µ.Element) {
     }
     return info;
   };
-  // </infos-serveur>
+  // </server-info>
   µ.Element.prototype._mjs_applyLayoutVariant = async function(name, sheets, _seq) {
     var sheet, url, variantCss;
     // Variant demandé : `_mjs_layouts` liste les noms

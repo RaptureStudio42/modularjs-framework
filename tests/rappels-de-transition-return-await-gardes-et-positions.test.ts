@@ -113,7 +113,7 @@ describe('rappels de transition : return, await, gardes des gestionnaires, posit
     it(`faute dans une balise globale d'un ${nom} : citée à sa ligne et à sa colonne du .mjs`, async () => {
       const m = await refus(`${script}\n<p>{$n}</p>\n<@window @resize={$n = = 1} />`, opts)
       assert.match(m, /pos\.mjs:5:24\b/, m)
-      assert.doesNotMatch(m, /pos\.globales/, m)
+      assert.doesNotMatch(m, /pos\.globals/, m)
     })
   }
 

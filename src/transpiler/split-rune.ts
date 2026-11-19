@@ -25,5 +25,5 @@ export function lintSplitRune(source: string, place: string, opts: { sigil?: str
   const m      = SPLIT_RUNE_RE[opts.sigil === 'mjs' ? 'mjs' : 'µ'].exec(masked)
   if(!m) return
   const line = (opts.firstLine ?? 1) + (masked.slice(0, m.index).match(/\n/g)?.length ?? 0)
-  throw new Error(t('transpiler.rune-separee-du-symbole', { symbole: m[1], rune: m[2], lieu: place, ligne: line }))
+  throw new Error(t('transpiler.rune-separated-from-symbol', { symbol: m[1], rune: m[2], place, line }))
 }

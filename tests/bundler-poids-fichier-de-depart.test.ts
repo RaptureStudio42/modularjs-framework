@@ -9,11 +9,17 @@ import { join } from 'node:path'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 
-// mesure reprise le 12/11/2026 : 53 504 → 55 105 o, le cœur porte désormais l'enveloppe des objets de l'état refaite (pièges communs à
-// toutes les enveloppes, liens d'un objet vers ses conteneurs et leur remontée, redite, copie d'un objet du navigateur rangé dans l'état),
-// les époques d'un objet tenu par deux composants et les props qu'un composant pas encore réveillé livre aux composants de sa racine : tout
-// part derrière un signal que l'appli allume, ou sert toute appli de ce genre
-const MESUREE  = 55105 // octets mesurés, runtime core + js bundle + production
+// mesure reprise le 16/11/2026 : 55 105 → 56 954 o (20 598 o en gzip -9 -n). Entré depuis la mesure d'avant, au cœur de toute appli de ce genre :
+// - jusqu'au 15/11 au matin, sous le plafond : +207 (55 312 o)
+// - le registre des détenteurs de l'enveloppe : +1 423 (un objet tenu par deux composants, un état ou un magasin suit chaque écriture ; rien ne prouve à la construction qu'aucun objet n'est tenu deux fois) ; sa part des familles de µ.state et de µ.Store (109 o) part avec eux
+// - la marque de lecture des attributs : +103 (une prop écrite en clair reste la valeur de départ au déplacement et au retour du cache, Safari compris)
+// - la redite d'un objet µraw reposé : +96 (l'appli passe µraw(…) en prop)
+// - mjs-props relu seulement quand son texte change : +25
+// - le déballage borné de µ._mjs_toRaw : +16
+// - un objet tenu par seize composants ou plus, prévenu de chaque écriture : +1
+// - la clé morte templateCacheSize retirée : −22
+// - l'attribut layout laissé à la variable $layout ou $template : 0 (son aide part avec son signal quand aucune unité ne déclare l'une d'elles)
+const MESUREE  = 56954 // octets mesurés, runtime core + js bundle + production
 const PLAFOND  = Math.ceil(MESUREE * 1.02)
 
 const SOURCES: Record<string, string> = {

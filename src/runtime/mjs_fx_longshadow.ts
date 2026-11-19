@@ -78,9 +78,9 @@ function _mjsFxLongshadowRoots(el) {
   setup: function(el, s) {
     var N   = 200;
     // longueur visible : avec l'effacement, seule la première moitié des copies se voit
-    var tot = (s.length === void 0 ? 200 : s.length) * (s.fade === false ? 1 : 2);
-    var rgb = null;
-    var a0  = 1;
+    var early = (s.length === void 0 ? 200 : s.length) * (s.fade === false ? 1 : 2);
+    var rgb   = null;
+    var a0    = 1;
     // la couleur en rouge, vert, bleu et sa transparence, pour doser celle de chaque copie : lue DANS
     // la balise (currentColor, une variable du composant s'y résolvent), par une sonde marquée calque
     // que les effets de texte ne prennent pas pour du texte
@@ -121,7 +121,7 @@ function _mjsFxLongshadowRoots(el) {
     // pas la souris, pas de lampe)
     if (s.follow === 'fixed' || µ._mjs_fxCalm()) {
       var r = (typeof s.angle === 'number' ? s.angle : 45) * Math.PI / 180;
-      paint(Math.cos(r) * tot, Math.sin(r) * tot);
+      paint(Math.cos(r) * early, Math.sin(r) * early);
       return function() { el.style.removeProperty('--mjs-fx-longshadow'); };
     }
     var pane   = null;
@@ -152,7 +152,7 @@ function _mjsFxLongshadowRoots(el) {
       // la lampe s'allume à moins de `tot` du bord de la balise, et seulement si le pointeur est dans sa
       // zone ; mesurée avant toute écriture, qui forcerait un second calcul de style
       var z = null;
-      if (lamp && e.clientX > b.left - tot && e.clientX < b.right + tot && e.clientY > b.top - tot && e.clientY < b.bottom + tot) {
+      if (lamp && e.clientX > b.left - early && e.clientX < b.right + early && e.clientY > b.top - early && e.clientY < b.bottom + early) {
         z = _mjsFxLongshadowRect(_mjsFxLongshadowZone(el));
         if (e.clientX < z.x || e.clientX >= z.x + z.w || e.clientY < z.y || e.clientY >= z.y + z.h) z = null;
       }
@@ -160,9 +160,9 @@ function _mjsFxLongshadowRoots(el) {
       var dy = e.clientY - b.top - b.height / 2;
       // l'ombre fuit la lampe : aussi longue que la distance, sans dépasser `length`
       var d = Math.hypot(dx, dy);
-      if (d > tot) {
-        dx *= tot / d;
-        dy *= tot / d;
+      if (d > early) {
+        dx *= early / d;
+        dy *= early / d;
       }
       // la même ombre qu'à l'image d'avant (au dixième de pixel) n'est pas repeinte
       var key = dx.toFixed(1) + ' ' + dy.toFixed(1);
@@ -201,11 +201,11 @@ function _mjsFxLongshadowRoots(el) {
     var scrolled = function() {
       if (seen && last) ask();
     };
-    var io = typeof IntersectionObserver === 'function' ? new IntersectionObserver(function(en) {
-      seen = en[en.length - 1].isIntersecting;
+    var io = typeof IntersectionObserver === 'function' ? new IntersectionObserver(function(entries) {
+      seen = entries[entries.length - 1].isIntersecting;
       if (seen && last) ask();
       else if (!seen && pane) pane.style.display = 'none';
-    }, { rootMargin: tot + 'px' }) : null;
+    }, { rootMargin: early + 'px' }) : null;
     if (io) io.observe(el);
     document.addEventListener('pointermove', move);
     if (lamp) {

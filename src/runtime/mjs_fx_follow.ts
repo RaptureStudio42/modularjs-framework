@@ -20,19 +20,19 @@
       µ.error(µ._mjs_msg('followNoCore', null, '*follow : le module socket manque au cœur (réglage runtime)'));
       return function() {};
     }
-    var page  = el === document.documentElement;
-    var zone  = page ? document.body : el;
-    var nom   = µ._mjs_fxRoomName(s);
-    var sock  = null;
-    var salon = null;
-    var gens  = {};
-    var lead  = s.lead === true;
-    var ease  = typeof s.ease === 'number' && s.ease > 0 ? Math.min(1, s.ease) : 0.12;
-    var cible = null;
-    var raf   = 0;
-    var shown = null;
-    var sent  = 0;
-    var top   = function() { return page ? window.scrollY : el.scrollTop; };
+    var page     = el === document.documentElement;
+    var zone     = page ? document.body : el;
+    var name     = µ._mjs_fxRoomName(s);
+    var sock     = null;
+    var room     = null;
+    var peers     = {};
+    var lead     = s.lead === true;
+    var ease     = typeof s.ease === 'number' && s.ease > 0 ? Math.min(1, s.ease) : 0.12;
+    var targetEl = null;
+    var raf      = 0;
+    var shown    = null;
+    var sent     = 0;
+    var top      = function() { return page ? window.scrollY : el.scrollTop; };
     // chaque pas est instantané : sous `scroll-behavior: smooth` (souvent posé sur <html>), un pas lissé relancerait son animation à chaque image
     var setTop = function(v) {
       if (page) window.scrollTo({ left: window.scrollX, top: v, behavior: 'instant' });
@@ -61,12 +61,12 @@
     };
     // posée par-dessus le contenu (un en-tête fixe, une barre collante) : elle ne défile pas avec lui ;
     // `seul` : la balise elle-même, sinon elle et ses parents jusqu'à la zone
-    var floats = function(e, seul) {
+    var floats = function(e, alone) {
       if (typeof getComputedStyle !== 'function') return false;
       for (var n = e; n && n !== zone && n.nodeType === 1; n = n.parentNode && n.parentNode.nodeType === 11 ? n.parentNode.host : n.parentNode) {
         var pos = getComputedStyle(n).position;
         if (pos === 'fixed' || pos === 'sticky') return true;
-        if (seul) break;
+        if (alone) break;
       }
       return false;
     };
@@ -131,7 +131,7 @@
       var b = µ._mjs_dom.getBoundingClientRect(a);
       // où le haut coupe la balise, en fraction de sa hauteur ; négatif : il tombe dans l'espace qui la précède
       var y = b.height > 0 ? (view() - b.top) / b.height : 0;
-      sock.send('follow:at', { room: nom, a: path, y: Math.max(-1, Math.min(1, Math.round(y * 10000) / 10000)) }, { coalesce: 60, volatile: true, key: nom });
+      sock.send('follow:at', { room: name, a: path, y: Math.max(-1, Math.min(1, Math.round(y * 10000) / 10000)) }, { coalesce: 60, volatile: true, key: name });
     };
     var onScroll = function() {
       if (lead && !sent) sent = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(send) : (send(), 0);
@@ -142,12 +142,12 @@
     var since = 0;
     var glide = function() {
       raf = 0;
-      if (cible === null) return;
+      if (targetEl === null) return;
       var before = top();
-      var d      = cible - before;
+      var d      = targetEl - before;
       if (Math.abs(d) < 0.5) {
-        setTop(cible);
-        cible = null;
+        setTop(targetEl);
+        targetEl = null;
         return;
       }
       // la position ne bouge plus depuis une demi-seconde (le bout de la zone, une cible hors d'atteinte ; un
@@ -159,7 +159,7 @@
         since = tick;
       }
       else if (tick - since > 500) {
-        cible = null;
+        targetEl = null;
         return;
       }
       // le navigateur arrondit la position : un pas de moins d'un pixel ne bougerait rien, on avance d'un pixel au moins
@@ -182,13 +182,13 @@
       if (lead || !m || !Array.isArray(m.a)) return;
       var a = nodeAt(m.a);
       if (!a) return;
-      var b = µ._mjs_dom.getBoundingClientRect(a);
-      cible = top() + (b.top - view()) + (typeof m.y === 'number' ? m.y : 0) * b.height;
-      seen   = null;
+      var b    = µ._mjs_dom.getBoundingClientRect(a);
+      targetEl = top() + (b.top - view()) + (typeof m.y === 'number' ? m.y : 0) * b.height;
+      seen     = null;
       glow(a);
       if (ease >= 1 || µ._mjs_fxCalm() || typeof requestAnimationFrame !== 'function') {
-        setTop(cible);
-        cible = null;
+        setTop(targetEl);
+        targetEl = null;
       }
       else if (!raf) raf = requestAnimationFrame(glide);
     };
@@ -198,50 +198,50 @@
     var select     = s.selection !== false;
     var active     = s.focus !== false;
     var kit        = null;
-    var sendCursor = function(st) { if (sock) sock.send('follow:cursor', { room: nom, p: st.p, t: st.t, f: st.f, c: st.c }, { coalesce: 50, volatile: true, key: nom }); };
-    var arme       = function() {
+    var sendCursor = function(st) { if (sock) sock.send('follow:cursor', { room: name, p: st.p, t: st.t, f: st.f, c: st.c }, { coalesce: 50, volatile: true, key: name }); };
+    var arm        = function() {
       var want = { pointer: cursor === 'normal' || cursor === 'pulse', pulse: cursor === 'pulse', text: select, focus: active };
       // la trousse reste quand ce qu'on montre ou le rôle change : les curseurs des autres restent à l'écran
       if (kit) kit.retune(want, lead ? sendCursor : null);
       else if ((want.pointer || want.text || want.focus) && typeof µ._mjs_fxCursorKit === 'function') kit = µ._mjs_fxCursorKit(zone, want, lead ? sendCursor : null);
     };
-    arme();
+    arm();
     // la connexion de sa variable (ou celle de `server`) : le salon, les positions, la souris de qui
     // mène, et, pour un retardataire comme après une reconnexion ou un changement de route, la dernière
     // position du salon ; la route change : le salon quitté, celui de la nouvelle page rejoint, la trousse reste
     var unlink = µ._mjs_fxSock(s.sock, s.server, _mjsFollowNoSock(), function(k) {
-      sock  = k;
-      nom   = µ._mjs_fxRoomName(s);
+      sock = k;
+      name = µ._mjs_fxRoomName(s);
       // followPackage() seul : personne ne mène — le conseil dit qui peut mener
       µ._mjs_fxPackage(sock, 'follow:', '*follow', 'followPackage', 'followPackage({ canLead: (client) => … })');
-      salon = µ._mjs_fxRoom(sock, 'follow:' + nom);
-      gens  = salon.presence();
-      var dernier = function() { sock.request('follow:last', { room: nom }, { waitForOpen: true }).then(function(m) { if (m) go(m); }, function() {}); };
-      var offAt   = sock.on('follow:at', function(m) { if (m && m.room === nom) go(m); });
+      room      = µ._mjs_fxRoom(sock, 'follow:' + name);
+      peers      = room.presence();
+      var last  = function() { sock.request('follow:last', { room: name }, { waitForOpen: true }).then(function(m) { if (m) go(m); }, function() {}); };
+      var offAt = sock.on('follow:at', function(m) { if (m && m.room === name) go(m); });
       // qui mène, absent de la présence du salon (elle refuse `__proto__`, `constructor`, `prototype`) : pas dessiné, le balayage
       // l'ôterait chaque seconde
       var offCur  = sock.on('follow:cursor', function(m) {
-        if (lead || !kit || !m || m.room !== nom || !m.from || typeof m.from.id !== 'string' || !Object.prototype.hasOwnProperty.call(gens, m.from.id)) return;
+        if (lead || !kit || !m || m.room !== name || !m.from || typeof m.from.id !== 'string' || !Object.prototype.hasOwnProperty.call(peers, m.from.id)) return;
         kit.paint(m.from.id, m.from, m.p, m.t, m.f, m.c);
       });
-      var offHi   = sock.on('welcome', dernier);
+      var offHi   = sock.on('welcome', last);
       // une connexion qui s'ouvre : son `welcome` demande déjà — une seule demande à la première ouverture
-      if (k.state !== 'connecting' && k.state !== 'reconnecting') dernier();
+      if (k.state !== 'connecting' && k.state !== 'reconnecting') last();
       return function() {
         offAt();
         offCur();
         offHi();
-        salon.leave();
-        sock  = null;
-        salon = null;
-        gens  = {};
-        cible = null;
+        room.leave();
+        sock     = null;
+        room     = null;
+        peers     = {};
+        targetEl = null;
         if (kit) kit.ids().forEach(function(id) { kit.drop(id); });
       };
     }, { read: µ._mjs_fxVar(el, 'follow', comp), room: s.room ? null : function() { return µ._mjs_fxRoomName(s); } });
     // celui qui mène parti (la présence du salon) : sa souris, sa sélection, sa balise active aussi
     var sweep = setInterval(function() {
-      if (sock && kit) kit.ids().forEach(function(id) { if (!Object.prototype.hasOwnProperty.call(gens, id)) kit.drop(id); });
+      if (sock && kit) kit.ids().forEach(function(id) { if (!Object.prototype.hasOwnProperty.call(peers, id)) kit.drop(id); });
     }, 1000);
     var target = page ? window : el;
     µ._mjs_dom.addEventListener(target, 'scroll', onScroll, { passive: true });
@@ -261,11 +261,11 @@
       else if (k === 'selection') select = v !== false;
       else if (k === 'focus') active = v !== false;
       else if (k === 'lead') {
-        lead  = v === true;
-        cible = null;
+        lead     = v === true;
+        targetEl = null;
       }
       else return false;
-      arme();
+      arm();
       // devenu celui qui mène : il ne voit plus la souris d'un autre, celle de l'ancien meneur s'efface
       if (k === 'lead' && lead) {
         if (kit) kit.ids().forEach(function(id) { kit.drop(id); });

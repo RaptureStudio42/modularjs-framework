@@ -203,9 +203,9 @@ describe('@attach.onec : modificateur inconnu', function () {
 
   it('le message existe en français (vouvoiement) et en anglais', () => {
     setMessagesLang('fr')
-    const fr = t('generator.attach-modificateur-inconnu', { attrName: ':attach.onec', mod: 'onec', hint: ' Vouliez-vous dire « .once » ?' })
+    const fr = t('generator.attach-modifier-unknown', { attrName: ':attach.onec', mod: 'onec', hint: ' Vouliez-vous dire « .once » ?' })
     setMessagesLang('en')
-    const en = t('generator.attach-modificateur-inconnu', { attrName: ':attach.onec', mod: 'onec', hint: ' Did you mean ".once"?' })
+    const en = t('generator.attach-modifier-unknown', { attrName: ':attach.onec', mod: 'onec', hint: ' Did you mean ".once"?' })
     setMessagesLang('fr')
     assert.ok(fr.includes('.once') && /utilisez|écrivez/i.test(fr), fr)
     assert.ok(en.includes('.once') && /use|write/i.test(en), en)

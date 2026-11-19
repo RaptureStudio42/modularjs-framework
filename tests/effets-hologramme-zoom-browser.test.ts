@@ -9,6 +9,7 @@
 import assert from 'node:assert/strict'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { navigateurPresent, construire, ouvrir, boite, agrandit, releve, exige, page, PENTE, type Construit } from './helpers/hologramme-zoom.js'
+import { playTogether } from './helpers/engines-together.js'
 
 const SOURCES = {
   'hz-page.mjs':  page('zoom: true'),
@@ -18,7 +19,7 @@ const SOURCES = {
 let compile: Promise<Construit> | null = null
 
 for (const nom of ['chromium', 'firefox'] as const) {
-  describe(`*hologram(zoom: true), le premier plan et le zoom simple (${nom} réel)`, function () {
+  playTogether(describe(`*hologram(zoom: true), le premier plan et le zoom simple (${nom} réel)`, function () {
     this.timeout(240000)
     let present = false
     let construit: Construit
@@ -125,5 +126,5 @@ for (const nom of ['chromium', 'firefox'] as const) {
         await browser.close()
       }
     })
-  })
+  }))
 }

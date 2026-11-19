@@ -45,7 +45,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`µ.modal
 
   // état de l'animation de la barre du n-ième toast : en marche ou en pause, son temps écoulé, et l'instant de la mesure (horloge de la page)
   const vie = (n = 0): Promise<{ etat: string; t: number; maintenant: number }> => page.evaluate(`(() => {
-    const a = document.querySelectorAll('.mjs-toast-barre')[${n}].getAnimations()[0]
+    const a = document.querySelectorAll('.mjs-toast-bar')[${n}].getAnimations()[0]
     return { etat: a.playState, t: Number(a.currentTime), maintenant: performance.now() }
   })()`)
 
@@ -64,11 +64,11 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`µ.modal
   // la barre du n-ième toast est dans l'état dit, et il n'est plus « en attente » : une animation qu'on vient de mettre en pause continue
   // jusqu'à l'image suivante, son temps n'est figé qu'ensuite (le message dit ce qui manque sinon)
   const barreEn = async (etat: string, msg: string, n = 0): Promise<void> => {
-    try { await page.waitForFunction(`(() => { const a = document.querySelectorAll('.mjs-toast-barre')[${n}].getAnimations()[0]; return a.playState === '${etat}' && !a.pending })()`, null, { timeout: 5000 }) } catch { /* le test dit ce qui manque */ }
+    try { await page.waitForFunction(`(() => { const a = document.querySelectorAll('.mjs-toast-bar')[${n}].getAnimations()[0]; return a.playState === '${etat}' && !a.pending })()`, null, { timeout: 5000 }) } catch { /* le test dit ce qui manque */ }
     assert.equal((await vie(n)).etat, etat, msg)
   }
   // le temps écoulé de la barre atteint t (la barre court en vrai : on attend sa progression)
-  const jusqua   = (t: number, n = 0): Promise<void> => page.waitForFunction(`document.querySelectorAll('.mjs-toast-barre')[${n}].getAnimations()[0].currentTime >= ${t}`)
+  const jusqua   = (t: number, n = 0): Promise<void> => page.waitForFunction(`document.querySelectorAll('.mjs-toast-bar')[${n}].getAnimations()[0].currentTime >= ${t}`)
   const proche   = (a: number, b: number, msg: string, ecart: number) => assert.ok(Math.abs(a - b) <= ecart, `${msg} : ${a} contre ${b} (écart permis ${ecart})`)
 
   before(async function () {
@@ -242,7 +242,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`µ.modal
     await sur('.mjs-toast')
     await page.focus('.mjs-toast-close')
     await image()
-    assert.equal(await page.evaluate(`document.querySelectorAll('.mjs-toast-barre').length`), 0, 'pas de barre')
+    assert.equal(await page.evaluate(`document.querySelectorAll('.mjs-toast-bar').length`), 0, 'pas de barre')
     assert.equal(await page.evaluate(`document.querySelector('.mjs-toast').classList.contains('mjs-toast-paused')`), false, 'rien à figer, rien de marqué')
     assert.equal(await nombre(), 1)
   })

@@ -58,12 +58,11 @@ export function cleanSpot(p: unknown): { a: number[], y: number } | null {
 
 /** paquet SUIVRE — `app.use(followPackage(opts))` (cf. tête de fichier pour le protocole). */
 export function followPackage(opts: MjsWsFollowOptions = {}): MjsPackage {
-  const prefix  = opts.prefix ?? 'follow:'
-  const rate    = opts.rateLimit?.rate ?? 20
-  const burst   = opts.rateLimit?.burst ?? 40
-  const onLog   = opts.onLog ?? defaultLogOf('follow')
-  const seaux   = perRoomBuckets(burst, rate)
-  const buckets = seaux.buckets
+  const prefix      = opts.prefix ?? 'follow:'
+  const rate        = opts.rateLimit?.rate ?? 20
+  const burst       = opts.rateLimit?.burst ?? 40
+  const onLog       = opts.onLog ?? defaultLogOf('follow')
+  const roomBuckets = perRoomBuckets(burst, rate)
   // la dernière position de chaque salon (partie avec le dernier membre)
   const last    = new Map<string, { a: number[], y: number }>()
   // qui l'a vue, par salon : ceux qui étaient là avant qu'elle soit posée (leur première demande en
@@ -83,16 +82,17 @@ export function followPackage(opts: MjsWsFollowOptions = {}): MjsPackage {
     const sweep = () => {
       if (++actions < 200) return
       actions = 0
-      for (const nom of buckets.keys()) if (app.room(nom).size === 0) { buckets.delete(nom); last.delete(nom) }
-      for (const nom of seen.keys()) if (app.room(nom).size === 0) seen.delete(nom)
+      roomBuckets.sweep(app)
+      for (const name of last.keys()) if (app.room(name).size === 0) last.delete(name)
+      for (const name of seen.keys()) if (app.room(name).size === 0) seen.delete(name)
     }
 
     app.serve('follow:last', (p, client) => {
       const room = p?.room
       if (typeof room !== 'string' || !room || room.length > 200) return null
       const fullName = prefix + room
-      const salon    = app.room(fullName)
-      if (!salon.has(client)) return null
+      const roomName = app.room(fullName)
+      if (!roomName.has(client)) return null
       sweep()
       const record = seenOf(fullName)
       if (!record.asked.has(client)) record.asked.set(client, ++tick)
@@ -100,7 +100,7 @@ export function followPackage(opts: MjsWsFollowOptions = {}): MjsPackage {
       if (!spot) return null
       // un membre resté qui l'a vue ? sinon le salon s'était vidé : la position d'avant est celle d'un autre cours
       let found = false
-      for (const c of salon.clients) {
+      for (const c of roomName.clients) {
         if (c === client) continue
         if (record.told.has(c) || (record.asked.get(c) ?? Infinity) < record.at) { found = true; break }
       }
@@ -113,25 +113,25 @@ export function followPackage(opts: MjsWsFollowOptions = {}): MjsPackage {
     })
 
     // qui peut mener : la garde que l'appli donne — sans elle, personne
-    const mene = async (client: MjsWsClient, fullName: string): Promise<boolean> => {
+    const leads = async (client: MjsWsClient, fullName: string): Promise<boolean> => {
       if (!opts.canLead) return false
       try { return (await opts.canLead(client, fullName)) === true }
-      catch (err) { onLog('error', t('ws.follow.canlead-a-leve'), { err: err instanceof Error ? err.message : String(err) }); return false }
+      catch (err) { onLog('error', t('ws.follow.canlead-threw'), { err: err instanceof Error ? err.message : String(err) }); return false }
     }
     // la souris et la sélection de celui qui mène, vers ceux qui suivent — ses propres seaux par (salon, identité). Seuls
     // ceux des salons vidés sont balayés, toutes les 200 trames : jamais tous à la fois, un seau vide le reste
-    const souris      = perRoomBuckets(60, 30)
-    let actionsSouris = 0
+    const mouse      = perRoomBuckets(60, 30)
+    let mouseActions = 0
     app.on('follow:cursor', async (p, client) => {
       const room = p?.room
       if (typeof room !== 'string' || !room || room.length > 200) return
       const fullName = prefix + room
-      const salon    = app.room(fullName)
-      if (!salon.has(client) || !(await mene(client, fullName))) return
+      const roomName = app.room(fullName)
+      if (!roomName.has(client) || !(await leads(client, fullName))) return
       const id  = peerIdOf(client)
-      if (++actionsSouris >= 200) { actionsSouris = 0; souris.sweep(app) }
-      if (!souris.bucketOf(fullName, id).take()) return
-      salon.send('follow:cursor', { room, p: cleanPointer(p?.p), t: cleanText(p?.t), f: cleanPath(p?.f), c: cleanClicks(p?.c), from: { id, name: nameOf(client) } }, { except: client })
+      if (++mouseActions >= 200) { mouseActions = 0; mouse.sweep(app) }
+      if (!mouse.bucketOf(fullName, id).take()) return
+      roomName.send('follow:cursor', { room, p: cleanPointer(p?.p), t: cleanText(p?.t), f: cleanPath(p?.f), c: cleanClicks(p?.c), from: { id, name: nameOf(client) } }, { except: client })
     })
     app.on('follow:at', async (p, client) => {
       const room = p?.room
@@ -139,17 +139,17 @@ export function followPackage(opts: MjsWsFollowOptions = {}): MjsPackage {
       const spot = cleanSpot(p)
       if (!spot) return
       const fullName = prefix + room
-      const salon    = app.room(fullName)
-      if (!salon.has(client)) return
-      if (!(await mene(client, fullName))) return
+      const roomName = app.room(fullName)
+      if (!roomName.has(client)) return
+      if (!(await leads(client, fullName))) return
       sweep()
       const id = peerIdOf(client)
-      if (!seaux.bucketOf(fullName, id).take()) return
+      if (!roomBuckets.bucketOf(fullName, id).take()) return
       const record = seenOf(fullName)
       record.at = ++tick
       record.told.add(client)
       last.set(fullName, spot)
-      salon.send('follow:at', { room, a: spot.a, y: spot.y, from: { id, name: nameOf(client) } }, { except: client })
+      roomName.send('follow:at', { room, a: spot.a, y: spot.y, from: { id, name: nameOf(client) } }, { except: client })
     })
   })
   ;(pkg as any)._last = last

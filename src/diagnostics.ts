@@ -41,7 +41,6 @@ export type LintType =
   | 'propUnknown'
   | 'routeUnknown'
   | 'i18nKeyUnknown'
-  | 'multilineString'
 
 /** gravité d'un TYPE lint — jamais 'error' : une erreur de build fait échouer `mjs build`, elle
  *  n'est ni typée ni coupable (cf. paintError ci-dessous, pour ELLE seule). */
@@ -50,7 +49,7 @@ export type LintSeverity = 'warning' | 'info'
 /** réglages `lint` résolus (mjs.config.json → resolveBundlerOpts) : clé absente ou `true` =
  *  actif (défaut), `false` = coupé. `maxStateVars` reste un entier à part (cf. LintConfig,
  *  bundler/config.ts) — MÊME forme ici, pour accepter `config.lint` tel quel (un seul bag,
- *  jamais un sous-ensemble reconstruit à la main). `emptyComponent` et `multilineString` acceptent
+ *  jamais un sous-ensemble reconstruit à la main). `emptyComponent` accepte
  *  aussi `'error'` (LINT_ERROR_TYPES) : l'avertissement devient une erreur de build (bundler, fin de compile). */
 export type LintToggles = Partial<Record<Exclude<LintType, 'maxStateVars' | 'emptyComponent' | 'multilineString'>, boolean>> & { maxStateVars?: number, emptyComponent?: boolean | 'error', multilineString?: boolean | 'error' }
 
@@ -87,7 +86,6 @@ export const LINT_SEVERITY: Record<LintType, LintSeverity> = {
   propUnknown:      'warning',
   routeUnknown:     'warning',
   i18nKeyUnknown:   'warning',
-  multilineString:  'warning'
 }
 
 /** ordre de déclaration ci-dessus — une seule liste, consultée par la validation de config ET
@@ -95,7 +93,7 @@ export const LINT_SEVERITY: Record<LintType, LintSeverity> = {
 export const LINT_TYPES = Object.keys(LINT_SEVERITY) as LintType[]
 
 /** les types qui acceptent aussi `"error"` : leurs avertissements deviennent des erreurs de build */
-export const LINT_ERROR_TYPES = ['emptyComponent', 'multilineString'] as const
+export const LINT_ERROR_TYPES = ['emptyComponent'] as const
 
 // un type explicitement à `false` coupe — absent ou `true` reste actif (défaut)
 function lintTypeEnabled(lint: LintToggles | undefined, type: LintType): boolean {

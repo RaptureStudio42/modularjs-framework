@@ -94,25 +94,25 @@ export class SqlPersistAdapter implements MjsServerPersistAdapter {
   private _sqliteSignaled = false
 
   constructor(opts: SqlPersistAdapterOpts) {
-    if (typeof opts.query !== 'function') throw new Error(t('serveur.persist-sql-query-manquant'))
-    if (opts.dialect !== undefined && opts.dialect !== '?' && opts.dialect !== '$') throw new Error(t('serveur.persist-sql-dialect-invalide', { received: JSON.stringify(opts.dialect) }))
+    if (typeof opts.query !== 'function') throw new Error(t('mjs-server.persist-sql-query-missing'))
+    if (opts.dialect !== undefined && opts.dialect !== '?' && opts.dialect !== '$') throw new Error(t('mjs-server.persist-sql-dialect-invalid', { received: JSON.stringify(opts.dialect) }))
     this._table = opts.table ?? 'mjs_server_games'
-    if (!SQL_IDENTIFIER.test(this._table)) throw new Error(t('serveur.persist-sql-table-invalide', { table: this._table }))
+    if (!SQL_IDENTIFIER.test(this._table)) throw new Error(t('mjs-server.persist-sql-table-invalid', { table: this._table }))
     this._query   = opts.query
     this._dialect = opts.dialect ?? '?'
     this._onLog   = opts.onLog ?? defaultLog
     const dataType = this._dialect === '?' ? 'LONGTEXT' : 'TEXT'   // cf. tête de fichier, SCHÉMA
     this._ready   = this._query(`CREATE TABLE IF NOT EXISTS ${this._table} (id VARCHAR(64) PRIMARY KEY, data ${dataType}, updated_at BIGINT)`, [])
       .then(() => {})
-      .catch(err => { this._onLog('warn', t('serveur.persist-sql-table-creation-echouee', { table: this._table }), { err: err instanceof Error ? err.message : String(err) }) })
+      .catch(err => { this._onLog('warn', t('mjs-server.persist-sql-table-creation-failed', { table: this._table }), { err: err instanceof Error ? err.message : String(err) }) })
   }
 
   // garde-fou — .catch() : une promesse orpheline rejetée ne doit JAMAIS devenir un unhandledRejection
   // (Node 20 tue le process dessus). En pratique save()/remove() catchent déjà tout en interne (le .catch()
   // ci-dessous ferme la chaîne) — filet de sécurité. `_inFlight` ne suit `p` que WRITE_TIMEOUT_MS (cf. l'en-tête, « ARRÊT »)
-  private _suivre(p: Promise<void>, label: string): Promise<void> {
+  private _track(p: Promise<void>, label: string): Promise<void> {
     this._inFlight.track(p)
-    return p.catch(err => this._onLog('warn', t('serveur.persist-backend-rejet-non-intercepte', { backend: 'sql', label: label }), { err: err instanceof Error ? err.message : String(err) }))
+    return p.catch(err => this._onLog('warn', t('mjs-server.persist-backend-unhandled-rejection', { backend: 'sql', label: label }), { err: err instanceof Error ? err.message : String(err) }))
   }
 
   private _upsertSql(): string {
@@ -125,14 +125,14 @@ export class SqlPersistAdapter implements MjsServerPersistAdapter {
     return this._dialect === '?' ? `DELETE FROM ${this._table} WHERE id = ?` : `DELETE FROM ${this._table} WHERE id = $1`
   }
 
-  // promesse rendue = fin de la requête, jamais rejetée (cf. _suivre) : le moteur s'y enchaîne
+  // promesse rendue = fin de la requête, jamais rejetée (cf. _track) : le moteur s'y enchaîne
   save(id: string, data: MjsServerGameSnapshot): Promise<void> {
     const params = [id, encodeSnapshot(data), Date.now()]
-    return this._suivre(this._ready
+    return this._track(this._ready
       .then(() => this._query(this._upsertSql(), params)).then(() => {})
       .catch(err => {
         const message = err instanceof Error ? err.message : String(err)
-        this._onLog('warn', t('serveur.persist-backend-save-echouee', { backend: 'sql', id: id }), { err: message })
+        this._onLog('warn', t('mjs-server.persist-backend-save-failed', { backend: 'sql', id: id }), { err: message })
         this._signalSqlite(message)
       }), `save('${id}')`)
   }
@@ -142,13 +142,13 @@ export class SqlPersistAdapter implements MjsServerPersistAdapter {
   private _signalSqlite(message: string): void {
     if (this._sqliteSignaled || this._dialect !== '?' || !/near "DUPLICATE"/.test(message)) return
     this._sqliteSignaled = true
-    this._onLog('warn', t('serveur.persist-sql-sqlite-non-pris-en-charge'))
+    this._onLog('warn', t('mjs-server.persist-sql-sqlite-not-supported'))
   }
 
   remove(id: string): Promise<void> {
-    return this._suivre(this._ready
+    return this._track(this._ready
       .then(() => this._query(this._deleteSql(), [id])).then(() => {})
-      .catch(err => this._onLog('warn', t('serveur.persist-backend-remove-echouee', { backend: 'sql', id: id }), { err: err instanceof Error ? err.message : String(err) })), `remove('${id}')`)
+      .catch(err => this._onLog('warn', t('mjs-server.persist-backend-remove-failed', { backend: 'sql', id: id }), { err: err instanceof Error ? err.message : String(err) })), `remove('${id}')`)
   }
 
   async load(): Promise<Array<{ id: string; data: MjsServerGameSnapshot }>> {
@@ -159,11 +159,11 @@ export class SqlPersistAdapter implements MjsServerPersistAdapter {
       for (const row of (Array.isArray(rows) ? rows as Array<Record<string, unknown>> : [])) {
         const id = String(row.id)
         try { results.push({ id, data: decodeSnapshot(row.data) }) }
-        catch (err) { this._onLog('warn', t('serveur.persist-backend-entree-illisible', { backend: 'sql', id: id }), { err: err instanceof Error ? err.message : String(err) }) }
+        catch (err) { this._onLog('warn', t('mjs-server.persist-backend-entry-unreadable', { backend: 'sql', id: id }), { err: err instanceof Error ? err.message : String(err) }) }
       }
       return results
     } catch (err) {
-      this._onLog('warn', t('serveur.persist-backend-load-echoue', { backend: 'sql' }), { err: err instanceof Error ? err.message : String(err) })
+      this._onLog('warn', t('mjs-server.persist-backend-load-failed', { backend: 'sql' }), { err: err instanceof Error ? err.message : String(err) })
       return []
     }
   }
@@ -172,6 +172,6 @@ export class SqlPersistAdapter implements MjsServerPersistAdapter {
   // restées sans réponse, puis flush() rend la main
   async flush(): Promise<void> {
     const unanswered = await this._inFlight.settle()
-    if (unanswered > 0) this._onLog('warn', t('serveur.persist-backend-flush-sans-reponse', { backend: 'sql', nb: unanswered, delai: WRITE_TIMEOUT_MS / 1000 }))
+    if (unanswered > 0) this._onLog('warn', t('mjs-server.persist-backend-flush-no-response', { backend: 'sql', count: unanswered, delay: WRITE_TIMEOUT_MS / 1000 }))
   }
 }

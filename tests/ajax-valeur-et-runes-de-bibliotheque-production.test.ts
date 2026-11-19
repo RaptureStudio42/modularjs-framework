@@ -12,7 +12,7 @@ import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 
 const ICI        = dirname(fileURLToPath(import.meta.url))
 const AJAX_SRC   = readFileSync(join(ICI, '../src/runtime/mjs_ajax.ts'), 'utf-8')
-// la forme appelable (bloc `<ajax-appel>` du cœur) : un GET dont la promesse rend le corps
+// la forme appelable (bloc `<ajax-call>` du cœur) : un GET dont la promesse rend le corps
 const DEFINITION = /method:\s*['"]GET['"],\s*success:/
 
 // une appli : rend les erreurs de sa construction et son cœur

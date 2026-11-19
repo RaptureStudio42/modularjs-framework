@@ -112,23 +112,23 @@ let unclosedBraces = new Set<number>()
 // positions lues au niveau de la balise (hors accolade) par une lecture qui n'a pas trouvé son `>` : la suite de la lecture ne
 // dépend que du texte et de la position, une autre balise qui y passe ne le trouvera pas non plus (des balises sans `>`, tout un
 // texte, coûtaient chacune une lecture jusqu'à la fin)
-let sansFin: Uint8Array | null = null
+let noEnd: Uint8Array | null = null
 
 export function findMacroTagEnd(html: string, from: number): number {
   if (html !== unclosedText) {
     unclosedText   = html
     unclosedBraces = new Set()
-    sansFin        = null
+    noEnd          = null
   }
   // accolades ouvertes, de l'extérieure à l'intérieure : quand la lecture échoue, aucune ne se refermait
   const open: number[] = []
   // positions lues au niveau de la balise par cette lecture
-  const lues: number[] = []
+  const read: number[] = []
   const fail = (): number => {
     for (const o of open) unclosedBraces.add(o)
-    if (lues.length > 0) {
-      sansFin ??= new Uint8Array(html.length)
-      for (const p of lues) sansFin[p] = 1
+    if (read.length > 0) {
+      noEnd ??= new Uint8Array(html.length)
+      for (const p of read) noEnd[p] = 1
     }
     return -1
   }
@@ -138,8 +138,8 @@ export function findMacroTagEnd(html: string, from: number): number {
   while (i < html.length) {
     const c = html[i]
     if (depth === 0) {
-      if (sansFin !== null && sansFin[i] === 1) return fail()
-      lues.push(i)
+      if (noEnd !== null && noEnd[i] === 1) return fail()
+      read.push(i)
     }
     if (strDelim !== null) {
       if (c === '\\') { i += 2; continue }

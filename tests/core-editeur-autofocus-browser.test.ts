@@ -55,7 +55,7 @@ window.__ed = (c) => __H().querySelector('.' + c)
 window.__sf = (c) => __ed(c)._shadow.querySelector('.surface')
 window.__val = (c) => __ed(c).querySelector(':scope > input[type=hidden]').value
 window.__deep = () => { let a = document.activeElement; while (a && (a._shadow || a.shadowRoot) && (a._shadow || a.shadowRoot).activeElement) a = (a._shadow || a.shadowRoot).activeElement; if (!a) return 'rien'; const h = a.getRootNode().host; return (h && h.classList.length ? h.classList[0] + ' ' : '') + a.tagName.toLowerCase() + '.' + a.className }
-window.__avant = () => __H().querySelector('.avant').focus()
+window.__before = () => __H().querySelector('.avant').focus()
 window.__debut = (c) => { const sf = __sf(c); sf.focus(); const t = sf.querySelector('p').firstChild; document.getSelection().setBaseAndExtent(t, 0, t, 0) }
 `
 
@@ -79,7 +79,7 @@ for (const moteur of ['chromium', 'firefox', 'webkit'] as const) {
 
     // l'éditeur posé par un `{if}`, le focus d'abord sur le bouton « avant » (celui qui ouvre, dans une vraie page)
     const poser = async (k: string): Promise<void> => {
-      await s.page.evaluate(`__avant()`)
+      await s.page.evaluate(`__before()`)
       await s.page.evaluate(`__ouvrir('${k}')`)
       await s.page.waitForFunction(`!!__H().querySelector('.${k}')?._shadow?.querySelector('.surface p')`, null, { timeout: 10000 })
       await s.page.waitForTimeout(150)
@@ -107,7 +107,7 @@ for (const moteur of ['chromium', 'firefox', 'webkit'] as const) {
     })
 
     it('`.focus()` de la balise et `caret="end"` : le curseur est à la fin du texte', async () => {
-      await s.page.evaluate(`__avant()`)
+      await s.page.evaluate(`__before()`)
       await s.page.evaluate(`__ed('fin').focus()`)
       await s.page.waitForTimeout(80)
       assert.equal(await s.page.evaluate(`__deep()`), 'fin div.surface')
@@ -122,7 +122,7 @@ for (const moteur of ['chromium', 'firefox', 'webkit'] as const) {
     })
 
     it('`caret="end"` sur un long texte : la zone défile jusqu\'au curseur', async () => {
-      await s.page.evaluate(`__avant()`)
+      await s.page.evaluate(`__before()`)
       await s.page.evaluate(`__ed('long').focus()`)
       await s.page.waitForTimeout(120)
       const [haut, vue, total] = await s.page.evaluate(`[__sf('long').scrollTop, __sf('long').clientHeight, __sf('long').scrollHeight]`)
@@ -132,7 +132,7 @@ for (const moteur of ['chromium', 'firefox', 'webkit'] as const) {
     })
 
     it('texte rouvert : la page pose une autre valeur et donne le focus dans le même geste, le curseur est à la fin du nouveau texte', async () => {
-      await s.page.evaluate(`__avant()`)
+      await s.page.evaluate(`__before()`)
       await s.page.evaluate(`__rouvrir()`)
       await s.page.waitForTimeout(120)
       assert.equal(await s.page.evaluate(`__deep()`), 'fin2 div.surface')
@@ -140,7 +140,7 @@ for (const moteur of ['chromium', 'firefox', 'webkit'] as const) {
     })
 
     it('sans `caret`, `.focus()` garde la place que le navigateur donne : le début', async () => {
-      await s.page.evaluate(`__avant()`)
+      await s.page.evaluate(`__before()`)
       await s.page.evaluate(`__ed('sans').focus()`)
       await s.page.waitForTimeout(80)
       assert.equal(await s.page.evaluate(`__deep()`), 'sans div.surface')

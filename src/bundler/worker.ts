@@ -29,7 +29,7 @@ import { transpileFromMsg, type TranspileMsg } from './transpile-msg.js'
 import { t, setMessagesLang } from '../messages/index.js'
 
 if (!parentPort) {
-  throw new Error(t('bundler.worker.parent-port-manquant'))
+  throw new Error(t('bundler.worker.parent-port-missing'))
 }
 
 parentPort.on('message', async (msg: TranspileMsg) => {

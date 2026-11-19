@@ -7,7 +7,7 @@
 
 import assert from 'node:assert/strict'
 import { transpile } from '../src/transpiler/index.js'
-import { ouvreUneRegex } from '../src/sigils.js'
+import { opensRegex } from '../src/sigils.js'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { monterHote } from './helpers/coeur-monter.js'
 
@@ -28,13 +28,13 @@ describe('sigils — regex après la parenthèse d\'une condition', function () 
   after(async () => { await terminateSharedWorkerPool() })
 
   it('ouvreUneRegex : après if (…), while (…), for (…) oui ; après un appel ou un groupe non', () => {
-    assert.equal(ouvreUneRegex('if (ok) '), true)
-    assert.equal(ouvreUneRegex('x = 1\nwhile (a(b)) '), true)
-    assert.equal(ouvreUneRegex('for (const c of l) '), true)
-    assert.equal(ouvreUneRegex('f(ok) '), false)
-    assert.equal(ouvreUneRegex('x = (a + b) '), false)
-    assert.equal(ouvreUneRegex('motif(ok) '), false)
-    assert.equal(ouvreUneRegex("x = (a + ')') "), false)
+    assert.equal(opensRegex('if (ok) '), true)
+    assert.equal(opensRegex('x = 1\nwhile (a(b)) '), true)
+    assert.equal(opensRegex('for (const c of l) '), true)
+    assert.equal(opensRegex('f(ok) '), false)
+    assert.equal(opensRegex('x = (a + b) '), false)
+    assert.equal(opensRegex('motif(ok) '), false)
+    assert.equal(opensRegex("x = (a + ')') "), false)
   })
 
   it('un µtoggle placé après `if (ok) /\'/.test(s)` est réécrit (lang="js", monté)', async () => {

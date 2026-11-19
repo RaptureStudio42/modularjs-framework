@@ -17,13 +17,14 @@ export async function attendre(cond: () => boolean, ms = 3000): Promise<void> {
 
 export const pause = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-export async function monterHote(source: string, prefixe: string): Promise<{ window: any; hote: any; erreurs: string[] }> {
+// `reglages` : ceux du Bundler en plus (`{ env: 'prod', minify: false }` pour la construction de production)
+export async function monterHote(source: string, prefixe: string, reglages: Record<string, unknown> = {}): Promise<{ window: any; hote: any; erreurs: string[] }> {
   const root   = mjsTmp(prefixe)
   const srcDir = join(root, 'src')
   const outDir = join(root, 'out')
   mkdirSync(srcDir, { recursive: true })
   writeFileSync(join(srcDir, 'hote.mjs'), source)
-  const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js') })
+  const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), ...reglages })
   const stats   = await bundler.compile()
   await bundler.close()
   assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))

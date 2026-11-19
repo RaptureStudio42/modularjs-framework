@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 import { createHmac } from 'node:crypto'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { creerAuthProxy } from '../src/mjs-ws/proxy.js'
+import { createAuthProxy } from '../src/mjs-ws/proxy.js'
 
 const SECRET = 'secret-partage-du-back-de-decision'
 
@@ -53,7 +53,7 @@ describe('proxy de décisions : verifyResponse lie la réponse à sa requête', 
   it('une réponse signée pour cette requête (signature de la requête comprise) est acceptée', async () => {
     const back = await startBack((requestSig, path) => signedFor(requestSig, path, ALICE))
     try {
-      const auth = creerAuthProxy({ url: back.url, secret: SECRET, verifyResponse: true }, () => {})
+      const auth = createAuthProxy({ url: back.url, secret: SECRET, verifyResponse: true }, () => {})
       assert.deepEqual(await verdict(auth, 'jeton-d-alice'), ALICE.identity)
     }
     finally { await back.close() }
@@ -66,7 +66,7 @@ describe('proxy de décisions : verifyResponse lie la réponse à sa requête', 
     const back = await startBack(() => ({ body, headers: { 'x-mjs-ws-timestamp': String(ts), 'x-mjs-ws-signature': sig } }))
     try {
       const warnings: string[] = []
-      const auth = creerAuthProxy({ url: back.url, secret: SECRET, verifyResponse: true }, (level, message) => { if (level === 'warn') warnings.push(message) })
+      const auth = createAuthProxy({ url: back.url, secret: SECRET, verifyResponse: true }, (level, message) => { if (level === 'warn') warnings.push(message) })
       assert.equal(await verdict(auth, 'jeton-d-alice'), 'refus')
       assert.equal(await verdict(auth, 'n-importe-quoi'), 'refus', 'la même réponse rejouée pour Mallory')
       assert.equal(warnings.length, 2, JSON.stringify(warnings))
@@ -82,7 +82,7 @@ describe('proxy de décisions : verifyResponse lie la réponse à sa requête', 
       return captured
     })
     try {
-      const auth = creerAuthProxy({ url: back.url, secret: SECRET, verifyResponse: true }, () => {})
+      const auth = createAuthProxy({ url: back.url, secret: SECRET, verifyResponse: true }, () => {})
       assert.deepEqual(await verdict(auth, 'jeton-d-alice'), ALICE.identity, 'la réponse d\'origine, pour Alice')
       assert.equal(await verdict(auth, 'n-importe-quoi'), 'refus', 'la même réponse, rejouée pour une autre requête')
     }

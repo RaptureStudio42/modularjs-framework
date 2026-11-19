@@ -48,10 +48,10 @@ export const DEFAULT_RESUME: MjsWsResolvedResume = { grace: 30000, maxBuffered: 
 export function resolveResumeOptions(raw: boolean | MjsWsResumeOptions | undefined): MjsWsResolvedResume | undefined {
   if (raw === undefined || raw === null || raw === false) return undefined
   if (raw === true) return { ...DEFAULT_RESUME }
-  if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error(t('ws.index.reglage-invalide', { cle: 'resume', raw: showSetting(raw), attendu: 'true, false, { grace, maxBuffered, maxBytes }' }))
+  if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error(t('ws.index.setting-invalid', { key: 'resume', raw: showSetting(raw), expected: 'true, false, { grace, maxBuffered, maxBytes }' }))
   const resume = { ...DEFAULT_RESUME } as MjsWsResolvedResume & Record<string, unknown>
-  for (const [cle, v] of Object.entries(raw)) if (v !== undefined) resume[cle] = v
-  for (const cle of ['grace', 'maxBuffered', 'maxBytes'] as const) checkSetting('resume.' + cle, resume[cle], 'nombre')
+  for (const [key, v] of Object.entries(raw)) if (v !== undefined) resume[key] = v
+  for (const key of ['grace', 'maxBuffered', 'maxBytes'] as const) checkSetting('resume.' + key, resume[key], 'number')
   return resume
 }
 
@@ -97,7 +97,7 @@ export function createSessionsEngine(opts: MjsWsResolvedResume, sizeOf: (frame: 
     let record = byClient.get(client)
     if (record) {
       record.key = randomBytes(32).toString('hex')   // la clé tourne à CHAQUE welcome — l'ancienne meurt ici
-      if (stats) stats.sessions.emises++
+      if (stats) stats.sessions.issued++
       return { id: record.id, key: record.key }
     }
     let id = randomBytes(8).toString('hex')
@@ -105,7 +105,7 @@ export function createSessionsEngine(opts: MjsWsResolvedResume, sizeOf: (frame: 
     record = { id, key: randomBytes(32).toString('hex'), identityId: identityIdOf(client.identity), client, parked: false, overflowed: false, buffer: [], bytes: 0, timer: null, reason: undefined }
     registry.set(id, record)
     byClient.set(client, record)
-    if (stats) stats.sessions.emises++
+    if (stats) stats.sessions.issued++
     return { id: record.id, key: record.key }
   }
 
@@ -119,11 +119,11 @@ export function createSessionsEngine(opts: MjsWsResolvedResume, sizeOf: (frame: 
       record.timer = null
       registry.delete(record.id)
       byClient.delete(client)
-      log('info', t('ws.sessions.expiree-purge-differee', { id: record.id, clientId: client.id }))
-      if (stats) stats.sessions.expirees++
+      log('info', t('ws.sessions.expired-purge-deferred', { id: record.id, clientId: client.id }))
+      if (stats) stats.sessions.expired++
       hooks.onExpire(client, record.reason)
     }, opts.grace)
-    log('info', t('ws.sessions.client-parque', { clientId: client.id, id: record.id, grace: opts.grace }))
+    log('info', t('ws.sessions.client-parked', { clientId: client.id, id: record.id, grace: opts.grace }))
     return true
   }
 
@@ -141,8 +141,8 @@ export function createSessionsEngine(opts: MjsWsResolvedResume, sizeOf: (frame: 
       record.overflowed    = true    // non reprenable — JAMAIS de rejeu partiel ; la minuterie continue pour la purge
       record.buffer.length = 0
       record.bytes         = 0
-      log('warn', t('ws.sessions.tampon-reprise-deborde', { clientId: client.id, id: record.id }))
-      if (stats) stats.sessions.debordees++
+      log('warn', t('ws.sessions.buffer-resume-overflowed', { clientId: client.id, id: record.id }))
+      if (stats) stats.sessions.overflowed++
     }
   }
 
@@ -164,7 +164,7 @@ export function createSessionsEngine(opts: MjsWsResolvedResume, sizeOf: (frame: 
     const frames  = record.buffer
     record.buffer = []
     record.bytes  = 0
-    if (stats) stats.sessions.reprises++
+    if (stats) stats.sessions.resumed++
     return { client: record.client, frames }
   }
 
@@ -184,7 +184,7 @@ export function createSessionsEngine(opts: MjsWsResolvedResume, sizeOf: (frame: 
   // reconnexion (claim() ci-dessus ne regarde que id+clé+identityId, jamais « une éjection a eu
   // lieu entre-temps »). Ne cible QUE les sessions PARQUÉES de cette identité — une session encore
   // VIVANTE (record.parked === false) est éjectée par un autre chemin (core.ts::clientsByIdentity/
-  // dismissClient, close 4003), jamais ici. Réutilise stats.sessions.expirees (pas de compteur
+  // dismissClient, close 4003), jamais ici. Réutilise stats.sessions.expired (pas de compteur
   // dédié : même famille « session parquée jamais reprise », qu'elle meure de la grâce ou d'un
   // remplacement immédiat).
   function dismissByIdentity(identityId: string, reason?: string): void {
@@ -193,8 +193,8 @@ export function createSessionsEngine(opts: MjsWsResolvedResume, sizeOf: (frame: 
       if (record.timer) { clearTimeout(record.timer); record.timer = null }
       registry.delete(record.id)
       byClient.delete(record.client)
-      log('info', t('ws.sessions.session-revoquee', { id: record.id, clientId: record.client.id }))
-      if (stats) stats.sessions.expirees++
+      log('info', t('ws.sessions.session-revoked', { id: record.id, clientId: record.client.id }))
+      if (stats) stats.sessions.expired++
       hooks.onExpire(record.client, reason ?? record.reason)
     }
   }

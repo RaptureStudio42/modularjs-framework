@@ -23,7 +23,7 @@ describe('MJS-WS — connexions refusées : un journal regroupé, une Origin tro
       const nouvelles = lignes.slice(avant)
       assert.equal(nouvelles.length, 1, 'une seule ligne pour 300 refus de suite')
       assert.ok(nouvelles[0].length < 400, `Origin tronquée (ligne de ${nouvelles[0].length} caractères)`)
-      assert.equal(app.stats().connexions.refuseesOrigine, 300, 'le compteur, lui, voit chaque refus')
+      assert.equal(app.stats().connections.refusedOrigin, 300, 'le compteur, lui, voit chaque refus')
 
       const decalage = 61000
       Date.now = () => vraiNow() + decalage
@@ -50,7 +50,7 @@ describe('MJS-WS — connexions refusées : un journal regroupé, une Origin tro
       for (let i = 0; i < 50; i++) transport.connect({ url: 'memory://plafond' })
       await tick(20)
       assert.equal(lignes.length - avant, 1)
-      assert.equal(app.stats().connexions.refuseesPlafond, 50)
+      assert.equal(app.stats().connections.refusedCap, 50)
     } finally {
       await app.stop()
     }

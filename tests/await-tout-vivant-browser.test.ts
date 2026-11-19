@@ -14,6 +14,7 @@ import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { transpile } from '../src/transpiler/index.js'
 import { VARIANTES, construire, charger, graves } from './helpers/liaison-navigateur.js'
 import type { Cible, Mode } from './helpers/liaison-navigateur.js'
+import { playTogether } from './helpers/engines-together.js'
 
 // la promesse du composant, ses gestes ; chaque source y ajoute ses variables, ses méthodes et son gabarit
 const PROMESSE = (resolu: string) => `  fin = null
@@ -344,7 +345,7 @@ const retenir = (page: any, balise: string, sel: string): Promise<null> => page.
 const vieux   = (page: any, expr: string): Promise<string> => page.evaluate(`(() => { const n = window.__vieux; return n ? String(${expr}) : 'absente' })()`)
 
 // ----- les trois modes, Chromium puis Firefox quand il est installé
-for (const moteur of ['chromium', 'firefox'] as const) for (const mode of ['dev-parents-avant', 'split', 'bundle'] as const) describe(`le contenu d'une branche {await} suit ses variables (${mode}, ${moteur} réel)`, function () {
+for (const moteur of ['chromium', 'firefox'] as const) for (const mode of ['dev-parents-avant', 'split', 'bundle'] as const) playTogether(describe(`le contenu d'une branche {await} suit ses variables (${mode}, ${moteur} réel)`, function () {
   this.timeout(180000)
   let browser: any = null
   let present = false
@@ -652,7 +653,7 @@ for (const moteur of ['chromium', 'firefox'] as const) for (const mode of ['dev-
       verifier(ecarts, '$ton = sombre, événements', await emis(page), 'vu:sombre')
     })
   })
-})
+}))
 
 // ----- le code émis : une interpolation qui ne lit que la valeur de la branche (ou des constantes) n'émet aucun effet
 describe('code émis : le contenu d\'une branche {await} qui ne lit aucune variable ne reçoit aucun effet', function () {

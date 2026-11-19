@@ -117,9 +117,9 @@ export type { RedisAdapterOpts, ParsedRedisUrl } from './adapter-redis.js'
 export { isLoopbackHost } from './bridge.js'
 export { LatencyReservoir, LATENCY_RESERVOIR_SIZE, createStatsRegistry, toPrometheusText } from './stats.js'
 export type {
-  MjsWsGuardCause, MjsWsStatsSnapshot, MjsWsStatsRegistry, MjsWsStatsGauges, MjsWsStatsLatences,
-  MjsWsStatsConnexions, MjsWsStatsMessages, MjsWsStatsGuard, MjsWsStatsRooms, MjsWsStatsFlux,
-  MjsWsStatsPont, MjsWsStatsAdaptateur, MjsWsStatsSessions, MjsWsStatsErreurs,
+  MjsWsGuardCause, MjsWsStatsSnapshot, MjsWsStatsRegistry, MjsWsStatsGauges, MjsWsStatsLatencies,
+  MjsWsStatsConnections, MjsWsStatsMessages, MjsWsStatsGuard, MjsWsStatsRooms, MjsWsStatsStreams,
+  MjsWsStatsBridge, MjsWsStatsAdapter, MjsWsStatsSessions, MjsWsStatsErrors,
 } from './stats.js'
 export { renderStatsPage } from './stats-page.js'
 // contrat TYPÉ optionnel — cf. contract.ts (ZÉRO runtime, que des
@@ -129,12 +129,12 @@ export type {
   MjsWsContract, MjsWsResultOf, TypedApp, TypedSocket, MjsSocketLoose, MjsRoomProxyLoose, MjsRequestOpts, MjsSendOpts,
 } from './contract.js'
 // paquets activables (packages.ts) — cf. son commentaire de tête : `app.use`
-// (core.ts) installe un MjsPackage ; `definirPaquet` = fabrique ergonomique ; `paquetEcho` =
+// (core.ts) installe un MjsPackage ; `definePackage` = fabrique ergonomique ; `echoPackage` =
 // exemple de référence (patron des paquets chat, comptes et lobby).
 export { definePackage, echoPackage } from './packages.js'
 export type { MjsPackage } from './packages.js'
 // paquet CHAT v1 (chat.ts) — 1er paquet applicatif RÉEL
-// au-dessus du patron paquetEcho : salons à historique, débit par identité+salon, modération
+// au-dessus du patron echoPackage : salons à historique, débit par identité+salon, modération
 // (suppression/muet), frappe. Cf. docs/26-chat.md pour le guide, chat.ts pour le protocole complet.
 export { chatPackage } from './chat.js'
 export type { MjsWsChatOptions, MjsWsChatMessageCtx } from './chat.js'
@@ -202,7 +202,7 @@ export interface MjsWsOptions {
    * Authentifie le µ:hello. `false` ou throw → µ:denied {message}. Retour → `client.identity`.
    * Fonction historique OU objet-proxy `{url, secret, timeout?, cache?}` (proxy.ts)
    * délégant la décision à un back HTTP signé (POST `{event:'connect', hello}`, réponse
-   * `{ok:true, identity}` ou `{ok:false, raison?}`) — façon Centrifugo, le dev ne code plus
+   * `{ok:true, identity}` ou `{ok:false, reason?}`) — façon Centrifugo, le dev ne code plus
    * l'appel HTTP lui-même. Cf. docs/23-mjs-ws.md « Proxy de décisions ».
    */
   auth?: ((hello: MjsWsHelloPayload, meta: MjsWsRemoteInfo) => unknown | Promise<unknown>) | MjsWsProxyOptions
@@ -270,7 +270,7 @@ export interface MjsWsOptions {
    * l'Origin brut (`string | undefined`) + le `MjsWsRemoteInfo` de la connexion, retourne `true`
    * pour admettre ; une exception levée = refus (fail-closed). Refus = fermeture immédiate code
    * **1008** (Policy Violation, définitif), AVANT le hello (pas de µ:denied), compteur DÉDIÉ
-   * `stats.connexions.refuseesOrigine`. Cf. docs/23-mjs-ws.md « Vérification d'origine ».
+   * `stats.connections.refusedOrigin`. Cf. docs/23-mjs-ws.md « Vérification d'origine ».
    */
   verifyOrigin?: string[] | ((origin: string | undefined, remote: MjsWsRemoteInfo) => boolean)
   /**
@@ -374,7 +374,7 @@ function isAdapterInstance(x: MjsWsAdapterConfig | MjsWsAdapter): x is MjsWsAdap
 export function resolveAdapterOption(raw: MjsWsAdapterConfig | MjsWsAdapter | undefined, onLog: MjsWsLogFn): MjsWsAdapter | undefined {
   if (!raw) return undefined
   if (isAdapterInstance(raw)) return raw
-  if (!raw.redis) throw new Error(t('ws.index.adapter-redis-manquant'))
+  if (!raw.redis) throw new Error(t('ws.index.adapter-redis-missing'))
   return new RedisAdapter({ url: raw.redis, prefix: raw.prefix, onLog })
 }
 
@@ -392,9 +392,9 @@ export function resolveAntiEntropyOption(top: number | false | undefined, adapte
 
 // la cadence d'anti-entropie : `false`, ou un entier ≥ 1 — NaN, 0 ou négatif feraient publier l'instantané de présence
 // toutes les millisecondes (setInterval les lit comme 1 ms)
-function checkAntiEntropy(cle: string, v: unknown): number | false {
+function checkAntiEntropy(key: string, v: unknown): number | false {
   if (v === false) return false
-  if (typeof v !== 'number' || !Number.isInteger(v) || v < 1) throw new Error(t('ws.index.reglage-invalide', { cle, raw: showSetting(v), attendu: t('ws.index.entier-positif-ou-false') }))
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < 1) throw new Error(t('ws.index.setting-invalid', { key, raw: showSetting(v), expected: t('ws.index.integer-positive-or-false') }))
   return v
 }
 
@@ -447,7 +447,7 @@ export interface MjsWsProxyWiring {
 export function resolveTransport(raw: MjsWsOptions['transport'], port: number | undefined, host: string | undefined, limits: MjsWsLimits, proxy: MjsWsProxyWiring = {}): MjsWsTransport {
   if (raw === undefined || raw === 'ws') return new WsTransport({ port, host, maxPayload: limits.maxPayload, trustProxy: proxy.trustProxy, onProxyHeaders: proxy.onProxyHeaders })
   if (raw === 'uws') return new UwsTransport({ port, host, maxPayload: limits.maxPayload, maxBuffered: limits.maxBuffered, trustProxy: proxy.trustProxy, onProxyHeaders: proxy.onProxyHeaders })
-  if (typeof raw === 'string') throw new Error(t('ws.index.transport-invalide', { raw }))
+  if (typeof raw === 'string') throw new Error(t('ws.index.transport-invalid', { raw }))
   return raw
 }
 
@@ -463,7 +463,7 @@ export function resolveSessionExclusiveOption(raw: MjsWsOptions['sessionExclusiv
   if (raw === undefined || raw === false) return false
   if (raw === true) return 'replace'
   if (raw === 'replace' || raw === 'refuse') return raw
-  throw new Error(t('ws.index.session-exclusive-invalide', { raw: JSON.stringify(raw) }))
+  throw new Error(t('ws.index.session-exclusive-invalid', { raw: JSON.stringify(raw) }))
 }
 
 /**
@@ -474,21 +474,21 @@ export function resolveSessionExclusiveOption(raw: MjsWsOptions['sessionExclusiv
 export function resolveBanOption(raw: MjsWsOptions['ban']): MjsWsResolvedBan | null {
   if (raw === false) return null
   if (raw === undefined || raw === true) return { ...DEFAULT_BAN }
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new Error(t('ws.index.ban-invalide', { cle: 'ban', raw: JSON.stringify(raw), attendu: 'true, false, { after, within, duration, by }' }))
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new Error(t('ws.index.ban-invalid', { key: 'ban', raw: JSON.stringify(raw), expected: 'true, false, { after, within, duration, by }' }))
   const ban = { ...DEFAULT_BAN, ...raw }
-  for (const cle of ['after', 'within', 'duration'] as const) {
-    const v = ban[cle]
-    if (typeof v !== 'number' || !Number.isInteger(v) || v < 1) throw new Error(t('ws.index.ban-invalide', { cle: 'ban.' + cle, raw: JSON.stringify(v), attendu: t('ws.index.entier-positif') }))
+  for (const key of ['after', 'within', 'duration'] as const) {
+    const v = ban[key]
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 1) throw new Error(t('ws.index.ban-invalid', { key: 'ban.' + key, raw: JSON.stringify(v), expected: t('ws.index.integer-positive') }))
   }
-  if (!VALID_BAN_BY.includes(ban.by)) throw new Error(t('ws.index.ban-invalide', { cle: 'ban.by', raw: JSON.stringify(ban.by), attendu: VALID_BAN_BY.map(v => `'${v}'`).join(', ') }))
+  if (!VALID_BAN_BY.includes(ban.by)) throw new Error(t('ws.index.ban-invalid', { key: 'ban.by', raw: JSON.stringify(ban.by), expected: VALID_BAN_BY.map(v => `'${v}'`).join(', ') }))
   return ban
 }
 
 // règles des réglages de `limits` (cf. checkSetting, guard.ts) — maxPayload et maxBuffered partent aussi aux transports
 // natifs, qui lisent 0 (et NaN) comme « illimité » : entiers ≥ 1
 const LIMITS_RULES: Record<string, MjsWsSettingRule> = {
-  rate: 'nombre', burst: 'nombre', kickAfter: 'nombre', maxPayload: 'entier', maxBuffered: 'entier',
-  maxConnections: 'plafond', maxConnectionsPerIp: 'plafond', maxRoomsPerClient: 'plafond', maxPresencePerClient: 'plafond', maxQueued: 'plafond',
+  rate: 'number', burst: 'number', kickAfter: 'number', maxPayload: 'integer', maxBuffered: 'integer',
+  maxConnections: 'cap', maxConnectionsPerIp: 'cap', maxRoomsPerClient: 'cap', maxPresencePerClient: 'cap', maxQueued: 'cap',
 }
 
 /**
@@ -499,10 +499,10 @@ const LIMITS_RULES: Record<string, MjsWsSettingRule> = {
  */
 function resolveLimitsOption(raw: unknown): MjsWsLimits {
   if (raw === undefined || raw === null) return { ...DEFAULT_LIMITS }
-  if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error(t('ws.index.reglage-invalide', { cle: 'limits', raw: showSetting(raw), attendu: '{ rate, burst, kickAfter, maxPayload, maxBuffered, … }' }))
+  if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error(t('ws.index.setting-invalid', { key: 'limits', raw: showSetting(raw), expected: '{ rate, burst, kickAfter, maxPayload, maxBuffered, … }' }))
   const limits = { ...DEFAULT_LIMITS } as MjsWsLimits & Record<string, unknown>
-  for (const [cle, v] of Object.entries(raw)) if (v !== undefined) limits[cle] = v
-  for (const [cle, regle] of Object.entries(LIMITS_RULES)) if (limits[cle] !== undefined) checkSetting('limits.' + cle, limits[cle], regle)
+  for (const [key, v] of Object.entries(raw)) if (v !== undefined) limits[key] = v
+  for (const [key, rule] of Object.entries(LIMITS_RULES)) if (limits[key] !== undefined) checkSetting('limits.' + key, limits[key], rule)
   limits.rateBy = resolveRateByOption(limits.rateBy)
   return limits
 }
@@ -510,25 +510,25 @@ function resolveLimitsOption(raw: unknown): MjsWsLimits {
 /** Résout `opts.heartbeat` — absent (ou `null`) = DEFAULT_HEARTBEAT, `0` = chien d'inactivité désactivé, sinon un nombre fini ≥ 0 (NaN le coupait en silence). */
 function resolveHeartbeatOption(raw: unknown): number {
   if (raw === undefined || raw === null) return DEFAULT_HEARTBEAT
-  checkSetting('heartbeat', raw, 'nombre')
+  checkSetting('heartbeat', raw, 'number')
   return raw as number
 }
 
 /** Résout `opts.token` — DEFAULT_TOKEN complété (une clé à `undefined` garde son défaut) ; `sweep`, période du balayage : entier ≥ 1 ; `slack` : nombre fini ≥ 0. */
 function resolveTokenOption(raw: unknown): MjsWsTokenOptions {
   if (raw === undefined || raw === null) return { ...DEFAULT_TOKEN }
-  if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error(t('ws.index.reglage-invalide', { cle: 'token', raw: showSetting(raw), attendu: '{ sweep, slack }' }))
+  if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error(t('ws.index.setting-invalid', { key: 'token', raw: showSetting(raw), expected: '{ sweep, slack }' }))
   const token = { ...DEFAULT_TOKEN } as MjsWsTokenOptions & Record<string, unknown>
-  for (const [cle, v] of Object.entries(raw)) if (v !== undefined) token[cle] = v
-  checkSetting('token.sweep', token.sweep, 'entier')
-  checkSetting('token.slack', token.slack, 'nombre')
+  for (const [key, v] of Object.entries(raw)) if (v !== undefined) token[key] = v
+  checkSetting('token.sweep', token.sweep, 'integer')
+  checkSetting('token.slack', token.slack, 'number')
   return token
 }
 
 /** Vérifie `limits.rateBy` (cf. MjsWsLimits.rateBy) — une valeur fausse lève tout de suite, en clair. */
 export function resolveRateByOption(raw: unknown): MjsWsRateBy {
   if (raw === undefined) return 'connection'
-  if (typeof raw !== 'string' || !(VALID_RATE_BY as readonly string[]).includes(raw)) throw new Error(t('ws.index.rate-by-invalide', { raw: JSON.stringify(raw), valides: VALID_RATE_BY.map(v => `'${v}'`).join(', ') }))
+  if (typeof raw !== 'string' || !(VALID_RATE_BY as readonly string[]).includes(raw)) throw new Error(t('ws.index.rate-by-invalid', { raw: JSON.stringify(raw), valid: VALID_RATE_BY.map(v => `'${v}'`).join(', ') }))
   return raw as MjsWsRateBy
 }
 
@@ -542,6 +542,8 @@ export function resolveRateByOption(raw: unknown): MjsWsRateBy {
 export function resolveVerifyOriginOption(raw: MjsWsOptions['verifyOrigin']): ((origin: string | undefined, remote: MjsWsRemoteInfo) => boolean) | null {
   if (raw === undefined) return null
   if (typeof raw === 'function') return raw
+  // null, une chaîne seule ou toute autre valeur : refus clair à la construction, plutôt qu'une TypeError brute sur `raw.map`
+  if (!Array.isArray(raw)) throw new Error(t('ws.index.verify-origin-invalid', { received: String(raw) }))
   const allowlist = new Set(raw.map(o => o.toLowerCase()))
   return (origin) => origin !== undefined && allowlist.has(origin.toLowerCase())
 }
@@ -556,7 +558,7 @@ export function mjsWs(userOpts: MjsWsOptions = {}): MjsWsApp {
   // maison qui ignore l'option. L'avertissement « derrière un proxy sans réglage » ne vaut que pour une option ABSENTE
   // (`false` ou une liste sont des choix explicites) ; il part au journal de l'app, une seule fois (cf. trust-proxy.ts)
   resolveTrustProxy(userOpts.trustProxy)
-  const proxyHint = userOpts.trustProxy === undefined ? () => (userOpts.onLog ?? defaultLog)('warn', t('ws.trust-proxy.proxy-sans-reglage')) : undefined
+  const proxyHint = userOpts.trustProxy === undefined ? () => (userOpts.onLog ?? defaultLog)('warn', t('ws.trust-proxy.proxy-no-setting')) : undefined
   const transport = resolveTransport(userOpts.transport, userOpts.port, userOpts.host, limits, { trustProxy: userOpts.trustProxy, onProxyHeaders: proxyHint })
   // adaptateur résolu ICI (pas inline dans `resolved` ci-dessous) : la MÊME instance sert deux
   // champs de `resolved` — `adapter` (core.ts, cluster) ET `rooms._cluster.adapter` (anti-

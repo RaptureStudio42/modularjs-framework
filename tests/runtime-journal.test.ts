@@ -93,7 +93,7 @@ describe('runtime — journal client (mjs_journal.ts)', function () {
     assert.equal(calls[0].blob.type, 'application/json')
     const payload = await bodyOf(calls[0])
     assert.equal(payload.message, 'boom client')
-    assert.equal(typeof payload.pile, 'string')
+    assert.equal(typeof payload.stack, 'string')
     assert.equal(payload.url, '/page?a=1')
     assert.equal(payload.version, 'abcd1234')
     assert.ok(!('source' in payload), 'le CLIENT ne pose jamais source — c\'est le serveur qui la force')

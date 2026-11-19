@@ -5,8 +5,8 @@
 // chaque touche, la case se coche, le navigateur envoie le formulaire du serveur) ; rien n'est rejoué au réveil. Réveillé, le composant
 // répond comme sans `@wake` (Entrée annulée au keydown : aucun envoi ; touche refusée : rien d'écrit). Ce que le navigateur a écrit dans la
 // page du serveur avant le réveil connaît le sort qu'il connaît au démarrage d'une page sans `@wake` (même geste fait avant l'arrivée du
-// code) : en `ssr:markers`, la vue reprend les nœuds du serveur, un champ sans liaison garde sa saisie et la case reste cochée, un champ lié
-// à une variable (`value=!{$x}`) reçoit la valeur de la variable ; dans les autres modes, la vue est rebâtie, tout est perdu. Un parent
+// code) : un champ lié à une variable (`value=!{$x}`) garde sa saisie, que sa variable prend ; en `ssr:markers`, la vue reprend les nœuds du
+// serveur, un champ sans liaison garde sa saisie et la case reste cochée ; dans les autres modes, la vue est rebâtie, leur saisie est perdue. Un parent
 // paresseux se réveille avec son enfant sans `@wake` ; son enfant qui a son propre `@wake` attend le sien. Une balise retirée avant son réveil ne se réveille jamais. Sans rendu serveur, l'option ne change rien.
 // Modes de rendu `ssr` (`replace`), `ssr:markers`, `ssr:positional`, `ssr:diff` et `prerender`, en développement et en production (un
 // fichier par composant), dans Chromium, Firefox et WebKit.
@@ -18,12 +18,14 @@ import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { createSSRRenderer } from '../src/server/renderToString.js'
 import { prerenderPages } from '../src/server/prerender.js'
+import { playTogether } from './helpers/engines-together.js'
 
 const ENVS  = ['dev', 'prod'] as const
 const MODES = ['replace', 'markers', 'positional', 'diff', 'prerender'] as const
 // ce que devient, au démarrage du composant, ce que le navigateur a écrit dans sa page du serveur : [champ lié à une variable, champ sans
-// liaison, case cochée] ; seule la vue de `ssr:markers` reprend les nœuds du serveur, et la liaison y écrit sa valeur dans son champ
-const APRES = (mode: string) => mode === 'markers' ? ['', 'ab', true] : ['', '', false]
+// liaison, case cochée] ; le champ lié garde sa saisie, que sa variable prend ; seule la vue de `ssr:markers` reprend les nœuds du serveur, où
+// le champ sans liaison et la case gardent la leur
+const APRES = (mode: string) => mode === 'markers' ? ['xy', 'ab', true] : ['xy', '', false]
 
 const SOURCES: Record<string, string> = {
   'rv-carte.mjs': `<script>
@@ -151,7 +153,7 @@ function construire(): Promise<Construit> {
   return construit
 }
 
-for (const nom of ['chromium', 'firefox', 'webkit'] as const) for (const env of ENVS) describe(`le réveil paresseux : ${nom}, ${env}`, function () {
+for (const nom of ['chromium', 'firefox', 'webkit'] as const) for (const env of ENVS) playTogether(describe(`le réveil paresseux : ${nom}, ${env}`, function () {
   this.timeout(180000)
   let present = false
   let browser: any
@@ -228,7 +230,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) for (const env of 
       await page.waitForFunction(`window.__texte('vue') === 'Carte vue 1 s0'`, null, { timeout: 5000 })
       // ce qui atteint le champ `.k` et le formulaire de la carte qui attend, et si quelqu'un l'a annulé (`!`, relevé une fois l'événement
       // passé par tous ses écouteurs) ; le test retient l'envoi du navigateur pour rester sur la page
-      await ev(`(() => { const vus = []; window.__vu = () => vus.map((e) => e.type === 'keydown' ? e.key + (e.defaultPrevented ? '!' : '') : e.key); window.__dans('tenue', '.k').addEventListener('keydown', (e) => vus.push(e)); window.__dans('tenue', '.f').addEventListener('submit', (e) => { vus.push({ key: 'submit' + (e.defaultPrevented ? '!' : '') }); e.preventDefault(); }); })()`)
+      await ev(`(() => { const vus = []; window.__seenMark = () => vus.map((e) => e.type === 'keydown' ? e.key + (e.defaultPrevented ? '!' : '') : e.key); window.__dans('tenue', '.k').addEventListener('keydown', (e) => vus.push(e)); window.__dans('tenue', '.f').addEventListener('submit', (e) => { vus.push({ key: 'submit' + (e.defaultPrevented ? '!' : '') }); e.preventDefault(); }); })()`)
       // de vrais gestes sur la carte qui attend : un clic sur son bouton, une saisie, une touche que le composant refuserait, la case, Entrée
       // dans son formulaire ; un focus donné à une carte hors de l'écran
       await cliquer(page, 'tenue', '.plus')
@@ -244,7 +246,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) for (const env of 
       assert.deepEqual([...await ordre(page)].sort(), ['tot', 'vue'], `aucun geste ne réveille (${mode})`)
       assert.ok(await ev(`window.__attend('tenue') && window.__attend('loin')`), `les cartes attendent toujours (${mode})`)
       assert.equal(await ev(`window.__texte('tenue')`), 'Carte tenue 0 s0', `le clic et Entrée ne sont pas pris (${mode})`)
-      assert.deepEqual(await ev('window.__vu()'), ['a', 'b', 'submit'], `chaque touche atteint le champ, l'envoi du navigateur part, rien n'est annulé (${mode})`)
+      assert.deepEqual(await ev('window.__seenMark()'), ['a', 'b', 'submit'], `chaque touche atteint le champ, l'envoi du navigateur part, rien n'est annulé (${mode})`)
       assert.deepEqual(await ev(`[window.__dans('tenue', '.nom').value, window.__dans('tenue', '.k').value, window.__dans('tenue', '.x').checked]`), ['xy', 'ab', true], `la page du serveur garde ce que le navigateur y écrit (${mode})`)
       // la vue rapportée : la carte se réveille, rien n'est rejoué
       await ev('window.__libere()')
@@ -267,8 +269,8 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) for (const env of 
       await page.waitForTimeout(300)
       assert.equal(await ev(`window.__texte('tenue')`), 'Carte tenue 1 s0', `réveillée : le clic compte une fois, Entrée annulée n'envoie rien (${mode})`)
       assert.equal(await ev(`window.__dans('tenue', '.k').value`), avant, `réveillée : la touche refusée n'est pas écrite (${mode})`)
-      assert.equal(await ev(`window.__dans('tenue', '.echo').textContent`), 'z', `réveillée : la liaison lit le champ (${mode})`)
-      assert.deepEqual(await ev('window.__vu()'), repris ? ['a', 'b', 'submit', 'c!', 'd!'] : ['a', 'b', 'submit'], `réveillée : aucun envoi (${mode})`)
+      assert.equal(await ev(`window.__dans('tenue', '.echo').textContent`), 'xyz', `réveillée : la liaison lit le champ, sa saisie d'avant le réveil comprise (${mode})`)
+      assert.deepEqual(await ev('window.__seenMark()'), repris ? ['a', 'b', 'submit', 'c!', 'd!'] : ['a', 'b', 'submit'], `réveillée : aucun envoi (${mode})`)
       assert.equal(vu.navigations, 1, `aucune navigation (${mode})`)
       assert.ok(await ev(`window.__attend('loin')`), `le focus donné à la carte du bas ne l'a pas réveillée (${mode})`)
       // la carte du bas se réveille quand elle paraît, la boîte aussi, avec son enfant sans @wake ; son enfant paresseux attend le sien
@@ -344,4 +346,4 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) for (const env of 
       await page.close()
     }
   })
-})
+}))

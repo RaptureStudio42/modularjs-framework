@@ -88,7 +88,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @me
       page.on('console', (m: any) => { if (m.type() === 'warning' && m.text().includes(':method="delete"')) sortie.avertis.push(m.text()) })
       await page.goto(ORIGINE + '/')
       await page.waitForFunction(() => { const o: any = document.querySelector('mjs-ombre'); return !!document.querySelector('mjs-hote a.simple') && !!(o && o._shadow && o._shadow.querySelector('a.simple')) })
-      await page.evaluate(() => { (window as any).__meme = true })
+      await page.evaluate(() => { (window as any).__unchanged = true })
       charge = true
       if (ombre) {
         const b = await page.evaluate((c: string) => { const r = (document.querySelector('mjs-ombre') as any)._shadow.querySelector('a.' + c).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 } }, classe)
@@ -99,7 +99,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @me
       else await page.click(`mjs-hote a.${classe}`, opts)
       await page.waitForTimeout(700)
       sortie.url  = page.url()
-      sortie.meme = await page.evaluate(() => (window as any).__meme === true).catch(() => false)
+      sortie.meme = await page.evaluate(() => (window as any).__unchanged === true).catch(() => false)
       return sortie
     }
     finally { await contexte.close() }

@@ -21,13 +21,13 @@ export function isEffectsFile(filePath: string): boolean {
  * fichier qui n'est pas que son bloc <effects> (du HTML, un <script>, un <style>… à côté) : le bloc se lit quand même, ses alias restent connus. Sans bloc, ou
  * avec plusieurs, rien à lire (ou on ne sait pas lequel) : la faute lève toujours */
 export function readEffectsFile(source: string, filePath: string, problems?: Error[]): ReturnType<typeof parseEffectsBlock> {
-  const fichier  = basename(filePath)
+  const file     = basename(filePath)
   const sections = extractSections(source)
-  const impur    = (quoi: string) => new Error(t('bundler.effets-fichier-impur', { fichier, quoi }))
-  if (sections.effects.length === 0) throw new Error(t('bundler.effets-fichier-sans-bloc', { fichier }))
-  if (sections.effects.length > 1)   throw new Error(t('bundler.effets-fichier-multi', { fichier }))
+  const impure   = (what: string) => new Error(t('bundler.effects-file-impure', { file: file, what: what }))
+  if (sections.effects.length === 0) throw new Error(t('bundler.effects-file-no-block', { file: file }))
+  if (sections.effects.length > 1)   throw new Error(t('bundler.effects-file-multi', { file: file }))
   // un commentaire HTML (et le blanc autour) hors du bloc est toléré, comme dans un *.theme.mjs
-  const autre = sections.html.replace(/<!--(?:-?>|[\s\S]*?--!?>)/g, '').trim() !== ''                    ? 'du HTML'
+  const other = sections.html.replace(/<!--(?:-?>|[\s\S]*?--!?>)/g, '').trim() !== ''                    ? 'du HTML'
               : sections.script.raw.trim() !== '' || sections.module.raw.trim() !== ''           ? '<script>'
               : sections.style.raw.trim() !== '' || sections.layouts.length > 0                  ? '<style>'
               : sections.themes.length > 0                                                       ? '<theme>'
@@ -35,12 +35,12 @@ export function readEffectsFile(source: string, filePath: string, problems?: Err
               : sections.types.length > 0                                                        ? '<types>'
               : sections.routes.length > 0                                                       ? '<routes>'
               : ''
-  if (autre) {
-    if (!problems) throw impur(autre)
-    problems.push(impur(autre))
+  if (other) {
+    if (!problems) throw impure(other)
+    problems.push(impure(other))
   }
-  const bloc = sections.effects[0]
-  return parseEffectsBlock(bloc.raw, bloc.startLine, filePath, problems)
+  const block = sections.effects[0]
+  return parseEffectsBlock(block.raw, block.startLine, filePath, problems)
 }
 
 /** tous les effets de l'appli, résolus ; une faute cite son fichier. `problems` : les fautes y sont rangées au lieu d'arrêter la lecture (un nom défini deux fois, la première définition reste ; une

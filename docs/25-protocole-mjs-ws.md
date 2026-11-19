@@ -63,7 +63,7 @@ Déclenche, dans l'ordre : `opts.auth` (ou le proxy) → si `session` est fourni
 
 #### `µ:ping` — battement
 
-`p = { ts: any }` — valeur libre (généralement un timestamp numérique), renvoyée **verbatim** par le serveur dans le `µ:pong` correspondant (même en cas de valeur non numérique — jamais recalculée côté serveur). Émis par le client à intervalle régulier (option cliente `heartbeat`, défaut 15000 ms — indépendante de l'option **serveur** du même nom, qui ne fixe qu'un seuil de watchdog, cf. [23 §3](23-mjs-ws.md#protections)). Déclenche `µ:pong` + met à jour `client.latency` côté serveur (mesuré entre deux `µ:ping` reçus, pas via `ts`), et l'échantillon `intervallesPing` de l'état du serveur ([23 §10](23-mjs-ws.md#etat-serveur)) : un **intervalle entre deux pings**, pas un aller-retour — l'aller-retour se mesure côté client, au `µ:pong`. Champ facultatif `early: true` : un `µ:ping` hors battement — le client de référence l'envoie pour prouver le départ d'un salon (cf. `µ:leave`), et son battement repart de lui. Le serveur y répond par un `µ:pong` comme à tout autre, mais n'en relève aucun intervalle (ni `client.latency`, ni `intervallesPing`) : l'intervalle suivant se mesure à partir de lui. Un serveur qui ignore ce champ relève l'intervalle qui le précède, plus court que la période du battement.
+`p = { ts: any }` — valeur libre (généralement un timestamp numérique), renvoyée **verbatim** par le serveur dans le `µ:pong` correspondant (même en cas de valeur non numérique — jamais recalculée côté serveur). Émis par le client à intervalle régulier (option cliente `heartbeat`, défaut 15000 ms — indépendante de l'option **serveur** du même nom, qui ne fixe qu'un seuil de watchdog, cf. [23 §3](23-mjs-ws.md#protections)). Déclenche `µ:pong` + met à jour `client.latency` côté serveur (mesuré entre deux `µ:ping` reçus, pas via `ts`), et l'échantillon `pingIntervals` de l'état du serveur ([23 §10](23-mjs-ws.md#etat-serveur)) : un **intervalle entre deux pings**, pas un aller-retour — l'aller-retour se mesure côté client, au `µ:pong`. Champ facultatif `early: true` : un `µ:ping` hors battement — le client de référence l'envoie pour prouver le départ d'un salon (cf. `µ:leave`), et son battement repart de lui. Le serveur y répond par un `µ:pong` comme à tout autre, mais n'en relève aucun intervalle (ni `client.latency`, ni `pingIntervals`) : l'intervalle suivant se mesure à partir de lui. Un serveur qui ignore ce champ relève l'intervalle qui le précède, plus court que la période du battement.
 
 #### `µ:refresh` — rafraîchit le jeton en vol
 
@@ -78,7 +78,7 @@ Un `µ:refresh` raté ne ferme **jamais** la connexion — elle continue de vivr
 
 #### `µ:sub-stream` — abonnement à un flux
 
-`p = { stream: string }` (obligatoire — une charge sans `stream` de type `string` est ignorée **silencieusement**, aucune trame en retour). Déclenche un abonnement + un delta `reset` immédiat (§2) — instantané complet même si le flux n'a jamais changé depuis l'abonnement précédent. Un flux jamais déclaré côté serveur (`app.stream(nom)` jamais appelé) répond honnêtement un `reset` **vide** (`seq: 0`) plutôt que de laisser le client sans réponse. Un flux fermé (déclaré sans `public`, `room` ni `canSubscribe` : un flux est fermé par défaut), un flux dont la garde refuse ce client (`canSubscribe`, `room` — [23 §5](23-mjs-ws.md#flux)), ou un flux écrit par le pont mais jamais déclaré par ce processus, répond `µ:error { message, code: 'stream-denied', stream }` (accès refusé, `stream` nomme le flux), sans abonnement. Une garde `canSubscribe` asynchrone sans réponse dans son délai (`guardTimeout`, 5 000 ms par défaut, [23 §5](23-mjs-ws.md#flux)) compte comme un refus : même forme, le `message` dit « sa garde n'a pas répondu à temps ». Un abonné qui perd le flux (garde posée après coup, vérification d'un départ ou d'une entrée) reçoit le même refus.
+`p = { stream: string }` (obligatoire — une charge sans `stream` de type `string` est ignorée **silencieusement**, aucune trame en retour). Déclenche un abonnement + un delta `reset` immédiat (§2) — instantané complet même si le flux n'a jamais changé depuis l'abonnement précédent. Un flux jamais déclaré côté serveur (`app.stream(name)` jamais appelé) répond honnêtement un `reset` **vide** (`seq: 0`) plutôt que de laisser le client sans réponse. Un flux fermé (déclaré sans `public`, `room` ni `canSubscribe` : un flux est fermé par défaut), un flux dont la garde refuse ce client (`canSubscribe`, `room` — [23 §5](23-mjs-ws.md#flux)), ou un flux écrit par le pont mais jamais déclaré par ce processus, répond `µ:error { message, code: 'stream-denied', stream }` (accès refusé, `stream` nomme le flux), sans abonnement. Une garde `canSubscribe` asynchrone sans réponse dans son délai (`guardTimeout`, 5 000 ms par défaut, [23 §5](23-mjs-ws.md#flux)) compte comme un refus : même forme, le `message` dit « sa garde n'a pas répondu à temps ». Un abonné qui perd le flux (garde posée après coup, vérification d'un départ ou d'une entrée) reçoit le même refus.
 
 #### `µ:resync` — rattrapage après un trou
 
@@ -90,7 +90,7 @@ Un `µ:refresh` raté ne ferme **jamais** la connexion — elle continue de vivr
 
 #### `µ:sub-presence` — abonnement à la présence
 
-`p = { room?: string }` — `room` absent (ou de type différent de `string`) = présence **globale** ; sinon présence du salon nommé (être **abonné** à la présence d'un salon ne rend pas **membre** de ce salon, cf. `µ:join` ci-dessous). Déclenche un `µ:presence { op: 'reset' }` immédiat (§1.2). La présence d'un salon n'est servie qu'à ses **membres** par défaut : celle d'un salon ouvert (`app.room(nom, { presence: 'public' })`) à tous, et la garde `rooms.canSeePresence`, si elle est posée, décide seule ([23 §4](23-mjs-ws.md#salons-presence)). Un refus répond `µ:error { message, code: 'presence-denied', room }`, sans abonnement ; un membre qui quitte un salon dont la présence lui était réservée (`µ:leave`, exclusion, déconnexion) en est désabonné. La présence **globale** est fermée par défaut : servie à tous les clients si le serveur l'ouvre (`mjsWs({ presence: 'public' })`), à personne sinon — refus `µ:error { message, code: 'presence-denied' }`, **sans** `room`, sans abonnement.
+`p = { room?: string }` — `room` absent (ou de type différent de `string`) = présence **globale** ; sinon présence du salon nommé (être **abonné** à la présence d'un salon ne rend pas **membre** de ce salon, cf. `µ:join` ci-dessous). Déclenche un `µ:presence { op: 'reset' }` immédiat (§1.2). La présence d'un salon n'est servie qu'à ses **membres** par défaut : celle d'un salon ouvert (`app.room(name, { presence: 'public' })`) à tous, et la garde `rooms.canSeePresence`, si elle est posée, décide seule ([23 §4](23-mjs-ws.md#salons-presence)). Un refus répond `µ:error { message, code: 'presence-denied', room }`, sans abonnement ; un membre qui quitte un salon dont la présence lui était réservée (`µ:leave`, exclusion, déconnexion) en est désabonné. La présence **globale** est fermée par défaut : servie à tous les clients si le serveur l'ouvre (`mjsWs({ presence: 'public' })`), à personne sinon — refus `µ:error { message, code: 'presence-denied' }`, **sans** `room`, sans abonnement.
 
 #### `µ:join` — rejoindre un salon
 
@@ -186,15 +186,15 @@ Poussée **immédiatement après** `µ:welcome` SI ET **seulement** SI le `schem
     "definitions": {
       "hash": "1a2b3c4d",
       "schemas": [
-        { "nom": "pos",  "champs": [["x", "i16"], ["y", "i16"]] },
-        { "nom": "etat", "champs": [["hp", "u8"], ["tags", { "kind": "list", "of": "str8" }]] }
+        { "name": "pos",  "fields": [["x", "i16"], ["y", "i16"]] },
+        { "name": "etat", "fields": [["hp", "u8"], ["tags", { "kind": "list", "of": "str8" }]] }
       ]
     }
   }
 }
 ```
 
-`fields` est un tableau de paires `[nom, type]` **dans l'ordre** fil (§4) — `type` est soit une chaîne scalaire (`"u8"`, `"str8"`…) soit un objet `{kind:'list', of: <scalaire>}` / `{kind:'bits', noms: [...]}`. Détail complet des types : §4.
+`fields` est un tableau de paires `[nom, type]` **dans l'ordre** fil (§4) — `type` est soit une chaîne scalaire (`"u8"`, `"str8"`…) soit un objet `{kind:'list', of: <scalaire>}` / `{kind:'bits', names: [...]}`. Détail complet des types : §4.
 
 #### *(delta de flux)* — `{ t: <nomFlux>, seq, p: {...} }`
 
@@ -209,7 +209,7 @@ Aucune enveloppe `{t,p}` — octets bruts `[u8 idSchéma][charge]`, en trame Web
 <a id="flux-spec"></a>
 ## 2. Flux à deltas — `stream`
 
-Source de vérité côté serveur : `app.stream(nom)` ([23 §5](23-mjs-ws.md#flux)) — un état courant (`clé → donnée`) dont chaque mutation est numérotée, diffusée et journalisée. Un flux existe **indépendamment** de toute connexion, créé par le code serveur ; un client s'y abonne, jamais ne le crée.
+Source de vérité côté serveur : `app.stream(name)` ([23 §5](23-mjs-ws.md#flux)) — un état courant (`clé → donnée`) dont chaque mutation est numérotée, diffusée et journalisée. Un flux existe **indépendamment** de toute connexion, créé par le code serveur ; un client s'y abonne, jamais ne le crée.
 
 ### Enveloppe
 
@@ -234,7 +234,7 @@ Source de vérité côté serveur : `app.stream(nom)` ([23 §5](23-mjs-ws.md#flu
 
 1. `µ:sub-stream { stream }` (§1.1) → réponse **immédiate** `{ op: 'reset', values: <état courant> }` au `seq` courant (état vide si le flux n'a encore rien reçu).
 2. Chaque mutation serveur (`stream.add/update/remove/reset(...)`) diffuse `{ t, seq: ++compteur, p }` à **tous** les abonnés de ce flux, et journalise l'entrée dans un anneau borné (sauf `reset`, qui **vide** le journal — taille par défaut 200 deltas, réglable **par** flux).
-3. Un abonné qui reçoit un `seq` ≠ (dernier `seq` vu + 1) — donc un **trou** — envoie lui-même `µ:resync { stream, from: dernierSeqVu }` (§1.1). Entièrement automatique côté client de référence : rien à coder.
+3. Un abonné qui reçoit un `seq` ≠ (dernier `seq` vu + 1) — donc un **trou** — envoie lui-même `µ:resync { stream, from: lastSeenSeq }` (§1.1). Entièrement automatique côté client de référence : rien à coder.
 4. `µ:unsub-stream { stream }` (§1.1) → plus aucun delta de ce flux pour cette connexion, sans trame en retour ; un nouveau `µ:sub-stream` repart de l'étape 1. Un refus (`µ:error { code: 'stream-denied', stream }`, §1.2) mène au même point, sans `µ:unsub-stream`.
 
 ### `µ:resync` — la décision serveur
@@ -246,7 +246,7 @@ Source de vérité côté serveur : `app.stream(nom)` ([23 §5](23-mjs-ws.md#flu
 | Tous les deltas `from+1 … seq` sont encore dans le journal | **Rejeu** de **ces** deltas **seuls**, avec leurs `seq` **d'origine** (jamais renumérotés) — un récepteur qui ignore tout `seq ≤` son dernier vu peut donc recevoir un doublon sans risque |
 | Trou plus large que ce que couvre le journal | `reset` complet |
 
-Un `µ:sub-stream`/`µ:resync` vers un nom de flux **jamais** déclaré côté serveur (`app.stream(nom)` jamais appelé) répond honnêtement `{ op: 'reset', values: {} }` au `seq: 0` — jamais une création fantôme, jamais un silence qui laisserait le récepteur sans réponse. Un flux écrit par le pont (`POST /stream`) mais jamais déclaré par ce processus répond `µ:error` (accès refusé), comme un flux dont la garde refuse, ou un flux déclaré sans accès : aucun flux n'est public par défaut (`public: true` l'ouvre).
+Un `µ:sub-stream`/`µ:resync` vers un nom de flux **jamais** déclaré côté serveur (`app.stream(name)` jamais appelé) répond honnêtement `{ op: 'reset', values: {} }` au `seq: 0` — jamais une création fantôme, jamais un silence qui laisserait le récepteur sans réponse. Un flux écrit par le pont (`POST /stream`) mais jamais déclaré par ce processus répond `µ:error` (accès refusé), comme un flux dont la garde refuse, ou un flux déclaré sans accès : aucun flux n'est public par défaut (`public: true` l'ouvre).
 
 ### Hors de portée de µschema
 
@@ -274,7 +274,7 @@ Préfixe **réservé** par [24 · MJS-Server](24-mjs-server.md), une couche comp
 
 Réponse `µ:ack.p` — **deux** formes :
 
-- **pas encore assis** (file publique, quota pas atteint) : `{ attente: number }` (position dans la file) ;
+- **pas encore assis** (file publique, quota pas atteint) : `{ queue: number }` (position dans la file) ;
 - **assis** : `{ game: string, seat: number, phase, turn, seq, code: string | undefined, ...infoMode }`, où `infoMode` vaut `{ view: any }` en mode `'authoritative'` (défaut), ou `{ seed: number, journal: [...] }` en mode `'lockstep'` ([24 §13](24-mjs-server.md#netcode)) — la graine déterministe + l'historique des ordres depuis la genèse, à rejouer côté client. Quand la partie garde des instantanés (`lockstepJournal.snapshotEvery`), `infoMode` porte en plus `snapshotEvery: number` (cadence en ticks) et `snapshotMax: number` (taille maximale d'une proposition, en octets du JSON `{ tick, state, rng }`), et, dès qu'un instantané est gardé, `snapshot: { tick: number, state: any, rng: number }` : `journal` ne porte alors que les ticks qui suivent `snapshot.tick` (au moins un), à rejouer à partir de cet état et de ce générateur.
 
 `snapshots: true` dit que le client sait repartir de cet instantané : le client du framework l'envoie quand la page charge `µ.lockstep` (modules `'lockstep'` et `'det'`), ici comme dans `µgame:resync`. Une partie `'lockstep'` dont le journal est coupé (un instantané gardé) refuse la requête qui ne le porte pas — celle d'une page d'une version qui ne sait pas lire les instantanés, qui repartirait sinon d'un journal tronqué avec un état faux : `µ:ack` d'erreur `"cette page ne sait pas reprendre la partie : son journal a été coupé par un instantané, que seule une version plus récente de la page sait lire — rechargez la page pour la reprendre"`, sans siège pris ni retrouvé. Tant que le journal est entier, une requête sans `snapshots` est servie comme les autres.
@@ -362,7 +362,7 @@ Couche opt-in qui remplace le JSON par des octets compacts pour un type applicat
 [u8 idSchéma][charge]
 ```
 
-Trame WebSocket **binaire** entière — pas de `{t,p,id}` JSON autour. `idSchéma` (1 octet, 0-255) identifie le schéma, attribué dans l'**ordre** de déclaration (`app.schema`/`µ.schema`), **jamais** choisi à la main — deux registres déclarés dans le **même** ordre obtiennent les **mêmes** ids (condition du hash stable, plus bas). `fields` (à la déclaration) est un objet **ordonné** `{ nom: type, ... }` — l'**ordre des clés** fait foi sur le fil, figé à la déclaration, jamais recalculé.
+Trame WebSocket **binaire** entière — pas de `{t,p,id}` JSON autour. `idSchéma` (1 octet, 0-255) identifie le schéma, attribué dans l'**ordre** de déclaration (`app.schema`/`µ.schema`), **jamais** choisi à la main — deux registres déclarés dans le **même** ordre obtiennent les **mêmes** ids (condition du hash stable, plus bas). `fields` (à la déclaration) est un objet **ordonné** `{ name: type, ... }` — l'**ordre des clés** fait foi sur le fil, figé à la déclaration, jamais recalculé.
 
 ### Types scalaires
 
@@ -383,8 +383,8 @@ Trame WebSocket **binaire** entière — pas de `{t,p,id}` JSON autour. `idSché
 
 | Type | Encodage | Notes |
 |---|---|---|
-| `list(scalaire)` | `u16` (compteur, little-endian, max 65535) puis `scalaire` répété N fois | v1 : `scalaire` **uniquement** — pas de `list(list(...))`, pas de sous-schéma imbriqué |
-| `bits([noms])` | 1 octet — bit `i` (`1 << i`) porte `noms[i]` | jusqu'à 8 noms ; décodé en objet `{ [nom]: bool, ... }` |
+| `list(scalar)` | `u16` (compteur, little-endian, max 65535) puis `scalaire` répété N fois | v1 : `scalaire` **uniquement** — pas de `list(list(...))`, pas de sous-schéma imbriqué |
+| `bits([names])` | 1 octet — bit `i` (`1 << i`) porte `names[i]` | jusqu'à 8 noms ; décodé en objet `{ [nom]: bool, ... }` |
 
 ### Encodage d'une trame
 
@@ -411,7 +411,7 @@ Un schéma déjà déclaré est **immuable** (mêmes champs, mêmes types, **mê
 
 ### Hash du registre — FNV-1a 32 bits
 
-`hashRegistre()` calcule un FNV-1a 32 bits, rendu en **hex** sur **exactement** 8 caractères (zéros de tête inclus), sur la chaîne :
+`hashRegistry()` calcule un FNV-1a 32 bits, rendu en **hex** sur **exactement** 8 caractères (zéros de tête inclus), sur la chaîne :
 
 ```
 nom1:champA=type,champB=type|nom2:champC=type|...
@@ -427,13 +427,13 @@ nom1:champA=type,champB=type|nom2:champC=type|...
 {
   "hash": "1a2b3c4d",
   "schemas": [
-    { "nom": "pos",  "champs": [["x", "i16"], ["y", "i16"]] },
-    { "nom": "etat", "champs": [["hp", "u8"], ["tags", { "kind": "list", "of": "str8" }], ["drapeau", { "kind": "bits", "noms": ["vivant", "arme", "vip"] }]] }
+    { "name": "pos",  "fields": [["x", "i16"], ["y", "i16"]] },
+    { "name": "etat", "fields": [["hp", "u8"], ["tags", { "kind": "list", "of": "str8" }], ["drapeau", { "kind": "bits", "names": ["vivant", "arme", "vip"] }]] }
   ]
 }
 ```
 
-`fields` = tableau de paires `[nom, type]` **dans l'ordre** fil — `type` est une chaîne pour un scalaire, ou un objet `{kind:'list', of: <scalaire>}` / `{kind:'bits', noms: [...]}` pour un composite (déjà des objets **inertes**, JSON-safe — jamais une fonction embarquée). C'est **cette** forme, précisément, que porte `µ:schema.p.definitions` (§1.2) — un récepteur qui la reçoit peut reconstruire un registre complet sans connaître le code source de l'application.
+`fields` = tableau de paires `[nom, type]` **dans l'ordre** fil — `type` est une chaîne pour un scalaire, ou un objet `{kind:'list', of: <scalaire>}` / `{kind:'bits', names: [...]}` pour un composite (déjà des objets **inertes**, JSON-safe — jamais une fonction embarquée). C'est **cette** forme, précisément, que porte `µ:schema.p.definitions` (§1.2) — un récepteur qui la reçoit peut reconstruire un registre complet sans connaître le code source de l'application.
 
 ### µschema-HTTP — même charge, 8 octets de version en préfixe
 
@@ -443,7 +443,7 @@ nom1:champA=type,champB=type|nom2:champC=type|...
 [8 octets ASCII — hash hex, LITTÉRAL, PAS un entier packé][u8 idSchéma][charge]
 ```
 
-Les 8 octets sont `hashRegistre()` écrits **tels quels** en caractères ASCII (lisibles dans un dump hexa sans le moindre calcul bit à bit) — le reste de la trame est identique à l'enveloppe WebSocket ci-dessus. Une réponse dont la version diffère du registre local déclenche un rafraîchissement (un `GET` sur l'endpoint schéma, un seul aller-retour, jamais une boucle) plutôt qu'un échec. Détail complet + recette Rails `Array#pack`/`String#unpack1` (sans dépendance) : [23 §3.2](23-mjs-ws.md#µschema).
+Les 8 octets sont `hashRegistry()` écrits **tels quels** en caractères ASCII (lisibles dans un dump hexa sans le moindre calcul bit à bit) — le reste de la trame est identique à l'enveloppe WebSocket ci-dessus. Une réponse dont la version diffère du registre local déclenche un rafraîchissement (un `GET` sur l'endpoint schéma, un seul aller-retour, jamais une boucle) plutôt qu'un échec. Détail complet + recette Rails `Array#pack`/`String#unpack1` (sans dépendance) : [23 §3.2](23-mjs-ws.md#µschema).
 
 ### Trois modes de transport — `ws.codec`
 
@@ -474,13 +474,13 @@ Chaque requête **signée** (tout le pont **sauf** `GET /health`, et le proxy de
 | `x-mjs-ws-nonce` | sur les commandes de votre back vers le pont : une chaîne **neuve** de 8 à 64 caractères, exigée par défaut ([23 §7.10](23-mjs-ws.md#pont)) ; les webhooks n'en portent pas |
 | `x-mjs-ws-signature` | HMAC-SHA256 **hexadécimal** de la chaîne canonique, avec le secret partagé |
 
-Chaîne canonique du pont admin/webhooks — champs encodés en **longueur-préfixée** (`{longueur}:{champ}`, injectif) et concaténés, `direction` en premier champ ([23 §7.2](23-mjs-ws.md#pont)) :
+Chaîne canonique du pont admin/webhooks — champs encodés en **longueur-préfixée** (`{length}:{field}`, injectif) et concaténés, `direction` en premier champ ([23 §7.2](23-mjs-ws.md#pont)) :
 
 ```
 {lp(direction)}{lp(timestamp)}{lp(MÉTHODE)}{lp(chemin+query)}{lp(corps brut)}[{lp(nonce)}]
 ```
 
-`direction` vaut `'in'` (commande admin, votre back → le pont) ou `'out'` (webhook, le pont → votre back) — **jamais** interchangeables, **même** secret partagé ; `{MÉTHODE}` en **majuscules** ; `{chemin+query}` tel qu'il apparaît dans l'URL (jamais domaine ni port) ; `{corps brut}` = le JSON envoyé **texte pour texte** (jamais re-sérialisé — l'ordre des clés compte), chaîne **vide** pour un `GET`. Le nonce ([23 §7.10](23-mjs-ws.md#pont)) s'ajoute en **dernier** champ des commandes de votre back (`'in'`), exigé par défaut ; les webhooks (`'out'`) n'en portent pas.
+`direction` vaut `'in'` (commande admin, votre back → le pont) ou `'out'` (webhook, le pont → votre back) — **jamais** interchangeables, **même** secret partagé ; `{METHOD}` en **majuscules** ; `{chemin+query}` tel qu'il apparaît dans l'URL (jamais domaine ni port) ; `{corps brut}` = le JSON envoyé **texte pour texte** (jamais re-sérialisé — l'ordre des clés compte), chaîne **vide** pour un `GET`. Le nonce ([23 §7.10](23-mjs-ws.md#pont)) s'ajoute en **dernier** champ des commandes de votre back (`'in'`), exigé par défaut ; les webhooks (`'out'`) n'en portent pas.
 
 **Les longueurs se comptent en unités UTF-16**, comme `String.length` en JavaScript — ni en octets, ni en caractères : `é` compte 1, un émoji comme `🎉` compte 2. Une longueur en octets fait refuser toute requête dont le corps porte un accent (`401`). En Ruby : `champ.encode('UTF-16LE').bytesize / 2`.
 

@@ -70,14 +70,19 @@ describe('*heatmap — la part se partage entre les effets qui émettent', funct
     assert.ok(de('a') >= 10 && de('b') >= 10, 'chacun envoie sa part : a ' + de('a') + ', b ' + de('b'))
     assert.equal(v.recus.length, v.emis(), 'rien n\'est jeté par le serveur')
     arretB()
-    // ce que a et b gardaient en attente part encore, sur le même seau : on le laisse finir avant de mesurer le seul actif
-    let vus = -1
-    while (v.recus.length !== vus) { vus = v.recus.length; await tick(300) }
+    // ce que a et b gardaient en attente part encore, sur le même seau : on le laisse finir avant de mesurer le seul actif — plus
+    // personne n'attend dans la part de la connexion, tout ce qui est parti est arrivé. 300 ms sans réception ne le disaient pas : à
+    // quatre trames par seconde, essayées toutes les 100 ms à tour de rôle, deux réceptions s'écartent parfois d'un peu plus de 300 ms,
+    // et les points qui attendaient encore comptaient dans la mesure (23 en 2,3 s, dix par seconde tout juste)
+    const part = (v.sock as any)._mjs_fxHeatShare
+    await attendre(() => !part.line.length && v.recus.length === v.emis(), 8000)
+    assert.ok(!part.line.length && v.recus.length === v.emis(), 'ce que a et b gardaient est parti : ' + JSON.stringify(part.line.map((o: any) => o.chunk.length)) + ' en attente, ' + (v.emis() - v.recus.length) + ' partis non reçus')
     const avant = de('a')
+    const debut = Date.now()
     await pendant(2000, (i) => a.tire('mousemove', i % 150))
     await tick(300)
     const seul = de('a') - avant
-    assert.ok(seul >= 15 && seul <= 22, 'seul, il envoie ses dix points par seconde : ' + seul + ' en 2 s')
+    assert.ok(seul >= 15 && seul <= 22, 'seul, il envoie ses dix points par seconde : ' + seul + ' en 2 s (' + (Date.now() - debut) + ' ms écoulées)')
     await v.fermer()
   })
 })

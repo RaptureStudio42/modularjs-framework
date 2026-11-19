@@ -61,9 +61,9 @@ describe('mjs_devpanel — l\'onglet Effets allume un réglage que la page n\'é
 
   const racine = () => window.document.querySelector('[data-mjs-devpanel]')?.shadowRoot
   const clic   = (el: any) => el.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
-  const onglet = (id: string) => clic(racine().querySelector(`.onglet[data-onglet="${id}"]`))
-  const bloc   = (effet: string) => Array.from(racine().querySelectorAll('.detail .fx') as ArrayLike<any>).find((b: any) => b.querySelector('.fx-nom')?.textContent === '*' + effet)
-  const champ  = (effet: string, cle: string) => bloc(effet)?.querySelector(`[data-cle="${cle}"]`)
+  const onglet = (id: string) => clic(racine().querySelector(`.tab[data-tab="${id}"]`))
+  const bloc   = (effet: string) => Array.from(racine().querySelectorAll('.detail .fx') as ArrayLike<any>).find((b: any) => b.querySelector('.fx-name')?.textContent === '*' + effet)
+  const champ  = (effet: string, cle: string) => bloc(effet)?.querySelector(`[data-key="${cle}"]`)
   const regler = (el: any, valeur: string) => {
     el.value = valeur
     el.dispatchEvent(new window.Event('change', { bubbles: true }))
@@ -83,7 +83,7 @@ describe('mjs_devpanel — l\'onglet Effets allume un réglage que la page n\'é
     assert.equal(calque() !== null, true, 'le calque du pointeur est là')
     assert.equal(calque().hasAttribute('mjs-fx-pointer-soft'), false, 'le bord est franc tant que soft n\'est pas posé')
     window.µ.console('mjs-dpnw-pointeur')
-    onglet('effets')
+    onglet('effects')
     assert.equal(champ('pointer', 'soft') !== undefined, true, 'le panneau propose le réglage soft')
     regler(champ('pointer', 'soft'), '40')
     assert.equal(calque().hasAttribute('mjs-fx-pointer-soft'), true, 'soft: 40 adoucit le bord')
@@ -99,7 +99,7 @@ describe('mjs_devpanel — l\'onglet Effets allume un réglage que la page n\'é
     assert.equal(el.querySelector('[mjs-fx-layer="hologram"]') !== null, true, 'style simple : le calque du reflet est là')
     assert.equal(el.hasAttribute('mjs-fx-hologram-shadow'), false, 'aucune carte tant que la page n\'en écrit pas')
     window.µ.console('mjs-dpnw-carte')
-    onglet('effets')
+    onglet('effects')
     regler(champ('hologram', 'style'), 'night-sky')
     await new Promise((r) => setTimeout(r, 30))
     assert.equal(el.hasAttribute('mjs-fx-hologram-shadow'), true, 'la carte est posée par le moteur de carte')
@@ -114,7 +114,7 @@ describe('mjs_devpanel — l\'onglet Effets allume un réglage que la page n\'é
     const comp = await monter('mjs-dpnw-survol', '.f')
     const el = comp._shadow.querySelector('.f')
     window.µ.console('mjs-dpnw-survol')
-    onglet('effets')
+    onglet('effects')
     regler(champ('fade', 'on'), 'hover')
     await new Promise((r) => setTimeout(r, 30))
     assert.equal(el.getAttribute('mjs-fx-hover'), 'rest', 'la balise est cachée jusqu\'au survol')

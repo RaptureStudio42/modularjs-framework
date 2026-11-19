@@ -13,7 +13,7 @@ import { StaticServer } from '../src/server/index.js'
 import { createRenderHandler } from '../src/server/render-request.js'
 import { createServeEntry } from '../src/server/serve-entry.js'
 import { findConfig } from '../src/bundler/config.js'
-import { terminateSharedWorkerPool, MARQUE_SORTIE } from '../src/bundler/index.js'
+import { terminateSharedWorkerPool, OUTPUT_MARK } from '../src/bundler/index.js'
 
 after(async () => { sweepRegistered(); await terminateSharedWorkerPool() })
 
@@ -86,7 +86,7 @@ function projet(): { root: string, outDir: string, config: any } {
   mkdirSync(outDir, { recursive: true })
   writeFileSync(join(srcDir, 'home.mjs'), '<h1 class="t">{$titre}</h1>\n')
   writeFileSync(join(srcDir, 'attente.mjs'), ATTENTE)
-  writeFileSync(join(outDir, 'manifest.js'), `${MARQUE_SORTIE}\nµ.paths = {};\nµ.version = "abcd1234";\n`)
+  writeFileSync(join(outDir, 'manifest.js'), `${OUTPUT_MARK}\nµ.paths = {};\nµ.version = "abcd1234";\n`)
   writeFileSync(join(root, 'serve.server.mjs'), CHARGEUR)
   const config: any = {
     sourceDir: 'src', outputDir: 'out', manifestPath: 'out/manifest.js',

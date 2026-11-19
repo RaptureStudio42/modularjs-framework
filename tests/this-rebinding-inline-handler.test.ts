@@ -208,13 +208,16 @@ describe('correctif auto this→_mjsThis DANS les handlers inline @click={…}',
       assert.notEqual(inlines, '', 'tableau _mjs_inline introuvable dans le JS généré')
     })
 
-    it('function(){} à nom nu dans un handler inline : this réécrit en (this ?? _mjsThis)', () => {
-      assert.match(inlines, /let save = function\(\) \{ return \(this \?\? _mjsThis\)\._mjs_getRCtx/)
-      assert.match(inlines, /let setAt = function\(\) \{ return \(this \?\? _mjsThis\)\._mjs_getRCtx\('theme'\)\.valeur = \(this \?\? _mjsThis\)\.champ \}/)
+    // le contexte (`§§theme`) se lit sur le composant (`_mjsThis`), plus sur `this` : même valeur en vraie construction pour le gestionnaire d'un
+    // événement natif, d'une émission d'un enfant, d'une ligne de `{for}`, avec `this` lu dans le corps
+    // (tests/contexte-lu-dans-une-fonction-d-un-gestionnaire-browser.test.ts)
+    it('function(){} à nom nu dans un handler inline : le contexte se lit sur le composant, this réécrit en (this ?? _mjsThis)', () => {
+      assert.match(inlines, /let save = function\(\) \{ return _mjsThis\._mjs_getRCtx/)
+      assert.match(inlines, /let setAt = function\(\) \{ return _mjsThis\._mjs_getRCtx\('theme'\)\.valeur = \(this \?\? _mjsThis\)\.champ \}/)
     })
 
-    it('callback anonyme function(){} dans un handler inline : this réécrit aussi', () => {
-      assert.match(inlines, /forEach\(function\(n\) \{ return \(this \?\? _mjsThis\)\._mjs_getRCtx/)
+    it('callback anonyme function(){} dans un handler inline : le contexte se lit aussi sur le composant', () => {
+      assert.match(inlines, /forEach\(function\(n\) \{ return _mjsThis\._mjs_getRCtx/)
     })
 
     it('le wrapper `(e, el) =>` du handler et son appel de méthode : this INCHANGÉ (flèche épaisse, capture déjà correcte)', () => {

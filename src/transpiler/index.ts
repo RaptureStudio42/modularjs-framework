@@ -12,8 +12,8 @@
 //   8. Generator HTML : surgical_html + updates + events + inlines
 //   9. Inject template avec toutes les substitutions
 //
-// Pas de daemon Node externe : tout en process. Pas de minification pour l'instant.
-// Pas de CSS Sass intégré pour l'instant — `style.raw` passé brut au template.
+// Pas de daemon Node externe : tout en process. Le CSS du `<style>` (Sass, SCSS ou CSS) est compilé par compileCss (css.ts) ;
+// la minification du JS produit revient au bundler.
 
 import { readFileSync } from 'node:fs'
 import { basename, relative, resolve } from 'node:path'
@@ -21,8 +21,8 @@ import { createHash } from 'node:crypto'
 import * as acorn from 'acorn'
 import * as walk from 'acorn-walk'
 
-import { compileVars, checkRessorts, compileAjaxTypes, compileAjaxCall, checkAjaxVerbNames, ajaxOptionsSurLArbre, placesDesAjaxEnTexte, type AjaxVerbName, type ReecritAjax, type RuleAst } from './var-types.js'
-import { MU_HOOKS, MU_LAYOUT_OUT, MU_T_CALL_BODY, MU_T_CALL_RE, refreshFormeError, rewriteMuImportAst, finExpression, storeComputedKeyError, selfWriteError, SELF_WRITE_VAR, SELF_WRITE_MODULE_STATE } from '../sigils.js'
+import { compileVars, checkSprings, compileAjaxTypes, compileAjaxCall, checkAjaxVerbNames, ajaxOptionsOnTree, ajaxPlacesAsText, type AjaxVerbName, type AjaxRewrite, type RuleAst } from './var-types.js'
+import { MU_HOOKS, MU_LAYOUT_OUT, MU_T_CALL_BODY, MU_T_CALL_RE, refreshShapeError, rewriteMuImportAst, expressionEnd, storeComputedKeyError, selfWriteError, SELF_WRITE_VAR, SELF_WRITE_MODULE_STATE } from '../sigils.js'
 import { skipQuotedSpan } from '../quoted-span.js'
 import { parseVtValue } from '../bundler/config.js'
 import { classesCitedBy, classImport } from '../bundler/class-files.js'
@@ -33,26 +33,26 @@ import { compileCss } from './css.js'
 import { rewriteFontSizes, type FontSizeSettings } from './font-size.js'
 import { rewriteStyleVars, wrapThemeBlock, type ThemeVar } from './style-vars.js'
 import { processIncludes, processGlobalMacros, newIncludeAccumulator, citeLine, type LinePlace, type SetupOrigin } from './macros.js'
-import { colonneEcrite, colonneDesOctets, ressemblance } from '../reader/positions.js'
+import { writtenColumn, byteColumn, likeness } from '../reader/positions.js'
 import { lintSplitRune, maskNonCode } from './split-rune.js'
 import { findConstReassignment } from './const-reassign.js'
 import { tokenize } from '../lexer/index.js'
-import { compilerLeScriptPrepare, preparerLeScript } from '../reader/script.js'
+import { compilePreparedScript, prepareScript } from '../reader/script.js'
 import { compile as compileHtml } from '../generator/index.js'
 import { sizeCss } from '../generator/attributes/index.js'
 import type { EventRoute, FineList } from '../generator/state.js'
-import type { LinkSeen, ProjectTagSeen, TagRef, LigneMelee } from '../parser/index.js'
-import { Scanner, extractBalanced, expandLayoutBlocks, lireAccolades } from '../parser/index.js'
+import type { LinkSeen, ProjectTagSeen, TagRef, MixedLine } from '../parser/index.js'
+import { Scanner, extractBalanced, expandLayoutBlocks, readBraces } from '../parser/index.js'
 import { SIGN, SIGN_RE, written, wordRe } from '../parser/mjs-words.js'
 import { generateCreateFnBody } from '../generator/paths.js'
-import { fermerComposantsAutoFermes, champsLus, arbreDeCode, lectureInconnue } from '../generator/compile.js'
-import { lireFichier, parcourir } from '../reader/index.js'
+import { closeSelfClosedComponents, readFields, codeTree, unknownRead } from '../generator/compile.js'
+import { readFile, traverse } from '../reader/index.js'
 import { Analyzer, collectStoreReads } from '../analyzer/index.js'
 import { getAdapter, type SupportedLang } from '../languages/index.js'
-import { ErreurParametreLuAutrement } from '../languages/civet-parametres.js'
-import { declarationsDeLaPasse, type DeclarationsDeLaPasse } from '../languages/civet-declarations.js'
+import { ParamReadOtherwiseError } from '../languages/civet-params.js'
+import { passDeclarations, type PassDeclarations } from '../languages/civet-declarations.js'
 import { transformReactiveWritesMapped } from '../generator/transform-reactive.js'
-import { applyPathTrackingMapped, etatSimple, refuseStoreSelfWrites } from '../generator/path-tracker.js'
+import { applyPathTrackingMapped, simpleState, refuseStoreSelfWrites, stateAliases } from '../generator/path-tracker.js'
 import { annotateEffectDepsMapped } from '../generator/effect-deps.js'
 import { rebindDetachedThisMapped } from '../generator/this-rebinding.js'
 import { batchLoopWritesMapped } from '../generator/loop-batch.js'
@@ -66,19 +66,21 @@ import { resolveEffectImages } from './effect-images.js'
 import { checkA11y } from './a11y.js'
 import { checkUjsForm } from './ujs-form.js'
 import { warnUnreachableCode } from './unreachable.js'
-import { refuserMinuteriesBrutes, nomsDeLaRacine } from './minuteries.js'
-import { avecNomsDuComposant } from '../generator/utils.js'
-import { nomsChangeants } from '../analyzer/derived-reads.js'
-import { classerDerivees, deriveesChoisies, ECRITURE_BRUTE, type DeriveeClassee } from '../analyzer/derived-classes.js'
+import { rejectRawTimers, rootNames } from './timers.js'
+import { withComponentNames } from '../generator/utils.js'
+import { changingNames } from '../analyzer/derived-reads.js'
+import { classifyDerived, chosenDerived, RAW_WRITE, type ClassifiedDerived } from '../analyzer/derived-classes.js'
 import { typedLine, printDiagnostic, type LintToggles } from '../diagnostics.js'
 import { t, type MsgKey } from '../messages/index.js'
-import { maskHtmlComments as masqueCommentairesHtml, readHtmlComment, createMaskTable, nextMatch, replaceBlocks } from '../mask.js'
+import { maskHtmlComments as maskCommentsInHtml, readHtmlComment, createMaskTable, nextMatch, replaceBlocks } from '../mask.js'
 import { decode, encode } from '@jridgewell/sourcemap-codec'
 import { chainSourceMaps, shiftGeneratedPosition, finalizeSourceMap, chainOverMap } from './source-map-chain.js'
-import { MASK_STRINGS_AND_COMMENTS_RE, lintSingletonConsume, lintImportDollarName, lintEffectTopLevel, lintEffectGestionnaire, lintEffectAncienNom, lintEmitInModule, lintOnUrlChangeLegacy, parseModuleAst, lintUndeclaredTopLevelAssignment, collectInstanceProps, collectHandlerInstanceProps, lintElementPropertyAtConstruction, sourceLineOf, lintNoRawImport, FLECHE_EN_LIGNE_CIVET_RE, controlerGestionnairesInline, lintHandlerSelfRefDeclaration, lintHandlerBareMethod, checkHandlerReferences, maskDocBlocks, maskStringsAndComments } from './lint.js'
-import { applyCivetDialectSugar, singletonsDeclares, applyMjsSugarToScript } from './sugar.js'
-import { collectBuildChecks, scriptRoutes, scriptRouteTargets, vuesDuGabarit, type BuildChecks, type I18nKeySeen } from './build-checks.js'
+import { MASK_STRINGS_AND_COMMENTS_RE, lintSingletonConsume, lintImportDollarName, lintEffectTopLevel, lintEffectHandler, lintEffectOldName, lintEmitInModule, lintOnUrlChangeLegacy, parseModuleAst, lintUndeclaredTopLevelAssignment, collectInstanceProps, collectHandlerInstanceProps, lintElementPropertyAtConstruction, sourceLineOf, lintNoRawImport, INLINE_ARROW_CIVET_RE, checkInlineHandlers, lintHandlerSelfRefDeclaration, lintHandlerBareMethod, checkHandlerReferences, maskDocBlocks, maskStringsAndComments } from './lint.js'
+import { browserGlobals, warnAboutLocals } from './handler-globals.js'
+import { applyCivetDialectSugar, singletonsDeclares, applyMjsSugarToScript, writesInFunctions } from './sugar.js'
+import { collectBuildChecks, scriptRoutes, scriptRouteTargets, templateViews, type BuildChecks, type I18nKeySeen } from './build-checks.js'
 import { loadSites } from './load-sites.js'
+import { awaitDerived } from './await-derived.js'
 import { unescapeMu } from './mu-escapes.js'
 
 // ----------------------------------------------------------------------------
@@ -88,78 +90,78 @@ import { unescapeMu } from './mu-escapes.js'
 // `decode`/`encode` travaillent en entiers ABSOLUS (la lib redélimite les deltas
 // VLQ elle-même) : ajouter l'offset au champ `sourceLine` de chaque segment suffit.
 // ----------------------------------------------------------------------------
-export function shiftSourceMapLines(mapJson: string, lineOffset: number, sansPlace = 0): string {
-  if (lineOffset === 0 && sansPlace === 0) return mapJson
+export function shiftSourceMapLines(mapJson: string, lineOffset: number, noPlace = 0): string {
+  if (lineOffset === 0 && noPlace === 0) return mapJson
   const raw = JSON.parse(mapJson)
   const decoded = decode(raw.mappings ?? '')
-  // `sansPlace` : premières lignes du texte compilé ajoutées par le compilateur, sans ligne d'origine
+  // `noPlace` : premières lignes du texte compilé ajoutées par le compilateur, sans ligne d'origine
   const shifted = decoded.map(line => line.map(seg => seg.length >= 4
-    ? (seg[2] < sansPlace ? [seg[0]] : [seg[0], seg[1], seg[2] + lineOffset, seg[3], ...seg.slice(4)]) as typeof seg
+    ? (seg[2] < noPlace ? [seg[0]] : [seg[0], seg[1], seg[2] + lineOffset, seg[3], ...seg.slice(4)]) as typeof seg
     : seg))
   raw.mappings = encode(shifted)
   return JSON.stringify(raw)
 }
 
 // une position dans son fichier : `main.mjs`, ou le chemin d'un partiel depuis le dossier du composant (`_bas.mjs`)
-interface PositionCitee { fichier: string; ligne: number; colonne: number }
+interface CitedPosition { file: string; line: number; column: number }
 
 // remapAdapterErrorLine — un adaptateur de langage qui échoue (Civet, CoffeeScript, TypeScript, JavaScript, et le sucre ou le
 // lexeur de MJS : message `<fileName>:<ligne>:<colonne> …`) rend une position du texte qu'on lui a donné, jamais celle du
-// `.mjs` : `situer` la ramène au fichier où le code est écrit (cf. situerDansLeBloc) et le message cite
+// `.mjs` : `situer` la ramène au fichier où le code est écrit (cf. locateInBlock) et le message cite
 // `fichier.mjs:ligne:colonne`. esbuild (TypeScript) compte ses colonnes en octets à partir de 0 (`…:3:10: ERROR`). Motif reconnu
 // SEULEMENT : un adaptateur qui ne porte aucune position dans son message le laisse intact, une ligne sans place (code ajouté
 // par MJS : persistance, macros) aussi.
 // `directives` : la directive `@import` de chaque import posé en tête du texte compilé (le rang `i` à la ligne `i + 1`), sa
 // ligne dans le fichier (`fichier`) et son texte ; une faute sur l'un de ces imports est citée à la ligne de sa directive, et
 // un nom refusé à sa colonne dans la directive
-function remapAdapterErrorLine(err: unknown, fileName: string, situer: (ligne: number, colonne: number, octets?: boolean) => PositionCitee | null, directives: readonly { ligne: number; texte: string }[] = [], fichier = fileName): Error {
+function remapAdapterErrorLine(err: unknown, fileName: string, locate: (line: number, column: number, bytes?: boolean) => CitedPosition | null, directives: readonly { line: number; text: string }[] = [], file = fileName): Error {
   const original = err instanceof Error ? err : new Error(String(err))
   const escaped  = fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const m        = new RegExp(`${escaped}:(\\d+):(\\d+)(?=(: ERROR\\b)?)`).exec(original.message)
   if (!m) return original
   const directive = directives[Number(m[1]) - 1]
-  const nom       = (original as { nomInterdit?: string }).nomInterdit
-  const place     = directive ? null : situer(Number(m[1]), Number(m[2]), m[3] !== undefined)
+  const name      = (original as { forbiddenName?: string }).forbiddenName
+  const place     = directive ? null : locate(Number(m[1]), Number(m[2]), m[3] !== undefined)
   if (!directive && !place) return original
-  const colonne   = directive && nom ? directive.texte.search(new RegExp(`(?<![\\w$@])${nom}(?![\\w$])`)) + 1 : 0
-  const cite      = place ? `${place.fichier}:${place.ligne}:${place.colonne}` : `${fichier}:${directive!.ligne}:${colonne || 1}`
+  const column = directive && name ? directive.text.search(new RegExp(`(?<![\\w$@])${name}(?![\\w$])`)) + 1 : 0
+  const cite   = place ? `${place.file}:${place.line}:${place.column}` : `${file}:${directive!.line}:${column || 1}`
   return new Error(original.message.replace(m[0], cite), { cause: original })
 }
 
 // un bloc de code donné à l'adaptateur (le `<script>` ou le `<script module>`) : `avant` lignes sans place (imports posés en
 // tête), le code écrit du composant (`ecrit`, à partir de la ligne `premiere` du fichier, dont `source` rend les lignes
-// telles qu'écrites), puis, après les lignes de `versAvant` (le bloc avant les partiels), le script de chaque partiel versé
+// telles qu'écrites), puis, après les lignes de `mergedBefore` (le bloc avant les partiels), le script de chaque partiel versé
 // (`morceaux`), chacun sous sa ligne de titre, à partir de la ligne `places[k].line` de son fichier ; le reste
 // (persistance, macros) n'a pas de place. Une ligne blanche du code lu (la dernière, close par la balise fermante) n'a rien
 // d'écrit avant elle : sa colonne est la première. Les textes sont gardés tels quels et découpés sur le seul chemin d'une
 // faute : une construction sans faute ne paie rien
-interface BlocVerse { avant: number; ecrit: string; premiere: number; fichier: string; source: () => string[]; versAvant: string; morceaux: string[]; places: Array<{ file: string; line: number }>; baseDir: string; macros?: MacrosVersees }
+interface PouredBlock { before: number; written: string; first: number; file: string; source: () => string[]; mergedBefore: string; pieces: string[]; places: Array<{ file: string; line: number }>; baseDir: string; macros?: PouredMacros }
 
 // les gestionnaires des balises du langage (`<@window @resize={…}>`) versés au script après `avant` (son texte d'alors) : la
 // place de chacune de leurs lignes écrites (cf. processGlobalMacros), retrouvée dans le gabarit (`places`, `premiere`, `ou`) ; `fin` :
-// le dernier signe de `avant` (cf. finDuScript)
-interface MacrosVersees { avant: string; origines: Array<SetupOrigin | undefined>; places: LinePlace[] | undefined; premiere: number; ou: OuEcrit; fin: () => FinDuScript | null }
+// le dernier signe de `avant` (cf. scriptEnd)
+interface PouredMacros { before: string; origins: Array<SetupOrigin | undefined>; places: LinePlace[] | undefined; first: number; where: WhereWritten; end: () => ScriptEnd | null }
 
 // le dernier signe du code versé au script avant les lignes des balises du langage : sa place dans le fichier qui l'écrit, ce que sa
 // ligne écrit jusqu'à lui (`texte`), et s'il est un opérateur (`ouverte` : la ligne qui suit s'y colle)
-interface FinDuScript extends PositionCitee { texte: string; ouverte: boolean }
+interface ScriptEnd extends CitedPosition { text: string; open: boolean }
 
 // une ligne de code qui s'arrête sur un opérateur, une virgule ou un mot qui attend la suite : jamais `x++`, une flèche (`g = ->`, une
 // fonction vide), `a?` ni `a!`
-const FIN_OUVERTE_RE = /(?:(?<![+-])[+-]|[*/%=<&|^~,\\:]|(?<![-=])>|(?<![\w$])(?:and|or|not|is|isnt|in|of|instanceof|new|typeof|delete|void|await|yield|throw|extends|then|else))$/
+const OPEN_END_RE = /(?:(?<![+-])[+-]|[*/%=<&|^~,\\:]|(?<![-=])>|(?<![\w$])(?:and|or|not|is|isnt|in|of|instanceof|new|typeof|delete|void|await|yield|throw|extends|then|else))$/
 
 // la définition d'un gestionnaire versée au script par une balise du langage (cf. processGlobalMacros) : `@_gl_0 = (e, _mjs_el) =>`
-const DEFINITION_VERSEE_RE = /^@(_glb?_[0-9a-z]+) = \(e, _mjs_el\) =>$/
+const MERGED_DEFINITION_RE = /^@(_glb?_[0-9a-z]+) = \(e, _mjs_el\) =>$/
 
 // où relire le texte écrit d'une faute : le fichier du composant (`fichier`, son nom tel qu'écrit, `menu.page.mjs`), ses
 // lignes telles qu'écrites et le dossier d'où se lisent ses partiels
-interface OuEcrit { fichier: string; lignes: () => string[]; baseDir: string }
+interface WhereWritten { file: string; lines: () => string[]; baseDir: string }
 
 // les lignes d'un fichier telles que le compilateur les lit (marque d'ordre et fins de ligne `\r\n` retirées)
-function lignesDuFichier(chemin: string): string[] {
+function fileLines(path: string): string[] {
   try {
-    const texte = readFileSync(chemin, 'utf-8')
-    return (texte.charCodeAt(0) === 0xfeff ? texte.slice(1) : texte).replace(/\r\n?/g, '\n').split('\n')
+    const text = readFileSync(path, 'utf-8')
+    return (text.charCodeAt(0) === 0xfeff ? text.slice(1) : text).replace(/\r\n?/g, '\n').split('\n')
   }
   catch {
     return []
@@ -167,31 +169,31 @@ function lignesDuFichier(chemin: string): string[] {
 }
 
 // la place dans son fichier de la ligne de rang `i` (à partir de 0) d'un bloc donné à l'adaptateur, et son texte écrit
-function origineDeLigne(i: number, bloc: BlocVerse): { fichier: string; ligne: number; texte: () => string } | null {
-  const ecrites = bloc.ecrit.split('\n')
-  const k       = i - bloc.avant
-  if (k >= 0 && k < ecrites.length) return { fichier: bloc.fichier, ligne: bloc.premiere + k, texte: () => (ecrites[k].trim() === '' ? '' : bloc.source()[bloc.premiere - 1 + k] ?? '') }
-  let s = bloc.versAvant.split('\n').length
-  for (let p = 0; p < bloc.morceaux.length; p++) {
-    const n     = bloc.morceaux[p].split('\n').length
-    const place = bloc.places[p]
-    if (place && i > s && i < s + n) return { fichier: relative(bloc.baseDir, place.file), ligne: place.line + i - s - 1, texte: () => (bloc.morceaux[p].split('\n')[i - s].trim() === '' ? '' : lignesDuFichier(place.file)[place.line + i - s - 2] ?? '') }
+function lineOrigin(i: number, block: PouredBlock): { file: string; line: number; text: () => string } | null {
+  const written = block.written.split('\n')
+  const k       = i - block.before
+  if (k >= 0 && k < written.length) return { file: block.file, line: block.first + k, text: () => (written[k].trim() === '' ? '' : block.source()[block.first - 1 + k] ?? '') }
+  let s = block.mergedBefore.split('\n').length
+  for (let p = 0; p < block.pieces.length; p++) {
+    const n     = block.pieces[p].split('\n').length
+    const place = block.places[p]
+    if (place && i > s && i < s + n) return { file: relative(block.baseDir, place.file), line: place.line + i - s - 1, text: () => (block.pieces[p].split('\n')[i - s].trim() === '' ? '' : fileLines(place.file)[place.line + i - s - 2] ?? '') }
     s += n
   }
   return null
 }
 
-// situerDansLeBloc — une position (ligne, colonne) du texte donné à l'adaptateur (`texte`, le sucre de MJS appliqué) ramenée au
+// locateInBlock — une position (ligne, colonne) du texte donné à l'adaptateur (`texte`, le sucre de MJS appliqué) ramenée au
 // fichier où le code est écrit : même rang de ligne dans le bloc (le sucre garde le nombre de lignes), colonne retrouvée en
-// alignant la ligne donnée sur la ligne écrite (cf. colonneEcrite : retrait commun, raccourcis `$x` → `$.x`, `x .= …`, `µ$$X`
+// alignant la ligne donnée sur la ligne écrite (cf. writtenColumn : retrait commun, raccourcis `$x` → `$.x`, `x .= …`, `µ$$X`
 // réécrit) ; `octets` : la colonne d'esbuild, en octets à partir de 0
-function situerDansLeBloc(texte: string, bloc: BlocVerse): (ligne: number, colonne: number, octets?: boolean) => PositionCitee | null {
-  return (ligne, colonne, octets = false) => {
-    const origine = origineDeLigne(ligne - 1, bloc)
-    const donnee  = texte.split('\n')[ligne - 1] ?? ''
-    const lue     = octets ? colonneDesOctets(donnee, colonne) : colonne
-    if (!origine) return bloc.macros ? placeDuGestionnaireVerse(ligne - 1, donnee, lue, bloc.macros) : null
-    return { fichier: origine.fichier, ligne: origine.ligne, colonne: colonneEcrite(donnee, origine.texte(), lue) }
+function locateInBlock(text: string, block: PouredBlock): (line: number, column: number, bytes?: boolean) => CitedPosition | null {
+  return (line, column, bytes = false) => {
+    const origin   = lineOrigin(line - 1, block)
+    const dataLine = text.split('\n')[line - 1] ?? ''
+    const read     = bytes ? byteColumn(dataLine, column) : column
+    if (!origin) return block.macros ? mergedHandlerPlace(line - 1, dataLine, read, block.macros) : null
+    return { file: origin.file, line: origin.line, column: writtenColumn(dataLine, origin.text(), read) }
   }
 }
 
@@ -199,39 +201,39 @@ function situerDansLeBloc(texte: string, bloc: BlocVerse): (ligne: number, colon
 // corps, puis sa place dans le gabarit, ramenée au fichier qui l'écrit (partiel compris) ; null hors de ces lignes. Une ligne que le
 // compilateur écrit après les corps : un gestionnaire est resté ouvert, la faute est citée à son `}` — le premier dont une
 // parenthèse, un crochet ou une accolade reste ouvert (la faute vient plus loin), sinon celui qui finit juste au-dessus d'elle
-function placeDuGestionnaireVerse(i: number, donnee: string, colonne: number, m: MacrosVersees): PositionCitee | null {
-  const k = i - m.avant.split('\n').length
-  const o = m.origines[k]
+function mergedHandlerPlace(i: number, dataLine: string, column: number, m: PouredMacros): CitedPosition | null {
+  const k = i - m.before.split('\n').length
+  const o = m.origins[k]
   if (!o && k > 0) {
-    const ecrit  = (x: SetupOrigin | undefined): x is SetupOrigin => x !== undefined && x.html.slice(x.at, x.at + x.body.length) === x.body
-    const ouvert = m.origines.slice(0, k).find((x) => ecrit(x) && resteOuvert(x.body)) ?? (ecrit(m.origines[k - 1]) ? m.origines[k - 1] : undefined)
-    if (ouvert) return placeDansLeGabarit(ouvert.html, ouvert.at + ouvert.body.length, m.places, m.premiere, m.ou)
+    const written = (x: SetupOrigin | undefined): x is SetupOrigin => x !== undefined && x.html.slice(x.at, x.at + x.body.length) === x.body
+    const open    = m.origins.slice(0, k).find((x) => written(x) && staysOpen(x.body)) ?? (written(m.origins[k - 1]) ? m.origins[k - 1] : undefined)
+    if (open) return placeInTemplate(open.html, open.at + open.body.length, m.places, m.first, m.where)
   }
   // une ligne que le compilateur écrit, sans gestionnaire resté ouvert avant elle : le code versé avant les balises du langage s'arrête
   // sur un opérateur, la faute est citée à son dernier signe
   if (!o) {
-    const fin = k >= 0 ? m.fin() : null
-    return fin?.ouverte ? { fichier: fin.fichier, ligne: fin.ligne, colonne: fin.colonne } : null
+    const end = k >= 0 ? m.end() : null
+    return end?.open ? { file: end.file, line: end.line, column: end.column } : null
   }
   if (o.html.slice(o.at, o.at + o.body.length) !== o.body) return null
-  const lignes = o.body.split('\n')
-  const debut  = o.at + lignes.slice(0, o.row).reduce((n, x) => n + x.length + 1, 0)
-  return placeDansLeGabarit(o.html, debut + colonneEcrite(donnee, lignes[o.row] ?? '', colonne) - 1, m.places, m.premiere, m.ou)
+  const lines = o.body.split('\n')
+  const start = o.at + lines.slice(0, o.row).reduce((n, x) => n + x.length + 1, 0)
+  return placeInTemplate(o.html, start + writtenColumn(dataLine, lines[o.row] ?? '', column) - 1, m.places, m.first, m.where)
 }
 
-// situerLaFaute — une faute du sucre ou du lexeur de MJS (`main.script:5:6 [ModularJS] …`) cite déjà la ligne du fichier, et sa
+// locateFault — une faute du sucre ou du lexeur de MJS (`main.script:5:6 [ModularJS] …`) cite déjà la ligne du fichier, et sa
 // colonne dans le texte lu (`texte`) : ramenée au fichier où le code est écrit comme celle de l'adaptateur
-function situerLaFaute<T>(lire: () => T, fileName: string, texte: string, bloc: BlocVerse): T {
+function locateFault<T>(read: () => T, fileName: string, text: string, block: PouredBlock): T {
   try {
-    return lire()
+    return read()
   }
   catch (e) {
     // l'état de module `µ$$x` écrit avec sa propre valeur, lu `$x` (pré-passe 0-bis) : la colonne alignée tombe sur son premier `$`,
     // la faute cite son `µ`
-    const etat = (e as { cause?: { mjsSelfWriteKind?: number } })?.cause?.mjsSelfWriteKind === SELF_WRITE_MODULE_STATE
-    throw remapAdapterErrorLine(e, fileName, (ligne, colonne) => {
-      const place = situerDansLeBloc(texte, bloc)(ligne - bloc.premiere + bloc.avant + 1, colonne)
-      return place && etat && place.fichier === bloc.fichier && bloc.source()[place.ligne - 1]?.[place.colonne - 2] === 'µ' ? { ...place, colonne: place.colonne - 1 } : place
+    const state = (e as { cause?: { mjsSelfWriteKind?: number } })?.cause?.mjsSelfWriteKind === SELF_WRITE_MODULE_STATE
+    throw remapAdapterErrorLine(e, fileName, (line, column) => {
+      const place = locateInBlock(text, block)(line - block.first + block.before + 1, column)
+      return place && state && place.file === block.file && block.source()[place.line - 1]?.[place.column - 2] === 'µ' ? { ...place, column: place.column - 1 } : place
     })
   }
 }
@@ -239,88 +241,91 @@ function situerLaFaute<T>(lire: () => T, fileName: string, texte: string, bloc: 
 // la place dans son fichier d'un indice du HTML où les partiels sont versés (`places`, cf. processIncludes) : le composant (son
 // HTML commence à la ligne `premiere`) ou le partiel qui écrit cette ligne ; `cite` : la ligne telle qu'un message la cite. La
 // colonne se retrouve sur la ligne écrite (le HTML lu a pu être réécrit : `µ$$X`, alias du symbole)
-function placeDansLeGabarit(html: string, indice: number, places: LinePlace[] | undefined, premiere: number, ou: OuEcrit): PositionCitee & { cite: number | string } {
-  const avant  = html.slice(0, indice)
-  const rang   = avant.split('\n').length - 1
-  const debut  = avant.lastIndexOf('\n') + 1
-  const fin    = html.indexOf('\n', debut)
+function placeInTemplate(html: string, hint: number, places: LinePlace[] | undefined, first: number, where: WhereWritten): CitedPosition & { cite: number | string } {
+  const before = html.slice(0, hint)
+  const rank   = before.split('\n').length - 1
+  const start  = before.lastIndexOf('\n') + 1
+  const end    = html.indexOf('\n', start)
   // le morceau de la ligne qui porte l'indice (cf. LinePlace.suite) : celui qui l'ouvre, ou un texte posé après un partiel
-  const suite  = places?.[rang]?.suite ?? []
-  let n        = 0
-  while (n < suite.length && suite[n].at <= indice - debut) n++
-  const run    = n > 0 ? suite[n - 1] : null
-  const place  = run ?? places?.[rang]
-  const ligne  = place ? place.line : premiere + rang
-  const de     = run ? run.at : 0
-  const ecart  = run ? run.column - 1 : 0
-  const ecrite = (place?.file ? lignesDuFichier(resolve(ou.baseDir, place.file)) : ou.lignes())[ligne - 1]
-  const lue    = html.slice(debut + de, n < suite.length ? debut + suite[n].at : fin < 0 ? html.length : fin)
-  const k      = indice - debut - de + 1
-  return { fichier: place?.file ?? ou.fichier, ligne, colonne: ecrite === undefined ? ecart + k : ecart + colonneEcrite(lue, ecrite.slice(ecart), k), cite: place?.file ? t('transpiler.ligne-du-partiel', { ligne, fichier: place.file }) : ligne }
+  const rest = places?.[rank]?.rest ?? []
+  let n      = 0
+  while (n < rest.length && rest[n].at <= hint - start) n++
+  const run          = n > 0 ? rest[n - 1] : null
+  const place        = run ?? places?.[rank]
+  const line         = place ? place.line : first + rank
+  const from         = run ? run.at : 0
+  const columnOffset = run ? run.column - 1 : 0
+  const written      = (place?.file ? fileLines(resolve(where.baseDir, place.file)) : where.lines())[line - 1]
+  const read         = html.slice(start + from, n < rest.length ? start + rest[n].at : end < 0 ? html.length : end)
+  const k            = hint - start - from + 1
+  return { file: place?.file ?? where.file, line, column: written === undefined ? columnOffset + k : columnOffset + writtenColumn(read, written.slice(columnOffset), k), cite: place?.file ? t('transpiler.partial-line', { line: line, file: place.file }) : line }
 }
 
 // l'indice du texte écrit d'une expression ou d'un gestionnaire dans le HTML (commentaires masqués), à une place de code : juste
-// après une accolade (`{…}`, `@click={…}`) ou la tête d'une attente (`{await …}`, `{await.keep …}`) et juste avant la fermante
+// après une accolade (`{…}`, `@click={…}`), la tête d'une attente (`{await …}`, `{await.keep …}`) ou d'une condition (`{if …}`, `{elsif …}`)
+// et juste avant la fermante
 // (`{f(1)}` n'est pas `{f(}`) ; -1 quand on ne le retrouve pas
-function apresUneAccolade(html: string, texte: string): number {
-  const masque = masqueCommentairesHtml(html)
-  const ferme  = /\s*\}/y
-  const entier = (k: number): boolean => {
-    ferme.lastIndex = k + texte.length
-    return /\{\s*(?:await(?:\.keep)?\s+)?$/.test(masque.slice(Math.max(0, k - 20), k)) && ferme.test(masque)
+function afterBrace(html: string, text: string): number {
+  const mask   = maskCommentsInHtml(html)
+  const closes = /\s*\}/y
+  const whole  = (k: number): boolean => {
+    closes.lastIndex = k + text.length
+    return /\{\s*(?:(?:await(?:\.keep)?|if|elsif)\s+)?$/.test(mask.slice(Math.max(0, k - 20), k)) && closes.test(mask)
   }
-  let k = texte ? masque.indexOf(texte) : -1
-  while (k >= 0 && !entier(k)) k = masque.indexOf(texte, k + 1)
+  let k = text ? mask.indexOf(text) : -1
+  while (k >= 0 && !whole(k)) k = mask.indexOf(text, k + 1)
   return k
 }
 
 // une expression du gabarit que Civet refuse (`main.expr:1:6`, position dans `(expression)`) : ramenée au fichier où elle est
 // écrite, partiel compris — son texte écrit retrouvé dans le HTML, la ligne et la colonne de Civet retrouvées sur ce texte
-function situerExpression(e: any, html: string, places: LinePlace[] | undefined, premiere: number, moduleName: string, ou: OuEcrit): unknown {
+function locateExpression(e: any, html: string, places: LinePlace[] | undefined, first: number, moduleName: string, where: WhereWritten): unknown {
   const m = new RegExp(`${moduleName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.expr:(\\d+):(\\d+)`).exec(String(e.message))
-  const k = m ? apresUneAccolade(html, String(e.expressionEcrite)) : -1
+  const k = m ? afterBrace(html, String(e.writtenExpression)) : -1
+  // un refus du générateur qui ne se retrouve pas à une place sûre : son repère (`main.expr:1:2`) n'est la place de rien, retiré
+  if (m && k < 0 && e.loneLandmark) e.message = String(e.message).replace(m[0] + ' — ', '')
   if (!m || k < 0) return e
-  const ecrite   = String(e.expressionEcrite)
-  const tete     = /^\s*/.exec(ecrite)![0].length
-  const lignes   = ecrite.slice(tete).split('\n')
+  const written  = String(e.writtenExpression)
+  const head     = /^\s*/.exec(written)![0].length
+  const lines    = written.slice(head).split('\n')
   const l        = Number(m[1])
-  const compilee = String(e.expressionCompilee).split('\n')[l - 1] ?? ''
+  const compiled = String(e.compiledExpression).split('\n')[l - 1] ?? ''
   // la parenthèse ajoutée autour de l'expression ouvre sa première ligne
-  const colonne  = l === 1 ? colonneEcrite(compilee.slice(1), lignes[0], Number(m[2]) - 1) : colonneEcrite(compilee, lignes[l - 1] ?? '', Number(m[2]))
-  const place    = placeDansLeGabarit(html, k + tete + lignes.slice(0, l - 1).reduce((n, x) => n + x.length + 1, 0) + colonne - 1, places, premiere, ou)
-  e.message      = String(e.message).replace(m[0], `${place.fichier}:${place.ligne}:${place.colonne}`)
+  const column = l === 1 ? writtenColumn(compiled.slice(1), lines[0], Number(m[2]) - 1) : writtenColumn(compiled, lines[l - 1] ?? '', Number(m[2]))
+  const place  = placeInTemplate(html, k + head + lines.slice(0, l - 1).reduce((n, x) => n + x.length + 1, 0) + column - 1, places, first, where)
+  e.message    = String(e.message).replace(m[0], `${place.file}:${place.line}:${place.column}`)
   return e
 }
 
-// un guillemet jamais refermé dans un attribut, refusé par le parseur à sa place dans le texte qu'il lit (`mjsGuillemet`) :
+// un guillemet jamais refermé dans un attribut, refusé par le parseur à sa place dans le texte qu'il lit (`mjsQuote`) :
 // le lecteur relit le HTML où les partiels sont versés, y retrouve ce guillemet (le seul qu'il suit jusqu'au bout), et le
 // message cite le fichier où il est écrit, sa ligne et sa colonne ; introuvable, le message reste tel quel
-function situerGuillemet(e: any, html: string, places: LinePlace[] | undefined, premiere: number, ou: OuEcrit): unknown {
-  const g = lireFichier(html, { gabarit: true, dialecte: e.mjsGuillemet.dialecte }).diagnostics.find((d) => d.guillemet !== undefined)?.guillemet
-  if (g === undefined || html[g.debut] !== e.mjsGuillemet.vars.guillemet) return e
-  const place = placeDansLeGabarit(html, g.debut, places, premiere, ou)
-  e.message   = t('parser.guillemet-non-referme', { ...e.mjsGuillemet.vars, fichier: place.fichier, ligne: place.ligne, colonne: place.colonne })
+function locateQuote(e: any, html: string, places: LinePlace[] | undefined, first: number, where: WhereWritten): unknown {
+  const g = readFile(html, { template: true, dialect: e.mjsQuote.dialect }).diagnostics.find((d) => d.quote !== undefined)?.quote
+  if (g === undefined || html[g.start] !== e.mjsQuote.quote) return e
+  const place = placeInTemplate(html, g.start, places, first, where)
+  e.message   = t('parser.quote-not-closed', { ...e.mjsQuote.vars, file: place.file, line: place.line, column: place.column })
   return e
 }
 
 // une faute d'effet écrite dans un partiel (`*titre : effet inconnu`) : le générateur la situe sur la ligne du composant qui
 // verse le partiel ; la ligne du partiel qui écrit cet effet, avec son fichier, est écrite dans le message quand elle est la
 // seule (le bundler ne cherche ensuite la ligne d'un effet que dans le texte du composant)
-function effetDuPartiel(e: any, html: string, places: LinePlace[] | undefined): unknown {
-  const hote = Number(e?.mjsLine ?? e?.cause?.mjsLine)
-  const tete = /\[ModularJS\] \*([A-Za-z][\w-]*(?:\.[\w.-]*)?)(?:\([^)\n]*\))?/.exec(String(e?.message ?? ''))
-  if (!places || !tete) return e
-  const motif  = new RegExp(`\\*${tete[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w.-])`)
-  const lignes = masqueCommentairesHtml(html).split('\n')
-  const vues   = places.filter((p, k) => p.file !== null && p.host === hote && motif.test(lignes[k] ?? ''))
-  if (vues.length !== 1) return e
-  const fin = tete.index + tete[0].length
-  e.message = e.message.slice(0, fin) + t('bundler.transpile-msg.effet-ligne', { ligne: t('transpiler.ligne-du-partiel', { ligne: vues[0].line, fichier: vues[0].file }) }) + e.message.slice(fin)
+function partialEffect(e: any, html: string, places: LinePlace[] | undefined): unknown {
+  const host = Number(e?.mjsLine ?? e?.cause?.mjsLine)
+  const head = /\[ModularJS\] \*([A-Za-z][\w-]*(?:\.[\w.-]*)?)(?:\([^)\n]*\))?/.exec(String(e?.message ?? ''))
+  if (!places || !head) return e
+  const pattern = new RegExp(`\\*${head[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w.-])`)
+  const lines   = maskCommentsInHtml(html).split('\n')
+  const seen    = places.filter((p, k) => p.file !== null && p.host === host && pattern.test(lines[k] ?? ''))
+  if (seen.length !== 1) return e
+  const end = head.index + head[0].length
+  e.message = e.message.slice(0, end) + t('bundler.transpile-msg.effect-line', { line: t('transpiler.partial-line', { line: seen[0].line, file: seen[0].file }) }) + e.message.slice(end)
   return e
 }
 
 // un code dont une parenthèse, un crochet ou une accolade reste ouvert (chaînes, commentaires et regex mis à part)
-function resteOuvert(code: string): boolean {
+function staysOpen(code: string): boolean {
   let n = 0
   for (const c of maskNonCode(code)) {
     if (c === '(' || c === '[' || c === '{') n++
@@ -332,75 +337,75 @@ function resteOuvert(code: string): boolean {
 // une faute de Civet dans le lot des gestionnaires (`main.inlines:L:C`) : la ligne fautive retrouvée dans le texte écrit d'un
 // gestionnaire (celle qui lui ressemble le plus), ce texte retrouvé dans le HTML juste après son accolade, la colonne de Civet
 // retrouvée sur la ligne écrite ; null quand on ne le retrouve pas (le message garde la position du lot)
-function situerGestionnaire(message: string, lot: string, sources: string[], html: string, places: LinePlace[] | undefined, premiere: number, moduleName: string, ou: OuEcrit): { message: string; cite: number | string; ligne?: string; source: string } | null {
+function locateHandler(message: string, batch: string, sources: string[], html: string, places: LinePlace[] | undefined, first: number, moduleName: string, where: WhereWritten): { message: string; cite: number | string; line?: string; source: string } | null {
   const m = new RegExp(`${moduleName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.inlines:(\\d+):(\\d+)`).exec(message)
   if (!m) return null
-  const lignesLot = lot.split('\n')
-  const proche    = (fautive: string): { score: number; source: string; rang: number } => {
-    let meilleur = { score: 0.5, source: '', rang: -1 }
+  const batchLines = batch.split('\n')
+  const near       = (faultyLine: string): { score: number; source: string; rank: number } => {
+    let best = { score: 0.5, source: '', rank: -1 }
     for (const source of sources) {
-      source.split('\n').forEach((ligne, rang) => {
-        const score = ressemblance(fautive, ligne)
-        if (score > meilleur.score) meilleur = { score, source, rang }
+      source.split('\n').forEach((line, rank) => {
+        const score = likeness(faultyLine, line)
+        if (score > best.score) best = { score, source, rank }
       })
     }
-    return meilleur
+    return best
   }
-  const fautive = lignesLot[Number(m[1]) - 1] ?? ''
-  let meilleur  = proche(fautive)
+  const faultyLine = batchLines[Number(m[1]) - 1] ?? ''
+  let best         = near(faultyLine)
   // repérée sur l'enveloppe du lot (sa fermeture `]`, la fin du texte) : un gestionnaire est resté ouvert, la faute est citée à
   // son `}` ; le premier dont une parenthèse, un crochet ou une accolade reste ouvert (Civet y a versé les suivants), sinon
   // celui qui précède la faute
-  if (meilleur.rang < 0 && /^(?:\]|@_mjs_inline = \[)?$/.test(fautive.trim())) {
-    const ouvert = sources.find((s) => resteOuvert(s))
-    if (ouvert !== undefined) meilleur = { score: 1, source: ouvert, rang: 0 }
-    for (let r = Number(m[1]) - 2; r >= 0 && meilleur.rang < 0; r--) meilleur = proche(lignesLot[r])
-    const place = meilleur.rang < 0 ? null : accoladeDuGestionnaire(html, meilleur.source, places, premiere, ou)
+  if (best.rank < 0 && /^(?:\]|@_mjs_inline = \[)?$/.test(faultyLine.trim())) {
+    const open = sources.find((s) => staysOpen(s))
+    if (open !== undefined) best = { score: 1, source: open, rank: 0 }
+    for (let r = Number(m[1]) - 2; r >= 0 && best.rank < 0; r--) best = near(batchLines[r])
+    const place = best.rank < 0 ? null : handlerBrace(html, best.source, places, first, where)
     if (place === null) return null
-    return { message: message.replace(m[0], `${place.fichier}:${place.ligne}:${place.colonne}`), cite: place.cite, ligne: meilleur.source.trimEnd().split('\n').pop(), source: meilleur.source }
+    return { message: message.replace(m[0], `${place.file}:${place.line}:${place.column}`), cite: place.cite, line: best.source.trimEnd().split('\n').pop(), source: best.source }
   }
-  const k = meilleur.rang < 0 ? -1 : apresUneAccolade(html, meilleur.source)
+  const k = best.rank < 0 ? -1 : afterBrace(html, best.source)
   if (k < 0) return null
-  const lignes  = meilleur.source.split('\n')
-  const colonne = colonneEcrite(fautive, lignes[meilleur.rang], Number(m[2]))
-  const place   = placeDansLeGabarit(html, k + lignes.slice(0, meilleur.rang).reduce((n, x) => n + x.length + 1, 0) + colonne - 1, places, premiere, ou)
-  return { message: message.replace(m[0], `${place.fichier}:${place.ligne}:${place.colonne}`), cite: place.cite, source: meilleur.source }
+  const lines  = best.source.split('\n')
+  const column = writtenColumn(faultyLine, lines[best.rank], Number(m[2]))
+  const place  = placeInTemplate(html, k + lines.slice(0, best.rank).reduce((n, x) => n + x.length + 1, 0) + column - 1, places, first, where)
+  return { message: message.replace(m[0], `${place.file}:${place.line}:${place.column}`), cite: place.cite, source: best.source }
 }
 
 // une faute de Civet ou de CoffeeScript dans un rappel de transition (`@introend={…}`), compilé seul (`main.inlines:L:C`, position dans
-// son texte compilé, cf. fauteDeRappel), ou le nom refusé par une garde (position dans son texte écrit) : citée à sa place dans le
-// fichier comme celle d'un gestionnaire (cf. situerGestionnaire) ; introuvable ou sans position (`main.inlines`), à la ligne de son attribut
-function situerRappel(e: any, html: string, places: LinePlace[] | undefined, premiere: number, moduleName: string, ou: OuEcrit): unknown {
-  const r     = e.rappelDeTransition
-  const situe = situerGestionnaire(String(e.message), r.lot, [r.ecrit], html, places, premiere, moduleName, ou)
-  e.message   = situe ? situe.message : String(e.message).replace(new RegExp(`${moduleName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.inlines(?::\\d+:\\d+)?`), `${ou.fichier}:${r.ligne ?? '?'}`)
+// son texte compilé, cf. callbackFault), ou le nom refusé par une garde (position dans son texte écrit) : citée à sa place dans le
+// fichier comme celle d'un gestionnaire (cf. locateHandler) ; introuvable ou sans position (`main.inlines`), à la ligne de son attribut
+function locateCallback(e: any, html: string, places: LinePlace[] | undefined, first: number, moduleName: string, where: WhereWritten): unknown {
+  const r       = e.transitionCallback
+  const located = locateHandler(String(e.message), r.batch, [r.written], html, places, first, moduleName, where)
+  e.message     = located ? located.message : String(e.message).replace(new RegExp(`${moduleName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.inlines(?::\\d+:\\d+)?`), `${where.file}:${r.line ?? '?'}`)
   return e
 }
 
 // chaque ligne du HTML où les partiels sont versés (`html`), telle que le parseur la cite (cf. ParseDiag.lineCites) : celle du
 // composant ou du partiel qui l'écrit ; faite de morceaux de plusieurs fichiers, son texte et la ligne de chaque morceau
-function citesDuParseur(places: LinePlace[], premiere: number, html: string): Array<number | string | LigneMelee> {
-  const lignes = places.some((p) => p.suite) ? html.split('\n') : []
-  return places.map((p, k) => (p.suite?.some((r) => r.file !== p.file) ? { host: p.host, texte: lignes[k] ?? '', morceaux: [{ at: 0, cite: citeLine([p], premiere, 0) }, ...p.suite.map((r) => ({ at: r.at, cite: citeLine([r], premiere, 0) }))] } : citeLine(places, premiere, k)))
+function parserCites(places: LinePlace[], first: number, html: string): Array<number | string | MixedLine> {
+  const lines = places.some((p) => p.rest) ? html.split('\n') : []
+  return places.map((p, k) => (p.rest?.some((r) => r.file !== p.file) ? { host: p.host, text: lines[k] ?? '', pieces: [{ at: 0, cite: citeLine([p], first, 0) }, ...p.rest.map((r) => ({ at: r.at, cite: citeLine([r], first, 0) }))] } : citeLine(places, first, k)))
 }
 
 // l'accolade qui ferme le gestionnaire écrit `source` (retrouvé dans le HTML juste après son accolade ouvrante) : sa place dans le
 // fichier qui l'écrit, partiel compris ; null quand on ne le retrouve pas
-function accoladeDuGestionnaire(html: string, source: string, places: LinePlace[] | undefined, premiere: number, ou: OuEcrit): (PositionCitee & { cite: number | string }) | null {
-  const k = apresUneAccolade(html, source)
+function handlerBrace(html: string, source: string, places: LinePlace[] | undefined, first: number, where: WhereWritten): (CitedPosition & { cite: number | string }) | null {
+  const k = afterBrace(html, source)
   if (k < 0) return null
-  const fin = k + source.length
-  return placeDansLeGabarit(html, fin + /^\s*/.exec(html.slice(fin))![0].length, places, premiere, ou)
+  const end = k + source.length
+  return placeInTemplate(html, end + /^\s*/.exec(html.slice(end))![0].length, places, first, where)
 }
 
 // le nombre de gestionnaires d'un lot compilé : les éléments du tableau `this._mjs_inline = […]`, ou les `this._mjs_inline[i] = …` d'un
-// lot compilé par groupes (cf. sourceGroupe) — moins que de gestionnaires écrits, l'un d'eux est resté ouvert et a avalé le suivant
-function gestionnairesCompiles(ast: any): number {
+// lot compilé par groupes (cf. groupSource) — moins que de gestionnaires écrits, l'un d'eux est resté ouvert et a avalé le suivant
+function compiledHandlers(ast: any): number {
   let n = 0
   for (const stmt of ast?.body ?? []) {
-    const a     = stmt.type === 'ExpressionStatement' ? stmt.expression : null
-    const cible = a?.type === 'AssignmentExpression' && a.left?.type === 'MemberExpression' ? (a.left.computed ? a.left.object : a.left) : null
-    if (cible?.type !== 'MemberExpression' || cible.object?.type !== 'ThisExpression' || cible.property?.name !== '_mjs_inline') continue
+    const a      = stmt.type === 'ExpressionStatement' ? stmt.expression : null
+    const target = a?.type === 'AssignmentExpression' && a.left?.type === 'MemberExpression' ? (a.left.computed ? a.left.object : a.left) : null
+    if (target?.type !== 'MemberExpression' || target.object?.type !== 'ThisExpression' || target.property?.name !== '_mjs_inline') continue
     if (a.left.computed) n++
     else if (a.right?.type === 'ArrayExpression') n += a.right.elements.length
   }
@@ -409,22 +414,22 @@ function gestionnairesCompiles(ast: any): number {
 
 // le refus d'un gestionnaire resté ouvert, que le code qui le suit complète sans erreur de Civet : cité à son `}`, avec la fin de son
 // corps
-function gestionnaireResteOuvert(place: PositionCitee, corps: string): Error {
-  return new Error(t('transpiler.gestionnaire-reste-ouvert', { position: `${place.fichier}:${place.ligne}:${place.colonne}`, fin: corps.trimEnd().split('\n').pop()!.trim() }))
+function handlerStaysOpen(place: CitedPosition, body: string): Error {
+  return new Error(t('transpiler.handler-left-open', { position: `${place.file}:${place.line}:${place.column}`, end: body.trimEnd().split('\n').pop()!.trim() }))
 }
 
 // le dernier signe du code versé au script avant les lignes des balises du langage (`avant` : le <script> du composant, celui d'un
 // partiel), chaînes et commentaires mis à part ; null quand sa ligne n'a pas de place dans un fichier
-function finDuScript(avant: string, lang: string, bloc: BlocVerse): FinDuScript | null {
-  const lues = maskNonCode(avant, lang).split('\n')
-  let i      = lues.length - 1
-  while (i >= 0 && lues[i].trim() === '') i--
-  const origine = i < 0 ? null : origineDeLigne(i, bloc)
-  if (!origine) return null
-  const ecrite  = origine.texte()
-  const code    = maskNonCode(ecrite, lang).trimEnd().length
-  const colonne = code > 0 ? code : ecrite.trimEnd().length
-  return { fichier: origine.fichier, ligne: origine.ligne, colonne, texte: ecrite.slice(0, colonne).trim(), ouverte: FIN_OUVERTE_RE.test(lues[i].trimEnd()) }
+function scriptEnd(before: string, lang: string, block: PouredBlock): ScriptEnd | null {
+  const read = maskNonCode(before, lang).split('\n')
+  let i      = read.length - 1
+  while (i >= 0 && read[i].trim() === '') i--
+  const origin = i < 0 ? null : lineOrigin(i, block)
+  if (!origin) return null
+  const written = origin.text()
+  const code    = maskNonCode(written, lang).trimEnd().length
+  const column  = code > 0 ? code : written.trimEnd().length
+  return { file: origin.file, line: origin.line, column, text: written.slice(0, column).trim(), open: OPEN_END_RE.test(read[i].trimEnd()) }
 }
 
 // la première ligne que les balises du langage versent au script (`setup`, cf. processGlobalMacros) prise par le code écrit avant elle,
@@ -433,27 +438,27 @@ function finDuScript(avant: string, lang: string, bloc: BlocVerse): FinDuScript 
 // absente de la racine ; la valeur de départ d'une liaison (`$y = window.scrollY`), qui n'est plus l'instruction posée juste avant le
 // gestionnaire de la liaison ; un reffet (`µeffect =>`, classe de <@body>, <@head>…), appelé ailleurs qu'en tête d'une instruction ; la
 // limite de réessai d'un <@failed> (`@_mjs_failedRetry = 3`), absente de la racine
-function premiereLigneAvalee(js: string, corps: any[], setup: string): boolean {
-  const [, premiere = '', suivante = ''] = setup.split('\n')
-  const limite = /^@(_mjs_failedRetry) = /.exec(premiere)
-  if (limite) return !corps.some((s) => s.type === 'ExpressionStatement' && s.expression?.type === 'AssignmentExpression' && s.expression.left?.object?.type === 'ThisExpression' && s.expression.left.property?.name === limite[1])
-  const definition = (fn: string): number => corps.findIndex((s) => {
+function swallowedFirstLine(js: string, body: any[], setup: string): boolean {
+  const [, first = '', next = ''] = setup.split('\n')
+  const limit = /^@(_mjs_failedRetry) = /.exec(first)
+  if (limit) return !body.some((s) => s.type === 'ExpressionStatement' && s.expression?.type === 'AssignmentExpression' && s.expression.left?.object?.type === 'ThisExpression' && s.expression.left.property?.name === limit[1])
+  const definition = (fn: string): number => body.findIndex((s) => {
     const a = s.type === 'ExpressionStatement' ? s.expression : null
     return a?.type === 'AssignmentExpression' && a.left?.object?.type === 'ThisExpression' && a.left.property?.name === fn && /FunctionExpression$/.test(a.right?.type ?? '')
   })
-  const gestionnaire = DEFINITION_VERSEE_RE.exec(premiere)
-  if (gestionnaire) return definition(gestionnaire[1]) < 0
-  const liaison = / = (?:window|navigator)\.\w+$/.test(premiere) ? DEFINITION_VERSEE_RE.exec(suivante) : null
-  if (liaison) {
-    const k = definition(liaison[1])
-    const a = corps[k - 1]?.type === 'ExpressionStatement' ? corps[k - 1].expression : null
+  const handler = MERGED_DEFINITION_RE.exec(first)
+  if (handler) return definition(handler[1]) < 0
+  const binding = / = (?:window|navigator)\.\w+$/.test(first) ? MERGED_DEFINITION_RE.exec(next) : null
+  if (binding) {
+    const k = definition(binding[1])
+    const a = body[k - 1]?.type === 'ExpressionStatement' ? body[k - 1].expression : null
     return k > 0 && !(a?.type === 'AssignmentExpression' && a.right?.type === 'MemberExpression' && a.right.object?.type === 'Identifier')
   }
   // l'appel du reffet (`µ._glCl(…)`) : dans l'instruction qui le pose (`µ.effect(() => …)`), ou dans la dernière du code écrit avant lui,
   // après le reffet vidé
-  const interne = premiere === 'µeffect =>' ? /^ {2}(µ\.\w+\()/.exec(suivante) : null
-  const k       = interne ? js.indexOf(interne[1]) : -1
-  const s       = k < 0 ? undefined : corps.find((x) => x.start <= k && k < x.end)
+  const internal = first === 'µeffect =>' ? /^ {2}(µ\.\w+\()/.exec(next) : null
+  const k       = internal ? js.indexOf(internal[1]) : -1
+  const s       = k < 0 ? undefined : body.find((x) => x.start <= k && k < x.end)
   return s !== undefined && !js.startsWith('µ.effect(', s.start) && js.lastIndexOf('µ.effect(', k) > s.start
 }
 
@@ -462,20 +467,20 @@ function premiereLigneAvalee(js: string, corps: any[], setup: string): boolean {
 // `$$` d'un objet, ni une chaîne `'…'`/`"…"` qui le cite) la donne, partiel compris, avec la clé telle qu'elle est écrite (un gestionnaire
 // est lu réécrit : `$k` y est `$.k`). Une chaîne de CoffeeScript qui porte du code (`"#{$$[k]}"`) : cherché ensuite sans sauter les
 // chaînes ; introuvable, le message reste tel quel
-function situerCleCalculee(e: any, html: string, places: LinePlace[] | undefined, premiere: number, ou: OuEcrit): unknown {
+function locateComputedKey(e: any, html: string, places: LinePlace[] | undefined, first: number, where: WhereWritten): unknown {
   if (/^\S+:\d+:\d+ /.test(String(e.message))) return e
-  const masque = masqueCommentairesHtml(html)
-  for (const sauter of [true, false]) {
+  const mask = maskCommentsInHtml(html)
+  for (const skip of [true, false]) {
     let n = 0
-    for (let k = 0; k < masque.length; k++) {
-      const avant = masque[k - 1] ?? ''
-      if (masque[k] === '{') n++
-      else if (masque[k] === '}') n = Math.max(0, n - 1)
-      else if (sauter && n > 0 && (masque[k] === "'" || masque[k] === '"')) k = skipQuotedSpan(masque, k) - 1
+    for (let k = 0; k < mask.length; k++) {
+      const before = mask[k - 1] ?? ''
+      if (mask[k] === '{') n++
+      else if (mask[k] === '}') n = Math.max(0, n - 1)
+      else if (skip && n > 0 && (mask[k] === "'" || mask[k] === '"')) k = skipQuotedSpan(mask, k) - 1
       // précédé d'un point, la propriété `$$` d'un objet (`o.$$[0]`) ; de deux, un étalement (`{...$$[k]}`), refusé comme par le lecteur
-      else if (n > 0 && masque.startsWith('$$[', k) && !/[\w$]/.test(avant) && (avant !== '.' || masque[k - 2] === '.')) {
-        const place = placeDansLeGabarit(html, k, places, premiere, ou)
-        e.message   = `${place.fichier}:${place.ligne}:${place.colonne} ${storeComputedKeyError(masque, k + 3).message}`
+      else if (n > 0 && mask.startsWith('$$[', k) && !/[\w$]/.test(before) && (before !== '.' || mask[k - 2] === '.')) {
+        const place = placeInTemplate(html, k, places, first, where)
+        e.message   = `${place.file}:${place.line}:${place.column} ${storeComputedKeyError(mask, k + 3).message}`
         return e
       }
     }
@@ -485,15 +490,15 @@ function situerCleCalculee(e: any, html: string, places: LinePlace[] | undefined
 
 // la fin de l'écriture `$x = $x` que cite un refus : parenthèses fermées, puis `;`, `,`, une fermante, la fin du texte ou un mot de
 // suite (`if`, `unless`…), comme le lecteur la lit (lexer/index.ts, selfWriteAt) — jamais `$x = $x + 1`, `$x = $x or 0`, `$x = $x.n`
-const FIN_AUTO_AFFECTATION = '(?:\\s*\\))*(?=\\s*(?:[;,)\\]}]|$)|[ \\t]+(?:if|unless|else|for|while|until|then|when)(?![\\w$]))'
+const SELF_ASSIGN_END = '(?:\\s*\\))*(?=\\s*(?:[;,)\\]}]|$)|[ \\t]+(?:if|unless|else|for|while|until|then|when)(?![\\w$]))'
 
 // la fin d'une écriture `$x = $x` que le lecteur n'a pas lue (`$x = $x as T`, `$x = $x!`, écrite sur deux lignes) : tout, sauf une
 // suite qui en fait une autre expression (point, opérateur, appel, indice, `and`, `or`…)
-const FIN_AUTO_AFFECTATION_LIBRE = '(?![ \\t]*(?:[.?[(+\\-*/%&|^<>=,`]|!=|(?:and|or|is|isnt|in|of|instanceof|not)(?![\\w$])))'
+const FREE_SELF_ASSIGNMENT_END = '(?![ \\t]*(?:[.?[(+\\-*/%&|^<>=,`]|!=|(?:and|or|is|isnt|in|of|instanceof|not)(?![\\w$])))'
 
 // `$d = $d` d'une valeur dérivée, que l'analyse connaît (`computed`) : le refus dit d'écrire `µrefresh` sur la variable qu'elle lit
 // (cf. selfWriteError, sigils.ts)
-function autoAffectationDeDerivee(e: any, computed: Record<string, unknown>): any {
+function derivedSelfAssignment(e: any, computed: Record<string, unknown>): any {
   return e?.mjsSelfWriteKind === SELF_WRITE_VAR && !e.mjsSelfWriteDerived && computed[e.mjsSelfWriteName] !== undefined ? Object.assign(selfWriteError(SELF_WRITE_VAR, e.mjsSelfWriteName, false, true), { mjsAt: e.mjsAt }) : e
 }
 
@@ -501,60 +506,72 @@ function autoAffectationDeDerivee(e: any, computed: Record<string, unknown>): an
 // passes d'écriture sans sa place (selfWriteError, sigils.ts) : sa ligne vient de la carte du script (`ligne`), sa colonne de la
 // première écriture de cette forme dans le script écrit (`ecrit`, à partir de la ligne `premiere` du fichier), à partir de cette
 // ligne ; sans ligne ni écriture trouvée, le message reste tel quel
-function situerAutoAffectationDuScript(e: any, ligne: number | null | undefined, ecrit: string, premiere: number, fichier: string): unknown {
-  if (!ligne || ligne < premiere || /^\S+:\d+:\d+ /.test(String(e.message))) return e
-  const forme     = new RegExp(`${e.mjsSelfWrite}${FIN_AUTO_AFFECTATION_LIBRE}`, 'g')
-  forme.lastIndex = ecrit.split('\n').slice(0, ligne - premiere).reduce((n, l) => n + l.length + 1, 0)
-  const trouvee   = forme.exec(ecrit)
-  if (!trouvee) return e
-  const avant = ecrit.slice(0, trouvee.index)
-  e.message   = `${fichier}:${premiere + (avant.match(/\n/g)?.length ?? 0)}:${trouvee.index - avant.lastIndexOf('\n')} ${e.message}`
+function locateScriptSelfAssignment(e: any, line: number | null | undefined, written: string, first: number, file: string): unknown {
+  if (!line || line < first || /^\S+:\d+:\d+ /.test(String(e.message))) return e
+  const shape      = new RegExp(`${e.mjsSelfWrite}${FREE_SELF_ASSIGNMENT_END}`, 'g')
+  shape.lastIndex  = written.split('\n').slice(0, line - first).reduce((n, l) => n + l.length + 1, 0)
+  const foundMatch = shape.exec(written)
+  if (!foundMatch) return e
+  const before = written.slice(0, foundMatch.index)
+  e.message    = `${file}:${first + (before.match(/\n/g)?.length ?? 0)}:${foundMatch.index - before.lastIndexOf('\n')} ${e.message}`
   return e
 }
 
 // `$x = $x`, `$$x = $$x` refusé dans un gestionnaire du gabarit (selfWriteError, sigils.ts), sans sa ligne : la première écriture
 // de cette forme dans le code du gabarit (entre accolades, commentaires masqués, chaînes sautées) la donne, partiel
 // compris ; introuvable, le message reste tel quel
-function situerAutoAffectation(e: any, html: string, places: LinePlace[] | undefined, premiere: number, ou: OuEcrit): unknown {
+function locateSelfAssignment(e: any, html: string, places: LinePlace[] | undefined, first: number, where: WhereWritten): unknown {
   if (/^\S+:\d+:\d+ /.test(String(e.message))) return e
-  const masque = masqueCommentairesHtml(html)
-  const forme  = new RegExp(`${e.mjsSelfWrite}${FIN_AUTO_AFFECTATION}`, 'y')
-  let n = 0
-  for (let k = 0; k < masque.length; k++) {
-    if (masque[k] === '{') n++
-    else if (masque[k] === '}') n = Math.max(0, n - 1)
-    else if (n > 0 && (masque[k] === "'" || masque[k] === '"')) k = skipQuotedSpan(masque, k) - 1
-    else if (n > 0 && (forme.lastIndex = k, forme.test(masque))) {
-      const place = placeDansLeGabarit(html, k, places, premiere, ou)
-      e.message   = `${place.fichier}:${place.ligne}:${place.colonne} ${e.message}`
+  const mask  = maskCommentsInHtml(html)
+  const shape = new RegExp(`${e.mjsSelfWrite}${SELF_ASSIGN_END}`, 'y')
+  let n       = 0
+  for (let k = 0; k < mask.length; k++) {
+    if (mask[k] === '{') n++
+    else if (mask[k] === '}') n = Math.max(0, n - 1)
+    else if (n > 0 && (mask[k] === "'" || mask[k] === '"')) k = skipQuotedSpan(mask, k) - 1
+    else if (n > 0 && (shape.lastIndex = k, shape.test(mask))) {
+      const place = placeInTemplate(html, k, places, first, where)
+      e.message   = `${place.file}:${place.line}:${place.column} ${e.message}`
       return e
     }
   }
   return e
 }
 
-// avecLigneDuGabarit — une expression du gabarit dont Civet lit un paramètre autrement (`{$l.map((x, readonly) -> x)}`) est
+// `µfailed` mal écrit dans le gabarit, refusé par le générateur, qui ne connaît pas sa ligne : la forme écrite (`µfailed $r`), cherchée dans
+// le HTML où les partiels sont versés, commentaires masqués ; le message cite son fichier et sa ligne seulement si elle s'y lit une fois
+// (deux fois : laquelle ?), sinon il reste sans place
+function locateBadFailed(e: any, html: string, places: LinePlace[] | undefined, first: number, where: WhereWritten): unknown {
+  const written = String(e.failedMalformed)
+  const read    = [...maskCommentsInHtml(html).matchAll(new RegExp('(?<![\\w.µ$])' + written.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\w$])', 'g'))]
+  if (read.length !== 1) return e
+  const place = placeInTemplate(html, read[0].index!, places, first, where)
+  return new Error(t('lexer.failed-misspelled', { written: written, file: place.file, line: place.line }))
+}
+
+// withTemplateLine — une expression du gabarit dont Civet lit un paramètre autrement (`{$l.map((x, readonly) -> x)}`) est
 // refusée par le générateur, qui ne connaît pas sa ligne : elle est cherchée au texte écrit de l'expression dans le gabarit
-// du fichier (`gabarit` commence à la ligne `premiereLigne`), commentaires masqués, à une place d'expression seulement (juste
+// du fichier (`gabarit` commence à la ligne `firstLine`), commentaires masqués, à une place d'expression seulement (juste
 // après l'accolade d'un `{…}` ou d'une valeur d'attribut) : le même texte recopié dans un paragraphe, un `<pre>` ou un
 // commentaire n'est pas l'expression. Absente du fichier qui inclut un partiel : elle vient du partiel, le message le dit,
 // sans citer une ligne de l'hôte
-function avecLigneDuGabarit<T>(construire: () => T, gabarit: string, premiereLigne: number, moduleName: string, htmlInclus: string, places: LinePlace[] | undefined, ou: OuEcrit): T {
+function withTemplateLine<T>(build: () => T, template: string, firstLine: number, moduleName: string, includedHtml: string, places: LinePlace[] | undefined, where: WhereWritten): T {
   try {
-    return construire()
+    return build()
   }
   catch (e) {
     // une expression que Civet refuse, une faute d'effet écrite dans un partiel : citées à leur place dans leur fichier
-    if ((e as any)?.expressionEcrite !== undefined) throw situerExpression(e, htmlInclus, places, premiereLigne, moduleName, ou)
-    if ((e as any)?.mjsCleCalculee) throw situerCleCalculee(e, htmlInclus, places, premiereLigne, ou)
-    if ((e as any)?.mjsGuillemet) throw situerGuillemet(e, htmlInclus, places, premiereLigne, ou)
-    if ((e as any)?.rappelDeTransition) throw situerRappel(e, htmlInclus, places, premiereLigne, moduleName, ou)
-    if (Number((e as any)?.mjsLine ?? (e as any)?.cause?.mjsLine) > 0) throw effetDuPartiel(e, htmlInclus, places)
-    if (!(e instanceof ErreurParametreLuAutrement) || e.expression === undefined) throw e
-    const masque = masqueCommentairesHtml(gabarit)
-    let k        = masque.indexOf(e.expression)
-    while (k >= 0 && !/\{\s*$/.test(masque.slice(Math.max(0, k - 20), k))) k = masque.indexOf(e.expression, k + 1)
-    throw new ErreurParametreLuAutrement(e.parametre, ou.fichier, e.js, k < 0 ? null : premiereLigne + (masque.slice(0, k).match(/\n/g)?.length ?? 0), null, k < 0 && /<@include\b/.test(masque))
+    if ((e as any)?.writtenExpression !== undefined) throw locateExpression(e, includedHtml, places, firstLine, moduleName, where)
+    if ((e as any)?.failedMalformed !== undefined) throw locateBadFailed(e, includedHtml, places, firstLine, where)
+    if ((e as any)?.mjsComputedKey) throw locateComputedKey(e, includedHtml, places, firstLine, where)
+    if ((e as any)?.mjsQuote) throw locateQuote(e, includedHtml, places, firstLine, where)
+    if ((e as any)?.transitionCallback) throw locateCallback(e, includedHtml, places, firstLine, moduleName, where)
+    if (Number((e as any)?.mjsLine ?? (e as any)?.cause?.mjsLine) > 0) throw partialEffect(e, includedHtml, places)
+    if (!(e instanceof ParamReadOtherwiseError) || e.expression === undefined) throw e
+    const mask = maskCommentsInHtml(template)
+    let k      = mask.indexOf(e.expression)
+    while (k >= 0 && !/\{\s*$/.test(mask.slice(Math.max(0, k - 20), k))) k = mask.indexOf(e.expression, k + 1)
+    throw new ParamReadOtherwiseError(e.param, where.file, e.js, k < 0 ? null : firstLine + (mask.slice(0, k).match(/\n/g)?.length ?? 0), null, k < 0 && /<@include\b/.test(mask))
   }
 }
 
@@ -727,6 +744,10 @@ function detectDuplicateHook(jsInitBase: string, preAst?: acorn.Node | null): st
 export interface TranspileOpts {
   /** Si non précisé, déduit du fichier source. */
   moduleName?: string
+  /** @internal la construction (transpile-msg.ts : `mjs build`, `mjs dev`) voit tous les fichiers : une transition hors bibliothèque écrite avec un
+   *  réglage sans nom (`*toupie(down)`) y est relevée dans `unnamedSettingAnimations` et jugée en fin de tour (nom inconnu, ou créé par µanim.create) ;
+   *  sans elle, transpile() la refuse (`transitions.custom-positional`), comme compileSingle */
+  deferUnnamedSettings?: boolean
   /** règles nommées des fichiers `*.types.mjs` du projet (bundler, compileTypesFiles) : un nom cité
    *  dans le `<vars>` du composant est remplacé par sa définition, au build. */
   typeDefs?: Record<string, RuleAst>
@@ -742,6 +763,10 @@ export interface TranspileOpts {
    *  à sens unique que l'enfant écrit lui-même (mjs_debug.ts les dit) — `true` en développement seulement (défaut `false`) :
    *  le code de production n'en porte rien. */
   devWarnings?: boolean
+  /** construction qui peut rendre côté serveur (cf. Bundler.rendersOnServer) : la route de la liaison d'un champ porte la marque 4, que le
+   *  cœur lit pour donner à sa variable ce qui a été tapé dans la page du serveur avant le démarrage (`<server-input>`, mjs_element.ts) ;
+   *  absent ou `false` (défaut), le code produit est le même */
+  serverRendered?: boolean
   /** les chargements qui montrent un squelette d'eux-mêmes (`effects.skeleton` de mjs.config.json ;
    *  défaut `['await']`) — ici, `await` : un {await} sans branche d'attente */
   skeleton?: string[]
@@ -765,6 +790,9 @@ export interface TranspileOpts {
    *  précises sont posées sur leur enveloppe (analyzer/derived-classes.ts) et l'écho d'une liaison `!{}` est marqué (generator/attributes) ;
    *  absent ou `false` (défaut), le code produit est celui de la règle de l'horloge */
   derivedPrecise?: boolean
+  /** un composant redessiné par un état partagé fait passer tous ses reffets (cœur bâti sans le choix des reffets, cf. Bundler.reffetsAll) :
+   *  le relevé ne pose aucune marque de doute sur `µ.effect(…)` (generator/effect-deps.ts) */
+  reffetsAll?: boolean
   /** objets de l'état (option d'appli `proxy`, mjs.config.json) : `false`, ils sont rangés sans enveloppe — `++`, `--`, les affectations
    *  composées ou logiques et les cibles d'un motif sur un chemin de l'état local (`$o.n++`, `$o.a += 1`, `$o.b ||= 5`) s'écrivent par
    *  `µ._mjs_deepSet`, comme `$o.a = v` (generator/path-tracker.ts) ; absent ou `true` (défaut), le code produit est le même */
@@ -926,87 +954,87 @@ export function normalizeSigilAlias(src: string, sigil?: string): string {
 export function sigilAliasCode(src: string, sigil: string, lang = 'civet'): string {
   const re = SIGIL_ALIASES[sigil]
   if (!re || !src.includes(sigil)) return src
-  const vue = maskNonCode(src, lang)
-  return src.replace(re, (m: string, pos: number) => vue.startsWith(m, pos) ? 'µ' : m)
+  const view = maskNonCode(src, lang)
+  return src.replace(re, (m: string, pos: number) => view.startsWith(m, pos) ? 'µ' : m)
 }
 
 // un appel d'asset ou d'image écrit en clair dans un attribut (`<img src="mjs.asset('x.png')">`) : la résolution des
 // assets le cherche dans tout le HTML, il garde l'alias
-const ALIAS_APPEL_EN_CLAIR_RE = /(?<![\w$])mjs(?=\.(?:asset|image)\s*\()/g
+const ALIAS_PLAIN_CALL_RE = /(?<![\w$])mjs(?=\.(?:asset|image)\s*\()/g
 
 // le HTML et les directives : alias dans les expressions `{…}` et les directives `@import` (débuts de ligne donnés par la
 // lecture partagée, comptés depuis le début du fichier : `decalage` est celui de ce morceau) ; le texte, les attributs,
 // `<pre>`, les commentaires HTML restent tels qu'écrits
-function sigilAliasHtml(html: string, sigil: string, directives: Set<number>, decalage: number): string {
+function sigilAliasHtml(html: string, sigil: string, directives: Set<number>, offset: number): string {
   if (!SIGIL_ALIASES[sigil] || !html.includes(sigil)) return html
-  let out   = ''
-  let texte = ''
-  const vider = () => { if (texte) { out += texte.replace(ALIAS_APPEL_EN_CLAIR_RE, 'µ'); texte = '' } }
-  const n = html.length
+  let out     = ''
+  let text    = ''
+  const clear = () => { if (text) { out += text.replace(ALIAS_PLAIN_CALL_RE, 'µ'); text = '' } }
+  const n     = html.length
   // accolades sans fin rendues par finExpression : relire depuis l'une d'elles ne se refermerait pas davantage (même mémoire que
   // scanTagClose : un gabarit aux accolades non refermées coûtait un temps quadratique)
-  const sansFin = new Set<number>()
+  const noEnd = new Set<number>()
   let i = 0
   while (i < n) {
-    if (directives.has(decalage + i)) {
-      vider()
+    if (directives.has(offset + i)) {
+      clear()
       const nl  = html.indexOf('\n', i)
-      const fin = nl < 0 ? n : nl + 1
-      out += sigilAliasCode(html.slice(i, fin), sigil)
-      i = fin
+      const end = nl < 0 ? n : nl + 1
+      out += sigilAliasCode(html.slice(i, end), sigil)
+      i = end
       continue
     }
     if (html.startsWith('<!--', i)) {
-      const commentaire = readHtmlComment(html, i)
-      if (commentaire !== null) {
-        vider()
-        out += html.slice(i, commentaire.end)
-        i = commentaire.end
+      const comment = readHtmlComment(html, i)
+      if (comment !== null) {
+        clear()
+        out += html.slice(i, comment.end)
+        i = comment.end
         continue
       }
     }
-    if (html[i] === '{' && !sansFin.has(i)) {
-      const fin = finExpression(html, i, sansFin)
-      if (fin > 0) {
-        vider()
-        out += sigilAliasCode(html.slice(i, fin), sigil)
-        i = fin
+    if (html[i] === '{' && !noEnd.has(i)) {
+      const end = expressionEnd(html, i, noEnd)
+      if (end > 0) {
+        clear()
+        out += sigilAliasCode(html.slice(i, end), sigil)
+        i = end
         continue
       }
     }
-    texte += html[i]
+    text += html[i]
     i++
   }
-  vider()
+  clear()
   return out
 }
 
 // la source entière : chaque <script> par sigilAliasCode, le HTML et les directives par sigilAliasHtml ; <style> et
 // <theme> (`.mjs.actif` y est un sélecteur) et <vars> (une règle n'a pas de rune : `'mjs.fr'` ne devient pas
 // `'µ.fr'`) tels qu'écrits. Sections trouvées comme extractSections et extractDirectives les trouvent
-function sigilAliasOutsideVars(src: string, sigil?: string, langParDefaut = 'civet'): string {
+function sigilAliasOutsideVars(src: string, sigil?: string, defaultLang = 'civet'): string {
   if (!src || !sigil || sigil === 'µ' || !SIGIL_ALIASES[sigil] || !src.includes(sigil)) return src
-  const zones: Array<{ debut: number; fin: number; lang: string | null }> = []
+  const zones: Array<{ start: number; end: number; lang: string | null }> = []
   const { moduleScripts, scripts } = findScriptMatches(src)
   for (const m of [...moduleScripts, ...scripts]) {
     const idx   = m.indices!
-    const corps = idx[idx.length - 1]
-    const attrs = src.slice(idx[0][0], corps[0])
-    zones.push({ debut: corps[0], fin: corps[1], lang: /lang[ \t]*=[ \t]*['"]([^'"]+)['"]/.exec(attrs)?.[1] ?? langParDefaut })
+    const body  = idx[idx.length - 1]
+    const attrs = src.slice(idx[0][0], body[0])
+    zones.push({ start: body[0], end: body[1], lang: /lang[ \t]*=[ \t]*['"]([^'"]+)['"]/.exec(attrs)?.[1] ?? defaultLang })
   }
   const styles = findStyleMatches(src, [...moduleScripts, ...scripts])
-  for (const m of styles.matches) zones.push({ debut: m.indices![0][0], fin: m.indices![0][1], lang: null })
-  for (const m of styles.maskedView.matchAll(/^[ \t]*<theme\b[^>]*>[\s\S]*?<\/theme>/gmd)) zones.push({ debut: m.indices![0][0], fin: m.indices![0][1], lang: null })
-  for (const m of src.matchAll(/^[ \t]*<vars\b[^>]*>[\s\S]*?<\/vars>/gmd)) zones.push({ debut: m.indices![0][0], fin: m.indices![0][1], lang: null })
-  zones.sort((a, b) => a.debut - b.debut)
+  for (const m of styles.matches) zones.push({ start: m.indices![0][0], end: m.indices![0][1], lang: null })
+  for (const m of styles.maskedView.matchAll(/^[ \t]*<theme\b[^>]*>[\s\S]*?<\/theme>/gmd)) zones.push({ start: m.indices![0][0], end: m.indices![0][1], lang: null })
+  for (const m of src.matchAll(/^[ \t]*<vars\b[^>]*>[\s\S]*?<\/vars>/gmd)) zones.push({ start: m.indices![0][0], end: m.indices![0][1], lang: null })
+  zones.sort((a, b) => a.start - b.start)
   const directives = new Set(readImportDirectives(src).map(d => d.index))
   let out          = ''
   let last         = 0
   for (const z of zones) {
-    if (z.debut < last) continue
-    out += sigilAliasHtml(src.slice(last, z.debut), sigil, directives, last)
-    out += z.lang === null ? src.slice(z.debut, z.fin) : sigilAliasCode(src.slice(z.debut, z.fin), sigil, z.lang)
-    last = z.fin
+    if (z.start < last) continue
+    out += sigilAliasHtml(src.slice(last, z.start), sigil, directives, last)
+    out += z.lang === null ? src.slice(z.start, z.end) : sigilAliasCode(src.slice(z.start, z.end), sigil, z.lang)
+    last = z.end
   }
   return out + sigilAliasHtml(src.slice(last), sigil, directives, last)
 }
@@ -1078,6 +1106,9 @@ export interface TranspileData {
   /** types — ligne d'instance collée après `stateMethodClashLine` : `this._mjs_types = …;`,
    *  posée avant le script (la valeur de départ passe la règle) ; chaîne VIDE sinon. */
   typesLine: string
+  /** réglage `proxy: false` : ligne d'instance `this._mjs_otherNames = { sel: ['rows'] };`, les variables que le script ou un gestionnaire
+   *  fait autres noms d'une autre (`$sel = $rows[i]`, cf. stateAliases) ; chaîne VIDE sinon, et toujours avec l'enveloppe */
+  aliasLine: string
   /** types — texte canonique de la règle de chaque store déclaré dans le `<vars>` : le build
    *  refuse deux règles différentes pour le même store. */
   storeTypes: Record<string, string>
@@ -1123,6 +1154,9 @@ export interface TranspileData {
   hasDynamicSlots: boolean
   /** Animations détectées dans `@transition.X / @in.X / @out.X`. */
   usedAnimations: string[]
+  /** @internal ceux de usedAnimations écrits avec un réglage sans nom (`*nom(down)`), relevés pour la seule construction
+   *  (cf. TranspileOpts.deferUnnamedSettings), qui les juge en fin de tour */
+  unnamedSettingAnimations: string[]
   /** `true` si le composant déclare AU MOINS un `@transition/@in/@out/@attach/@this=!/@flip`.
    * Si `false`, `_mjs_destroyNodeAndChildren` bypass le walk DFS (gain replace1k / clear1k). */
   hasDestroyHooks: boolean
@@ -1159,7 +1193,7 @@ export interface TranspileData {
   componentDeps: string[]
   /** classement des valeurs dérivées du `<script>`, dans l'ordre où elles sont écrites — seulement avec
    *  `TranspileOpts.derived` */
-  derivees?: DeriveeClassee[]
+  derivedClasses?: ClassifiedDerived[]
 }
 
 // ----------------------------------------------------------------------------
@@ -1252,12 +1286,12 @@ async function replaceMagicAssets(
 function replaceMagicImages(text: string, images?: Record<string, string>): string {
   if (!images) return text
   let out = text
-  for (const [appel, json] of Object.entries(images)) out = out.split(appel).join(json)
+  for (const [call, json] of Object.entries(images)) out = out.split(call).join(json)
   return out
 }
 
 // lints du script (lint.ts) : réexportés ici pour le bundler, la CLI et les tests
-export { lintSingletonConsume, lintImportDollarName, lintEffectTopLevel, lintEffectAncienNom, lintEmitInModule, lintOnUrlChangeLegacy, parseModuleAst, lintUndeclaredTopLevelAssignment, sourceLineOf, lintNoRawImport }
+export { lintSingletonConsume, lintImportDollarName, lintEffectTopLevel, lintEffectOldName, lintEmitInModule, lintOnUrlChangeLegacy, parseModuleAst, lintUndeclaredTopLevelAssignment, sourceLineOf, lintNoRawImport }
 
 // lintSplitRune (split-rune.ts) — rune séparée de son symbole par un espace ou un retour à la ligne : réexportée
 // ici avec les règles sœurs ; rangée à part pour être lue aussi par macros.ts (script des partiels) sans cycle
@@ -1366,8 +1400,8 @@ function maskStaticHtmlText(src: string): { masked: string; restore: (s: string)
     // et regex compris, cf. header) ; jamais refermée, tout le reste
     if (src[i] === '{') {
       flush()
-      const fin = finExpression(src, i)
-      const j = fin < 0 ? n : fin
+      const end = expressionEnd(src, i)
+      const j = end < 0 ? n : end
       out += src.slice(i, j)
       i = j
       continue
@@ -1380,7 +1414,7 @@ function maskStaticHtmlText(src: string): { masked: string; restore: (s: string)
 }
 
 // sucres du script (sugar.ts) : réexportés ici pour le bundler, la CLI et les tests
-export { applyCivetDialectSugar, singletonsDeclares, applyMjsSugarToScript }
+export { applyCivetDialectSugar, singletonsDeclares, applyMjsSugarToScript, writesInFunctions }
 
 // ----------------------------------------------------------------------------
 // escapeVtAttrValue — échappe une valeur VERBATIM `@viewTransition` (nom, ou
@@ -1484,12 +1518,12 @@ function scanBareTranslatedCall(str: string, i: number): { expr: string; end: nu
   TRANSLATED_BARE_HEAD_RE.lastIndex = i
   const head = TRANSLATED_BARE_HEAD_RE.exec(str)
   if (!head) return null
-  const debut = i + head[0].length
-  const cle   = scanQuoted(str, debut)
-  if (!cle) return null
-  const end = cle.end + 1
+  const start = i + head[0].length
+  const key   = scanQuoted(str, start)
+  if (!key) return null
+  const end = key.end + 1
   if (!/^\s*(?:,|$)/.test(str.slice(end))) return null
-  return { expr: `${head[1]}(${str.slice(debut, end)})`, end }
+  return { expr: `${head[1]}(${str.slice(start, end)})`, end }
 }
 
 // clampRaw — borne un extrait de source à une longueur d'affichage raisonnable pour un message
@@ -1535,18 +1569,18 @@ function replaceBraceDirective(html: string, marker: string, build: (raw: string
 // de commentaire, cf. maskHtmlComments plus bas) et replaceQuotedDirective juste en dessous
 // (« même balise » entre deux occurrences d'un marqueur, au lieu du `.includes('>')` trompé par un
 // `>` littéral dans la valeur d'un AUTRE attribut).
-// Accolades sans fin de `sansFinTexte` (rendues par finExpression) : une balise suivante qui retombe sur l'une d'elles
+// Accolades sans fin de `unendedText` (rendues par finExpression) : une balise suivante qui retombe sur l'une d'elles
 // sait d'avance qu'elle ne se referme pas, sans relire tout le reste du texte (un gabarit en cours de frappe, aux
 // accolades non refermées, coûtait un temps quadratique)
-let sansFinTexte = ''
-let sansFin      = new Set<number>()
+let unendedText = ''
+let noEnd       = new Set<number>()
 
 function scanTagClose(html: string, from: number): number {
   // même texte dans une autre chaîne (un masque qui n'y a rien changé) : le relevé reste, et la chaîne retenue devient
   // celle-ci, que les appels suivants reconnaissent sans relire tout le texte (une relecture par balise coûtait un temps
   // quadratique sur des milliers de balises)
-  if (html !== sansFinTexte) sansFin = new Set()
-  sansFinTexte = html
+  if (html !== unendedText) noEnd = new Set()
+  unendedText = html
   let quote: string | null = null
   for (let i = from; i < html.length; i++) {
     const ch = html[i]
@@ -1554,9 +1588,9 @@ function scanTagClose(html: string, from: number): number {
     if (ch === '"' || ch === "'") { quote = ch; continue }
     // une expression `{…}` (valeur d'attribut, raccourci) se lit d'un bloc (finExpression) : un guillemet ou un `>` qu'elle
     // contient (`{$s.replace(/"/g, '').length > 0}`) n'ouvre pas de valeur et ne ferme pas la balise ; jamais refermée, lecture d'avant
-    if (ch === '{' && !sansFin.has(i)) {
-      const fin = finExpression(html, i, sansFin)
-      if (fin > 0) { i = fin - 1; continue }
+    if (ch === '{' && !noEnd.has(i)) {
+      const end = expressionEnd(html, i, noEnd)
+      if (end > 0) { i = end - 1; continue }
     }
     if (ch === '>') return i
   }
@@ -1612,7 +1646,7 @@ function replaceQuotedDirective(html: string, marker: string, build: (value: str
     // ⇒ toujours la même balise ouvrante.
     const tagClose = lastEnd === -1 ? -1 : scanTagClose(html, lastEnd)
     if (lastEnd !== -1 && (tagClose === -1 || tagClose > idx)) {
-      throw new Error(t('transpiler.directive-dupliquee', { directive: marker.replace(/=$/, ''), balise: tagNameBefore(html, idx) }))
+      throw new Error(t('transpiler.directive-duplicate', { directive: marker.replace(/=$/, ''), tag: tagNameBefore(html, idx) }))
     }
     out += html.slice(i, idx)
     out += build(scanned.content)
@@ -1657,7 +1691,7 @@ function replaceDoubleBraceDirective(html: string, marker: string, attrName: str
       continue
     }
     out += html.slice(i, idx)
-    if (html[idx + open.length] === '{') throw new Error(t(tripleCatalogKey, { extrait: clampRaw(html.slice(idx, idx + 20)) }))
+    if (html[idx + open.length] === '{') throw new Error(t(tripleCatalogKey, { excerpt: clampRaw(html.slice(idx, idx + 20)) }))
     const { body, end } = extractBraceBody(html, idx + open.length)
     if (end === -1 || html[end + 1] !== '}') throw new Error(t(catalogKey, { raw: clampRaw(body) }))
     out += `${attrName}={${body}}`
@@ -1797,8 +1831,8 @@ function maskInterpolations(html: string, mask: (m: string) => string): string {
       continue
     }
     if (html[i] === '{') {
-      const fin = finExpression(html, i)
-      const j = fin < 0 ? n : fin
+      const end = expressionEnd(html, i)
+      const j = end < 0 ? n : end
       out += mask(html.slice(i, j))
       i = j
       continue
@@ -1809,11 +1843,11 @@ function maskInterpolations(html: string, mask: (m: string) => string): string {
   return out
 }
 
-function preprocessHtml(html: string, moduleName: string, dialecte: boolean): string {
+function preprocessHtml(html: string, moduleName: string, dialect: boolean): string {
   let out = html
 
   // Auto-fermeture mjs-* : <mjs-foo /> → <mjs-foo></mjs-foo> (un `>` entre guillemets ou dans une expression ne coupe pas la balise)
-  out = fermerComposantsAutoFermes(out)
+  out = closeSelfClosedComponents(out)
 
   // Vérification d'isométrie (open vs close) — comptée sur une vue où les valeurs d'attribut
   // (maskAttrQuotes) ET les interpolations de TEXTE (maskInterpolations, définie plus bas) sont
@@ -1830,7 +1864,7 @@ function preprocessHtml(html: string, moduleName: string, dialecte: boolean): st
     const opens = (isoView.match(openRe) ?? []).length
     const closes = (isoView.match(closeRe) ?? []).length
     if (opens !== closes) {
-      throw new Error(t('transpiler.desequilibre-structurel', { moduleName, tag, opens, closes }))
+      throw new Error(t('transpiler.structural-imbalance', { moduleName, tag, opens, closes }))
     }
   }
 
@@ -1849,37 +1883,30 @@ function preprocessHtml(html: string, moduleName: string, dialecte: boolean): st
 
   // les mots de MJS lus sur le texte (liens, formulaires, navigation) : dans les balises du gabarit seulement (inTags, tagWords) — un
   // `:title=` du texte, un `:disabled` d'une feuille de style ou d'une chaîne n'est jamais un mot
-  out = inTags(out, dialecte, tagWords)
+  out = inTags(out, dialect, tagWords)
   return codeMasks.restore(out)
 }
 
-// ----------------------------------------------------------------------------
-// classifyUpdates — sépare struct / transition / content (V2).
-//
-// V2 — les updates "content" (text/attr/bindings) sont gérés via le dispatch
-// direct par `effectsByVar` côté template. Ils ne vont plus dans le render
-// monolithique. Seuls struct + trans alimentent `_mjs_renderStruct`.
-// ----------------------------------------------------------------------------
 // chaque balise ouvrante du gabarit, lue dans son arbre (une balise-macro `<@view …>` comprise), passée à `fn` de son `<` à son
 // `>`, le texte entre elles laissé tel quel : une balise écrite dans le texte d'un <textarea> ou d'un <title>, dans une valeur
 // d'attribut ou dans un bloc masqué n'est qu'un texte. L'arbre est lu même quand il signale une faute (le parseur refuse
 // ensuite le gabarit, avec son message) ; une balise que l'arbre ne referme jamais (sa lecture s'y arrête) est passée à `fn`
 // jusqu'à la fin du texte : un mot qui y reste ouvert (la chaîne d'un `:confirm`, les accolades d'un `:title={{…}}`) garde
 // son message
-function inTags(html: string, dialecte: boolean, fn: (tag: string) => string): string {
-  const tree = lireFichier(html, { gabarit: true, dialecte })
-  const tags: Array<{ debut: number, fin: number }> = []
-  parcourir(tree, (n) => {
-    if (n.sorte === 'balise') tags.push({ debut: n.debut, fin: n.finOuvrante })
+function inTags(html: string, dialect: boolean, fn: (tag: string) => string): string {
+  const tree = readFile(html, { template: true, dialect })
+  const tags: Array<{ start: number, end: number }> = []
+  traverse(tree, (n) => {
+    if (n.kind === 'tag') tags.push({ start: n.start, end: n.openingEnd })
   })
-  tags.sort((a, b) => a.debut - b.debut)
+  tags.sort((a, b) => a.start - b.start)
   const last = tree.diagnostics[tree.diagnostics.length - 1]
-  const open = last && html[last.debut] === '<' && /[a-zA-Z@]/.test(html[last.debut + 1] ?? '') && !tags.some((tag) => tag.debut === last.debut) ? last.debut : -1
+  const open = last && html[last.start] === '<' && /[a-zA-Z@]/.test(html[last.start + 1] ?? '') && !tags.some((tag) => tag.start === last.start) ? last.start : -1
   let out = ''
   let pos = 0
   for (const tag of tags) {
-    out += html.slice(pos, tag.debut) + fn(html.slice(tag.debut, tag.fin))
-    pos  = tag.fin
+    out += html.slice(pos, tag.start) + fn(html.slice(tag.start, tag.end))
+    pos  = tag.end
   }
   return open >= pos ? out + html.slice(pos, open) + fn(html.slice(open)) : out + html.slice(pos)
 }
@@ -1893,8 +1920,8 @@ function tagWords(out: string): string {
   // préciser) — une valeur qui traîne serait un bogue muet (attribut mjs-no-ujs='valeur' posé au
   // lieu du marqueur nu attendu). GARDE testée AVANT la forme nue, même piège de capture que
   // :permanent (sinon `="valeur"` traînerait tel quel après mjs-no-ujs).
-  out = out.replace(wordRe('no-?ujs', String.raw`=("[^"]*"|'[^']*'|[^\s/>]*)`, 'gi'), (_m, valeur) => {
-    throw new Error(t('transpiler.no-ujs-valeur-refusee', { valeur }))
+  out = out.replace(wordRe('no-?ujs', String.raw`=("[^"]*"|'[^']*'|[^\s/>]*)`, 'gi'), (_m, value) => {
+    throw new Error(t('transpiler.no-ujs-value-refused', { value: value }))
   })
   // :noUJS → mjs-no-ujs (casse insensible, tiret optionnel : :noUJS/@noUjs/:noujs/:no-ujs)
   out = out.replace(wordRe('no-?ujs', String.raw`(?=[\s/>]|$)`, 'gi'), 'mjs-no-ujs')
@@ -1907,15 +1934,15 @@ function tagWords(out: string): string {
   // Plutôt qu'ignorer la valeur en silence, ERREUR explicite qui renvoie vers `id` — GARDE testée
   // AVANT la forme nue (sinon la forme nue matcherait le `:permanent` de `:permanent="nom"`
   // en laissant `="nom"` traîner tel quel dans le HTML, même piège que :callback/:flash plus bas).
-  out = out.replace(wordRe('permanent', String.raw`=("[^"]*"|'[^']*'|[^\s/>]*)`, 'gi'), (_m, valeur) => {
-    throw new Error(t('transpiler.permanent-valeur-refusee', { valeur }))
+  out = out.replace(wordRe('permanent', String.raw`=("[^"]*"|'[^']*'|[^\s/>]*)`, 'gi'), (_m, value) => {
+    throw new Error(t('transpiler.permanent-value-refused', { value: value }))
   })
   out = out.replace(wordRe('permanent', String.raw`(?=[\s/>]|$)`, 'gi'), 'mjs-permanent')
 
   // :preload="on" (sur un <a>, niveau 3) → attribut data-mjs-preload lu au runtime.
   // Valeurs : on|hover|off (guillemets simples/doubles ou nus) ; `eager` refusé
   out = out.replace(wordRe('preload', String.raw`=(["']?)eager\1`), () => {
-    throw new Error(t('transpiler.preload-eager-renomme', { ou: `attribut ${written('preload')} d'un lien` }))
+    throw new Error(t('transpiler.preload-eager-renamed', { where: `attribut ${written('preload')} d'un lien` }))
   })
   out = out.replace(wordRe('preload', String.raw`=(["']?)(on|hover|off)\1`), 'data-mjs-preload="$2"')
 
@@ -1935,7 +1962,7 @@ function tagWords(out: string): string {
   // le message coupait l'attribut au milieu (HTML corrompu, silencieux) avant ce correctif ; une
   // chaîne jamais refermée est maintenant une ERREUR de compile explicite, plus un pass-through muet.
   out = replaceQuotedDirective(out, `${written('confirm')}=`, (msg) => `mjs-confirm="${escapeVtAttrValue(msg)}"`, (raw) => {
-    throw new Error(t('transpiler.confirm-objet-invalide', { raw }))
+    throw new Error(t('transpiler.confirm-object-invalid', { raw }))
   })
 
   // :confirm={ text: '…', ok: '…', cancel: '…' } (forme OBJET) → MÊME attribut mjs-confirm,
@@ -1972,7 +1999,7 @@ function tagWords(out: string): string {
       const vi = keyM ? keyM[0].length : -1
       const call = keyM ? scanTranslatedCall(rest, vi) : null
       const scanned = keyM && !call && (rest[vi] === "'" || rest[vi] === '"') ? scanQuoted(rest, vi) : null
-      if (!keyM || (!scanned && !call)) throw new Error(t('transpiler.confirm-objet-invalide', { raw }))
+      if (!keyM || (!scanned && !call)) throw new Error(t('transpiler.confirm-object-invalid', { raw }))
       if (call) {
         translated = true
         parts.push(`${keyM[1]}: ${call.expr}`)
@@ -1994,13 +2021,13 @@ function tagWords(out: string): string {
   // pipeline d'attributs en ferait un écouteur DOM fantôme sur un événement 'callback' inexistant.
   // Nom validé ICI (identifiant simple [A-Za-z_$][\w$]*) : même message d'erreur pour les deux pièges.
   out = out.replace(wordRe('callback', String.raw`=(\{[^}]*\}?)`), (_m, raw) => {
-    throw new Error(t('transpiler.callback-nom-attendu', { valeur: raw }))
+    throw new Error(t('transpiler.callback-name-expected', { value: raw }))
   })
-  out = out.replace(wordRe('callback', String.raw`=(["'])([^"']*)\1`), (_m, _q, nom) => {
-    if (!/^[A-Za-z_$][\w$]*$/.test(nom)) {
-      throw new Error(t('transpiler.callback-nom-attendu', { valeur: `"${nom}"` }))
+  out = out.replace(wordRe('callback', String.raw`=(["'])([^"']*)\1`), (_m, _q, name) => {
+    if (!/^[A-Za-z_$][\w$]*$/.test(name)) {
+      throw new Error(t('transpiler.callback-name-expected', { value: `"${name}"` }))
     }
-    return `mjs-callback="${nom}"`
+    return `mjs-callback="${name}"`
   })
 
   // :flash="popup"/"console"/"silent" (sur <a>/<form>/<button>) → attribut mjs-flash lu au
@@ -2010,11 +2037,11 @@ function tagWords(out: string): string {
   // énumération sont des ERREURS de compile explicites — sans elles, le repli générique du pipeline
   // d'attributs en ferait un écouteur DOM fantôme sur un événement 'flash' inexistant.
   out = out.replace(wordRe('flash', String.raw`=(\{[^}]*\}?)`), (_m, raw) => {
-    throw new Error(t('transpiler.flash-valeur-invalide', { valeur: raw }))
+    throw new Error(t('transpiler.flash-value-invalid', { value: raw }))
   })
   out = out.replace(wordRe('flash', String.raw`=(["'])([^"']*)\1`), (_m, _q, val) => {
     if (val !== 'popup' && val !== 'console' && val !== 'silent') {
-      throw new Error(t('transpiler.flash-valeur-invalide', { valeur: `"${val}"` }))
+      throw new Error(t('transpiler.flash-value-invalid', { value: `"${val}"` }))
     }
     return `mjs-flash="${val}"`
   })
@@ -2026,7 +2053,7 @@ function tagWords(out: string): string {
   // Extraction par replaceQuotedDirective/scanQuoted, même correctif et même
   // raison que la forme chaîne de :confirm plus haut (apostrophe échappée `\'`).
   out = replaceQuotedDirective(out, `${written('title')}=`, (msg) => `mjs-title="${escapeVtAttrValue(msg)}"`, (raw) => {
-    throw new Error(t('transpiler.title-objet-invalide', { raw }))
+    throw new Error(t('transpiler.title-object-invalid', { raw }))
   })
 
   // :title={{ expr }} — FORME HTML : DEUX accolades ouvrantes
@@ -2041,7 +2068,7 @@ function tagWords(out: string): string {
   // replaceBraceDirective juste après. SÉCURITÉ : porte ouverte volontaire, comme `{{expr}}` en
   // interpolation — aucune désinfection ici, ne l'alimente jamais avec une saisie non maîtrisée
   // (cf. mjs_title.ts, volet runtime).
-  out = replaceDoubleBraceDirective(out, `${written('title')}=`, 'mjs-title-html', 'transpiler.title-html-non-ferme', 'transpiler.title-html-triple-accolade')
+  out = replaceDoubleBraceDirective(out, `${written('title')}=`, 'mjs-title-html', 'transpiler.title-html-not-closed', 'transpiler.title-html-triple-brace')
 
   // :title={...} — DEUX formes distinguées par leur CONTENU (rien à voir avec :confirm, qui n'a
   // pas de forme expression) :
@@ -2068,7 +2095,7 @@ function tagWords(out: string): string {
     let rest = trimmed
     while (rest.length > 0) {
       const keyM = rest.match(/^(text|delay|side|dur|transition)\s*:\s*/)
-      if (!keyM) throw new Error(t('transpiler.title-objet-invalide', { raw }))
+      if (!keyM) throw new Error(t('transpiler.title-object-invalid', { raw }))
       const key = keyM[1]
       const vi = keyM[0].length
       // text: µt(…) : seul appel accepté, et seulement pour cette clé (les réglages restent littéraux)
@@ -2082,29 +2109,29 @@ function tagWords(out: string): string {
       let num: string | undefined
       if (rest[vi] === "'" || rest[vi] === '"') {
         const scanned = scanQuoted(rest, vi)
-        if (!scanned) throw new Error(t('transpiler.title-objet-invalide', { raw }))
+        if (!scanned) throw new Error(t('transpiler.title-object-invalid', { raw }))
         str = scanned.content
         rest = rest.slice(scanned.end + 1).replace(/^\s*,?\s*/, '')
       } else {
         const numM = rest.slice(vi).match(/^-?\d+(?:\.\d+)?/)
-        if (!numM) throw new Error(t('transpiler.title-objet-invalide', { raw }))
+        if (!numM) throw new Error(t('transpiler.title-object-invalid', { raw }))
         num = numM[0]
         rest = rest.slice(vi + numM[0].length).replace(/^\s*,?\s*/, '')
       }
       if (key === 'text') {
-        if (str === undefined) throw new Error(t('transpiler.title-objet-invalide', { raw }))
+        if (str === undefined) throw new Error(t('transpiler.title-object-invalid', { raw }))
         text = str
       } else if (key === 'delay' || key === 'dur') {
-        if (num === undefined) throw new Error(t('transpiler.title-objet-invalide', { raw }))
+        if (num === undefined) throw new Error(t('transpiler.title-object-invalid', { raw }))
         conf[key] = Number(num)
       } else {
-        if (str === undefined) throw new Error(t('transpiler.title-objet-invalide', { raw }))
-        if (key === 'side' && str !== 'top' && str !== 'bottom') throw new Error(t('transpiler.title-objet-invalide', { raw }))
-        if (key === 'transition' && str !== 'fade' && str !== 'slide') throw new Error(t('transpiler.title-objet-invalide', { raw }))
+        if (str === undefined) throw new Error(t('transpiler.title-object-invalid', { raw }))
+        if (key === 'side' && str !== 'top' && str !== 'bottom') throw new Error(t('transpiler.title-object-invalid', { raw }))
+        if (key === 'transition' && str !== 'fade' && str !== 'slide') throw new Error(t('transpiler.title-object-invalid', { raw }))
         conf[key] = str
       }
     }
-    if (text === undefined && textCall === undefined) throw new Error(t('transpiler.title-objet-invalide', { raw }))
+    if (text === undefined && textCall === undefined) throw new Error(t('transpiler.title-object-invalid', { raw }))
     let attrs = textCall !== undefined ? `mjs-title={${textCall}}` : `mjs-title="${escapeVtAttrValue(text!)}"`
     if (Object.keys(conf).length > 0) attrs += ` mjs-title-conf="${escapeVtAttrValue(JSON.stringify(conf))}"`
     return attrs
@@ -2130,29 +2157,29 @@ function tagWords(out: string): string {
     (_m, pre, directive, rest) => {
       const label = `${SIGN}${directive}`
       if (rest === undefined) {
-        throw new Error(t('transpiler.viewtransition-nu-sur-view', { label }))
+        throw new Error(t('transpiler.viewtransition-bare-on-view', { label }))
       }
 
       if (rest[0] === '.') {
         const dm = rest.match(/^\.([a-zA-Z][a-zA-Z0-9-]*(?::(?:left|right|up|down))?)(?:[ \t]*=[ \t]*\{([^}]*)\})?$/)
         if (!dm) {
-          throw new Error(t('transpiler.viewtransition-forme-invalide-sur-view', { label, rest }))
+          throw new Error(t('transpiler.viewtransition-shape-invalid-on-view', { label, rest }))
         }
         const nameAndDir: string = dm[1]
         const optsRaw: string | undefined = dm[2]
         const base = nameAndDir.split(':')[0]
-        if (base === 'off') throw new Error(t('transpiler.vt-off-nexiste-pas', { label }))
-        if (base === 'on') throw new Error(t('transpiler.vt-on-implicite', { label }))
+        if (base === 'off') throw new Error(t('transpiler.vt-off-does-not-exist', { label }))
+        if (base === 'on') throw new Error(t('transpiler.vt-on-implicit', { label }))
         // Le suffixe `:direction` n'existe plus, la SEULE façon
         // d'orienter est la clé d'option (`${label}.cube={ dir: left }`).
         if (nameAndDir.includes(':')) {
-          throw new Error(t('transpiler.vt-direction-plus-dans-nom', { label, example: `${label}.cube={ dir: left }` }))
+          throw new Error(t('transpiler.vt-direction-no-longer-in-name', { label, example: `${label}.cube={ dir: left }` }))
         }
         const verbatim = optsRaw !== undefined ? `${nameAndDir}={${optsRaw}}` : nameAndDir
         const parsed = parseVtValue(verbatim)
         // Cast explicite : strictNullChecks:false (tsconfig du projet) désactive le
         // narrowing natif des unions discriminées — cf. le même commentaire dans config.ts.
-        if (!parsed.ok) throw new Error(t('transpiler.viewtransition-erreur-parsing-sur-view', { label, nameAndDir, erreur: (parsed as { ok: false; error: string }).error }))
+        if (!parsed.ok) throw new Error(t('transpiler.viewtransition-error-parsing-on-view', { label, nameAndDir, error: (parsed as { ok: false; error: string }).error }))
         // PAS de contrôle de la base — cf. le commentaire jumeau dans sections.ts : la parité avec
         // `<style :viewTransition…>` tient, mais sur la TOLÉRANCE, pas sur le refus.
         const okParsed = parsed as { ok: true; value: { priority: number | null } }
@@ -2173,18 +2200,18 @@ function tagWords(out: string): string {
       const em = (rest as string).match(/^=(?:"([^"]*)"|'([^']*)'|([^\s>]*))$/)
       const val = (em ? (em[1] ?? em[2] ?? em[3]) : '') ?? ''
       const nameOnly = val.trim().split(/\s+/)[0] || ''
-      if (nameOnly === 'off') throw new Error(t('transpiler.vt-off-nexiste-pas', { label }))
-      if (nameOnly === 'on') throw new Error(t('transpiler.vt-on-implicite', { label }))
-      throw new Error(t('transpiler.viewtransition-ancienne-forme-view', { label, val, nameOnly }))
+      if (nameOnly === 'off') throw new Error(t('transpiler.vt-off-does-not-exist', { label }))
+      if (nameOnly === 'on') throw new Error(t('transpiler.vt-on-implicit', { label }))
+      throw new Error(t('transpiler.viewtransition-old-shape-view', { label, val, nameOnly }))
     },
   )
 
   // @vt sur <a> N'EXISTE PLUS : renommé :pageTransition, seule orthographe du
   // mécanisme (nom long à part entière, pas un alias) — erreur d'orientation
   // AVANT le remplacement ci-dessous, sur le modèle de
-  // transpiler.viewtransition-racine-interdite.
+  // transpiler.viewtransition-root-forbidden.
   out = out.replace(/\B@vt=(["']?)([a-zA-Z][a-zA-Z0-9-]*(?::(?:left|right|up|down))?)\1/g, (_m, q: string, val: string) => {
-    throw new Error(t('transpiler.vt-renomme-pagetransition', { ligne: `@vt=${q}${val}${q}`, remplacement: `${written('pageTransition')}=${q}${val}${q}` }))
+    throw new Error(t('transpiler.vt-renamed-pagetransition', { line: `@vt=${q}${val}${q}`, replacement: `${written('pageTransition')}=${q}${val}${q}` }))
   })
 
   // :pageTransition="nom|on|off|nom={ direction: …, duration: … }" (sur un <a>, transition de
@@ -2215,17 +2242,17 @@ function tagWords(out: string): string {
       const val   = dq ?? sq ?? bare ?? ''
       if (val === 'on' || val === 'off') return `mjs-vt="${val}"`
       const fm = val.match(/^([a-zA-Z][a-zA-Z0-9-]*(?::(?:left|right|up|down))?)(?:[ \t]*=[ \t]*\{([^}]*)\})?$/)
-      if (!fm) throw new Error(t('transpiler.pagetransition-forme-invalide', { label, val }))
+      if (!fm) throw new Error(t('transpiler.pagetransition-shape-invalid', { label, val }))
       const nameAndDir: string = fm[1]
       const optsRaw: string | undefined = fm[2]
-      if (nameAndDir.includes(':')) throw new Error(t('transpiler.vt-direction-plus-dans-nom', { label, example: `${label}="cube={ dir: left }"` }))
+      if (nameAndDir.includes(':')) throw new Error(t('transpiler.vt-direction-no-longer-in-name', { label, example: `${label}="cube={ dir: left }"` }))
       const verbatim = optsRaw !== undefined ? `${nameAndDir}={${optsRaw}}` : nameAndDir
       const parsed = parseVtValue(verbatim)
       // cast explicite : strictNullChecks:false (tsconfig du projet) désactive le narrowing natif
       // des unions discriminées — même piège que les autres call-sites, cf. leurs commentaires.
-      if (!parsed.ok) throw new Error(t('transpiler.pagetransition-erreur-parsing', { label, valeur: verbatim, erreur: (parsed as { ok: false; error: string }).error }))
+      if (!parsed.ok) throw new Error(t('transpiler.pagetransition-error-parsing', { label, value: verbatim, error: (parsed as { ok: false; error: string }).error }))
       const okParsed = parsed as { ok: true; value: { priority: number | null } }
-      if (okParsed.value.priority != null) throw new Error(t('transpiler.pagetransition-priority-sans-effet', { label, valeur: verbatim }))
+      if (okParsed.value.priority != null) throw new Error(t('transpiler.pagetransition-priority-no-effect', { label, value: verbatim }))
       return `mjs-vt="${escapeVtAttrValue(verbatim)}"`
     },
   )
@@ -2248,20 +2275,20 @@ function tagWords(out: string): string {
     wordRe('viewTransition', String.raw`\{([^}]*)\}[ \t]*=(?:"([^"]*)"|'([^']*)'|([^\s/>]*))`),
     (_m, cond, dq, sq, bare) => {
       const val = dq ?? sq ?? bare ?? ''
-      throw new Error(t('transpiler.viewtransition-etiquette-conditionnelle-interdite', { cond, val }))
+      throw new Error(t('transpiler.viewtransition-label-conditional-forbidden', { cond, val }))
     },
   )
   out = out.replace(
     wordRe('viewTransition', String.raw`[ \t]*=[ \t]*\{([^}]*)\}`),
     (_m, expr) => {
-      throw new Error(t('transpiler.viewtransition-etiquette-calculee-interdite', { expr }))
+      throw new Error(t('transpiler.viewtransition-label-computed-forbidden', { expr }))
     },
   )
   out = out.replace(
     wordRe('viewTransition', String.raw`\.([a-zA-Z][a-zA-Z0-9:_-]*)([ \t]*=[ \t]*\{[^}]*\})?(?=[\s/>])`),
     (_m, morphName, opts) => {
       if (opts) {
-        throw new Error(t('transpiler.viewtransition-morph-options-interdites', { morphName }))
+        throw new Error(t('transpiler.viewtransition-morph-options-forbidden', { morphName }))
       }
       // ⚠ FAMILLE « GARDE MUETTE » — le `:` est capturé EXPRÈS pour pouvoir être
       // refusé. La classe de caractères l'excluait : la regex entière échouait sur
@@ -2270,7 +2297,7 @@ function tagWords(out: string): string {
       // `view-transition-name` CSS, un custom-ident où le `:` n'a pas cours : le navigateur
       // jetterait la déclaration sans un mot. Même message qu'aux deux niveaux de navigation.
       if (morphName.includes(':')) {
-        throw new Error(t('transpiler.vt-direction-plus-dans-nom', { label: written('viewTransition'), example: `${written('viewTransition')}.cube={ dir: left }` }))
+        throw new Error(t('transpiler.vt-direction-no-longer-in-name', { label: written('viewTransition'), example: `${written('viewTransition')}.cube={ dir: left }` }))
       }
       return `${written('style')}.view-transition-name="${morphName}"`
     },
@@ -2279,23 +2306,26 @@ function tagWords(out: string): string {
     wordRe('viewTransition', String.raw`[ \t]*=[ \t]*(?:"([^"]*)"|'([^']*)'|([^\s>]*))(?=[\s/>])`),
     (_m, dq, sq, bare) => {
       const val = dq ?? sq ?? bare ?? ''
-      throw new Error(t('transpiler.viewtransition-ancienne-forme', { val }))
+      throw new Error(t('transpiler.viewtransition-old-shape', { val }))
     },
   )
 
-  // restaure les blocs masqués, au point fixe : un masque peut en contenir un autre (un commentaire écrit dans une chaîne d'une
-  // interpolation est masqué avant elle) et un jeton laissé sortirait tel quel dans le code, le DOM et le rendu serveur
   return out
 }
 
+// ----------------------------------------------------------------------------
+// classifyUpdates — sépare struct / transition (V2).
+//
+// V2 — les autres updates (texte, attributs, liaisons) passent par le dispatch
+// direct `effectsByVar` côté template, jamais par un render monolithique : ils
+// ne sont pas gardés ici. Seuls struct + trans alimentent `_mjs_renderStruct`.
+// ----------------------------------------------------------------------------
 function classifyUpdates(updates: string[]): {
   struct: string[]
   trans: string[]
-  content: string[]
 } {
   const struct: string[] = []
-  const trans: string[] = []
-  const content: string[] = []
+  const trans: string[]  = []
   for (const u of updates) {
     // `_mjs_td` = code généré par `@attach` : on l'inclut dans struct pour qu'il soit
     // repassé à chaque re-rendu d'un bloc parent (`{if}`/`{key}`/`{for}`) — un nœud
@@ -2305,9 +2335,8 @@ function classifyUpdates(updates: string[]): {
     // seconde pose sur le même nœud
     if (/_mjs_updIf|_mjs_updFor|_mjs_updAwait|_mjs_updKey|_updElement|_mjs_td|µ\._mjs_fx\(/.test(u)) struct.push(u)
     else if (/_mjs_intro|_mjs_outro/.test(u)) trans.push(u)
-    else content.push(u)
   }
-  return { struct, trans, content }
+  return { struct, trans }
 }
 
 // ----------------------------------------------------------------------------
@@ -2353,7 +2382,7 @@ function parseStringLiteralArg(raw: string): { quote: string; content: string } 
 // L'appel récursif interne (backtick ré-imbriqué jamais refermé) retombe sur `s.length` pour
 // continuer à consommer jusqu'à la fin (comportement inchangé) ; pareil chez les appelants
 // (parseTemplateLiteralArg → null automatiquement, `-1` n'égalant jamais `s.length` ;
-// splitTopLevelArgs et maskTemplateLiterals → adaptés pour retomber sur `.length`).
+// splitTopLevelArgs → adapté pour retomber sur `.length`).
 export function skipTemplateLiteral(s: string, i: number): number {
   i++
   while (i < s.length) {
@@ -2440,68 +2469,6 @@ function splitTopLevelArgs(raw: string): string[] {
   return args
 }
 
-// variante de MASK_STRINGS_AND_COMMENTS_RE SANS le gabarit (backtick) :
-// celui-ci avale un gabarit ENTIER, `${…}` compris (cf. commentaire d'applyI18nPrefixing plus
-// bas) — les guillemets/commentaires seuls n'ont pas ce défaut, un gabarit se masque À PART
-// (maskTemplateLiterals, juste en dessous).
-// Commentaires JS seulement (`//`, `/* */`), jamais `#`/`###` : ce masque ne lit que du JS DÉJÀ
-// compilé, où `#` n'ouvre aucun commentaire. Pris pour un commentaire, le `#` d'un lien
-// (`"#/x/#{n}"`, devenu un gabarit) masquait la fin de sa ligne — et les `µ.t(` qui la suivaient
-// n'étaient plus préfixés par la section (libellés vides à l'écran)
-const MASK_QUOTES_AND_COMMENTS_RE =
-  /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g
-
-// Masque UNIQUEMENT le texte figé d'un gabarit (backtick) — une interpolation `${…}` est du JS
-// VIVANT (jamais un `µ.t('clé')` simplement mentionné en dur) : elle reste lisible, jamais
-// masquée. Profondeur de `{}` suivie ; guillemets internes à l'interpolation sautés SANS se
-// laisser tromper par un `}` de leur contenu. Un caractère masqué = un caractère en sortie
-// (position dans `code` original préservée, cf. l'appelant). Appelée APRÈS
-// MASK_QUOTES_AND_COMMENTS_RE : un backtick encore présent à ce stade ne peut plus être QUE
-// un vrai délimiteur de gabarit (les guillemets qui l'auraient rendu ambigu sont déjà masqués).
-// Un backtick RÉ-imbriqué dans l'interpolation (`${`inner`}`) est sauté
-// via skipTemplateLiteral (même aide que parseTemplateLiteralArg/splitTopLevelArgs), pas
-// laissé au comptage naïf de `{`/`}` (le texte figé du gabarit imbriqué pourrait contenir
-// lui-même une accolade non appariée).
-function maskTemplateLiterals(code: string): string {
-  let out = ''
-  let i = 0
-  while (i < code.length) {
-    if (code[i] !== '`') { out += code[i]; i++; continue }
-    out += '`'
-    i++
-    while (i < code.length && code[i] !== '`') {
-      if (code[i] === '\\') { out += code.slice(i, i + 2).replace(/[^\n]/g, 'x'); i += 2; continue }
-      if (code[i] === '$' && code[i + 1] === '{') {
-        const start = i
-        let depth = 1
-        i += 2
-        while (i < code.length && depth > 0) {
-          const c = code[i]
-          if (c === '"' || c === "'") {
-            i = skipQuotedSpan(code, i)
-            continue
-          }
-          if (c === '`') {
-            // `-1` (jamais refermé) : consomme jusqu'à la fin, comme avant.
-            const end = skipTemplateLiteral(code, i)
-            i = end === -1 ? code.length : end
-            continue
-          }
-          if (c === '{') depth++
-          else if (c === '}') depth--
-          i++
-        }
-        out += code.slice(start, i)   // interpolation : JS vivant, jamais masqué
-        continue
-      }
-      out += code[i] === '\n' ? '\n' : 'x'
-      i++
-    }
-    if (i < code.length) { out += '`'; i++ }
-  }
-  return out
-}
-
 // Scan caractère par caractère des appels de la traduction (MU_T_CALL_RE, sigils.ts : `µ.t(` et ses formes optionnelles, même réécriture,
 // forme écrite gardée), balance-aware (chaînes + parenthèses
 // imbriquées) — trouve la parenthèse fermante RÉELLE de chaque appel, jamais
@@ -2512,23 +2479,20 @@ function applyI18nPrefixing(code: string, section: string | null, mode: string |
   //    `code` BRUT : une chaîne JS qui MENTIONNE `µ.t('clé')` (texte d'aide, log) était prise
   //    pour un vrai appel et voyait sa « clé » préfixée par la section, à l'intérieur même de
   //    la chaîne. Copie masquée longueur-identique (même régime que lintEffectTopLevel) —
-  //    chaînes/commentaires réduits à des `x` qui PRÉSERVENT les `\n` — utilisée UNIQUEMENT
+  //    chaînes/commentaires réduits à des blancs qui PRÉSERVENT les `\n` — utilisée UNIQUEMENT
   //    pour TROUVER l'index d'un `µ.t(` réel (un marqueur à l'intérieur d'une chaîne masquée
   //    n'y est plus littéralement présent) ; le scan des parenthèses/arguments qui suit reste
   //    sur `code` ORIGINAL, inchangé — l'argument du VRAI appel est lui-même une chaîne, donc
   //    masqué dans la copie, mais jamais dans `code`.
-  // MASK_STRINGS_AND_COMMENTS_RE avale un gabarit (backtick) ENTIER,
-  //    `${…}` compris : un `µ.t(...)` niché dans l'interpolation d'un gabarit (ex. le texte
-  //    STATIQUE d'une branche {await}, compilé en `createTextNode(\`${µ.t('clé')}\`)`, jamais
-  //    en `_mjs_updText(...)` comme {if}/{for}/{key}) disparaissait donc du masque — jamais trouvé,
-  //    jamais réécrit, la clé restait NUE. Masque désormais en 2 temps : guillemets/commentaires
-  //    d'abord (MASK_QUOTES_AND_COMMENTS_RE, identique à l'ancien masque MOINS le gabarit), puis
-  //    gabarits à part (maskTemplateLiterals, ci-dessous) — texte figé masqué, `${…}` (JS vivant)
-  //    laissé LISIBLE, seul moyen d'y retrouver un vrai `µ.t(`.
-  const masked = maskTemplateLiterals(code.replace(MASK_QUOTES_AND_COMMENTS_RE, (m: string) => m.replace(/[^\n]/g, 'x')))
-  // appels cherchés sur la copie masquée, garde (`fooµ.t(`) vérifiée sur le code lui-même : un blanc du masque (`x`) passerait pour un nom
+  // vue du code à longueur égale (maskNonCode, src/mask.ts) : chaînes, commentaires, expressions régulières et texte figé des gabarits
+  //    littéraux blanchis d'une seule lecture, le code de leurs `${…}` laissé lisible — seul moyen d'y retrouver un vrai `µ.t(`. Deux
+  //    passes séparées (guillemets et commentaires, puis gabarits) lisaient le `//` d'une adresse écrite dans un gabarit littéral
+  //    (`\`https://…/${$.id}\``) comme un commentaire : la fin de la ligne était masquée, son accent grave fermant aussi, et les
+  //    `µ.t(` qui suivaient n'étaient plus préfixés par la section
+  const masked = maskNonCode(code, 'js')
+  // appels cherchés sur la copie masquée, garde (`fooµ.t(`) vérifiée sur le code lui-même
   const calls = new RegExp(MU_T_CALL_BODY, 'g')
-  const garde = new RegExp(MU_T_CALL_RE.source, 'uy')
+  const guard = new RegExp(MU_T_CALL_RE.source, 'uy')
   let out = ''
   let i = 0
   while (i < code.length) {
@@ -2536,8 +2500,8 @@ function applyI18nPrefixing(code: string, section: string | null, mode: string |
     const found     = calls.exec(masked)
     if (!found) { out += code.slice(i); break }
     const idx = found.index
-    garde.lastIndex = idx
-    if (!garde.test(code)) { out += code.slice(i, idx + 1); i = idx + 1; continue }
+    guard.lastIndex = idx
+    if (!guard.test(code)) { out += code.slice(i, idx + 1); i = idx + 1; continue }
     const marker = code.slice(idx, idx + found[0].length)
     out += code.slice(i, idx)
     let depth = 1
@@ -2580,8 +2544,8 @@ function applyI18nPrefixing(code: string, section: string | null, mode: string |
       const rest = args.slice(1).map(a => applyI18nPrefixing(a.trim(), section, mode, more, seen))
       // la clé telle que le dictionnaire la porte (échappements retirés), et ses autres sections (cf. plus bas)
       if (seen) {
-        const brute = (k: string) => k.replace(/\\(.)/g, '$1')
-        seen.push({ key: brute(key), ...(section && !isAbsolute && more.length > 0 ? { alts: more.map(s => brute(`${s}.${lit.content}`)) } : {}), written: lit.content })
+        const raw = (k: string) => k.replace(/\\(.)/g, '$1')
+        seen.push({ key: raw(key), ...(section && !isAbsolute && more.length > 0 ? { alts: more.map(s => raw(`${s}.${lit.content}`)) } : {}), written: lit.content })
       }
       let newArgs = [`${lit.quote}${key}${lit.quote}`]
       if (mode) {
@@ -2638,6 +2602,11 @@ export function cssTrapWarnings(css: string, lint?: LintToggles): string[] {
     if (w !== null) warnings.push(w)
   }
   return warnings
+}
+
+// réglage `proxy: false` : la ligne d'instance des autres noms d'une variable (cf. stateAliases), vide quand aucune n'en a
+function aliasLineOf(alias: Record<string, string[]>): string {
+  return Object.keys(alias).length > 0 ? `\n    this._mjs_otherNames = ${JSON.stringify(alias)};` : ''
 }
 
 // ----------------------------------------------------------------------------
@@ -2697,15 +2666,15 @@ function attributeValues(html: string): string {
 // accolade jamais refermée n'est pas lue (le parseur la signale plus loin, à sa ligne) : la lecture
 // reprend juste après elle
 function templateCode(html: string): string {
-  const accolades = lireAccolades(html)
+  const braces = readBraces(html)
   const parts: string[] = []
   let at = html.indexOf('{')
   while (at !== -1) {
-    const lue  = accolades.get(at)
-    let next = at + 1
-    if (lue) {
-      parts.push(lue.corps)
-      next = lue.fin
+    const read = braces.get(at)
+    let next   = at + 1
+    if (read) {
+      parts.push(read.body)
+      next = read.end
     }
     // sinon accolade seule : rien à lire, cf. plus haut
     at = html.indexOf('{', next)
@@ -2716,17 +2685,17 @@ function templateCode(html: string): string {
 // le même HTML, les chaînes et commentaires du code des accolades blanchis (même longueur, lignes gardées) : un nom
 // écrit dans un texte (`@log('alert')`) n'est pas une citation de ce nom. Une accolade jamais refermée est laissée telle quelle
 function blankBraceStrings(html: string, lang: string): string {
-  const accolades = lireAccolades(html)
-  let out         = ''
-  let from        = 0
-  let at          = html.indexOf('{')
+  const braces = readBraces(html)
+  let out      = ''
+  let from     = 0
+  let at       = html.indexOf('{')
   while (at !== -1) {
-    const lue  = accolades.get(at)
-    let next = at + 1
-    if (lue) {
-      out += html.slice(from, at + 1) + maskNonCode(html.slice(at + 1, lue.fin - 1), lang)
-      from = lue.fin - 1
-      next = lue.fin
+    const read = braces.get(at)
+    let next   = at + 1
+    if (read) {
+      out += html.slice(from, at + 1) + maskNonCode(html.slice(at + 1, read.end - 1), lang)
+      from = read.end - 1
+      next = read.end
     }
     // sinon accolade seule : rien à blanchir
     at = html.indexOf('{', next)
@@ -2773,13 +2742,13 @@ function layoutNamesInScript(ast: acorn.Node | null): string[] {
 // Restreint à une mention DÉJÀ QUOTÉE (`'` immédiatement suivi de moduleName) — motif qui couvre
 // À LA FOIS le préfixe que CETTE fonction pose elle-même (`'${moduleName}' : …`, relu si
 // transpile() puis transpileFile() l'appellent tous les deux) ET les messages qui citent déjà le
-// fichier entre quotes sans repasser par ici (ex. transpiler.page-marqueur-manquant :
+// fichier entre quotes sans repasser par ici (ex. transpiler.page-marker-missing :
 // `'${moduleName}.mjs' utilise…`) — sans exiger de guillemet fermant immédiat, absent de cette
 // 2e forme.
 function wrapModuleError(err: unknown, moduleName: string | undefined): never {
   const original = err instanceof Error ? err : new Error(String(err))
   if (moduleName && !original.message.includes(`'${moduleName}`)) {
-    throw new Error(t('transpiler.erreur-dans-module', { moduleName, message: original.message }), { cause: original })
+    throw new Error(t('transpiler.error-in-module', { moduleName, message: original.message }), { cause: original })
   }
   throw original
 }
@@ -2790,8 +2759,8 @@ function wrapModuleError(err: unknown, moduleName: string | undefined): never {
 // les erreurs du nom de module).
 // ----------------------------------------------------------------------------
 // mots du langage et fonctions du navigateur qu'une fléchée à paramètre nu (`nom => …`) peut suivre sans piège (cf. transpileImpl)
-const MOTS_AVANT_FLECHE       = new Set(['async', 'await', 'return', 'yield', 'then', 'else', 'do', 'and', 'or', 'not', 'is', 'isnt', 'in', 'of', 'new', 'typeof', 'void', 'delete', 'throw', 'case', 'when', 'unless', 'if', 'loop', 'until', 'while'])
-const FONCTIONS_DU_NAVIGATEUR = new Set(['requestAnimationFrame', 'requestIdleCallback', 'alert', 'confirm', 'prompt', 'matchMedia', 'getComputedStyle', 'open', 'print', 'scrollTo', 'scrollBy', 'postMessage', 'addEventListener', 'removeEventListener', 'dispatchEvent'])
+const WORDS_BEFORE_ARROW = new Set(['async', 'await', 'return', 'yield', 'then', 'else', 'do', 'and', 'or', 'not', 'is', 'isnt', 'in', 'of', 'new', 'typeof', 'void', 'delete', 'throw', 'case', 'when', 'unless', 'if', 'loop', 'until', 'while'])
+const BROWSER_FUNCTIONS  = new Set(['requestAnimationFrame', 'requestIdleCallback', 'alert', 'confirm', 'prompt', 'matchMedia', 'getComputedStyle', 'open', 'print', 'scrollTo', 'scrollBy', 'postMessage', 'addEventListener', 'removeEventListener', 'dispatchEvent'])
 
 async function transpileImpl(
   source: string,
@@ -2799,11 +2768,11 @@ async function transpileImpl(
 ): Promise<{ data: TranspileData; output: string; sourceMap?: string }> {
   const moduleName = opts.moduleName ?? 'inline'
   // le fichier tel qu'écrit : les contrôles de construction y retrouvent la ligne d'une clé µt
-  const sourceEcrite = source
-  // où une faute relit son texte écrit (cf. OuEcrit) : ses lignes découpées sur le seul chemin d'une faute, marque d'ordre et
+  const writtenSource = source
+  // où une faute relit son texte écrit (cf. WhereWritten) : ses lignes découpées sur le seul chemin d'une faute, marque d'ordre et
   // `\r\n` retirés comme plus bas, avant les alias et la réécriture de `µ$$X`
-  let lignesEcrites: string[] | null = null
-  const ouEcrit: OuEcrit = { fichier: opts.sourceFileName ?? `${moduleName}.mjs`, lignes: () => (lignesEcrites ??= sourceEcrite.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n')), baseDir: opts.baseDir ?? '' }
+  let writtenLines: string[] | null = null
+  const whereWritten: WhereWritten = { file: opts.sourceFileName ?? `${moduleName}.mjs`, lines: () => (writtenLines ??= writtenSource.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n')), baseDir: opts.baseDir ?? '' }
   // calculé UNE fois, en tête — transmis tel quel aux adapters de langage et aux modules
   // profonds (analyzer/parser/generator) qui tournent dans CE même appel, jamais recalculé.
   const colorsEnabled = opts.colorsEnabled ?? false
@@ -2811,7 +2780,7 @@ async function transpileImpl(
   // `${urlPrefix}/`. Pour usage standalone (sans bundler), default à `/modularjs/`.
   const dirInject = opts.dirInject ?? '/modularjs/'
   // le gabarit se lit en Civet : l'ancienne grammaire « js », passée par programme, est refusée comme dans mjs.config.json
-  if ((opts.templateLang as string | undefined) === 'js') throw new Error(t('bundler.config.template-js-retire', { cle: '[ModularJS] templateLang' }))
+  if ((opts.templateLang as string | undefined) === 'js') throw new Error(t('bundler.config.template-js-removed', { key: '[ModularJS] templateLang' }))
 
   // fins de ligne normalisées à
   //    l'entrée, AVANT tout le reste : le sucre mono-ligne (`k = (a, b) ->`) ne s'appliquait
@@ -2880,25 +2849,25 @@ async function transpileImpl(
   //    réécriture n'opère plus que sur ce qui reste EXPOSÉ ; restauration dans
   //    l'ordre inverse, texte masqué RENDU À L'IDENTIQUE (µ$$X littéral compris).
   {
-    const { masked: sansDoc, restore: restoreDoc } = maskDocBlocks(source)
-    const { masked: sansHtmlStatique, restore: restoreHtmlStatique } = maskStaticHtmlText(sansDoc)
-    const { masked: sansChainesEtCommentaires, restore: restoreChainesEtCommentaires } = maskStringsAndComments(sansHtmlStatique)
-    const reecrit = sansChainesEtCommentaires
+    const { masked: noDoc, restore: restoreDoc } = maskDocBlocks(source)
+    const { masked: withoutStaticHtml, restore: restoreStaticHtml } = maskStaticHtmlText(noDoc)
+    const { masked: withoutStringsAndComments, restore: restoreStringsAndComments } = maskStringsAndComments(withoutStaticHtml)
+    const rewritten = withoutStringsAndComments
       .replace(/^([ \t]*)export[ \t]+µ\$\$([a-zA-Z0-9_]+)([ \t]*=)/gm, '$1export µ$$$2$3')
-      .replace(/µ\$\$([a-zA-Z0-9_]+)/g, (_m: string, nom: string) => {
-        if (singletonImports.has(nom)) return '$' + nom
-        throw new Error(t('transpiler.singleton-sans-import', { nom }))
+      .replace(/µ\$\$([a-zA-Z0-9_]+)/g, (_m: string, name: string) => {
+        if (singletonImports.has(name)) return '$' + name
+        throw new Error(t('transpiler.singleton-no-import', { name: name }))
       })
-    source = restoreDoc(restoreHtmlStatique(restoreChainesEtCommentaires(reecrit)))
+    source = restoreDoc(restoreStaticHtml(restoreStringsAndComments(rewritten)))
   }
 
   // 1. Directives + nettoyage
   const dir = extractDirectives(source)
   const content = dir.cleaned
   // classes globales citées (`µNom`, `µ.Nom`, gabarit compris) : un import statique de chacune, en tête du module, comme un `@import`
-  for (const nom of classesCitedBy(source, opts.classes ?? {})) {
-    dir.pendingAutoImports.push(classImport(opts.classes![nom]))
-    dir.directivesDesImports.push({ ligne: 1, texte: `µ${nom}` })
+  for (const name of classesCitedBy(source, opts.classes ?? {})) {
+    dir.pendingAutoImports.push(classImport(opts.classes![name]))
+    dir.importDirectives.push({ line: 1, text: `µ${name}` })
   }
 
   // 2. Sections
@@ -2909,29 +2878,24 @@ async function transpileImpl(
   let html = sections.html
   // le script tel qu'écrit, avant ce qui s'y ajoute (partiels, persistance) : ses lignes sont celles du fichier
   const writtenScript = script.raw
-  const moduleEcrit   = moduleSection.raw
+  const writtenModule = moduleSection.raw
 
   // 2-quater. Types et valeurs permises — un <types> n'a pas sa place dans un composant (fichier
   //    *.types.mjs) ; le <vars> est lu tout de suite, ses fautes sortent avant tout le reste, et
   //    ses règles sont émises plus bas, avec la classe (data.typesDecl/typesLine)
-  if (sections.types.length > 0) throw new Error(t('transpiler.types-dans-composant', { ligne: sections.types[0].startLine }))
-  if (sections.effects.length > 0) throw new Error(t('transpiler.effets-dans-composant', { ligne: sections.effects[0].startLine }))
+  if (sections.types.length > 0) throw new Error(t('transpiler.types-in-component', { line: sections.types[0].startLine }))
+  if (sections.effects.length > 0) throw new Error(t('transpiler.effects-in-component', { line: sections.effects[0].startLine }))
   // un composant sans HTML (script ou style seuls, un commentaire) ne rend rien
   if (replaceBlocks(html, ['<!--'], () => '').trim() === '') {
-    const vide = typedLine('emptyComponent', t('transpiler.composant-sans-html', { moduleName }), opts.lint)
-    if (vide !== null) sections.warnings.push(vide)
-  }
-  // une chaîne d'un script écrite sur plusieurs lignes où le retrait des commentaires a pris un commentaire : avertie à sa place
-  for (const p of sections.lostInStrings) {
-    const w = typedLine('multilineString', t('transpiler.chaine-longue-entamee', { position: `${ouEcrit.fichier}:${p.line}:${p.column}`, signe: p.sign, ouverte: p.openLine, guillemet: p.quote }), opts.lint)
-    if (w !== null) sections.warnings.push(w)
+    const empty = typedLine('emptyComponent', t('transpiler.component-no-html', { moduleName }), opts.lint)
+    if (empty !== null) sections.warnings.push(empty)
   }
   // `@formAssociated` écrit plus d'une fois : la directive n'a qu'un sens, la compilation passe et un avertissement le dit
-  if (dir.moduleFormAssociatedTwice) sections.warnings.push(t('transpiler.form-associated-plusieurs-fois', { moduleName }))
+  if (dir.moduleFormAssociatedTwice) sections.warnings.push(t('transpiler.form-associated-multiple-times', { moduleName }))
   // une directive lisible écrite dans le texte d'un élément s'affiche telle quelle : un avertissement le dit, à sa ligne du fichier
-  for (const at of importsInElementText(source)) sections.warnings.push(t('transpiler.import-dans-le-texte', { moduleName, ligne: source.slice(0, at).split('\n').length }))
+  for (const at of importsInElementText(source)) sections.warnings.push(t('transpiler.import-in-text', { moduleName, line: source.slice(0, at).split('\n').length }))
   const varRules = compileVars(sections.vars, opts.typeDefs ?? {}, opts.typesText ?? true)
-  checkRessorts(varRules, [
+  checkSprings(varRules, [
     { text: moduleSection.raw, startLine: moduleSection.startLine, code: true },
     { text: script.raw, startLine: script.startLine, code: true },
     { text: html, startLine: sections.htmlStartLine, code: false },
@@ -2939,14 +2903,14 @@ async function transpileImpl(
   // `type: Reward[]` d'un appel µajax : la règle nommée, compilée, contrôlera la réponse à son arrivée ; la forme appelable
   // `µajax '/url', options` devient µ._mjs_ajax, un GET dont la promesse rend le corps
   // un `type: Nom` de verbe n'est une donnée que si le fichier lie `Nom` : lu sur l'arbre du code compilé, en fin de compilation
-  const aLier: AjaxVerbName[] = []
-  // les réécritures de la forme appelable, par bloc : un `µajax` réécrit dans un texte est cité à sa place (cf. placesDesAjaxEnTexte)
-  const reecritsAjax: ReecritAjax[] = []
-  for (const [bloc, nom] of [[moduleSection, '<script module>'], [script, '<script>']] as const) {
-    const ajax = compileAjaxTypes(bloc.raw, opts.typeDefs ?? {}, opts.typesText ?? true, bloc.startLine, opts.moduleName ? `mjs-${opts.moduleName.toLowerCase()}` : undefined, nom, true)
-    bloc.raw = compileAjaxCall(ajax.code, reecritsAjax, bloc.startLine)
+  const toBind: AjaxVerbName[] = []
+  // les réécritures de la forme appelable, par bloc : un `µajax` réécrit dans un texte est cité à sa place (cf. ajaxPlacesAsText)
+  const ajaxRewrites: AjaxRewrite[] = []
+  for (const [block, name] of [[moduleSection, '<script module>'], [script, '<script>']] as const) {
+    const ajax = compileAjaxTypes(block.raw, opts.typeDefs ?? {}, opts.typesText ?? true, block.startLine, opts.moduleName ? `mjs-${opts.moduleName.toLowerCase()}` : undefined, name, true)
+    block.raw = compileAjaxCall(ajax.code, ajaxRewrites, block.startLine, !/^(?:js|ts)$/.test(block.lang ?? ''), block.lang === 'coffee')
     if (ajax.used) varRules.usesNamedTypes = true
-    aLier.push(...ajax.aLier)
+    toBind.push(...ajax.toBind)
   }
 
   // 2-bis. Lint µeffect/µinspect hors top-level — sur le SOURCE du dev tout
@@ -2979,8 +2943,10 @@ async function transpileImpl(
     moduleSection.raw = dir.pendingAutoImports.join('\n') + '\n' + moduleSection.raw
   }
 
-  // 4. Persistance : append au script user
+  // 4. Persistance : append au script user — du Civet, refusé sous un script JavaScript, TypeScript ou CoffeeScript, où il
+  // sortait en erreur de syntaxe sur du code que l'auteur n'a pas écrit
   const persistCode = buildPersistCode(moduleName, dir.persistLocalVars, dir.persistSessionVars)
+  if (persistCode && (script.lang === 'js' || script.lang === 'ts' || script.lang === 'coffee')) throw new Error(t('transpiler.persist-script-civet', { lang: script.lang }))
   if (persistCode) script.raw = script.raw + persistCode
 
   // 4a. <@include partial> + <@window/document/body/head> — EN PREMIER,
@@ -2999,15 +2965,15 @@ async function transpileImpl(
   // la table des lignes du HTML où des partiels sont versés, chacun nommé par son chemin depuis le dossier du composant
   // (aucune sans partiel) : une faute écrite dans un partiel cite sa ligne dans ce partiel, une faute écrite après lui la
   // ligne du composant (cf. citeLine)
-  const relatif      = (file: string | null): string | null => (file === null ? null : relative(opts.baseDir ?? '', file))
-  const places       = includeAcc.places?.some((p) => p.file !== null || p.suite) ? includeAcc.places.map((p) => (p.file === null && !p.suite ? p : { ...p, file: relatif(p.file), ...(p.suite && { suite: p.suite.map((r) => ({ ...r, file: relatif(r.file) })) }) })) : undefined
+  const toRelative   = (file: string | null): string | null => (file === null ? null : relative(opts.baseDir ?? '', file))
+  const places       = includeAcc.places?.some((p) => p.file !== null || p.rest) ? includeAcc.places.map((p) => (p.file === null && !p.rest ? p : { ...p, file: toRelative(p.file), ...(p.rest && { rest: p.rest.map((r) => ({ ...r, file: toRelative(r.file) })) }) })) : undefined
   const citeHtmlLine = (k: number): number | string => citeLine(places, sections.htmlStartLine, k)
   const includedHtml = html
   // Append partial scripts/styles/modules au parent
-  // la place dans son fichier de chaque ligne du script et du `<script module>` donnés à l'adaptateur (cf. origineDeLigne) : une
+  // la place dans son fichier de chaque ligne du script et du `<script module>` donnés à l'adaptateur (cf. lineOrigin) : une
   // faute de Civet, de CoffeeScript, de TypeScript ou du lexeur y est citée `fichier.mjs:ligne:colonne`
-  const blocScript: BlocVerse = { avant: 0, ecrit: writtenScript, premiere: script.startLine, fichier: ouEcrit.fichier, source: ouEcrit.lignes, versAvant: script.raw, morceaux: includeAcc.script, places: includeAcc.scriptPlaces ?? [], baseDir: ouEcrit.baseDir }
-  const blocModule: BlocVerse = { avant: dir.pendingAutoImports.length, ecrit: moduleEcrit, premiere: moduleSection.startLine, fichier: ouEcrit.fichier, source: ouEcrit.lignes, versAvant: moduleSection.raw, morceaux: includeAcc.module, places: includeAcc.modulePlaces ?? [], baseDir: ouEcrit.baseDir }
+  const scriptBlock: PouredBlock = { before: 0, written: writtenScript, first: script.startLine, file: whereWritten.file, source: whereWritten.lines, mergedBefore: script.raw, pieces: includeAcc.script, places: includeAcc.scriptPlaces ?? [], baseDir: whereWritten.baseDir }
+  const moduleBlock: PouredBlock = { before: dir.pendingAutoImports.length, written: writtenModule, first: moduleSection.startLine, file: whereWritten.file, source: whereWritten.lines, mergedBefore: moduleSection.raw, pieces: includeAcc.module, places: includeAcc.modulePlaces ?? [], baseDir: whereWritten.baseDir }
   if (includeAcc.script.length > 0) script.raw += '\n' + includeAcc.script.join('\n')
   if (includeAcc.module.length > 0) moduleSection.raw += '\n' + includeAcc.module.join('\n')
   // neutralise tout octet NUL PRÉ-EXISTANT du style hôte AVANT d'apposer les marqueurs
@@ -3038,11 +3004,11 @@ async function transpileImpl(
   }
   // 4c-bis. µeffect écrit dans un gestionnaire du gabarit (`@click={…}`, balises globales comprises, partiels versés compris), sigil déjà
   //     normalisé : refusé à la construction comme dans une méthode du script, sauf directement dans une racine µeffect.root (cf.
-  //     lintEffectGestionnaire) ; la faute cite la ligne de l'attribut, dans son partiel s'il y est écrit
+  //     lintEffectHandler) ; la faute cite la ligne de l'attribut, dans son partiel s'il y est écrit
   if (html.includes('effect')) {
-    parcourir(lireFichier(html, { gabarit: true, dialecte: true }), (n) => {
-      if (n.sorte !== 'balise') return
-      for (const a of n.attributs) if (a.sorte === 'geste' && a.code && a.nom) lintEffectGestionnaire(html.slice(a.code.debut, a.code.fin), a.nom, citeHtmlLine(html.slice(0, a.debut).split('\n').length - 1))
+    traverse(readFile(html, { template: true, dialect: true }), (n) => {
+      if (n.kind !== 'tag') return
+      for (const a of n.attrs) if (a.kind === 'gesture' && a.code && a.name) lintEffectHandler(html.slice(a.code.start, a.code.end), a.name, citeHtmlLine(html.slice(0, a.start).split('\n').length - 1))
     })
   }
 
@@ -3072,19 +3038,19 @@ async function transpileImpl(
   // (µlayout, modèles connus) ; ceux du composant sont déjà développés (cf. processIncludes)
   html = expandLayoutBlocks(html, sections.htmlStartLine)
   // une balise du langage écrite dans un partiel est citée à sa ligne du partiel (table des lignes)
-  // le code des balises globales est compilé par la langue du script qui le reçoit, ou à part dans celle des gestionnaires (cf. globalesAPart)
-  const macros = processGlobalMacros(html, { firstLine: sections.htmlStartLine, sigil: opts.sigil, places, dialecte: true, civet: script.lang === 'js' || script.lang === 'ts' || script.lang === 'civet' })
+  // le code des balises globales est compilé par la langue du script qui le reçoit, ou à part dans celle des gestionnaires (cf. separateGlobals)
+  const macros = processGlobalMacros(html, { firstLine: sections.htmlStartLine, sigil: opts.sigil, places, dialect: true, civet: script.lang === 'js' || script.lang === 'ts' || script.lang === 'civet' })
   html = macros.html
   // le code des balises globales (`<@window>`, `<@document>`, `<@body>`…) est écrit dans la langue des gestionnaires : un script Civet ou
   // CoffeeScript le reçoit tel quel, un script JavaScript ou TypeScript ne le lirait pas — compilé à part, comme eux, après le script
-  const globalesAPart = script.lang === 'js' || script.lang === 'ts' ? macros.setup + macros.teardown : ''
-  // une faute de Civet dans un gestionnaire de ces balises, versé au script : citée à sa place dans le gabarit (cf. MacrosVersees)
+  const separateGlobals = script.lang === 'js' || script.lang === 'ts' ? macros.setup + macros.teardown : ''
+  // une faute de Civet dans un gestionnaire de ces balises, versé au script : citée à sa place dans le gabarit (cf. PouredMacros)
   // le code versé avant ces lignes (le <script>, ceux des partiels) : son dernier signe, cherché sur le seul chemin d'une faute
-  const scriptAvantMacros = script.raw
-  const finAvantMacros    = (): FinDuScript | null => finDuScript(scriptAvantMacros, script.lang, blocScript)
-  if (!globalesAPart && macros.setup) blocScript.macros = { avant: script.raw, origines: macros.setupOrigins, places, premiere: sections.htmlStartLine, ou: ouEcrit, fin: finAvantMacros }
-  if (!globalesAPart && macros.setup) script.raw += macros.setup
-  if (!globalesAPart && macros.teardown) script.raw += macros.teardown
+  const scriptBeforeMacros = script.raw
+  const endBeforeMacros    = (): ScriptEnd | null => scriptEnd(scriptBeforeMacros, script.lang, scriptBlock)
+  if (!separateGlobals && macros.setup) scriptBlock.macros = { before: script.raw, origins: macros.setupOrigins, places, first: sections.htmlStartLine, where: whereWritten, end: endBeforeMacros }
+  if (!separateGlobals && macros.setup) script.raw += macros.setup
+  if (!separateGlobals && macros.teardown) script.raw += macros.teardown
 
   // 5. Préprocesse HTML
   const hasDynamicSlots = html.includes('<@slot')
@@ -3113,22 +3079,22 @@ async function transpileImpl(
   //    l'homonyme dans le <script> (ReferenceError au montage, prouvé par le test rouge).
   // noms que la passe de déclaration pose elle-même (`x .= undefined`) : le contrôle des noms de variable ne les compte pas ;
   // chaque déclaration qu'elle pose (ligne, noms) est vérifiée par l'arbre de Civet
-  // un script de composant n'a plus de commentaire (retirerCommentaires) : sous la lecture par l'arbre, le sucre n'en lit
+  // un script de composant n'a plus de commentaire (removeComments) : sous la lecture par l'arbre, le sucre n'en lit
   // aucun ; repris (un `#` que la compilation lit comme du code), il est relu du début, ses commentaires lus par l'arbre
-  const sucreRelu = (declares: Set<string>, passe: DeclarationsDeLaPasse, sucre: () => string) => (): string => {
+  const rereadSugar = (declares: Set<string>, pass: PassDeclarations, sugar: () => string) => (): string => {
     declares.clear()
-    passe.enPlace.clear()
-    passe.hisses.clear()
-    passe.etats.clear()
-    return sucre()
+    pass.inPlace.clear()
+    pass.hoisted.clear()
+    pass.states.clear()
+    return sugar()
   }
   const declaresModule = new Set<string>()
-  const passeModule    = declarationsDeLaPasse()
-  const moduleLecture  = { externalVars, moduleMode: true, fileName: `${moduleName}.module`, firstLine: moduleSection.startLine - dir.pendingAutoImports.length, lang: moduleSection.lang }
-  const moduleSucreDe  = (commentaires: 'retires' | 'lus') => applyMjsSugarToScript(moduleSection.raw, moduleSection.lang, undefined, '<script module>', moduleSection.startLine - dir.pendingAutoImports.length, declaresModule, passeModule, false, commentaires)
-  const moduleSucre    = moduleSection.raw ? situerLaFaute(() => moduleSucreDe('retires'), `${moduleName}.module`, moduleSection.raw, blocModule) : ''
-  const moduleLu       = moduleSection.raw ? situerLaFaute(() => preparerLeScript(moduleSucre, moduleLecture), `${moduleName}.module`, moduleSucre, blocModule) : { texte: '', retouche: null }
-  const modulePrep     = moduleLu.texte
+  const modulePass     = passDeclarations()
+  const moduleReading  = { externalVars, moduleMode: true, fileName: `${moduleName}.module`, firstLine: moduleSection.startLine - dir.pendingAutoImports.length, lang: moduleSection.lang }
+  const moduleSugarOf  = (comments: 'removed' | 'read') => applyMjsSugarToScript(moduleSection.raw, moduleSection.lang, undefined, '<script module>', moduleSection.startLine - dir.pendingAutoImports.length, declaresModule, modulePass, false, comments)
+  const moduleSugar    = moduleSection.raw ? locateFault(() => moduleSugarOf('removed'), `${moduleName}.module`, moduleSection.raw, moduleBlock) : ''
+  const moduleRead     = moduleSection.raw ? locateFault(() => prepareScript(moduleSugar, moduleReading), `${moduleName}.module`, moduleSugar, moduleBlock) : { text: '', tweak: null }
+  const modulePrep     = moduleRead.text
   // même remap qu'au <script> composant (cf.
   // scriptCompiled plus bas) : une erreur Civet DANS <script module> citait une position relative
   // au texte COMPILÉ (`modulePrep`), jamais à la ligne réelle du `.mjs` — remapAdapterErrorLine
@@ -3136,14 +3102,16 @@ async function transpileImpl(
   // même que `shiftSourceMapLines(moduleCompiled.map, moduleSection.startLine - 1)` plus bas
   // (succès) applique déjà à la carte de source de ce bloc.
   // le texte donné en dernier à l'adaptateur (une reprise le relit) : les positions de son erreur sont les siennes
-  let moduleVu = ''
+  let moduleSeen = ''
   let moduleCompiled: { code: string, map?: string }
   if (modulePrep) {
     try {
-      moduleCompiled = await compilerLeScriptPrepare(moduleLu, moduleSucre, moduleLecture, (texte, retouche) => moduleAdapter.compileToJs(moduleVu = texte, { fileName: `${moduleName}.module`, lint: opts.lint, colorsEnabled, nomsDeVariables: true, nomsDeclaresParMjs: declaresModule, declarerAffectations: true, declarationsDeLaPasse: passeModule, nomsConnus: retouche?.noms, retoucheArbre: retouche ?? undefined }), sucreRelu(declaresModule, passeModule, () => moduleSucreDe('lus')))
+      moduleCompiled = await compilePreparedScript(moduleRead, moduleSugar, moduleReading, (text, tweak) => moduleAdapter.compileToJs(moduleSeen = text, { fileName: `${moduleName}.module`, lint: opts.lint, colorsEnabled, variableNames: true, mjsDeclaredNames: declaresModule, declareAssignments: true, passDeclarations: modulePass, knownNames: tweak?.names, treeFixup: tweak ?? undefined }), rereadSugar(declaresModule, modulePass, () => moduleSugarOf('read')))
+      // `µ$X = …` dans le corps d'une fonction : une écriture (writesInFunctions)
+      moduleCompiled = { ...moduleCompiled, code: writesInFunctions(moduleCompiled.code) }
     }
     catch (e) {
-      throw remapAdapterErrorLine(e, `${moduleName}.module`, situerDansLeBloc(moduleVu, blocModule), dir.directivesDesImports, ouEcrit.fichier)
+      throw remapAdapterErrorLine(e, `${moduleName}.module`, locateInBlock(moduleSeen, moduleBlock), dir.importDirectives, whereWritten.file)
     }
   }
   else {
@@ -3152,20 +3120,20 @@ async function transpileImpl(
   let moduleJs = moduleCompiled.code
   // une seule analyse du JS compilé, partagée par les contrôles qui suivent (constantes, symboles réservés, déclarations…)
   const moduleAst = parseModuleAst(moduleJs, true)
-  // défaut de Civet sur une flèche en ligne (FLECHE_EN_LIGNE_CIVET_RE, `f = => x = if a then 'b' else 'c'`) : le JavaScript
+  // défaut de Civet sur une flèche en ligne (INLINE_ARROW_CIVET_RE, `f = => x = if a then 'b' else 'c'`) : le JavaScript
   // du bloc ne s'analyse pas, la page mourait au chargement — même refus que pour le <script> (cf. plus bas)
   if (moduleJs && !moduleAst) {
     let position: RegExpExecArray | null = null
     try { acorn.parse(moduleJs, { ecmaVersion: 'latest', sourceType: 'module' }) }
     catch (e: any) { position = /\((\d+):\d+\)$/.exec(String(e?.message ?? '')) }
-    const produite = position ? moduleJs.split('\n')[Number(position[1]) - 1] ?? '' : ''
-    if (FLECHE_EN_LIGNE_CIVET_RE.test(produite)) throw new Error(t('transpiler.script-fleche-en-ligne', { moduleName, ligne: Number(position![1]), extrait: produite.trim().slice(0, 160), section: '<script module>' }))
+    const producedLine = position ? moduleJs.split('\n')[Number(position[1]) - 1] ?? '' : ''
+    if (INLINE_ARROW_CIVET_RE.test(producedLine)) throw new Error(t('transpiler.script-arrow-inline', { moduleName, line: Number(position![1]), excerpt: producedLine.trim().slice(0, 160), section: '<script module>' }))
   }
   // même contrôle des constantes `:=` que pour le `<script>` (cf. plus bas), sur le JS du bloc
   // `<script module>` juste compilé : une constante réaffectée dans le bloc lui-même
   const moduleConstReassign = findConstReassignment(moduleJs, [], moduleAst)
   if (moduleConstReassign) {
-    throw new Error(t('transpiler.civet-reaffectation-constante', { nom: moduleConstReassign.name, ligne: moduleConstReassign.line, code: true }))
+    throw new Error(t('transpiler.civet-reassignment-constant', { name: moduleConstReassign.name, line: moduleConstReassign.line, code: true }))
   }
   // Vars top-level du `<script module>` partagé : le `<script>` composant peut les
   // lire/réassigner sans qu'elles soient re-déclarées localement (sinon TDZ). Repli
@@ -3189,12 +3157,12 @@ async function transpileImpl(
         return out
       })()
   const declaresScript = new Set<string>()
-  const passeScript    = declarationsDeLaPasse()
-  const scriptLecture  = { externalVars, fileName: `${moduleName}.script`, firstLine: script.startLine, lang: script.lang }
-  const scriptSucreDe  = (commentaires: 'retires' | 'lus') => applyMjsSugarToScript(script.raw, script.lang, moduleVars, '<script>', script.startLine, declaresScript, passeScript, true, commentaires)
-  const scriptSucre    = script.raw ? situerLaFaute(() => scriptSucreDe('retires'), `${moduleName}.script`, script.raw, blocScript) : ''
-  const scriptLu       = script.raw ? situerLaFaute(() => preparerLeScript(scriptSucre, scriptLecture), `${moduleName}.script`, scriptSucre, blocScript) : { texte: '', retouche: null }
-  const scriptPrep     = scriptLu.texte
+  const scriptPass     = passDeclarations()
+  const scriptReading  = { externalVars, fileName: `${moduleName}.script`, firstLine: script.startLine, lang: script.lang }
+  const scriptSugarOf  = (comments: 'removed' | 'read') => applyMjsSugarToScript(script.raw, script.lang, moduleVars, '<script>', script.startLine, declaresScript, scriptPass, true, comments)
+  const scriptSugar    = script.raw ? locateFault(() => scriptSugarOf('removed'), `${moduleName}.script`, script.raw, scriptBlock) : ''
+  const scriptRead     = script.raw ? locateFault(() => prepareScript(scriptSugar, scriptReading), `${moduleName}.script`, scriptSugar, scriptBlock) : { text: '', tweak: null }
+  const scriptPrep     = scriptRead.text
 
   // 8. Compile via language adapter → JS standard
   // carte de source du compilateur, décalée de l'offset de ligne du bloc
@@ -3206,32 +3174,34 @@ async function transpileImpl(
   // ligne 1 tombe sur `script.startLine` du `.mjs` réel — jamais sur sa propre ligne 1. Même
   // décalage QUE `shiftSourceMapLines` juste en dessous (succès), appliqué ICI au MESSAGE
   // (remapAdapterErrorLine, plus haut) avant de relancer.
-  let scriptVu = ''
+  let scriptSeen = ''
   let scriptCompiled: { code: string, map?: string }
   if (scriptPrep) {
     try {
-      scriptCompiled = await compilerLeScriptPrepare(scriptLu, scriptSucre, scriptLecture, (texte, retouche) => scriptAdapter.compileToJs(scriptVu = texte, { fileName: `${moduleName}.script`, lint: opts.lint, colorsEnabled, nomsDeVariables: true, nomsDeclaresParMjs: declaresScript, declarerAffectations: true, nomsConnus: retouche ? [...moduleVars, ...retouche.noms] : moduleVars, declarationsDeLaPasse: passeScript, retoucheArbre: retouche ?? undefined }), sucreRelu(declaresScript, passeScript, () => scriptSucreDe('lus')))
+      scriptCompiled = await compilePreparedScript(scriptRead, scriptSugar, scriptReading, (text, tweak) => scriptAdapter.compileToJs(scriptSeen = text, { fileName: `${moduleName}.script`, lint: opts.lint, colorsEnabled, variableNames: true, inComponent: true, mjsDeclaredNames: declaresScript, declareAssignments: true, knownNames: tweak ? [...moduleVars, ...tweak.names] : moduleVars, passDeclarations: scriptPass, treeFixup: tweak ?? undefined }), rereadSugar(declaresScript, scriptPass, () => scriptSugarOf('read')))
+      // `µ$X = …` dans le corps d'une fonction : une écriture (writesInFunctions)
+      scriptCompiled = { ...scriptCompiled, code: writesInFunctions(scriptCompiled.code) }
     }
     catch (e) {
-      throw remapAdapterErrorLine(e, `${moduleName}.script`, situerDansLeBloc(scriptVu, blocScript))
+      throw remapAdapterErrorLine(e, `${moduleName}.script`, locateInBlock(scriptSeen, scriptBlock))
     }
   }
   else {
     scriptCompiled = { code: '' }
   }
-  // balises globales d'un script JavaScript ou TypeScript (cf. globalesAPart) : leurs gestionnaires voient les noms du script et du
+  // balises globales d'un script JavaScript ou TypeScript (cf. separateGlobals) : leurs gestionnaires voient les noms du script et du
   // `<script module>`, qui ne sont pas redéclarés (une écriture garde la variable du script), puis leur JavaScript suit celui du script
-  if (globalesAPart) {
-    const lu     = parseModuleAst(scriptCompiled.code)
-    const connus = [...moduleVars, ...collectTopLevelDeclarations(lu, 'binding'), ...collectTopLevelDeclarations(lu, 'const')]
-    const texte  = tokenize(applyMjsSugarToScript(globalesAPart, 'civet', connus, '<script> (handlers)'), { externalVars })
+  if (separateGlobals) {
+    const read  = parseModuleAst(scriptCompiled.code)
+    const known = [...moduleVars, ...collectTopLevelDeclarations(read, 'binding'), ...collectTopLevelDeclarations(read, 'const')]
+    const text  = tokenize(applyMjsSugarToScript(separateGlobals, 'civet', known, '<script> (handlers)'), { externalVars })
     let js: string
     try {
-      js = (await getAdapter('civet').compileToJs(texte, { fileName: `${moduleName}.globales`, lint: opts.lint, colorsEnabled })).code
+      js = (await getAdapter('civet').compileToJs(text, { fileName: `${moduleName}.globals`, lint: opts.lint, colorsEnabled })).code
     }
     catch (e) {
-      // une faute dans le code d'une balise globale : citée à sa place dans le gabarit, comme dans un script Civet (cf. placeDuGestionnaireVerse)
-      throw remapAdapterErrorLine(e, `${moduleName}.globales`, (ligne, colonne) => placeDuGestionnaireVerse(ligne - 1, texte.split('\n')[ligne - 1] ?? '', colonne, { avant: '', origines: macros.setupOrigins, places, premiere: sections.htmlStartLine, ou: ouEcrit, fin: () => null }))
+      // une faute dans le code d'une balise globale : citée à sa place dans le gabarit, comme dans un script Civet (cf. mergedHandlerPlace)
+      throw remapAdapterErrorLine(e, `${moduleName}.globals`, (line, column) => mergedHandlerPlace(line - 1, text.split('\n')[line - 1] ?? '', column, { before: '', origins: macros.setupOrigins, places, first: sections.htmlStartLine, where: whereWritten, end: () => null }))
     }
     scriptCompiled = { ...scriptCompiled, code: `${scriptCompiled.code}\n${js}` }
   }
@@ -3251,27 +3221,27 @@ async function transpileImpl(
   const scriptAst = parseModuleAst(scriptJs, true)
   // un <script> qui s'arrête au milieu d'une expression (`a +`) prend la première ligne que <@failed>, <@window>, <@document> ou <@body> lui
   // versent
-  // (cf. premiereLigneAvalee) : le script se compile sans faute, et ce qu'elle pose est perdu. Refusé, cité au dernier signe du script ;
-  // un script JavaScript ou TypeScript ne les reçoit pas (cf. globalesAPart)
-  if (scriptAst && !globalesAPart && macros.setup && premiereLigneAvalee(scriptJs, (scriptAst as any).body, macros.setup)) {
-    const fin = finAvantMacros()
-    throw new Error(t('transpiler.script-reste-ouvert', { position: fin ? `${fin.fichier}:${fin.ligne}:${fin.colonne}` : ouEcrit.fichier, fin: fin?.texte ?? '' }))
+  // (cf. swallowedFirstLine) : le script se compile sans faute, et ce qu'elle pose est perdu. Refusé, cité au dernier signe du script ;
+  // un script JavaScript ou TypeScript ne les reçoit pas (cf. separateGlobals)
+  if (scriptAst && !separateGlobals && macros.setup && swallowedFirstLine(scriptJs, (scriptAst as any).body, macros.setup)) {
+    const end = endBeforeMacros()
+    throw new Error(t('transpiler.script-left-open', { position: end ? `${end.file}:${end.line}:${end.column}` : whereWritten.file, end: end?.text ?? '' }))
   }
   // un gestionnaire de <@window>, <@document> ou <@body> resté ouvert sur un opérateur (`@resize={$x = 1 +}`) avale la ligne qui
   // le referme dans le script (`@_gl_0 = µ._mjs_sigFree(@_gl_0)`) : le script se compile sans faute, et le gestionnaire ne fait
   // pas ce qui est écrit. Refusé, cité à son `}`
   if (scriptAst && macros.setupHandlers.length > 0) {
-    const refermes = new Set<string>()
+    const closed = new Set<string>()
     for (const stmt of (scriptAst as any).body) {
       const a = stmt.type === 'ExpressionStatement' ? stmt.expression : null
-      if (a?.type === 'AssignmentExpression' && a.left?.object?.type === 'ThisExpression' && a.right?.type === 'CallExpression' && a.right.callee?.property?.name === '_mjs_sigFree') refermes.add(a.left.property?.name)
+      if (a?.type === 'AssignmentExpression' && a.left?.object?.type === 'ThisExpression' && a.right?.type === 'CallExpression' && a.right.callee?.property?.name === '_mjs_sigFree') closed.add(a.left.property?.name)
     }
-    const avale = macros.setupHandlers.find((h) => !refermes.has(h.fn) && h.origin.html.slice(h.origin.at, h.origin.at + h.origin.body.length) === h.origin.body)
-    if (avale) throw gestionnaireResteOuvert(placeDansLeGabarit(avale.origin.html, avale.origin.at + avale.origin.body.length, places, sections.htmlStartLine, ouEcrit), avale.origin.body)
+    const swallows = macros.setupHandlers.find((h) => !closed.has(h.fn) && h.origin.html.slice(h.origin.at, h.origin.at + h.origin.body.length) === h.origin.body)
+    if (swallows) throw handlerStaysOpen(placeInTemplate(swallows.origin.html, swallows.origin.at + swallows.origin.body.length, places, sections.htmlStartLine, whereWritten), swallows.origin.body)
   }
   const constReassign = findConstReassignment(scriptJs, collectTopLevelDeclarations(moduleAst, 'const'), scriptAst)
   if (constReassign) {
-    throw new Error(t('transpiler.civet-reaffectation-constante', { nom: constReassign.name, ligne: constReassign.line, code: true }))
+    throw new Error(t('transpiler.civet-reassignment-constant', { name: constReassign.name, line: constReassign.line, code: true }))
   }
   // garde symboles réservés, cf. generator/reserved-symbols.ts
   lintReservedSymbolNames(moduleJs, moduleName, '<script module>', moduleAst)
@@ -3316,11 +3286,11 @@ async function transpileImpl(
     return line !== null && line <= lastWrittenLine ? line : null
   }
   lintElementPropertyAtConstruction(scriptAst, moduleName, opts.lint, colorsEnabled, scriptLineOf)
-  // setTimeout / setInterval du <script> : refusés, µevery / µafter à la place (cf. minuteries.ts) ; libres, les noms que
+  // setTimeout / setInterval du <script> : refusés, µevery / µafter à la place (cf. timers.ts) ; libres, les noms que
   // le composant déclare hors de l'AST lu : son <script module> et ses `@import` (posés en tête du module), la racine du
   // <script> pour le gabarit et les gestionnaires
-  const nomsDuComposant = [...nomsDeLaRacine(moduleAst), ...nomsDeLaRacine(scriptAst)]
-  refuserMinuteriesBrutes(scriptAst, scriptLineOf, moduleName, false, nomsDuComposant)
+  const componentNames = [...rootNames(moduleAst), ...rootNames(scriptAst)]
+  rejectRawTimers(scriptAst, scriptLineOf, moduleName, false, componentNames)
   // code qui suit un `return`, un `throw`, un `break` ou un `continue` dans le même bloc (cf. unreachable.ts) :
   // le <script> et le <script module>, chacun à sa ligne du .mjs — imports ajoutés devant le bloc exclus
   warnUnreachableCode(scriptAst, scriptLineOf, `${moduleName}.mjs`, opts.lint, colorsEnabled)
@@ -3337,17 +3307,17 @@ async function transpileImpl(
   scanStoreArgs(moduleJs)
   // un effet en direct de <@document> sans connexion écrite la prend dans `@sock` : le script, ou un
   // gestionnaire du HTML, doit le poser
-  const htmlWithoutComments = masqueCommentairesHtml(html)
+  const htmlWithoutComments = maskCommentsInHtml(html)
   const codeHtml = templateCode(htmlWithoutComments)
   // une fléchée à paramètre nu (`v => v * 2`) : Civet la lit comme un appel de `v` (`v(() => v * 2)`), sans faute ; refusée quand rien ne
   // fournit `v` (ni un script du composant, ni une variable du gabarit, ni une fonction globale) : l'appel lèverait à coup sûr
   for (const m of maskNonCode(codeHtml, 'civet').matchAll(/(?<![\w$@µ§&#.])([A-Za-z_]\w*)[ \t]+=>/g)) {
-    const nom = m[1]
-    const mot = `(?<![\\w$@µ§&#.])${nom}(?![\\w$])`
-    if (MOTS_AVANT_FLECHE.has(nom) || FONCTIONS_DU_NAVIGATEUR.has(nom) || typeof (globalThis as any)[nom] === 'function') continue
-    if (new RegExp(mot).test(`${script.raw}\n${moduleSection.raw}`) || new RegExp(`\\{\\s*(?:for|const|then|success|error|catch)\\b[^}\\n]*${mot}`).test(html)) continue
-    const ou = html.search(new RegExp(`${mot}[ \\t]+=>`))
-    throw new Error(t('transpiler.fleche-parametre-nu', { moduleName, ligne: String(citeHtmlLine(html.slice(0, Math.max(ou, 0)).split('\n').length - 1)), nom }))
+    const name = m[1]
+    const word = `(?<![\\w$@µ§&#.])${name}(?![\\w$])`
+    if (WORDS_BEFORE_ARROW.has(name) || BROWSER_FUNCTIONS.has(name) || typeof (globalThis as any)[name] === 'function') continue
+    if (new RegExp(word).test(`${script.raw}\n${moduleSection.raw}`) || new RegExp(`\\{\\s*(?:for|const|then|success|error|catch)\\b[^}\\n]*${word}`).test(html)) continue
+    const where = html.search(new RegExp(`${word}[ \\t]+=>`))
+    throw new Error(t('transpiler.arrow-param-bare', { moduleName, line: String(citeHtmlLine(html.slice(0, Math.max(where, 0)).split('\n').length - 1)), name: name }))
   }
   const instanceProps = [...new Set([...collectInstanceProps(scriptAst), ...collectHandlerInstanceProps(codeHtml, 'civet')])]
   if (macros.docSock.length > 0 && !instanceProps.includes('sock')) throw new Error(sockAbsent(macros.docSock[0]))
@@ -3372,13 +3342,13 @@ async function transpileImpl(
   // à chaud) nettoie d'abord ceux de sa vie d'avant ; les clés `$$x` qu'il lit sont relevées comme ailleurs. L'ouverture suit les `import`,
   // sur leur ligne, la fermeture vient après la dernière : chaque ligne du module garde sa place (carte de source)
   if (/µ\.effect\b/.test(moduleJs)) {
-    let ouvre = 0
+    let opens = 0
     try {
-      for (const n of (acorn.parse(moduleJs, { ecmaVersion: 'latest', sourceType: 'module' }) as any).body) if (n.type === 'ImportDeclaration') ouvre = n.end
+      for (const n of (acorn.parse(moduleJs, { ecmaVersion: 'latest', sourceType: 'module' }) as any).body) if (n.type === 'ImportDeclaration') opens = n.end
     }
     catch { /* le module refusé plus loin dit lui-même sa faute */ }
-    const annote = annotateEffectDepsMapped(moduleJs).code
-    moduleJs = `${annote.slice(0, ouvre)}; µ._mjs_magOpen(${JSON.stringify(moduleName + ' <script module>')}); ${annote.slice(ouvre)}\nµ._mjs_magClose();\n`
+    const annotated = annotateEffectDepsMapped(moduleJs, undefined, undefined, false, false, false, opts.reffetsAll === true).code
+    moduleJs = `${annotated.slice(0, opens)}; µ._mjs_magOpen(${JSON.stringify(moduleName + ' <script module>')}); ${annotated.slice(opens)}\nµ._mjs_magClose();\n`
   }
 
   // 9. Analyzer (script du composant) — créé même sans script, pour que les
@@ -3389,19 +3359,26 @@ async function transpileImpl(
   try {
     // variables du `<script module>` que le module change lui-même : jamais une donnée sûre pour une valeur dérivée (sans
     // lecture du module, aucune ne l'est)
-    const changeants = moduleAst ? nomsChangeants(moduleAst, moduleVars) : null
+    const changing = moduleAst ? changingNames(moduleAst, moduleVars) : null
     // valeurs précises avec l'option `derived: "precise"` seulement ; écriture de l'état qui contourne MJS dans le composant : aucune
     // valeur précise (derived-classes.ts)
-    analyzer = new Analyzer(scriptJs ?? '', externalVars, opts.lint, colorsEnabled, scriptAst, changeants ? moduleVars.filter((v) => !changeants.has(v)) : [], ECRITURE_BRUTE.test(sourceEcrite), opts.derivedPrecise === true)
+    analyzer = new Analyzer(scriptJs ?? '', externalVars, opts.lint, colorsEnabled, scriptAst, changing ? moduleVars.filter((v) => !changing.has(v)) : [], RAW_WRITE.test(writtenSource), opts.derivedPrecise === true, { moduleName, first: 1, lines: whereWritten.lines(), lang: script.lang, wholeFile: true })
   }
   catch (e: any) {
-    // défaut de Civet sur une flèche en ligne (FLECHE_EN_LIGNE_CIVET_RE, `f = => x = if a then 'b' else 'c'`) : le JavaScript produit
+    // défaut de Civet sur une flèche en ligne (INLINE_ARROW_CIVET_RE, `f = => x = if a then 'b' else 'c'`) : le JavaScript produit
     // ne s'analyse pas et acorn parle d'autre chose (« The keyword 'let' is reserved », « Unexpected token »). Signature lue sur la
     // ligne qu'acorn désigne (`(ligne:colonne)` en fin de message) : message de cette forme, avec les deux écritures qui passent
-    const position = /\((\d+):\d+\)$/.exec(String(e?.message ?? ''))
-    const produite = position ? (scriptJs ?? '').split('\n')[Number(position[1]) - 1] ?? '' : ''
-    if (FLECHE_EN_LIGNE_CIVET_RE.test(produite)) {
-      throw new Error(t('transpiler.script-fleche-en-ligne', { moduleName, ligne: Number(position![1]), extrait: produite.trim().slice(0, 160) }))
+    const position     = /\((\d+):\d+\)$/.exec(String(e?.message ?? ''))
+    const producedLine = position ? (scriptJs ?? '').split('\n')[Number(position[1]) - 1] ?? '' : ''
+    if (INLINE_ARROW_CIVET_RE.test(producedLine)) {
+      throw new Error(t('transpiler.script-arrow-inline', { moduleName, line: Number(position![1]), excerpt: producedLine.trim().slice(0, 160) }))
+    }
+    // `#nom` hors d'une classe (`#console.log x`, ligne mise en commentaire sans espace) : Civet le lit comme un nom privé, acorn le refuse
+    // sans dire ni le fichier ni la règle ; message avec la ligne du .mjs où le nom est écrit et la forme d'un commentaire (`#` puis une espace)
+    const privateFieldRe = /Private field '#([A-Za-z_$][\w$]*)'/.exec(String(e?.message ?? ''))
+    if (privateFieldRe) {
+      const k = script.raw.split('\n').findIndex((l) => new RegExp(`(?<![\\w$.@])#${privateFieldRe[1].replace(/\$/g, '\\$')}(?![\\w$])`).test(l))
+      throw new Error(t('transpiler.hash-sign-glued-name-private', { moduleName, name: privateFieldRe[1], line: k < 0 ? '' : script.startLine + k }))
     }
     // Piste ciblée (bug Civet amont) : un objet 100 % spread en position
     // `else` d'un if/then/else inline (`x = if $c then {...$a} else {...$b}`)
@@ -3421,7 +3398,7 @@ async function transpileImpl(
     // faux positif sur une autre cause de parse error. Les deux hints se
     // cumulent si les deux motifs sont présents.
     const spreadFatArrowHint = /->\s*\{[^{}]*\.\.\./s.test(script.raw)
-      ? t('transpiler.hint-spread-fleche-fine-civet')
+      ? t('transpiler.hint-spread-arrow-thin-civet')
       : ''
     throw new Error(`${e.message}${spreadElseHint}${spreadFatArrowHint}`)
   }
@@ -3438,8 +3415,8 @@ async function transpileImpl(
   if (muLayout && SAME_NAME_RE.test(maskNonCode(script.raw, script.lang) + '\n' + maskNonCode(codeHtml, 'civet') + '\n' + attributeValues(htmlWithoutComments))) {
     // la ligne de la variable quand elle est dans le script écrit ; ailleurs (partiel inclus, HTML aux
     // blocs développés), sa position ne se relie plus au fichier
-    const ecrite = SAME_NAME_RE.exec(maskNonCode(writtenScript, script.lang))
-    throw new Error(t('transpiler.mu-layout-homonyme', { moduleName, ligne: ecrite ? script.startLine + (writtenScript.slice(0, ecrite.index).match(/\n/g)?.length ?? 0) : '' }))
+    const written = SAME_NAME_RE.exec(maskNonCode(writtenScript, script.lang))
+    throw new Error(t('transpiler.mu-layout-same-name', { moduleName, line: written ? script.startLine + (writtenScript.slice(0, written.index).match(/\n/g)?.length ?? 0) : '' }))
   }
   if (muLayout) analyzer.autoDeclareFromTemplate('{$layout}')
 
@@ -3455,10 +3432,10 @@ async function transpileImpl(
   // méthode homonyme dans l'état puis la supprime. Le runtime épargne
   // désormais les clés fonction listées ci-dessous : on ne refuse plus la
   // compilation, on transmet juste la liste triée au gabarit.
-  const etatMethodeCollisions = analyzer.stateVars.filter(v => analyzer.methodNames.has(v)).sort()
-  const stateMethodClashLine = etatMethodeCollisions.length === 0
+  const stateMethodCollisions = analyzer.stateVars.filter(v => analyzer.methodNames.has(v)).sort()
+  const stateMethodClashLine = stateMethodCollisions.length === 0
     ? ''
-    : `\n    this._mjs_state_methods = ${JSON.stringify(Object.fromEntries(etatMethodeCollisions.map(n => [n, 1])))};`
+    : `\n    this._mjs_state_methods = ${JSON.stringify(Object.fromEntries(stateMethodCollisions.map(n => [n, 1])))};`
 
   // Lint « trop de variables d'état » — un composant qui
   // déclare des dizaines de `$x` est un écran-monolithe à découper (étalonnage
@@ -3470,7 +3447,7 @@ async function transpileImpl(
   // cœur arrive ici à 0 (bundler, compileMjsCold) : jamais signalé à l'appli.
   const maxStateVars = opts.maxStateVars ?? 40
   if (maxStateVars > 0 && analyzer.stateVars.length > maxStateVars) {
-    printDiagnostic(typedLine('maxStateVars', t('transpiler.trop-de-variables-etat', { moduleName, n: analyzer.stateVars.length, seuil: maxStateVars }))!, colorsEnabled)
+    printDiagnostic(typedLine('maxStateVars', t('transpiler.too-many-variables-state', { moduleName, n: analyzer.stateVars.length, threshold: maxStateVars }))!, colorsEnabled)
   }
 
   // Lint « accessibilité » (a11y) — sept contrôles ciblés (image
@@ -3503,11 +3480,12 @@ async function transpileImpl(
   const linksSeen: LinkSeen[] = []
   // `structVars` permet au runtime de skip `_mjs_renderStruct` quand
   // une mutation ne touche pas un bloc structurel.
-  const [surgicalHtmlWithMarkers, updates, events, inlines, effectsByVar, structVars, mountOnlyEffects, passiveEvents, tagRefs, templateLocals, initialPropBinds, componentDeps, inlineLocals, propVars] = avecNomsDuComposant(nomsDuComposant, () => avecLigneDuGabarit(() => compileHtml(html, {
+  const [surgicalHtmlWithMarkers, updates, events, inlines, effectsByVar, structVars, mountOnlyEffects, passiveEvents, tagRefs, templateLocals, initialPropBinds, componentDeps, inlineLocals, propVars] = withComponentNames(componentNames, () => withTemplateLine(() => compileHtml(html, {
     analyzer,
     externalVars,
     handlerScope: handlerNames,
     handlerConsts: [...scriptConsts, ...moduleConsts],
+    scriptLang: script.lang,
     startScript: script.raw,
     moduleName,
     lint: opts.lint,
@@ -3520,14 +3498,15 @@ async function transpileImpl(
     firstLine: sections.htmlStartLine,
     hostLines: places?.map((p) => p.host),
     // une ligne faite de morceaux de plusieurs fichiers (texte du composant après un `<@include>`, partiel versé en milieu de
-    // ligne) : chaque morceau cité dans son fichier, d'après sa place dans la ligne (cf. LigneMelee)
-    lineCites: places && citesDuParseur(places, sections.htmlStartLine, includedHtml),
+    // ligne) : chaque morceau cité dans son fichier, d'après sa place dans la ligne (cf. MixedLine)
+    lineCites: places && parserCites(places, sections.htmlStartLine, includedHtml),
     devWarnings: opts.devWarnings === true,
+    serverRendered: opts.serverRendered === true,
     derivedPrecise: opts.derivedPrecise === true,
     proxy: opts.proxy,
     projectTags,
     links: linksSeen,
-  }), hostHtml, sections.htmlStartLine, moduleName, includedHtml, places, ouEcrit))
+  }), hostHtml, sections.htmlStartLine, moduleName, includedHtml, places, whereWritten))
 
   // `<@view name>` réellement transformé en `<metamjs-view id="name">` par le
   // generator (generator/compile.ts, preprocess()) : lire le résultat plutôt que re-greper
@@ -3547,7 +3526,7 @@ async function transpileImpl(
   // c'est plus court. Les gabarits de ligne d'un `{for}`, eux, gardent leurs chaînes directes
   // (cf. compileFor, generator/compile.ts).
   const createFnBody = generateCreateFnBody(surgicalHtmlWithMarkers, { compactPaths: true })
-  const { struct, trans, content: _contentUp } = classifyUpdates(updates)
+  const { struct, trans } = classifyUpdates(updates)
 
   // Build des chaînes pour le template V2.
   //
@@ -3615,20 +3594,20 @@ async function transpileImpl(
   // compilateur de langage juste avant l'assemblage (source-map-chain.ts).
   const passMaps: (string | undefined)[] = []
   // `$x = $x`, `$$x = $$x` qu'une forme cache au lecteur, refusé par ces passes sans sa place : la valeur dérivée dit sa propre
-  // écriture, la ligne vient de la carte du script, comme les avis plus bas (cf. situerAutoAffectationDuScript)
-  const refusDuScript = (e: any, code: string): unknown => {
+  // écriture, la ligne vient de la carte du script, comme les avis plus bas (cf. locateScriptSelfAssignment)
+  const scriptReject = (e: any, code: string): unknown => {
     if (!e?.mjsSelfWrite) return e
-    const l = ligneDe(code, e.mjsAt ?? 0)
-    const ligne = scriptLineOf(debutDeLigne(scriptJs, l)) ?? (scriptKeepsLines && !scriptSourceMap && script.startLine - 1 + l <= lastWrittenLine ? script.startLine - 1 + l : undefined)
-    return situerAutoAffectationDuScript(autoAffectationDeDerivee(e, analyzer?.computedDeps ?? {}), ligne, writtenScript, script.startLine, ouEcrit.fichier)
+    const l = lineOf(code, e.mjsAt ?? 0)
+    const line = scriptLineOf(lineStart(scriptJs, l)) ?? (scriptKeepsLines && !scriptSourceMap && script.startLine - 1 + l <= lastWrittenLine ? script.startLine - 1 + l : undefined)
+    return locateScriptSelfAssignment(derivedSelfAssignment(e, analyzer?.computedDeps ?? {}), line, writtenScript, script.startLine, whereWritten.file)
   }
-  const entreeP1 = analyzer?.modifiedCode ?? scriptJs
+  const inputP1 = analyzer?.modifiedCode ?? scriptJs
   let _p1: ReturnType<typeof transformReactiveWritesMapped>
   try {
-    _p1 = transformReactiveWritesMapped(entreeP1)
+    _p1 = transformReactiveWritesMapped(inputP1)
   }
   catch (e) {
-    throw refusDuScript(e, entreeP1)
+    throw scriptReject(e, inputP1)
   }
   passMaps.push(_p1.map)
   let jsInitBase = _p1.code
@@ -3637,19 +3616,19 @@ async function transpileImpl(
   // $.x = y) — applyPathTracking ne traite que les depth >= 2.
   let _p2: ReturnType<typeof applyPathTrackingMapped>
   try {
-    _p2 = applyPathTrackingMapped(jsInitBase, { sansProxy: opts.proxy === false })
+    _p2 = applyPathTrackingMapped(jsInitBase, { withoutProxy: opts.proxy === false })
   }
   catch (e) {
-    throw refusDuScript(e, jsInitBase)
+    throw scriptReject(e, jsInitBase)
   }
   // réglage `proxy: false` : les écritures de l'état que le compilateur ne voit pas, à leur ligne du .mjs (les passes gardent les
   // lignes du script, cf. scriptLineOf ; un script en JavaScript n'a pas de carte : sa ligne est celle du texte écrit). Posées après la
-  // lecture des gestionnaires, qui disent quelles variables restent simples (cf. etatSimple)
-  const avisSansProxy: { racine: string, texte: string }[] = []
-  for (const a of _p2.avis ?? []) {
-    const l = ligneDe(jsInitBase, a.at)
-    const ligne = scriptLineOf(debutDeLigne(scriptJs, l)) ?? (scriptKeepsLines && !scriptSourceMap && script.startLine - 1 + l <= lastWrittenLine ? script.startLine - 1 + l : undefined)
-    avisSansProxy.push({ racine: a.racine, texte: t('transpiler.ecriture-invisible-sans-proxy', { moduleName, ligne, forme: a.forme, nom: a.nom, racine: a.racine }) })
+  // lecture des gestionnaires, qui disent quelles variables restent simples (cf. simpleState)
+  const noProxyNotices: { root: string, text: string }[] = []
+  for (const a of _p2.notice ?? []) {
+    const l = lineOf(jsInitBase, a.at)
+    const line = scriptLineOf(lineStart(scriptJs, l)) ?? (scriptKeepsLines && !scriptSourceMap && script.startLine - 1 + l <= lastWrittenLine ? script.startLine - 1 + l : undefined)
+    noProxyNotices.push({ root: a.root, text: t('transpiler.write-invisible-no-proxy', { moduleName, line: line, shape: a.shape, name: a.name, root: a.root }) })
   }
   passMaps.push(_p2.map)
   jsInitBase = _p2.code
@@ -3666,8 +3645,8 @@ async function transpileImpl(
   // une racine µeffect.root ouverte dans un gestionnaire du gabarit appartient au composant (passe des gestionnaires, plus bas) : ses
   // reffets appellent aussi les fonctions du script (`lireY = -> $y`), dont les lectures sont alors notées pour le graphe des signaux,
   // même quand le script n'a aucun reffet à lui
-  const racinesDuGabarit = inlines.some((c) => /(?<![\w$.])µ\.?effect\s*\.\s*root(?![\w$])/.test(c.toString()))
-  const _p3 = annotateEffectDepsMapped(jsInitBase, analyzer.methodReads, analyzer.computedDeps, true, false, racinesDuGabarit)
+  const templateRoots = inlines.some((c) => /(?<![\w$.])µ\.?effect\s*\.\s*root(?![\w$])/.test(c.toString()))
+  const _p3 = annotateEffectDepsMapped(jsInitBase, analyzer.methodReads, analyzer.computedDeps, true, false, templateRoots, opts.reffetsAll === true)
   passMaps.push(_p3.map)
   jsInitBase = _p3.code
   // Correctif automatique `this` perdu (cf. this-rebinding.ts) — une flèche
@@ -3708,7 +3687,7 @@ async function transpileImpl(
   // tête) — cet AST-ci serait alors périmé pour lui (repassé `undefined`, il re-parse).
   const sharedInitAst = parseScriptAst(jsInitBase)
   const dupHook = detectDuplicateHook(jsInitBase, sharedInitAst)
-  if (dupHook) throw new Error(t('transpiler.hook-duplique', { moduleName, hook: dupHook }))
+  if (dupHook) throw new Error(t('transpiler.hook-duplicate', { moduleName, hook: dupHook }))
 
   // Bloc(s) <routes target="…"> — table de routes FIXES, POSÉE en tête du JS d'init,
   // AVANT tout code issu du <script> : `detectRouterAware` (plus bas) doit voir
@@ -3740,7 +3719,7 @@ async function transpileImpl(
   }
   if (routesSections.length > 0) {
     if (hasRoutesDirective) {
-      const routesWarning = typedLine('routes', t('transpiler.routes-script-reassigne'), opts.lint)
+      const routesWarning = typedLine('routes', t('transpiler.routes-script-reassigned'), opts.lint)
       if (routesWarning !== null) sections.warnings.push(routesWarning)
     }
     const routesObjParts = routesSections.map(rs => {
@@ -3790,13 +3769,16 @@ async function transpileImpl(
     jsInitBase += '\nthis._mjs_is_router_aware = true;'
     // Pages de la table (VALEURS du map `@routes`, ex. '/': 'home-page'), selon `routes.preload` : la page que le
     // routeur monte dans l'outlet <@view> est vue par le guetteur de l'ombre du composant (`subtree`), et le routeur la
-    // demande aussi lui-même (bloc `routes-repos` de mjs_router.ts) ; les autres partent d'avance. 'on' : toutes
+    // demande aussi lui-même (bloc `routes-idle` de mjs_router.ts) ; les autres partent d'avance. 'on' : toutes
     // demandées au montage du composant, plus l'appel à liste vide ; 'idle' (défaut) : leur liste confiée au routeur, qui les
     // charge au repos après l'affichage ; 'off' : liste vide (rien d'avance) ; dans tous les modes, l'appel livre au cœur la
     // demande par le routeur, l'attente de la page suivante et la reprise d'un fichier raté (mjs_router.ts, mjs_autoloader.ts)
     const _mode           = opts.routesPreload ?? 'idle'
     let _idle: string[]   = []
-    const _ri             = jsInitBase.indexOf('this.routes')
+    // la table lue à partir de son affectation quand le script en a une : une lecture écrite plus haut (`if (this.routes[p]) …`)
+    // ne prend pas sa place, ni l'accolade qui suit cette lecture
+    const _assign         = jsInitBase.search(/this\.routes\s*=[^=]/)
+    const _ri             = _assign >= 0 ? _assign : jsInitBase.indexOf('this.routes')
     if (_ri >= 0) {
       const _open = jsInitBase.indexOf('{', _ri)
       if (_open >= 0) {
@@ -3829,9 +3811,9 @@ async function transpileImpl(
   // `undefined` (transpile()/transpileFile() appelés directement, tests, outillage) laisse la
   // garde INACTIVE : aucune régression pour un appelant qui ignore cette option.
   if (opts.isPageModule === false) {
-    const forme = routesSections.length > 0 ? t('transpiler.page-forme-bloc-routes')
-      : hasRoutesDirective ? t('transpiler.page-forme-directive-routes')
-      : hasView ? t('transpiler.page-forme-vue')
+    const shape = routesSections.length > 0 ? t('transpiler.page-shape-block-routes')
+      : hasRoutesDirective ? t('transpiler.page-shape-directive-routes')
+      : hasView ? t('transpiler.page-shape-view')
       : null
     // `moduleName` vient de
     // `pageAwareBaseName` (bundler/index.ts), qui ne retire le marqueur QUE s'il est écrit en
@@ -3845,7 +3827,7 @@ async function transpileImpl(
     let cleaned = moduleName
     while (/\.page$/i.test(cleaned)) cleaned = cleaned.replace(/\.page$/i, '')
     const suggestion = `${cleaned}.page.mjs`
-    if (forme) throw new Error(t('transpiler.page-marqueur-manquant', { moduleName, suggestion, forme }))
+    if (shape) throw new Error(t('transpiler.page-marker-missing', { moduleName, suggestion, shape: shape }))
   }
 
   // méthode du composant citée nue par un gestionnaire (cf. lintHandlerBareMethod) : ce que les
@@ -3858,9 +3840,9 @@ async function transpileImpl(
   const bareMethodsSaid = new Set<string>()
   // la ligne citée du premier gestionnaire du HTML qui cite `nom` (`@click=nom`, `@click={ …nom… }`), partiels versés
   // compris (cf. citeHtmlLine : « 3 de _bas.mjs » dans un partiel) ; '' quand on ne le retrouve pas
-  const htmlForLines = blankBraceStrings(masqueCommentairesHtml(includedHtml), 'civet')
-  const handlerLine = (nom: string): number | string => {
-    const id = nom.replace(/\$/g, '\\$')
+  const htmlForLines = blankBraceStrings(maskCommentsInHtml(includedHtml), 'civet')
+  const handlerLine = (name: string): number | string => {
+    const id = name.replace(/\$/g, '\\$')
     const m  = new RegExp(`@[\\w.:-]+\\s*=\\s*(?:\\{[^}]*(?<![\\w$.@])${id}(?![\\w$])|${id}(?![\\w$]))`).exec(htmlForLines)
     return m ? citeHtmlLine(htmlForLines.slice(0, m.index).match(/\n/g)?.length ?? 0) : ''
   }
@@ -3874,20 +3856,20 @@ async function transpileImpl(
   if (visibleNames) {
     for (const stmt of ((scriptAst as any)?.body ?? []) as any[]) {
       const affect = stmt.type === 'ExpressionStatement' ? stmt.expression : null
-      const cible  = affect?.type === 'AssignmentExpression' ? affect.left : null
-      if (cible?.type !== 'MemberExpression' || cible.object?.type !== 'ThisExpression' || !/^_gl_/.test(cible.property?.name ?? '')) continue
+      const target = affect?.type === 'AssignmentExpression' ? affect.left : null
+      if (target?.type !== 'MemberExpression' || target.object?.type !== 'ThisExpression' || !/^_gl_/.test(target.property?.name ?? '')) continue
       if (affect.right?.type === 'ArrowFunctionExpression') lintHandlerBareMethod(scriptJs.slice(affect.right.start, affect.right.end), analyzer.methodNames, visibleNames, moduleName, bareMethodsSaid, opts.lint, colorsEnabled, handlerLine)
     }
   }
 
   // JS des gestionnaires du gabarit, pour le classement des valeurs dérivées (`opts.derived`) : ce qu'ils écrivent
-  let gestionnairesJs = ''
-  // les mêmes, écritures de l'état réécrites (`µ._set(…)`) : qui écrit quoi (cf. etatSimple)
-  let gestionnairesEcrits = ''
+  let handlersJs = ''
+  // les mêmes, écritures de l'état réécrites (`µ._set(…)`) : qui écrit quoi (cf. simpleState)
+  let writtenHandlers = ''
   // un gestionnaire écrit que Civet ne lit pas (vraie faute de syntaxe) : sa faute, dite sur le texte écrit, passe après les refus qui la
   // précèdent (nom seul, cf. checkHandlerReferences), à la place du lot des gestionnaires qui la disait
-  const fauteEcrite = generatorState.inlineFautes.find((f) => f !== null)
-  if (fauteEcrite) throw situerExpression(fauteEcrite, includedHtml, places, sections.htmlStartLine, moduleName, ouEcrit)
+  const writtenFault = generatorState.inlineFaults.find((f) => f !== null)
+  if (writtenFault) throw locateExpression(writtenFault, includedHtml, places, sections.htmlStartLine, moduleName, whereWritten)
   if (inlines.length > 0) {
     // Grammaire des handlers inline (`@click={…}`) : le generator émet un squelette Coffee-like (postfix if, if/then/else,
     // and/or/not/is…), compilé en Civet ci-dessous.
@@ -3916,60 +3898,63 @@ async function transpileImpl(
     // pour le contrôle de constance : un nom de gabarit sortait de la liste contrôlée, une `:=`
     // homonyme n'était plus refusée.
     const basePredeclared = [...moduleTopVars, ...scriptVars, ...scriptConsts]
+    // une globale du navigateur qu'un gestionnaire affecte (`location = '#x'`, `onresize = f`) n'y est pas déclarée : son affectation agit,
+    // sauf dans un gestionnaire à qui le gabarit donne ce nom (variable d'un `{for location in $l}` qui l'entoure)
+    const pageGlobals = browserGlobals(inlinesSrc)
     const baseConsts = [...scriptConsts, ...moduleConsts]
     // les groupes se bâtissent sur les listes EFFECTIVES, pas sur les noms de gabarit : deux
     // gestionnaires qui ne divergent pas (aucun homonyme du `<script>`) ne compilent qu'une
     // fois — un composant sans collision garde donc UN groupe, et une sortie identique
     // `gabarit` : union des noms du gabarit en portée des gestionnaires du groupe — leur copie,
-    // recréée en tête de gestionnaire, ne se réaffecte pas (cf. controlerGestionnairesInline)
-    const groupes = new Map<string, { predeclared: string[]; consts: string[]; indices: number[]; gabarit: Set<string> }>()
+    // recréée en tête de gestionnaire, ne se réaffecte pas (cf. checkInlineHandlers)
+    const groups = new Map<string, { predeclared: string[]; consts: string[]; indices: number[]; template: Set<string> }>()
     for (let i = 0; i < inlines.length; i++) {
       // filet : un gestionnaire sans locaux enregistrés retombe sur l'union globale
       // (l'ancien filtre), jamais sur « aucun local » — cela prédéclarerait la variable d'un
       // `{for}` et lui ferait écrire la var du `<script>` au lieu de l'item reconstruit
-      const locaux = new Set(i < inlineLocals.length ? inlineLocals[i] : templateLocals)
-      const predeclared = basePredeclared.filter(nom => !locaux.has(nom))
-      const consts = baseConsts.filter(nom => !locaux.has(nom))
-      const cle = JSON.stringify([predeclared, consts])
-      let groupe = groupes.get(cle)
-      if (!groupe) {
-        groupe = { predeclared, consts, indices: [], gabarit: new Set() }
-        groupes.set(cle, groupe)
+      const locals = new Set(i < inlineLocals.length ? inlineLocals[i] : templateLocals)
+      const predeclared = [...basePredeclared, ...pageGlobals].filter(name => !locals.has(name))
+      const consts = baseConsts.filter(name => !locals.has(name))
+      const key = JSON.stringify([predeclared, consts])
+      let group = groups.get(key)
+      if (!group) {
+        group = { predeclared, consts, indices: [], template: new Set() }
+        groups.set(key, group)
       }
-      groupe.indices.push(i)
-      for (const nom of locaux) groupe.gabarit.add(nom)
+      group.indices.push(i)
+      for (const name of locals) group.template.add(name)
     }
-    const listeGroupes = Array.from(groupes.values())
+    const groupList = Array.from(groups.values())
 
     /** source d'un groupe — un seul groupe : le batch d'origine, inchangé. Plusieurs groupes
      * (un nom du gabarit recouvre un nom du `<script>`, donc des listes divergentes) : une
      * compilation par groupe et une écriture par INDEX dans `_mjs_inline` — l'index reste la
      * clé d'événement du tableau global, l'ordre de `inlines` est conservé. */
-    const sourceGroupe = (groupe: { predeclared: string[]; consts: string[]; indices: number[] }, premier: boolean): string => {
-      if (listeGroupes.length === 1) return inlinesSrc
-      const reset = premier ? 'this._mjs_inline = []\n' : ''
-      return reset + groupe.indices.map(i => {
-        const lignes = chunksInline[i].split('\n')
+    const groupSource = (group: { predeclared: string[]; consts: string[]; indices: number[] }, first: boolean): string => {
+      if (groupList.length === 1) return inlinesSrc
+      const reset = first ? 'this._mjs_inline = []\n' : ''
+      return reset + group.indices.map(i => {
+        const lines = chunksInline[i].split('\n')
         // corps dé-indenté de 2 : la ligne d'affectation porte la flèche, le corps reste
         // strictement plus indenté qu'elle (Civet/Coffee lisent l'indentation)
-        const corps = lignes.slice(1).map(l => l.slice(2)).join('\n')
-        return `this._mjs_inline[${i}] = ${lignes[0].trim()}\n${corps}\n`
+        const body = lines.slice(1).map(l => l.slice(2)).join('\n')
+        return `this._mjs_inline[${i}] = ${lines[0].trim()}\n${body}\n`
       }).join('')
     }
 
-    const sorties: string[] = []
-    // un `$$[k]` d'un gestionnaire, refusé par le lecteur sans sa ligne : situé dans le gabarit (cf. situerCleCalculee)
-    const lireGestionnaires = (texte: string): string => {
+    const outputs: string[] = []
+    // un `$$[k]` d'un gestionnaire, refusé par le lecteur sans sa ligne : situé dans le gabarit (cf. locateComputedKey)
+    const readHandlers = (text: string): string => {
       try {
-        return tokenize(texte, { externalVars })
+        return tokenize(text, { externalVars })
       }
       catch (e: any) {
-        throw e?.mjsCleCalculee ? situerCleCalculee(e, includedHtml, places, sections.htmlStartLine, ouEcrit) : e
+        throw e?.mjsComputedKey ? locateComputedKey(e, includedHtml, places, sections.htmlStartLine, whereWritten) : e
       }
     }
     // la faute de Civet dans `lu`, le texte d'un lot de gestionnaires donné à l'adaptateur, ramenée au gestionnaire écrit parmi
-    // `sources` (cf. situerGestionnaire)
-    const echecDuLot = (err: any, lu: string, sources: string[]): Error => {
+    // `sources` (cf. locateHandler)
+    const batchFailure = (err: any, read: string, sources: string[]): Error => {
       // Erreur orientante : le civet ParseError expose `.line` (1-indexé,
       // relatif à `lu` — exactement le texte qu'on vient de lui
       // soumettre, donc AUCUNE conversion d'offset nécessaire) — best-effort
@@ -3978,105 +3963,106 @@ async function transpileImpl(
       // COLLÉ (`a?b:c`, hors chaînes) traîne dans le batch : signature du
       // piège le plus fréquent (Coffee l'acceptait — silencieusement FAUX,
       // cf. tests — Civet le rejette).
-      // la position du lot ramenée au gestionnaire écrit (cf. situerGestionnaire)
-      const situe = situerGestionnaire(String(err?.message ?? err), lu, sources, includedHtml, places, sections.htmlStartLine, moduleName, ouEcrit)
-      const civetMsg = situe?.message ?? err?.message ?? String(err)
+      // la position du lot ramenée au gestionnaire écrit (cf. locateHandler)
+      const located = locateHandler(String(err?.message ?? err), read, sources, includedHtml, places, sections.htmlStartLine, moduleName, whereWritten)
+      const civetMsg = located?.message ?? err?.message ?? String(err)
       const lineNo = typeof err?.line === 'number' ? err.line : null
-      const faultyLine = lineNo != null ? lu.split('\n')[lineNo - 1] : null
+      const faultyLine = lineNo != null ? read.split('\n')[lineNo - 1] : null
       const lineHint = faultyLine != null
-        ? t('transpiler.hint-ligne-civet', { ligne: situe?.cite ?? lineNo, ligneFautive: (situe?.ligne ?? faultyLine).trim() })
+        ? t('transpiler.hint-line-civet', { line: located?.cite ?? lineNo, badLine: (located?.line ?? faultyLine).trim() })
         : ''
       // Filler NON-blanc (pas des espaces) : les branches d'un ternaire collé
       // sont typiquement des chaînes (`a?'x':'y'`) — un masquage espace-à-espace
       // ferait disparaître le caractère juste après le `?` (le guillemet),
       // rendant le motif `\?[^\s?.:]` aveugle à sa propre cible.
-      const codeOnly = lu.replace(MASK_STRINGS_AND_COMMENTS_RE, (m: string) => 'x'.repeat(m.length))
+      const codeOnly = read.replace(MASK_STRINGS_AND_COMMENTS_RE, (m: string) => 'x'.repeat(m.length))
       const gluedTernaryHint = /\?[^\s?.:]/.test(codeOnly)
-        ? t('generator.hint-ternaire-colle')
+        ? t('generator.hint-ternary-glued')
         : ''
-      return new Error(t('transpiler.handler-inline-echec-civet', { moduleName, lineHint, civetMsg, gluedTernaryHint }))
+      return new Error(t('transpiler.handler-inline-failed-civet', { moduleName, lineHint, civetMsg, gluedTernaryHint }))
     }
     // le premier gestionnaire d'un groupe, avant celui de rang `avant` (tous sans lui), qui ne se compile pas seul (sa faute, citée à sa
     // place) ou qui avale un gestionnaire vide posé après lui (resté ouvert, refusé à son `}`) ; null quand chacun se compile seul. Sur le
     // seul chemin d'une faute : un lot qui échoue, qui compile en JavaScript illisible ou qui compte moins de gestionnaires qu'écrits — la
     // faute est celle du premier qui la porte, pas celle du voisin qu'il a pris
-    const fautif = async (groupe: { predeclared: string[]; indices: number[] }, avant = Infinity): Promise<unknown> => {
-      const adaptateur = getAdapter('civet')
-      const lire       = (corps: string): string => lireGestionnaires(applyMjsSugarToScript(`@_mjs_inline = [\n${corps}\n]\n`, 'civet', groupe.predeclared, '<script> (handlers)'))
-      for (const i of groupe.indices) {
-        if (i >= avant) break
-        const seul = lire(chunksInline[i])
-        let seulJs: string
+    const faulty = async (group: { predeclared: string[]; indices: number[] }, before = Infinity): Promise<unknown> => {
+      const adapter = getAdapter('civet')
+      const read    = (body: string): string => readHandlers(applyMjsSugarToScript(`@_mjs_inline = [\n${body}\n]\n`, 'civet', group.predeclared, '<script> (handlers)'))
+      for (const i of group.indices) {
+        if (i >= before) break
+        const alone = read(chunksInline[i])
+        let jsOnly: string
         try {
-          seulJs = (await adaptateur.compileToJs(seul, { fileName: `${moduleName}.inlines`, lint: opts.lint, colorsEnabled })).code
+          jsOnly = (await adapter.compileToJs(alone, { fileName: `${moduleName}.inlines`, lint: opts.lint, colorsEnabled })).code
         }
         catch (err: any) {
-          if (err instanceof ErreurParametreLuAutrement) return err
-          return echecDuLot(err, seul, [generatorState.inlineSources[i]])
+          if (err instanceof ParamReadOtherwiseError) return err
+          return batchFailure(err, alone, [generatorState.inlineSources[i]])
         }
-        // seul, il compile en JavaScript illisible : la faute est la sienne, dite par le contrôle du groupe (cf. controlerLeGroupe)
-        if (parseModuleAst(seulJs) === null) return null
-        let avale = true
+        // seul, il compile en JavaScript illisible : la faute est la sienne, dite par le contrôle du groupe (cf. checkGroup)
+        if (parseModuleAst(jsOnly) === null) return null
+        let swallows = true
         try {
-          avale = gestionnairesCompiles(parseModuleAst((await adaptateur.compileToJs(lire(`${chunksInline[i]}\n  (e, _mjs_el) -> null`), { fileName: `${moduleName}.inlines`, lint: opts.lint, colorsEnabled })).code)) < 2
+          swallows = compiledHandlers(parseModuleAst((await adapter.compileToJs(read(`${chunksInline[i]}\n  (e, _mjs_el) -> null`), { fileName: `${moduleName}.inlines`, lint: opts.lint, colorsEnabled })).code)) < 2
         }
         catch {
           // suivi d'un gestionnaire vide, il ne se compile plus : resté ouvert
         }
-        const place = avale ? accoladeDuGestionnaire(includedHtml, generatorState.inlineSources[i], places, sections.htmlStartLine, ouEcrit) : null
-        if (place) return gestionnaireResteOuvert(place, generatorState.inlineSources[i])
+        const place = swallows ? handlerBrace(includedHtml, generatorState.inlineSources[i], places, sections.htmlStartLine, whereWritten) : null
+        if (place) return handlerStaysOpen(place, generatorState.inlineSources[i])
       }
       return null
     }
-    // le rang du gestionnaire où le lot `lu` situe sa faute (cf. situerGestionnaire) : ceux d'avant lui peuvent l'avoir prise
+    // le rang du gestionnaire où le lot `lu` situe sa faute (cf. locateHandler) : ceux d'avant lui peuvent l'avoir prise
     // (`{$k ?}` suivi d'un autre) ; Infinity quand il ne le dit pas
-    const rangCite = (err: any, lu: string): number => {
-      const source = situerGestionnaire(String(err?.message ?? err), lu, generatorState.inlineSources, includedHtml, places, sections.htmlStartLine, moduleName, ouEcrit)?.source
+    const rankCite = (err: any, read: string): number => {
+      const source = locateHandler(String(err?.message ?? err), read, generatorState.inlineSources, includedHtml, places, sections.htmlStartLine, moduleName, whereWritten)?.source
       const i      = source === undefined ? -1 : generatorState.inlineSources.indexOf(source)
       return i < 0 ? Infinity : i
     }
-    // les contrôles du JavaScript d'un groupe (cf. controlerGestionnairesInline) ; illisible, il vient d'un gestionnaire resté ouvert qui
+    // les contrôles du JavaScript d'un groupe (cf. checkInlineHandlers) ; illisible, il vient d'un gestionnaire resté ouvert qui
     // a pris son voisin : refusé à sa place (cf. fautif)
-    const controlerLeGroupe = async (js: string, groupe: typeof listeGroupes[number]): Promise<void> => {
+    const checkGroup = async (js: string, group: typeof groupList[number]): Promise<void> => {
       try {
-        controlerGestionnairesInline(js, groupe.consts, moduleName, groupe.gabarit)
+        checkInlineHandlers(js, group.consts, moduleName, group.template)
       }
       catch (err) {
-        throw (parseModuleAst(js) === null ? await fautif(groupe) : null) ?? err
+        throw (parseModuleAst(js) === null ? await faulty(group) : null) ?? err
       }
     }
-    for (let k = 0; k < listeGroupes.length; k++) {
-      const groupe = listeGroupes[k]
-      const inlinesSrcGroupe = sourceGroupe(groupe, k === 0)
-      let inlinesJsGroupe: string
+    for (let k = 0; k < groupList.length; k++) {
+      const group = groupList[k]
+      const groupInlinesSrc = groupSource(group, k === 0)
+      let groupInlinesJs: string
       // `applyMjsSugarToScript(…, 'civet')` sait déjà déclarer les vars nues
       // (`nom = expr` → `nom .= expr`, Pass 4 plus haut) pour une cible
       // non-Coffee, exactement comme pour un `<script>` civet classique — le
       // squelette du generator (assignations brutes `__idx_0 = …`, `item = …`)
       // n'a donc rien de spécifique à faire pour se déclarer proprement ici.
       const civetAdapter = getAdapter('civet')
-      const inlinesProcessed = lireGestionnaires(applyMjsSugarToScript(inlinesSrcGroupe, 'civet', groupe.predeclared, '<script> (handlers)'))
+      const inlinesProcessed = readHandlers(applyMjsSugarToScript(groupInlinesSrc, 'civet', group.predeclared, '<script> (handlers)'))
       lintHandlerSelfRefDeclaration(inlinesProcessed, moduleName)
       try {
-        inlinesJsGroupe = (await civetAdapter.compileToJs(inlinesProcessed, {
-          fileName: `${moduleName}.inlines`, lint: opts.lint, colorsEnabled,
+        groupInlinesJs = (await civetAdapter.compileToJs(inlinesProcessed, {
+          fileName: `${moduleName}.inlines`, lint: opts.lint, colorsEnabled, declareAssignments: true, knownNames: [...(group.predeclared ?? [])],
         })).code
       }
       catch (err: any) {
         // paramètre lu autrement par Civet : cité à la ligne du .mjs de la balise qui porte le gestionnaire
-        if (err instanceof ErreurParametreLuAutrement) {
-          const lot = parseModuleAst(err.js)
-          throw new ErreurParametreLuAutrement(err.parametre, `${moduleName}.mjs`, err.js, lot ? inlineHandlerLines(generatorState.inlineLines)(err.parametre.decalage, lot) : null, null)
+        if (err instanceof ParamReadOtherwiseError) {
+          const batch = parseModuleAst(err.js)
+          throw new ParamReadOtherwiseError(err.param, `${moduleName}.mjs`, err.js, batch ? inlineHandlerLines(generatorState.inlineLines)(err.param.offset, batch) : null, null)
         }
-        throw (await fautif(groupe, rangCite(err, inlinesProcessed))) ?? echecDuLot(err, inlinesProcessed, generatorState.inlineSources)
+        throw (await faulty(group, rankCite(err, inlinesProcessed))) ?? batchFailure(err, inlinesProcessed, generatorState.inlineSources)
       }
-      await controlerLeGroupe(inlinesJsGroupe, groupe)
-      sorties.push(inlinesJsGroupe)
+      await checkGroup(groupInlinesJs, group)
+      // en développement : une variable du gestionnaire dont le nom existe déjà dans la page le dit au clic
+      outputs.push(opts.devWarnings ? warnAboutLocals(groupInlinesJs, generatorState.inlineSources, (i) => new Set(i < inlineLocals.length ? inlineLocals[i] : templateLocals), (name) => t('transpiler.handler-page-variable', { moduleName, name: name })) : groupInlinesJs)
     }
     // un seul groupe : le texte du batch d'origine, tel quel ; plusieurs : les blocs compilés
-    // à part, recollés dans l'ordre des index (cf. sourceGroupe)
-    const inlinesJs = sorties.join('\n')
-    gestionnairesJs = inlinesJs
+    // à part, recollés dans l'ordre des index (cf. groupSource)
+    const inlinesJs = outputs.join('\n')
+    handlersJs      = inlinesJs
     // même pipeline que le <script>, rebindDetachedThis COMPRISE — ferme
     // l'écart : la passe n'était câblée que sur jsInitBase, jamais sur les
     // handlers inline (assemblés à part ici) — une `function(){…}` explicite
@@ -4095,51 +4081,51 @@ async function transpileImpl(
     const inlinesAst = opts.lint?.unreachable === false ? null : parseModuleAst(inlinesJs)
     const handlerAt  = inlineHandlerLines(generatorState.inlineLines)
     // setTimeout / setInterval d'un gestionnaire : même refus, à la ligne de la balise qui le porte
-    const astMinuteries = inlinesAst ?? parseModuleAst(inlinesJs)
+    const timersAst = inlinesAst ?? parseModuleAst(inlinesJs)
     // un gestionnaire resté ouvert sur un opérateur (`@click={$x = 1 +}`) avale le suivant : le lot se compile sans faute, avec un
     // gestionnaire de moins, et chacun reçoit le code d'un autre. Compilés un à un (cf. fautif) : le premier qui échoue seul est refusé
-    // comme le dernier du lot l'est (cf. situerGestionnaire) ; celui qui se compile seul mais avale un gestionnaire vide posé après lui,
+    // comme le dernier du lot l'est (cf. locateHandler) ; celui qui se compile seul mais avale un gestionnaire vide posé après lui,
     // refusé à son `}`
-    if (gestionnairesCompiles(astMinuteries) < inlines.length) {
-      for (const groupe of listeGroupes) {
-        const faute = await fautif(groupe)
-        if (faute) throw faute
+    if (compiledHandlers(timersAst) < inlines.length) {
+      for (const group of groupList) {
+        const fault = await faulty(group)
+        if (fault) throw fault
       }
     }
-    refuserMinuteriesBrutes(astMinuteries, offset => handlerAt(offset, astMinuteries!), moduleName, true, nomsDuComposant)
+    rejectRawTimers(timersAst, offset => handlerAt(offset, timersAst!), moduleName, true, componentNames)
     warnUnreachableCode(inlinesAst, offset => handlerAt(offset, inlinesAst!), `${moduleName}.mjs`, opts.lint, colorsEnabled)
-    // `$x = $x`, `$$x = $$x` d'un gestionnaire, refusé par ces passes sans sa ligne : situé dans le gabarit (cf. situerAutoAffectation)
-    let inlinesEcrits: string
-    let inlinesSuivis: ReturnType<typeof applyPathTrackingMapped>
+    // `$x = $x`, `$$x = $$x` d'un gestionnaire, refusé par ces passes sans sa ligne : situé dans le gabarit (cf. locateSelfAssignment)
+    let writtenInlines: string
+    let trackedInlines: ReturnType<typeof applyPathTrackingMapped>
     try {
-      inlinesEcrits = transformReactiveWritesMapped(inlinesJs).code
-      inlinesSuivis = applyPathTrackingMapped(inlinesEcrits, { sansProxy: opts.proxy === false })
+      writtenInlines = transformReactiveWritesMapped(inlinesJs).code
+      trackedInlines = applyPathTrackingMapped(writtenInlines, { withoutProxy: opts.proxy === false })
     }
     catch (e: any) {
-      throw e?.mjsSelfWrite ? situerAutoAffectation(autoAffectationDeDerivee(e, analyzer?.computedDeps ?? {}), includedHtml, places, sections.htmlStartLine, ouEcrit) : e
+      throw e?.mjsSelfWrite ? locateSelfAssignment(derivedSelfAssignment(e, analyzer?.computedDeps ?? {}), includedHtml, places, sections.htmlStartLine, whereWritten) : e
     }
-    gestionnairesEcrits = inlinesEcrits
+    writtenHandlers = writtenInlines
     // réglage `proxy: false` : même avertissement, à la ligne de la balise qui porte le gestionnaire
-    for (const a of inlinesSuivis.avis ?? []) avisSansProxy.push({ racine: a.racine, texte: t('transpiler.ecriture-invisible-sans-proxy', { moduleName, ligne: handlerAt(debutDeLigne(inlinesJs, ligneDe(inlinesEcrits, a.at)), astMinuteries!) ?? undefined, forme: a.forme, nom: a.nom, racine: a.racine }) })
-    jsInitBase += '\n' + batchLoopWritesMapped(rebindDetachedThisMapped(annotateEffectDepsMapped(inlinesSuivis.code, analyzer.methodReads, analyzer.computedDeps, false, true).code).code).code
+    for (const a of trackedInlines.notice ?? []) noProxyNotices.push({ root: a.root, text: t('transpiler.write-invisible-no-proxy', { moduleName, line: handlerAt(lineStart(inlinesJs, lineOf(writtenInlines, a.at)), timersAst!) ?? undefined, shape: a.shape, name: a.name, root: a.root }) })
+    jsInitBase += '\n' + batchLoopWritesMapped(rebindDetachedThisMapped(annotateEffectDepsMapped(trackedInlines.code, analyzer.methodReads, analyzer.computedDeps, false, true, false, opts.reffetsAll === true).code).code).code
   }
   // élément d'une boucle `{for}` sur une liste calculée, écrit par un gestionnaire : à la ligne de la balise (une fois)
-  for (const b of new Map(generatorState.avisBoucles.map((b) => [`${b.inline} ${b.nom}`, b])).values()) {
-    avisSansProxy.push({ racine: b.racine, texte: t('transpiler.ecriture-invisible-sans-proxy', { moduleName, ligne: generatorState.inlineLines[b.inline], forme: 1, nom: b.nom, racine: b.racine }) })
+  for (const b of new Map(generatorState.loopNotice.map((b) => [`${b.inline} ${b.name}`, b])).values()) {
+    noProxyNotices.push({ root: b.root, text: t('transpiler.write-invisible-no-proxy', { moduleName, line: generatorState.inlineLines[b.inline], shape: 1, name: b.name, root: b.root }) })
   }
   // rappel de transition (`@introend`…) : à la ligne de la balise qui le porte (une fois)
-  for (const r of new Map(generatorState.avisRappels.map((r) => [`${r.ligne} ${r.forme} ${r.nom} ${r.racine}`, r])).values()) {
-    avisSansProxy.push({ racine: r.racine, texte: t('transpiler.ecriture-invisible-sans-proxy', { moduleName, ligne: r.ligne, forme: r.forme, nom: r.nom, racine: r.racine }) })
+  for (const r of new Map(generatorState.callbackNotice.map((r) => [`${r.line} ${r.shape} ${r.name} ${r.root}`, r])).values()) {
+    noProxyNotices.push({ root: r.root, text: t('transpiler.write-invisible-no-proxy', { moduleName, line: r.line, shape: r.shape, name: r.name, root: r.root }) })
   }
   // une variable que le compilateur SAIT simple n'avertit pas : type chaîne, nombre ou booléen du <vars>, ou valeur simple à chaque
-  // écriture du script et des gestionnaires (cf. etatSimple) — sauf liée dans les deux sens (`=!{$x}`), qui peut recevoir autre chose
-  if (avisSansProxy.length > 0) {
-    const simples = new Set([...varRules.simples, ...etatSimple([_p1.code, gestionnairesEcrits])])
-    for (const a of avisSansProxy) {
-      const nom = a.racine.slice(1)
-      const lie = !varRules.simples.includes(nom) && new RegExp(`=!\\{\\s*\\$${nom}(?![\\w$])`).test(sections.html ?? '')
+  // écriture du script et des gestionnaires (cf. simpleState) — sauf liée dans les deux sens (`=!{$x}`), qui peut recevoir autre chose
+  if (noProxyNotices.length > 0) {
+    const simpleNames = new Set([...varRules.simpleNames, ...simpleState([_p1.code, writtenHandlers])])
+    for (const a of noProxyNotices) {
+      const name  = a.root.slice(1)
+      const bound = !varRules.simpleNames.includes(name) && new RegExp(`=!\\{\\s*\\$${name}(?![\\w$])`).test(sections.html ?? '')
       // un même avertissement à la même ligne (élément d'une boucle `{for}` relevé par le gabarit et par la passe des gestionnaires) : une fois
-      if ((!simples.has(nom) || lie) && !sections.warnings.includes(a.texte)) sections.warnings.push(a.texte)
+      if ((!simpleNames.has(name) || bound) && !sections.warnings.includes(a.text)) sections.warnings.push(a.text)
     }
   }
 
@@ -4161,8 +4147,8 @@ async function transpileImpl(
   // `µderived $x = expr, $a` que le composant écrit : la table de ses dépendances nommées, posée en tête de `init` (avant toute
   // valeur dérivée et tout gestionnaire), lue à l'écriture par le runtime (`_mjs_computedSrc`, mjs_element.ts) — le choix tient
   // jusqu'à l'écriture de l'une d'elles. Aucune `µderived` écrite : rien n'est ajouté, le code produit ne change pas
-  const choisies = analyzer && analyzer.derivedCandidates.some((k) => k.nommees) ? deriveesChoisies(scriptAst, analyzer.derivedCandidates, gestionnairesJs) : null
-  if (choisies) jsInitBase = `this._mjs_computedSrc = ${choisies};\n${jsInitBase}`
+  const chosen = analyzer && analyzer.derivedCandidates.some((k) => k.named) ? chosenDerived(scriptAst, analyzer.derivedCandidates, handlersJs) : null
+  if (chosen) jsInitBase = `this._mjs_computedSrc = ${chosen};\n${jsInitBase}`
 
   // 12. Métadonnées class / tag.
   //
@@ -4186,8 +4172,12 @@ async function transpileImpl(
   // MAIS bornée à `=`/`;`/`\n` : ça reste côté GAUCHE de l'affectation — un
   // `let context = canvas.getContext()` (canvas à DROITE du `=`) ne fait donc
   // toujours pas un faux positif (le `[^;=]` s'arrête au `=`).
+  // les noms que la racine du script déclare, lus sur son arbre (cf. rootNames : `var` d'un bloc compris) — le texte du script,
+  // lui, porte aussi ses chaînes et les variables de ses fonctions : `'let the champ rest'` ou un `champ` local passaient pour la
+  // déclaration, la référence n'était pas déclarée et son premier rendu levait « champ is not defined »
+  const declaredAtRoot = new Set(rootNames(scriptAst))
   const refDecls = Array.from(generatorState.refVars)
-    .filter(name => !new RegExp(`\\b(?:let|var|const)\\b[^;=\\n]*\\b${name}\\b`).test(jsInitBase))
+    .filter(name => !declaredAtRoot.has(name))
     .map(name => `let ${name};`)
   const refDeclsStr = refDecls.length ? refDecls.join(' ') + '\n' : ''
 
@@ -4234,6 +4224,8 @@ async function transpileImpl(
   // même réécriture i18n que struct/trans ci-dessus (une liaison
   // two-way vers un enfant peut très bien vivre sous @i18n, cf. le repro).
   const initialPropBindsI18n = initialPropBinds.map(u => applyI18nPrefixing(u, i18nSection, i18nMode, i18nMore, i18nKeysSeen))
+  // le <script module> aussi : la section vaut pour toutes les clés du composant ; préfixé avant le relevé des contrôles, qui lit ses clés
+  const moduleJsI18n = applyI18nPrefixing(moduleJs, i18nSection, i18nMode, i18nMore, i18nKeysSeen)
   const hasI18nCalls = MU_T_CALL_RE.test(jsInitI18n) ||
     structI18n.some(u => MU_T_CALL_RE.test(u)) ||
     transI18n.some(u => MU_T_CALL_RE.test(u))
@@ -4297,32 +4289,33 @@ async function transpileImpl(
   // le préfixe n'est plus à écrire à la main — les déclarations d'un <style> partent au
   // registre par le scan du CSS compilé (bundler, scanDeclaredVars), pas par cette liste
   const styleRw = rewriteStyleVars(style.raw, { prefix: varPrefix })
-  if (styleRw.rootDecl.length > 0) throw new Error(t('transpiler.variable-racine-sans-selecteur', { nom: styleRw.rootDecl[0].name, ligne: styleRw.rootDecl[0].line, bloc: '<style>' }))
+  if (styleRw.rootDecl.length > 0) throw new Error(t('transpiler.variable-root-no-selector', { name: styleRw.rootDecl[0].name, line: styleRw.rootDecl[0].line, block: '<style>' }))
+  if (styleRw.misplaced.length > 0) throw new Error(t('transpiler.variable-mid-line', { name: styleRw.misplaced[0].name, line: styleRw.misplaced[0].line, block: '<style>' }))
   for (const r of styleRw.read) if (!varsRead.includes(r)) varsRead.push(r)
   // préambule SASS des `$x` adossés (cf. themeLiterals plus haut) : une ligne par nom, en tête du
   // bloc — SASS exige la déclaration AVANT l'usage, et la syntaxe indentée refuse deux instructions
   // sur une ligne. Le CSS pur n'a pas de variables de build : rien n'y est injecté
   // `@use`/`@forward`/`@charset` doivent rester en TÊTE de feuille (dart-sass : « @use rules must be
   // written before any other rules ») : le préambule se glisse APRÈS eux, jamais devant
-  const apresEnTete = (code: string): number => {
-    const lignes = code.split('\n')
-    let coupe = 0
-    for (let n = 0; n < lignes.length; n++) {
-      const l = lignes[n].trim()
+  const afterHeader = (code: string): number => {
+    const lines = code.split('\n')
+    let cut = 0
+    for (let n = 0; n < lines.length; n++) {
+      const l = lines[n].trim()
       if (l === '' || l.startsWith('//') || l.startsWith('/*')) continue
-      if (/^@(use|forward|charset)\b/.test(l)) { coupe = n + 1; continue }
+      if (/^@(use|forward|charset)\b/.test(l)) { cut = n + 1; continue }
       break
     }
-    return coupe
+    return cut
   }
   const withSassPreamble = (rw: { code: string, sassRead: string[], sassDeclared: string[] }, lang: 'css' | 'sass' | 'scss'): string => {
     if (lang === 'css') return rw.code
-    const noms = rw.sassRead.filter(n => themeLiterals.has(n) && !rw.sassDeclared.includes(n))
-    if (noms.length === 0) return rw.code
-    const preambule = noms.map(n => `$${n}: ${themeLiterals.get(n)}${lang === 'scss' ? ';' : ''}`)
-    const lignes = rw.code.split('\n')
-    lignes.splice(apresEnTete(rw.code), 0, ...preambule)
-    return lignes.join('\n')
+    const names = rw.sassRead.filter(n => themeLiterals.has(n) && !rw.sassDeclared.includes(n))
+    if (names.length === 0) return rw.code
+    const preamble = names.map(n => `$${n}: ${themeLiterals.get(n)}${lang === 'scss' ? ';' : ''}`)
+    const lines = rw.code.split('\n')
+    lines.splice(afterHeader(rw.code), 0, ...preamble)
+    return lines.join('\n')
   }
   // une balise qui porte `hidden` est cachée, comme une balise HTML : le `:host{display}` posé à tout composant (cf. injectTemplate) passait
   // devant la règle du navigateur. Un composant qui déclare une prop `hidden` (sans la casse, comme l'attribut) la garde pour lui :
@@ -4331,7 +4324,7 @@ async function transpileImpl(
   const hiddenCss = Object.keys(analyzer?.varBitsDict ?? {}).some((v) => v.toLowerCase() === 'hidden') ? '' : ':host([hidden]:not([hidden=until-found i])){display:none}'
   // `@offscreen` (generator/attributes) : une règle par place réservée, dans le style de base — l'ombre, le mode léger, le rendu serveur et le
   // rechargement du CSS à chaud la reçoivent avec lui ; aucune sans `@offscreen`
-  const offscreenCss = [...generatorState.offscreen].map((taille) => `[mjs-offscreen="${taille}"]{content-visibility:auto;contain-intrinsic-size:auto ${taille}}`).join('')
+  const offscreenCss = [...generatorState.offscreen].map((size) => `[mjs-offscreen="${size}"]{content-visibility:auto;contain-intrinsic-size:auto ${size}}`).join('')
   // `@size` (generator/attributes, cf. sizeCss) : une règle par place gardée, au même endroit ; aucune sans `@size`
   const sizesCss     = sizeCss(generatorState.sizes)
   const baseCss      = themeCss + hiddenCss + offscreenCss + sizesCss + fluidText(compileCss(withSassPreamble(styleRw, style.lang), style.lang))
@@ -4344,7 +4337,8 @@ async function transpileImpl(
   const layoutCss: Record<string, string> = {}
   for (const ly of layouts) {
     const rw = rewriteStyleVars(ly.raw, { prefix: varPrefix })
-    if (rw.rootDecl.length > 0) throw new Error(t('transpiler.variable-racine-sans-selecteur', { nom: rw.rootDecl[0].name, ligne: rw.rootDecl[0].line, bloc: `<style name="${ly.name}">` }))
+    if (rw.rootDecl.length > 0) throw new Error(t('transpiler.variable-root-no-selector', { name: rw.rootDecl[0].name, line: rw.rootDecl[0].line, block: `<style name="${ly.name}">` }))
+    if (rw.misplaced.length > 0) throw new Error(t('transpiler.variable-mid-line', { name: rw.misplaced[0].name, line: rw.misplaced[0].line, block: `<style name="${ly.name}">` }))
     for (const r of rw.read) if (!varsRead.includes(r)) varsRead.push(r)
     layoutCss[ly.name] = fluidText(compileCss(withSassPreamble(rw, ly.lang), ly.lang))
   }
@@ -4361,8 +4355,8 @@ async function transpileImpl(
       if (mc[5] === undefined) found.push(mc[2] ?? mc[4])
       else for (const m of mc[5].matchAll(/(['"])([A-Za-z][\w-]*)\1/g)) found.push(m[2])
     }
-    for (const nom of found) {
-      if (/^[A-Za-z][\w-]*$/.test(nom) && nom !== 'default' && !(nom in layoutCss)) layoutCss[nom] = ''
+    for (const name of found) {
+      if (/^[A-Za-z][\w-]*$/.test(name) && name !== 'default' && !(name in layoutCss)) layoutCss[name] = ''
     }
   }
   const cssWarnings = cssTrapWarnings(baseCss, opts.lint)
@@ -4373,8 +4367,8 @@ async function transpileImpl(
   let checks: BuildChecks | undefined
   try {
     checks = collectBuildChecks({
-      source:        sourceEcrite,
-      textes:        [...includeAcc.script, ...includeAcc.module],
+      source:        writtenSource,
+      texts:        [...includeAcc.script, ...includeAcc.module],
       html,
       hostHtml,
       htmlStartLine: sections.htmlStartLine,
@@ -4388,7 +4382,7 @@ async function transpileImpl(
       routes:        routesSections.flatMap(rs => rs.entries.map(([path]) => path)),
       scriptRoutes:  routesScript,
       scriptRouteTargets: routeTargetsScript,
-      views:         vuesDuGabarit(html),
+      views:         templateViews(html),
       routeTargets:  routesSections.map(rs => ({ name: rs.target, line: rs.line ?? 1 })),
     })
   }
@@ -4413,19 +4407,20 @@ async function transpileImpl(
     transUpdates: transI18n,
     effectsByVarStr,
     effectsAllStr,
-    fineLine: fine.ligne || undefined,
+    fineLine: fine.line || undefined,
     initialPropBindsStr: initialPropBindsI18n.join('\n'),
     structVarsStr,
     storeKeysLine,
     storeDeclareLine,
     typesDecl: (varRules.vars.length > 0 ? `\nconst _mjs_T_${className} = {${varRules.vars.join(',')}};` : '') + (varRules.stores.length > 0 ? `\nµ._mjs_storeTypes({${varRules.stores.join(',')}});` : ''),
     typesLine: varRules.vars.length > 0 ? `\n    this._mjs_types = _mjs_T_${className};` : '',
+    aliasLine: opts.proxy === false ? aliasLineOf(stateAliases([_p1.code, writtenHandlers])) : '',
     storeTypes: varRules.storeTypes,
     usesNamedTypes: varRules.usesNamedTypes,
     usesProjectEffects: generatorState.usesProjectEffects || macros.usesProjectEffects,
     stateMethodClashLine,
     i18nLine,
-    jsModule: moduleJs,
+    jsModule: moduleJsI18n,
     jsInitBase: jsInitI18n,
     baseCss,
     themeVars,
@@ -4443,6 +4438,7 @@ async function transpileImpl(
     moduleViewTransitionPriority: sections.style.moduleViewTransitionPriority,
     hasDynamicSlots,
     usedAnimations: Array.from(generatorState.usedAnimations),
+    unnamedSettingAnimations: Array.from(generatorState.unnamedSettingAnimations),
     // un `{for}` imbriqué coupe aussi le mode direct de la réconciliation (cf. compileFor), sans toucher à la pose initiale des lignes
     hasDestroyHooks: generatorState.hasDestroyHooks || generatorState.hasNestedFor,
     hasFlip: generatorState.hasFlip,
@@ -4494,34 +4490,38 @@ async function transpileImpl(
   // la forme, qui dit quoi écrire
   if (analyzer) {
     for (const m of output.matchAll(/µ\._mjs_refresh\(_mjsThis, (['"])([A-Za-z_$][\w$]*)\1\)/g)) {
-      const nom = m[2]
-      if (analyzer.computedDeps[nom] !== undefined) {
-        throw new Error(t('transpiler.rune-refresh-derivee', { nom, forme: `µrefresh($${nom})` }))
+      const name = m[2]
+      if (analyzer.computedDeps[name] !== undefined) {
+        throw new Error(t('transpiler.rune-refresh-derived', { name: name, shape: `µrefresh($${name})` }))
       }
-      if (!analyzer.stateVars.includes(nom)) throw externalVars.includes(`$${nom}`) ? refreshFormeError() : new Error(t('transpiler.rune-refresh-inconnue', { nom }))
+      if (!analyzer.stateVars.includes(name)) throw externalVars.includes(`$${name}`) ? refreshShapeError() : new Error(t('transpiler.rune-refresh-unknown', { name: name }))
     }
   }
   // le repère de chaque appel de µload (cf. load-sites.ts), posé sur le texte fini : la carte se recompose par-dessus
-  const sites = loadSites(output, moduleName)
+  const sitesLoad = loadSites(output, moduleName)
+  if (sitesLoad.map && sourceMap) sourceMap = chainOverMap(sitesLoad.map, sourceMap)
+  // la valeur dérivée qui attend (cf. await-derived.ts), posée sur le même texte ; ses refus citent leur ligne du fichier tel qu'écrit,
+  // gabarit compris, et leur conseil suit la langue du script
+  const sites = awaitDerived(sitesLoad.code, moduleName, opts.devWarnings === true, { moduleName, first: 1, lines: whereWritten.lines(), lang: script.lang, wholeFile: true }, script.lang, generatorState.boundFields, generatorState.awaitBlocks)
   if (sites.map && sourceMap) sourceMap = chainOverMap(sites.map, sourceMap)
 
   // classement des valeurs dérivées (`mjs check --derived`), seulement sur demande : le code produit n'en dépend pas
   if (opts.derived) {
-    data.derivees = classerDerivees({ script: scriptAst, module: moduleAst, candidats: analyzer.derivedCandidates, moduleVars, externalVars, imports: collectImportNames(moduleAst), gestionnaires: gestionnairesJs, refs: [...generatorState.refVars], suivreMethodes: opts.derivedMethods === true, brut: ECRITURE_BRUTE.test(sourceEcrite) })
+    data.derivedClasses = classifyDerived({ script: scriptAst, module: moduleAst, candidates: analyzer.derivedCandidates, moduleVars, externalVars, imports: collectImportNames(moduleAst), handlers: handlersJs, refs: [...generatorState.refVars], trackMethods: opts.derivedMethods === true, raw: RAW_WRITE.test(writtenSource) })
   }
 
-  // les options de la forme appelable lues sur l'arbre du code compilé (cf. ajaxOptionsSurLArbre) ; sur le même arbre, un `µajax`
+  // les options de la forme appelable lues sur l'arbre du code compilé (cf. ajaxOptionsOnTree) ; sur le même arbre, un `µajax`
   // réécrit dans un texte (regex étendue sur plusieurs lignes, chaîne écrite dans une interpolation) : averti à sa place, le code
   // produit ne change pas
-  const enTexte = reecritsAjax.length > 0 ? [] as number[] : undefined
-  const code    = ajaxOptionsSurLArbre(sites.code, enTexte)
-  if (enTexte && enTexte.length > 0) {
-    for (const position of placesDesAjaxEnTexte(sites.code, enTexte, reecritsAjax, ouEcrit.fichier, ouEcrit.lignes, o => sourceLineOf(sites.code, sourceMap, o))) {
-      const w = typedLine('syntax', t('types.ajax-ecrit-dans-un-texte', { position }), opts.lint)
+  const asText = ajaxRewrites.length > 0 ? [] as number[] : undefined
+  const code   = ajaxOptionsOnTree(sites.code, asText)
+  if (asText && asText.length > 0) {
+    for (const position of ajaxPlacesAsText(sites.code, asText, ajaxRewrites, whereWritten.file, whereWritten.lines, o => sourceLineOf(sites.code, sourceMap, o))) {
+      const w = typedLine('syntax', t('types.ajax-written-in-a-text', { position }), opts.lint)
       if (w !== null) data.sectionWarnings.push(w)
     }
   }
-  checkAjaxVerbNames(code, aLier)
+  checkAjaxVerbNames(code, toBind)
   return { data, output: code, sourceMap }
 }
 
@@ -4533,29 +4533,29 @@ async function transpileImpl(
 // "f7"], v)` ; pour une variable lue par une liste, le champ d'un élément, `["data", i, "label"]`) et dont TOUS les lecteurs du gabarit
 // lisent des champs nommés reçoit sa table : `r` pour ses listes (id, champ → masque, cf. FineList), `f` pour ses liaisons (champ →
 // fonctions de `_mjs_eff`, les mêmes que celles de `_mjs_effectsByVar`, aucune copie). Refus, la variable garde le chemin ordinaire :
-// liaison qui lit la variable entière, ne la cite pas (valeur dérivée dépliée) ou appelle ce que l'analyse ne suit pas (cf. champsLus) ;
+// liaison qui lit la variable entière, ne la cite pas (valeur dérivée dépliée) ou appelle ce que l'analyse ne suit pas (cf. readFields) ;
 // prop d'enfant ; lecture par la passe de structure ou une transition ailleurs qu'en itérable d'une liste qui a ses masques (`{if
 // $data[0]}`, ligne qui lit sa liste, liste dans une autre liste) ; valeur dérivée, reffet ou `µinspect` qui la lit. Une lecture
 // inconnue (valeur dérivée ou reffet aux lectures non notées, clé calculée, liaison `*`) : aucune table. Rend la ligne posée dans
 // `init` (vide sans table) et la passe de structure, où les listes retenues ont leur fermeture gardée. Lu sur les arbres des codes
-function tableFine(init: string, struct: string[], trans: string[], effectsByVar: Map<string, string[]>, idx: Map<string, number>, listes: FineList[], propVars: Set<string>): { ligne: string, struct: string[] } {
-  const rien = { ligne: '', struct }
+function tableFine(init: string, struct: string[], trans: string[], effectsByVar: Map<string, string[]>, idx: Map<string, number>, lists: FineList[], propVars: Set<string>): { line: string, struct: string[] } {
+  const nothing = { line: '', struct }
   // aucune écriture compilée d'un chemin : rien à lire
-  if (!init.includes('µ._mjs_deep') || effectsByVar.has('*')) return rien
-  const ast = arbreDeCode(init)
-  if (!ast) return rien
+  if (!init.includes('µ._mjs_deep') || effectsByVar.has('*')) return nothing
+  const ast = codeTree(init)
+  if (!ast) return nothing
   // plus long chemin compilé écrit, par variable ; variables lues par une valeur dérivée, un reffet, `µinspect`
-  const ecrit  = new Map<string, number>()
-  const autres = new Set<string>()
-  let inconnu = false
-  const noms = (a: any): void => {
+  const written = new Map<string, number>()
+  const others  = new Set<string>()
+  let unknown   = false
+  const names   = (a: any): void => {
     if (a?.type !== 'ArrayExpression') {
-      inconnu = true
+      unknown = true
       return
     }
     for (const e of a.elements) {
-      if (e?.type === 'Literal' && typeof e.value === 'string' && e.value !== '*') autres.add(e.value)
-      else inconnu = true
+      if (e?.type === 'Literal' && typeof e.value === 'string' && e.value !== '*') others.add(e.value)
+      else unknown = true
     }
   }
   walk.simple(ast, {
@@ -4563,80 +4563,80 @@ function tableFine(init: string, struct: string[], trans: string[], effectsByVar
       const f = n.callee
       if (f.type !== 'MemberExpression' || f.computed || f.object.type !== 'Identifier' || f.object.name !== 'µ') return
       const [a0, a1] = n.arguments
-      const nom = f.property.name
-      if (nom === '_mjs_deepSet' || nom === '_mjs_deepCall' || nom === '_mjs_deepDelete') {
-        if (a0?.type === 'Identifier' && a0.name === '_mjsThis' && a1?.type === 'ArrayExpression' && a1.elements[0]?.type === 'Literal' && typeof a1.elements[0].value === 'string') ecrit.set(a1.elements[0].value, Math.max(ecrit.get(a1.elements[0].value) ?? 0, a1.elements.length))
+      const name = f.property.name
+      if (name === '_mjs_deepSet' || name === '_mjs_deepCall' || name === '_mjs_deepDelete') {
+        if (a0?.type === 'Identifier' && a0.name === '_mjsThis' && a1?.type === 'ArrayExpression' && a1.elements[0]?.type === 'Literal' && typeof a1.elements[0].value === 'string') written.set(a1.elements[0].value, Math.max(written.get(a1.elements[0].value) ?? 0, a1.elements.length))
       }
       // valeur dérivée : ses sources quand elle est précise (quatrième argument), sinon toute écriture la périme
-      else if (nom === '_mjs_setComputed') noms(n.arguments[3])
-      else if (nom === 'effect') noms(a1)
-      else if (nom === 'inspect') {
-        if (a0?.type === 'Literal' && typeof a0.value === 'string') autres.add(a0.value)
-        else inconnu = true
+      else if (name === '_mjs_setComputed') names(n.arguments[3])
+      else if (name === 'effect') names(a1)
+      else if (name === 'inspect') {
+        if (a0?.type === 'Literal' && typeof a0.value === 'string') others.add(a0.value)
+        else unknown = true
       }
     },
   })
-  if (inconnu || ecrit.size === 0) return rien
+  if (unknown || written.size === 0) return nothing
   // lectures de la passe de structure et des transitions : `$.v` itérable d'une liste (`this._mjs_updFor('for3', $.v, …)`) ou ailleurs
   const iterables = new Map<string, Set<string>>()
-  const ailleurs  = new Set<string>()
+  const elsewhere = new Set<string>()
   for (const code of [...struct, ...trans]) {
-    const a = arbreDeCode(code)
-    if (!a || lectureInconnue(code)) return rien
+    const a = codeTree(code)
+    if (!a || unknownRead(code)) return nothing
     walk.fullAncestor(a, (n: any, _st: any, anc: any[]) => {
       const p = anc[anc.length - 2]
-      if (n.type === 'MemberExpression' && !n.computed && n.property.name === '_state') inconnu = true
+      if (n.type === 'MemberExpression' && !n.computed && n.property.name === '_state') unknown = true
       if (n.type !== 'Identifier' || n.name !== '$') return
       if (!p || p.type !== 'MemberExpression' || p.object !== n || p.computed && !(p.property.type === 'Literal' && typeof p.property.value === 'string')) {
-        inconnu = true
+        unknown = true
         return
       }
       const v = p.computed ? p.property.value : p.property.name
       const g = anc[anc.length - 3]
-      const liste = g && g.type === 'CallExpression' && g.arguments[1] === p && g.arguments[0]?.type === 'Literal' && g.callee.type === 'MemberExpression' && g.callee.object.type === 'ThisExpression' && !g.callee.computed && g.callee.property.name === '_mjs_updFor'
-      if (liste) (iterables.get(v) ?? iterables.set(v, new Set()).get(v)!).add(g.arguments[0].value)
-      else ailleurs.add(v)
+      const list = g && g.type === 'CallExpression' && g.arguments[1] === p && g.arguments[0]?.type === 'Literal' && g.callee.type === 'MemberExpression' && g.callee.object.type === 'ThisExpression' && !g.callee.computed && g.callee.property.name === '_mjs_updFor'
+      if (list) (iterables.get(v) ?? iterables.set(v, new Set()).get(v)!).add(g.arguments[0].value)
+      else elsewhere.add(v)
     })
   }
-  if (inconnu) return rien
-  let sortie = struct
+  if (unknown) return nothing
+  let output = struct
   const parts: string[] = []
-  for (const [v, longueur] of ecrit) {
-    const siennes = listes.filter((l) => l.v === v)
-    if (longueur < (siennes.length > 0 ? 3 : 2) || autres.has(v) || propVars.has(v) || ailleurs.has(v)) continue
-    if ([...(iterables.get(v) ?? [])].some((id) => !siennes.some((l) => l.id === id))) continue
+  for (const [v, length] of written) {
+    const theirs = lists.filter((l) => l.v === v)
+    if (length < (theirs.length > 0 ? 3 : 2) || others.has(v) || propVars.has(v) || elsewhere.has(v)) continue
+    if ([...(iterables.get(v) ?? [])].some((id) => !theirs.some((l) => l.id === id))) continue
     // chaque liste : ses masques, et sa fermeture présente une fois dans la passe de structure
     const r: string[] = []
-    let suivante = sortie
-    for (const l of siennes) {
+    let next = output
+    for (const l of theirs) {
       const res = l.fine()
-      if (!res || suivante.reduce((nb, c) => nb + c.split(l.plain).length - 1, 0) !== 1) break
-      suivante = suivante.map((c) => c.includes(l.plain) ? c.replace(l.plain, () => res.code) : c)
+      if (!res || next.reduce((count, c) => count + c.split(l.plain).length - 1, 0) !== 1) break
+      next = next.map((c) => c.includes(l.plain) ? c.replace(l.plain, () => res.code) : c)
       r.push(`['${l.id}', ${JSON.stringify(res.table)}]`)
     }
-    if (r.length !== siennes.length) continue
+    if (r.length !== theirs.length) continue
     // liaisons de la variable, dans leur ordre, avec les champs qu'elles lisent ; celle qui lit sous un champ (`profond`) repasse à
     // l'écriture de tout champ : elle rejoint la liste de chacun et `d`, celle d'un champ qu'aucune liaison ne lit directement
-    const lues: [string, Set<string>, boolean][] = []
-    let suivies = true
+    const reads: [string, Set<string>, boolean][] = []
+    let tracked = true
     for (const c of effectsByVar.get(v) ?? []) {
-      const lu = champsLus(c, { etat: v })
-      if (!lu || lu.champs.size === 0) {
-        suivies = false
+      const read = readFields(c, { state: v })
+      if (!read || read.fields.size === 0) {
+        tracked = false
         break
       }
-      lues.push([`_mjs_eff[${idx.get(c)}]`, lu.champs, lu.profond])
+      reads.push([`_mjs_eff[${idx.get(c)}]`, read.fields, read.deep])
     }
     const f = new Map<string, string[]>()
-    for (const [, champs] of lues) for (const champ of champs) f.set(champ, [])
-    for (const [nom, champs, profond] of lues) for (const [champ, a] of f) if (profond || champs.has(champ)) a.push(nom)
-    const d = lues.filter((l) => l[2]).map((l) => l[0])
-    if (!suivies || r.length === 0 && f.size === 0) continue
-    sortie = suivante
+    for (const [, fields] of reads) for (const field of fields) f.set(field, [])
+    for (const [name, fields, deep] of reads) for (const [field, a] of f) if (deep || fields.has(field)) a.push(name)
+    const d = reads.filter((l) => l[2]).map((l) => l[0])
+    if (!tracked || r.length === 0 && f.size === 0) continue
+    output = next
     const fs = [...f].map(([k, a]) => `${JSON.stringify(k)}: [${a.join(', ')}]`).join(', ')
     parts.push(`${JSON.stringify(v)}: {${[r.length ? `r: [${r.join(', ')}]` : '', f.size ? `f: {${fs}}` : '', d.length ? `d: [${d.join(', ')}]` : ''].filter(Boolean).join(', ')}}`)
   }
-  return parts.length ? { ligne: `\n      _mjsThis._mjs_fine = {${parts.join(', ')}};`, struct: sortie } : rien
+  return parts.length ? { line: `\n      _mjsThis._mjs_fine = {${parts.join(', ')}};`, struct: output } : nothing
 }
 
 export async function transpile(
@@ -4649,6 +4649,7 @@ export async function transpile(
   // (Promise.all, serveur qui compile à la demande) ne se prennent ni transitions, ni références, ni effets
   return withState(() => withProjectEffects(opts.effectDefs ?? {}, async () => {
     try {
+      generatorState.deferUnnamedSettings = opts.deferUnnamedSettings === true
       return await transpileImpl(source, opts)
     }
     catch (err) {
@@ -4774,6 +4775,7 @@ export function injectTemplate(data: TranspileData, dirInject: string): string {
     '[[STORE_DECLARE_LINE]]': data.storeDeclareLine,
     '[[TYPES_DECL]]': data.typesDecl ?? '',
     '[[TYPES_LINE]]': data.typesLine ?? '',
+    '[[ALIAS_LINE]]': data.aliasLine ?? '',
     '[[STATE_METHOD_CLASH_LINE]]': data.stateMethodClashLine,
     '[[I18N_LINE]]': data.i18nLine,
     '[[JS_INIT]]': jsInit,
@@ -4845,15 +4847,15 @@ export function injectTemplate(data: TranspileData, dirInject: string): string {
 
 // ligne (1 pour la première) d'une position d'un code, et position du premier caractère écrit d'une ligne : les passes de réécriture
 // gardent les lignes de ce qu'elles reçoivent, une position de leur code se retrouve ainsi dans le code d'avant elles
-function ligneDe(code: string, at: number): number {
+function lineOf(code: string, at: number): number {
   return code.slice(0, at).split('\n').length
 }
-function debutDeLigne(code: string, ligne: number): number {
+function lineStart(code: string, line: number): number {
   let p = 0
-  for (let i = 1; i < ligne; i++) {
-    const fin = code.indexOf('\n', p)
-    if (fin < 0) break
-    p = fin + 1
+  for (let i = 1; i < line; i++) {
+    const end = code.indexOf('\n', p)
+    if (end < 0) break
+    p = end + 1
   }
   while (code[p] === ' ' || code[p] === '\t') p++
   return p

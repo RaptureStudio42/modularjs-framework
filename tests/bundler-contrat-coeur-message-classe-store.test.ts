@@ -8,7 +8,7 @@ import { fr } from '../src/messages/fr.js'
 import { en } from '../src/messages/en.js'
 
 const message = (table: Record<string, any>, manquants: string[]): string =>
-  table['bundler.index.contrat-coeur-rompu']({ manquants: manquants.join(', '), nb: manquants.length, modules: 12 })
+  table['bundler.index.contract-core-broken']({ missing: manquants.join(', '), count: manquants.length, modules: 12 })
 
 describe('bundler — contrat du cœur rompu : µ.Store nommé comme une classe', () => {
   it('µ.Store : une classe, « is not a constructor », jamais « fonction »', () => {

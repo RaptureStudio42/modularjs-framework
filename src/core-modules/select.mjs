@@ -8,7 +8,7 @@
   # @@ dev other
   # told = false # @@ !other
   # @@
-  # la couche du dessus (`popover`) ; le panneau ancré : le navigateur le pose contre son bouton, dans la couche du dessus (cf. lift) ; sans l'ancrage CSS, le placement par le script, dans le flux de la balise (cf. fitPanel). Dans une boîte fixe ou transformée, le script le place dans la couche du dessus (cf. pin). Le test de fonction demande tout ce que le style emploie : Chrome 125 à 128 connaît `anchor-name` sans `position-area` (alors `inset-area`)
+  # la couche du dessus (`popover`) ; le panneau ancré : le navigateur le pose contre son bouton, dans la couche du dessus (cf. lift) ; sans l'ancrage CSS, ou dans une boîte fixe ou transformée, le script le place dans la couche du dessus (cf. pin) ; sans la couche du dessus, le placement par le script, dans le flux de la balise (cf. fitPanel). Le test de fonction demande tout ce que le style emploie : Chrome 125 à 128 connaît `anchor-name` sans `position-area` (alors `inset-area`)
   layer   = typeof HTMLElement isnt 'undefined' and typeof HTMLElement.prototype.showPopover is 'function'
   anchors = layer and typeof CSS isnt 'undefined' and typeof CSS.supports is 'function' and CSS.supports('(anchor-name: --a) and (position-area: top) and (position-try-fallbacks: flip-block)')
 
@@ -304,8 +304,8 @@
   # libellé, comme une <option> native sans value
   optionData = (el, seen)->
     label = (el.textContent or '').trim()
-    etat  = el._state
-    { value: etat?.value ?? el.getAttribute('value') ?? label, icon: iconOf(etat?.icon ?? el.getAttribute('icon')), label: label, norm: normalize(label), group: groupOf(el, seen) }
+    state = el._state
+    { value: state?.value ?? el.getAttribute('value') ?? label, icon: iconOf(state?.icon ?? el.getAttribute('icon')), label: label, norm: normalize(label), group: groupOf(el, seen) }
 
   # le <@@optgroup> d'une option, numéroté dans l'ordre : deux groupes de même titre restent deux
   groupOf = (el, seen)->
@@ -360,7 +360,7 @@
     queueMicrotask fitPanel
     queueMicrotask(fitOther) if $otherMax # @@ other
 
-  # ancré ou placé par le script : le panneau passe dans la couche du dessus dès qu'il paraît (`:attach`, avant que le champ de recherche prenne le focus et que `sticky` le mesure), où aucun ancêtre qui coupe (`overflow: hidden`, un bloc qui défile) ne le rogne ; ancré, le navigateur le pose contre son bouton, l'y garde au défilement et le retourne quand la place manque (cf. style) ; dans une boîte fixe ou transformée, le script le place et l'y garde (cf. pin). Le bouton porte l'ancre de sa liste, un nom par liste
+  # ancré ou placé par le script : le panneau passe dans la couche du dessus dès qu'il paraît (`:attach`, avant que le champ de recherche prenne le focus et que `sticky` le mesure), où aucun ancêtre qui coupe (`overflow: hidden`, un bloc qui défile) ne le rogne ; ancré, le navigateur le pose contre son bouton, l'y garde au défilement et le retourne quand la place manque (cf. style) ; sans l'ancrage CSS, ou dans une boîte fixe ou transformée, le script le place et l'y garde (cf. pin). Le bouton porte l'ancre de sa liste, un nom par liste
   lift = (panel)->
     return unless $tied or $pinned
     wrapperRef.style.setProperty('--mjs-select-anchor', "--#{uid}") if $tied
@@ -381,7 +381,7 @@
       n = n.parentElement or n.getRootNode().host
     false
 
-  # repli sans ancrage, et panneau placé par le script (cf. pin) : le panneau, jamais moins large que la balise, s'élargit pour ses libellés et ne sort jamais de la fenêtre : il part du bord gauche de la balise s'il tient, sinon son bord droit suit celui de la balise, puis la fenêtre le borne (écrit de droite à gauche, il suit le bord droit de la balise, cf. style)
+  # repli sans couche du dessus, et panneau placé par le script (cf. pin) : le panneau, jamais moins large que la balise, s'élargit pour ses libellés et ne sort jamais de la fenêtre : il part du bord gauche de la balise s'il tient, sinon son bord droit suit celui de la balise, puis la fenêtre le borne (écrit de droite à gauche, il suit le bord droit de la balise, cf. style)
   # sa largeur ne dépend pas de sa place : il est posé d'abord sur le bord droit de la balise (rien ne dépasse à droite avant la mesure : WebKit garde le débordement d'une première pose et en fait un défilement horizontal de la page)
   fitPanel = ->
     return if $tied
@@ -506,8 +506,9 @@
     $activeIndex = $optionsData.length if $given # @@ other
     # posé d'abord sur le bord droit de la balise, puis à sa place mesurée (cf. fitPanel)
     $panelLeft = null
-    $pinned    = layer and shiftedOf(wrapperRef)
-    $tied      = anchors and not $pinned
+    # au premier plan dès que la couche du dessus existe, où aucun bloc qui isole son empilement ne le couvre et aucun conteneur qui défile ne le rogne : ancré par le navigateur, sinon (pas d'ancrage CSS, boîte fixe ou transformée) placé par le script
+    $tied      = anchors and not shiftedOf(wrapperRef)
+    $pinned    = layer and not $tied
     $open      = true
     # inscrite le temps qu'elle est ouverte : une modale qui s'ouvre (µ.modal) la referme, elle passerait devant elle ; l'Échap d'une modale la referme d'abord (cf. leave)
     (µ._mjs_menus = µ._mjs_menus or new Set()).add(leave)
@@ -995,6 +996,19 @@
     white-space: nowrap
     text-overflow: ellipsis
 
+  // la flèche, au bout de la ligne (à gauche écrit de droite à gauche), tournée liste ouverte ; comptée aussi dans la jauge, où la plus longue étiquette garde sa place à côté d'elle ; texte de remplacement vide, qu'un lecteur d'écran ne la lise pas ; `--mjs-select-arrow: none` la retire
+  .select-btn::after, .select > .select-sizer > span::after
+    content: "▾"
+    content: "▾" / ""
+    display: var(--mjs-select-arrow, block)
+    flex: none
+    color: var(--mjs-select-arrow-color, currentColor)
+    font-size: var(--mjs-select-arrow-size, .8em)
+    line-height: 1
+
+  .select-btn[aria-expanded=true]::after
+    transform: rotate(180deg)
+
   .select-label.placeholder, .select-search::placeholder, .select-other-input::placeholder
     color: var(--mjs-select-placeholder, color-mix(in srgb, currentColor 62%, transparent))
 
@@ -1026,13 +1040,13 @@
     height: 1.2em
     object-fit: contain
 
-  // jamais moins large que la balise, élargi pour ses libellés dans la fenêtre : posé d'abord sur le bord droit de la balise, puis à sa place mesurée (cf. fitPanel)
+  // jamais moins large que la balise, élargi pour ses libellés dans la fenêtre : posé d'abord sur le bord droit de la balise, puis à sa place mesurée (cf. fitPanel) ; dans le flux de la balise (sans couche du dessus), empilé par `--mjs-select-panel-z`
   .select-panel
     position: absolute
     top: calc(100% + 4px)
     left: var(--mjs-select-panel-left, auto)
     right: 0
-    z-index: 20
+    z-index: var(--mjs-select-panel-z, 20)
     width: max-content
     min-width: 100%
     max-width: calc(100vw - 32px)
@@ -1167,6 +1181,10 @@
 
   .with-other .select-panel
     min-width: max(100%, min(16rem, 90vw))
+
+    // placé par le script dans la couche du dessus (cf. pin), ses 100 % seraient la fenêtre : la largeur de son bouton
+    &.pinned
+      min-width: max(calc(var(--mjs-pin-right) - var(--mjs-pin-left)), min(16rem, 90vw))
 
   .select-other, .select-other-edit
     border-top: 1px solid var(--mjs-select-border, var(--mjs-border, #d0d0d0))

@@ -1,4 +1,4 @@
-// la passe en microtâche des `µeffect` (bloc `<reffets-passe>` de `_mjs_invalidate`, mjs_element.ts : plusieurs écritures du même tour, une
+// la passe en microtâche des `µeffect` (bloc `<reffets-pass>` de `_mjs_invalidate`, mjs_element.ts : plusieurs écritures du même tour, une
 // seule passe des reffets qui les lisent, sur l'état final) n'entre au cœur qu'avec mjs_effect.ts, seul fichier qui inscrit un reffet
 // (`_mjs_effects`) : sans lui, elle ne tourne jamais — en production, en développement, et avec le cœur demandé tout entier (`runtime: 'all'`),
 // qui n'emporte mjs_effect.ts qu'avec un reffet. Une appli qui écrit `µeffect` la garde. Cœur non minifié : les noms internes y gardent leur texte

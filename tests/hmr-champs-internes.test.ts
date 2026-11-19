@@ -14,7 +14,7 @@ const hotswap  = join(repoRoot, 'src', 'runtime', 'mjs_hotswap.ts')
 // receveurs qui ne sont jamais une instance de composant (prise, entrée de dérivée, réglages, feuille, magasin, main d'arrêt d'une minuterie…) ; `this` désigne un autre
 // objet dans les fichiers de la prise, du magasin, du ressort, de l'interpolation et du cache de pages ; `e`, dans sortable.mjs, est l'appui du pointeur, que la liste la plus proche marque pour que celle qui la contient ne le prenne pas ; dans select.mjs, le clic, que la liste marque pour que son panneau ne se ferme pas quand il vient d'elle. Tout autre receveur peut être une
 // instance (un composant est aussi un nœud de la vue de son parent : ligne de liste, référence, nœud animé)
-const PAS        = new Set(['µ', 'window', 'globalThis', 'h', 'v', 'val', 'obj', 'off', 'settings', 'fixed', 'setup', 'setupIn', 'setupOut', 'f', 'refs', 'run', 'reg', 'sheet', 'cover', 'shieldWait', 'err', 'own', 'sock', 'shelf', 'layer', 'toute', 's', 'out', 'nodes', '__nodes', 'relay', 'P', '__mjsLdProto', 'prototype', 'main'])
+const PAS        = new Set(['µ', 'window', 'globalThis', 'h', 'v', 'val', 'obj', 'off', 'settings', 'fixed', 'setup', 'setupIn', 'setupOut', 'f', 'refs', 'run', 'reg', 'sheet', 'cover', 'shieldWait', 'err', 'own', 'sock', 'shelf', 'layer', 'invalidateWithStar', 's', 'out', 'nodes', '__nodes', 'relay', 'P', '__mjsLdProto', 'prototype', 'main'])
 const AUTRE_THIS = /^mjs_(socket|game|lobby|chat|accounts|store|spring|interpolate|page_cache)\.ts$/
 const APPUI      = /^(?:sortable|select)\.mjs$/
 const ECRIT      = /([\wµ$]+|\})\s*\.\s*(_mjs_\w+|_shadow|_state|_mjsSkelBusy)\s*(?:=(?!=)|\|\|=|\?\?=|&&=|\+=|-=|\+\+|--)|delete\s+([\wµ$]+)\.(_mjs_\w+|_shadow|_state)/g
@@ -35,7 +35,7 @@ function sources(): string[] {
 function ecrits(): Set<string> {
   const noms = new Set<string>()
   for (const f of sources()) {
-    const t = readFileSync(f, 'utf8').replace(/var _mjsHotInternes = [^\n]*/, '')
+    const t = readFileSync(f, 'utf8').replace(/var _mjsHotInternal = [^\n]*/, '')
     let m: RegExpExecArray | null
     ECRIT.lastIndex = 0
     while ((m = ECRIT.exec(t))) {
@@ -50,17 +50,17 @@ function ecrits(): Set<string> {
   return noms
 }
 
-// la liste fixe, puis les noms qu'ajoute un bloc balisé du cœur (`Object.assign(_mjsHotInternes, { … })`) : ceux d'une partie que la
+// la liste fixe, puis les noms qu'ajoute un bloc balisé du cœur (`Object.assign(_mjsHotInternal, { … })`) : ceux d'une partie que la
 // construction retire quand aucune unité ne s'en sert, et qui partent avec elle ; des clés nues, que le minifieur raccourcit comme les champs
 const cles = (objet: string): string[] => objet.split(',').map((c) => c.trim()).filter((c) => c !== '').map((c) => {
   assert.match(c, /^[A-Za-z_$][\w$]*: 1$/, `clé nue attendue, un nom écrit entre guillemets ne serait pas raccourci : ${c}`)
   return c.slice(0, -3)
 })
 function liste(): string[] {
-  const texte  = readFileSync(hotswap, 'utf8')
-  const m      = /^var _mjsHotInternes = \{ ([^}]*) \};$/m.exec(texte)
+  const texte = readFileSync(hotswap, 'utf8')
+  const m     = /^var _mjsHotInternal = \{ ([^}]*) \};$/m.exec(texte)
   assert.ok(m, 'liste des champs internes introuvable dans mjs_hotswap.ts')
-  const ajouts = texte.split('\n').filter((l) => l.startsWith('Object.assign(_mjsHotInternes, {')).flatMap((l) => cles(/\{ ([^}]*) \}/.exec(l)![1]))
+  const ajouts = texte.split('\n').filter((l) => l.startsWith('Object.assign(_mjsHotInternal, {')).flatMap((l) => cles(/\{ ([^}]*) \}/.exec(l)![1]))
   return [...cles(m[1]), ...ajouts]
 }
 

@@ -60,9 +60,9 @@ if (µ.Element) {
   };
   // l'ancre de fin d'un bloc imbriqué (repère `mjs-q:e-<id>`) parmi les frères qui suivent `n`, avant `stop` ; null si le parseur l'a déplacée
   var blockEnd = function(n, d, stop) {
-    var fin = 'mjs-q:e-' + d.slice(8).split(' ')[0];
+    var end = 'mjs-q:e-' + d.slice(8).split(' ')[0];
     for (var x = n.nextSibling; x && x !== stop; x = x.nextSibling) {
-      if (x.nodeType === 8 && x.data.split(' ')[0] === fin) return x;
+      if (x.nodeType === 8 && x.data.split(' ')[0] === end) return x;
     }
     return null;
   };
@@ -92,12 +92,12 @@ if (µ.Element) {
         }
         refsOn(refs, d.slice(6), n);
         if (q && d.charCodeAt(6) === 115 && d.charCodeAt(7) === 45) { // 's-'
-          var fin = blockEnd(n, d, stop);
-          if (!fin) return false;
-          var keep = rowHead(n.nextSibling, fin);
+          var end = blockEnd(n, d, stop);
+          if (!end) return false;
+          var keep = rowHead(n.nextSibling, end);
           if (keep) n._mjs_srv = 1;
           if (out) out.push(n);
-          while (n.nextSibling !== fin) {
+          while (n.nextSibling !== end) {
             if (keep) {
               n = n.nextSibling;
               if (out) out.push(n);
@@ -105,7 +105,7 @@ if (µ.Element) {
             else n.parentNode.removeChild(n.nextSibling);
           }
           // l'ancre de fin, relevée au tour suivant
-          n = fin;
+          n = end;
           continue;
         }
       }
@@ -136,10 +136,10 @@ if (µ.Element) {
   µ.Element.prototype._set = function(k, v, code) {
     return this._mjs_srvWait === 1 ? held.call(this, k, v) : srvSet.call(this, k, v, code);
   // </precision>
-  // <horloge>
+  // <clock>
   // µ.Element.prototype._set = function(k, v) {
     // return this._mjs_srvWait === 1 ? held.call(this, k, v) : srvSet.call(this, k, v);
-  // </horloge>
+  // </clock>
   };
   µ.Element.prototype.connectedCallback = function() {
     if (µ._isServer || !this.hasAttribute('mjs-r')) return connect.apply(this, arguments);
@@ -210,7 +210,7 @@ if (µ.Element) {
     // la clé de chaque tête, prise à la lecture de son repère
     var hkeys  = [];
     var done   = [];
-    // les entrées des lignes reprises, dans l'ordre de leurs clés : la réconciliation les lit là (`_mjs_rows`, cf. `_mjs_forCourt`, mjs_for.ts)
+    // les entrées des lignes reprises, dans l'ordre de leurs clés : la réconciliation les lit là (`_mjs_rows`, cf. `_mjs_forShort`, mjs_for.ts)
     var rows   = done._mjs_rows = [];
     var seen   = new Set();
     var last   = start;
@@ -234,7 +234,7 @@ if (µ.Element) {
       var at = j++;
       var k  = at < keys.length ? keys[at] : null;
       var it = k !== null ? items[at] : void 0;
-      var en = null;
+      var ent = null;
       if (k !== null) seen.add(k);
       parent.removeChild(h);
       // clé d'identité des deux côtés : reprise par le rang ; sinon la même clé, écrite par l'auteur des deux côtés
@@ -247,27 +247,27 @@ if (µ.Element) {
             var built = tplFn(it, ix, refs);
             // éléments enregistrés pour le routage des événements, sauf si le tplFn l'a fait (`_mjs_reg`)
             if (!refs._mjs_reg) this._mjs_registerRefs(refs);
-            en = {nodes: nodes, __nodes: refs, _mjs_updFn: built.updateFn || null, _mjs_init: built._mjs_init || 0, _mjs_p: built._mjs_p, _mjs_it: it, _mjs_ix: ix, _mjs_br: void 0};
-            refs._mjs_en = en;
+            ent = {nodes: nodes, __nodes: refs, _mjs_updFn: built.updateFn || null, _mjs_init: built._mjs_init || 0, _mjs_p: built._mjs_p, _mjs_it: it, _mjs_ix: ix, _mjs_br: void 0};
+            refs._mjs_ent = ent;
           }
           catch {
-            en = null;
+            ent = null;
           }
         }
       }
-      if (en) {
-        cache.set(k, en);
+      if (ent) {
+        cache.set(k, ent);
         done.push(k);
-        rows.push(en);
-        last = en.nodes[en.nodes.length - 1];
+        rows.push(ent);
+        last = ent.nodes[ent.nodes.length - 1];
         // l'état de la ligne, quand son gabarit ne l'a pas posé (ligne d'une liste imbriquée), est posé ici, avant que ses composants ne
         // se connectent ; la passe des liaisons qui suit la saute, comme une ligne neuve dont le gabarit l'a posé
-        if (!en._mjs_init) {
-          if (en._mjs_updFn) en._mjs_updFn(it, en._mjs_ix);
-          else if (upd) upd(en.__nodes, it, en._mjs_ix);
-          en._mjs_init = 1;
+        if (!ent._mjs_init) {
+          if (ent._mjs_updFn) ent._mjs_updFn(it, ent._mjs_ix);
+          else if (upd) upd(ent.__nodes, it, ent._mjs_ix);
+          ent._mjs_init = 1;
         }
-        rowReady(en.__nodes);
+        rowReady(ent.__nodes);
       }
       else {
         while (last.nextSibling && last.nextSibling !== stop) parent.removeChild(last.nextSibling);
@@ -280,11 +280,11 @@ if (µ.Element) {
   // `<div mjs-el>` du gabarit (mjs_dynamic.ts) reprend ce repère, par lequel le client la retrouve ; puis les lignes de chaque liste dont les
   // ancres sont reprises (celles de la racine, puis celles des lignes repérées, de proche en proche) reçoivent leurs repères
   µ._ssrRows = function(el) {
-    // <element-dynamique>
+    // <dynamic-element>
     // un nœud par ligne quand le `<@element>` est dans un `{for}`
     var dyn = el._mjs_dynEls, di;
     for (var dk in dyn) for (di = 0; di < dyn[dk].length; di++) dyn[dk][di].setAttribute('mjs-el', dk);
-    // </element-dynamique>
+    // </dynamic-element>
     var lists = el._mjs_list_anchor;
     if (!lists || !el._mjs_nodes) return;
     var doc      = el.ownerDocument;
@@ -299,21 +299,21 @@ if (µ.Element) {
         // le nom de la clé `by` de la liste, posé sur son ancre par la réconciliation (mjs_for.ts)
         var by = refs[a]._mjs_by;
         for (var i = 0; i < order.length; i++) {
-          var en = cache.get(order[i]);
-          var ns = en && el._mjs_liveEntryNodes(en.nodes);
+          var ent = cache.get(order[i]);
+          var ns = ent && el._mjs_liveEntryNodes(ent.nodes);
           if (!ns || !ns[0] || !ns[0].parentNode) continue;
           // clé d'identité : `#`, reprise par le rang (cf. identKey) ; toute autre clé, encodée
           var key = order[i];
-          ns[0].parentNode.insertBefore(doc.createComment('mjs-l:' + (identKey(el, en._mjs_it, key, by) ? '#' : encodeURIComponent(key))), ns[0]);
+          ns[0].parentNode.insertBefore(doc.createComment('mjs-l:' + (identKey(el, ent._mjs_it, key, by) ? '#' : encodeURIComponent(key))), ns[0]);
           // un nœud qui porte plusieurs réfs n'a qu'un repère, réfs séparées par une espace
-          var r     = en.__nodes;
+          var r     = ent.__nodes;
           var byRef = new Map();
           for (var k in r) {
             var t = r[k];
-            // <module-dynamique>
+            // <dynamic-module>
             // la réf d'une ligne garde le repère `<div mjs-mod>` du gabarit (sa tête) : le repère va au composant qui l'a remplacé
             if (t && t._mjs_modLive) t = t._mjs_modLive;
-            // </module-dynamique>
+            // </dynamic-module>
             if (!t || !(t.nodeType === 1 || t.nodeType === 3 && t.parentNode)) continue;
             var ks = byRef.get(t);
             if (ks) ks.push(k);
@@ -391,19 +391,19 @@ if (µ.Element) {
       var walker = doc.createTreeWalker(root, 128 /* NodeFilter.SHOW_COMMENT */, null);
       // chaque commentaire lu une fois : son texte est gardé à côté de lui
       var comments = [];
-      var datas    = [];
+      var dataList = [];
       var c;
       while ((c = walker.nextNode())) {
         var cd = c.data || '';
         if (/^mjs-[he]:/.test(cd)) {
           comments.push(c);
-          datas.push(cd);
+          dataList.push(cd);
         }
       }
       for (var j = 0; j < comments.length; j++) {
         var cm  = comments[j];
-        var key = datas[j].slice(6);
-        if (key && datas[j].charAt(4) === 'e') {
+        var key = dataList[j].slice(6);
+        if (key && dataList[j].charAt(4) === 'e') {
           refs[key] = µ._tm(cm);
           found++;
           continue;
@@ -434,13 +434,13 @@ if (µ.Element) {
           from._mjs_srv = 1;
           continue;
         }
-        // <attente-gardee>
+        // <wait-kept>
         // le contenu servi d'un `{await}` part à sa première lecture (mjs_await.ts), ou reste jusqu'à son arrivée sous `{await.keep}`
         if (b.startsWith('s-await')) {
           from._mjs_srv = 2;
           continue;
         }
-        // </attente-gardee>
+        // </wait-kept>
         while (from.nextSibling !== to) {
           from.parentNode.removeChild(from.nextSibling);
         }
@@ -532,13 +532,13 @@ if (µ.Element) {
       }
       // le repère `<div mjs-el>` d'un `<@element>` : le serveur a mis la vraie balise à sa place, sans le repère ; le client garde cette
       // balise et la change ensuite (mjs_dynamic.ts) ; un nœud par ligne quand le `<@element>` est dans un `{for}`
-      // <element-dynamique>
-      var de = f.nodeType === 1 && f.getAttribute('mjs-el'), dl;
-      if (de) {
+      // <dynamic-element>
+      var from = f.nodeType === 1 && f.getAttribute('mjs-el'), dl;
+      if (from) {
         dl = this._mjs_dynEls || (this._mjs_dynEls = {});
-        (dl[de] || (dl[de] = [])).push(s);
+        (dl[from] || (dl[from] = [])).push(s);
       }
-      // </element-dynamique>
+      // </dynamic-element>
       if (f.firstChild) {
         // un composant léger auquel la page glisse un contenu : la vue est rebâtie, comme en `replace` (sans repère entre sa page et ce
         // contenu, la reprise par position ne sait pas le garder : des balises de composants seules s'aligneraient sur sa page, et le

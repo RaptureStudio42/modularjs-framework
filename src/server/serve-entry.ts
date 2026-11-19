@@ -1,5 +1,5 @@
 // serve-entry — chargeur d'entrée serveur `.server.mjs` pour `mjs serve`. RÉUTILISE
-// l'appareillage déjà posé pour `mjs ws`/`mjs serveur`
+// l'appareillage déjà posé pour `mjs ws`/`mjs server`
 // (cli/ws.ts → cli/server-entry.ts) : même format `.server.mjs` (dialecte Civet des
 // composants + grammaire @import, compilation vers un fichier réel sous le cache, import via
 // URL file:// cache-bustée), même debounce de rechargement à chaud. Différence
@@ -87,25 +87,25 @@ export async function createServeEntry(config: MjsConfig, configDir: string, rec
       if (closed) return
       const dflt = mod ? mod.default : undefined
       if (!isPlainObject(dflt)) {
-        const recu = dflt === undefined ? t('cli.aucun-export-defaut') : (Array.isArray(dflt) ? t('cli.un-tableau') : typeof dflt)
-        throw new Error(t('cli.entry-doit-export-default', { produit: 'mjs serve', entryPath: entryPath!, recu }))
+        const received = dflt === undefined ? t('cli.no-export-default') : (Array.isArray(dflt) ? t('cli.an-array') : typeof dflt)
+        throw new Error(t('cli.entry-must-export-default', { product: 'mjs serve', entryPath: entryPath!, received: received }))
       }
-      for (const cle of Object.keys(dflt)) {
-        if (cle === 'props' || cle === 'actions') continue
-        console.warn(t('server.entry-cle-ignoree', { cle }))
+      for (const key of Object.keys(dflt)) {
+        if (key === 'props' || key === 'actions') continue
+        console.warn(t('server.entry-key-ignored', { key: key }))
       }
       props   = isPlainObject(dflt.props)   ? dflt.props   as RouteTable : {}
       actions = isPlainObject(dflt.actions) ? dflt.actions as RouteTable : {}
       active  = true
-      console.log(t('server.entry-charge', { fichier: entryPath }))
+      console.log(t('server.entry-load', { file: entryPath }))
     } catch (err) {
       if (closed) return
-      const erreur = err instanceof Error ? err.message : String(err)
-      console.error(t('server.entry-echec', { fichier: entryPath, erreur, actif: wasActive }))
+      const error = err instanceof Error ? err.message : String(err)
+      console.error(t('server.entry-failed', { file: entryPath, error: error, active: wasActive }))
       // (point 4/5 de capture) — chargement/rechargement de l'entry : AUCUN appelant en aval
       // (contrairement à propsFor/actionFor, cf. leurs propres catch) — le journal doit être touché
       // ICI, seul endroit qui voit jamais cet échec.
-      recordServer?.({ message: erreur, pile: err instanceof Error ? err.stack : undefined, url: entryPath })
+      recordServer?.({ message: error, stack: err instanceof Error ? err.stack : undefined, url: entryPath })
     }
   }
 
@@ -149,12 +149,12 @@ export async function createServeEntry(config: MjsConfig, configDir: string, rec
       try {
         result = await match.fn(match.params, req)
       } catch (err) {
-        const erreur = err instanceof Error ? err.message : String(err)
-        console.error(t('server.entry-props-echec', { pathname, erreur }))
+        const error = err instanceof Error ? err.message : String(err)
+        console.error(t('server.entry-props-failed', { pathname, error: error }))
         throw err   // l'appelant (branche GET protocole) répond 500
       }
       if (!isPlainObject(result)) {
-        console.warn(t('server.entry-props-invalides', { pathname }))
+        console.warn(t('server.entry-props-invalid', { pathname }))
         return {}
       }
       return result

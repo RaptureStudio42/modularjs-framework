@@ -5,8 +5,8 @@
 // changement fait dehors et redessine seule. Une valeur dérivée que le compilateur prouve précise et qui lit un objet repasse, sans
 // enveloppe, à la règle de l'horloge : elle se refait après une écriture vue par le compilateur, après `µrefresh($o)`, et après toute
 // écriture du composant (un changement fait dehors y paraît alors, comme à l'horloge) — jamais un dernier calcul périmé. Un objet
-// atteint par une autre variable (`$sel = $items[0]`) : l'écriture par `$sel` redessine ce qui affiche `$sel`, la liste attend
-// `µrefresh($items)` ; avec l'enveloppe, la liste suit seule. Chromium, Firefox et WebKit réels
+// atteint par une autre variable (`$sel = $items[0]`, que le compilateur note comme un autre nom de `$items`) : l'écriture par `$sel`
+// redessine ce qui affiche `$sel` et la liste, avec ou sans l'enveloppe. Chromium, Firefox et WebKit réels
 
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -222,9 +222,9 @@ for (const moteur of ['chromium', 'firefox', 'webkit'] as const) playTogether(de
     assert.deepEqual(await parcoursDerivee(browser, await cible('sans-dev', { proxy: false }, true)), attendu, 'développement')
   })
 
-  it('un objet atteint par une autre variable : l\'écriture par `$sel` redessine ce qui affiche `$sel`, la liste attend µrefresh($items)', async function () {
+  it('un objet atteint par une autre variable : l\'écriture par `$sel` redessine ce qui affiche `$sel` et la liste, sans attendre µrefresh($items)', async function () {
     if (!present) { this.skip(); return }
-    assert.deepEqual(await parcoursListe(browser, await cible('sans-prod', { proxy: false })), ['a,b|-', 'a,b|a', 'a,b|Z', 'Z,b|Z'])
+    assert.deepEqual(await parcoursListe(browser, await cible('sans-prod', { proxy: false })), ['a,b|-', 'a,b|a', 'Z,b|Z', 'Z,b|Z'])
   })
 
   it('sans le réglage, rien ne change : l\'enveloppe voit le changement fait dehors et redessine seule', async function () {

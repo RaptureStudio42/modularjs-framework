@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict'
 import { parseRule, parseVarsBlock, parseTypesBlock, resolveRule, ruleText, emitRuntimeRule } from '../src/transpiler/var-types.js'
 
-const OU = { bloc: '<vars>', ligne: 1 }
+const OU = { block: '<vars>', line: 1 }
 const regle = (texte: string) => parseRule(texte, OU)
 // un objet en retrait, un champ par ligne, comme sous une variable du <vars>
 const objet = (...champs: string[]) => parseVarsBlock(['$o', ...champs.map(c => '  ' + c)].join('\n'), 1)[0].rule

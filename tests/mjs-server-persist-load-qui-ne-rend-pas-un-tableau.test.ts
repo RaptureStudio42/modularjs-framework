@@ -23,7 +23,7 @@ describe('MJS-Server — persist : load() qui ne rend pas un tableau', () => {
       await app.listen()
       try {
         const avertissements = journal.filter(([niveau]) => niveau === 'warn' || niveau === 'error')
-        assert.deepEqual(avertissements, [['warn', t('serveur.persist-load-pas-un-tableau', { recu })]])
+        assert.deepEqual(avertissements, [['warn', t('mjs-server.persist-load-not-an-array', { received: recu })]])
       }
       finally {
         await app.stop()

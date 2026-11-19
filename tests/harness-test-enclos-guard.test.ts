@@ -22,7 +22,7 @@ function runScript(tmp: string, source: string, mem: string) {
   mkdirSync(join(tmp, 'tmp'), { recursive: true })
   writeFileSync(specPath, source)
   const t0 = Date.now()
-  const r  = spawnSync('bash', [script, '--no-config', '--no-package', specPath], { cwd: repoRoot, env: { ...process.env, MJS_TEST_MEM: mem, MJS_TEST_MAXSEC: '0', TMPDIR: join(tmp, 'tmp') }, encoding: 'utf-8', timeout: 120000 })
+  const r  = spawnSync('bash', [script, '--no-config', '--no-package', specPath], { cwd: repoRoot, env: { ...process.env, MJS_TEST_MEM: mem, MJS_TEST_MAXSEC: '0', MJS_TEST_JETONS: '0', TMPDIR: join(tmp, 'tmp') }, encoding: 'utf-8', timeout: 120000 })
   return { code: r.status, out: (r.stdout ?? '') + (r.stderr ?? ''), ms: Date.now() - t0 }
 }
 
@@ -104,7 +104,7 @@ describe('harnais — test-enclos.sh arrête un run qui crève MJS_TEST_MEM, enc
       '  })',
       '})',
     ].join('\n'))
-    const child = spawn('bash', [script, '--no-config', '--no-package', specPath], { cwd: repoRoot, env: { ...process.env, MJS_TEST_MEM: '600M', MJS_TEST_MAXSEC: '0', TMPDIR: join(tmp, 'tmp') }, stdio: 'ignore' })
+    const child = spawn('bash', [script, '--no-config', '--no-package', specPath], { cwd: repoRoot, env: { ...process.env, MJS_TEST_MEM: '600M', MJS_TEST_MAXSEC: '0', MJS_TEST_JETONS: '0', TMPDIR: join(tmp, 'tmp') }, stdio: 'ignore' })
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
     for(let i = 0; i < 100 && !existsSync(pidFile); i++) await sleep(100)
     assert.ok(existsSync(pidFile), 'mocha n\'a jamais démarré')

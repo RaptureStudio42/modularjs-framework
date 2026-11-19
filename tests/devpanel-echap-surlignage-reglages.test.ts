@@ -88,17 +88,17 @@ describe('mjs_devpanel — Échap, surlignage et réglages', function () {
   it('mises à jour : survoler une ligne de l\'arbre n\'éclaire ni la page ni le calque de surlignage', async () => {
     await monter()
     window.µ.console(true)
-    if (racine().querySelector('[data-action="maj"]').getAttribute('aria-pressed') !== 'true') clic(racine().querySelector('[data-action="maj"]'))
+    if (racine().querySelector('[data-action="updates"]').getAttribute('aria-pressed') !== 'true') clic(racine().querySelector('[data-action="updates"]'))
     await pause(80)
     eclairs.length = 0
-    const ligne = racine().querySelector('.arbre .ligne:not(.ligne-stores):not(.ligne-effets)')
+    const ligne = racine().querySelector('.tree .line:not(.line-stores):not(.line-effects)')
     ligne.dispatchEvent(new window.MouseEvent('mouseenter'))
     await pause(80)
     ligne.dispatchEvent(new window.MouseEvent('mouseleave'))
     await pause(80)
     const touches = eclairs.map((e) => e.el.tagName + (e.el.hasAttribute('data-mjs-devpanel-highlight') ? '[calque]' : ''))
     assert.deepEqual(touches, [])
-    clic(racine().querySelector('[data-action="maj"]'))
+    clic(racine().querySelector('[data-action="updates"]'))
     window.µ.console(false)
   })
 
@@ -119,17 +119,17 @@ describe('mjs_devpanel — Échap, surlignage et réglages', function () {
   it('un réglage changé : le panneau se redessine et reprend ses rafraîchissements', async () => {
     await monter()
     window.µ.console(true)
-    if (racine().querySelector('[data-action="maj"]').getAttribute('aria-pressed') !== 'true') clic(racine().querySelector('[data-action="maj"]'))
-    await attendre(() => !!racine().querySelector('[data-maj="duration"]'))
-    const champ = racine().querySelector('[data-maj="duration"]')
+    if (racine().querySelector('[data-action="updates"]').getAttribute('aria-pressed') !== 'true') clic(racine().querySelector('[data-action="updates"]'))
+    await attendre(() => !!racine().querySelector('[data-upd="duration"]'))
+    const champ = racine().querySelector('[data-upd="duration"]')
     champ.focus()
     champ.value = '800'
     champ.dispatchEvent(new window.Event('change', { bubbles: true }))
     // un composant de plus dans la page : le compte du bandeau doit suivre au tour suivant
     window.document.body.appendChild(window.document.createElement('mjs-dp-page'))
     await pause(900)
-    assert.match(racine().querySelector('.compte').textContent, /^2 composants/)
-    clic(racine().querySelector('[data-action="maj"]'))
+    assert.match(racine().querySelector('.count').textContent, /^2 composants/)
+    clic(racine().querySelector('[data-action="updates"]'))
     window.µ.console(false)
   })
 })

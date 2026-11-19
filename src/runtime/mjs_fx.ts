@@ -1054,9 +1054,9 @@ function _mjsFxStep(e, part) {
   // <visible>
   var io = µ._mjs_fxSight(function(entries) {
   // </visible>
-  // <sans-visible>
+  // <no-visible>
   // var io = new IntersectionObserver(function(entries) {
-  // </sans-visible>
+  // </no-visible>
     for (var i = 0; i < entries.length; i++) {
       if (!µ._mjs_fxSeen(entries[i], 0.2)) continue;
       io.disconnect();
@@ -1103,9 +1103,9 @@ function _mjsFxStep(e, part) {
       // <visible>
       var io = µ._mjs_fxSight(function(entries) {
       // </visible>
-      // <sans-visible>
+      // <no-visible>
       // var io = new IntersectionObserver(function(entries) {
-      // </sans-visible>
+      // </no-visible>
         for (var i = 0; i < entries.length; i++) (µ._mjs_fxSeen(entries[i], 0.1) ? run : stop)();
       }, { threshold: µ._mjs_fxSteps(0.1) });
       io.observe(el);
@@ -1160,9 +1160,9 @@ function _mjsFxStep(e, part) {
       // <visible>
       var io = µ._mjs_fxSight(function(entries) {
       // </visible>
-      // <sans-visible>
+      // <no-visible>
       // var io = new IntersectionObserver(function(entries) {
-      // </sans-visible>
+      // </no-visible>
         for (var i = 0; i < entries.length; i++) {
           if (!µ._mjs_fxSeen(entries[i], 0.2)) continue;
           io.disconnect();
@@ -1226,9 +1226,9 @@ function _mjsFxStep(e, part) {
       // <visible>
       var io = µ._mjs_fxSight(function(entries) {
       // </visible>
-      // <sans-visible>
+      // <no-visible>
       // var io = new IntersectionObserver(function(entries) {
-      // </sans-visible>
+      // </no-visible>
         for (var i = 0; i < entries.length; i++) {
           var yes = µ._mjs_fxSeen(entries[i], 0.1);
           if (yes === shown) continue;
@@ -1350,8 +1350,8 @@ function _mjsFxSafe(x) {
       return list.length > 0 && list.every(function(x) { return x !== '' && _mjsFxSafe(x); }) ? [list, 0] : [void 0, -1];
     }
     case 'w': {
-      var mots = Array.isArray(v) ? v.map(String) : [String(v)];
-      return mots.length > 0 && mots.every(function(x) { return x !== ''; }) ? [mots, 0] : [void 0, -1];
+      var words = Array.isArray(v) ? v.map(String) : [String(v)];
+      return words.length > 0 && words.every(function(x) { return x !== ''; }) ? [words, 0] : [void 0, -1];
     }
     // une direction : un mot, un angle ramené dans 0..360
     case 'd': {
@@ -1367,17 +1367,17 @@ function _mjsFxSafe(x) {
       if (v === 'none') return ['none', 0];
       // donné en objet `{ fx, s }` : une copie, marquée (ses textes et ses listes passeront le filtre des valeurs CSS, hors textes de
       // la page, cf. µ._mjs_fxOnce) ; son nom passe la même vérification qu'un nom seul
-      var obj = !!v && typeof v === 'object' && typeof v.fx === 'string';
-      var nom = /^\*?([a-z][a-z0-9-]*)$/.exec(obj ? v.fx : String(v));
+      var obj  = !!v && typeof v === 'object' && typeof v.fx === 'string';
+      var name = /^\*?([a-z][a-z0-9-]*)$/.exec(obj ? v.fx : String(v));
       // seul un effet qui se joue une fois se nomme : la table des plages (émise dès qu'une page nomme un effet par une variable, sans
       // prototype) a une entrée pour chacun de ceux du cœur, la définition d'un effet CSS de l'appli porte ses réglages (`params`) ; un effet
       // continu (`magnet`, `particles`) est écarté, son fichier n'est pas demandé
       var t = µ._mjs_fxRanges;
-      if (!nom || (t && !(nom[1] in t) && !(µ._mjs_fxDefs[nom[1]] || 0).params)) return [void 0, -1];
+      if (!name || (t && !(name[1] in t) && !(µ._mjs_fxDefs[name[1]] || 0).params)) return [void 0, -1];
       // un effet de l'appli (sa définition, ou son fichier au manifeste) ; celui dont le code n'est pas encore là : son fichier part tout de suite
-      if (!(nom[1] === 'count' || µ._mjs_fxNeed(nom[1]))) return [void 0, -1];
+      if (!(name[1] === 'count' || µ._mjs_fxNeed(name[1]))) return [void 0, -1];
       // ses réglages : les siens seulement, jamais un `s` lu sur un prototype pollué
-      return [obj ? { fx: nom[1], s: Object.prototype.hasOwnProperty.call(v, 's') ? v.s : void 0, byVar: true } : { fx: nom[1], s: {} }, 0];
+      return [obj ? { fx: name[1], s: Object.prototype.hasOwnProperty.call(v, 's') ? v.s : void 0, byVar: true } : { fx: name[1], s: {} }, 0];
     }
     // un point : un mot, `x% y%`, pointer si l'effet le suit (sp[1])
     case 'o':
@@ -1395,13 +1395,13 @@ function _mjsFxValue(el, name, k, v, sp) {
   // @@ dev
   var mode = µ._typesMode;
   if (r[1] !== 0 && (mode === 'warn' || mode === 'error')) {
-    var ou  = el && el.localName ? ' (<' + el.localName + '>)' : '';
+    var where  = el && el.localName ? ' (<' + el.localName + '>)' : '';
     // un objet en forme courte (le nom de l'effet qu'il porte), jamais [object Object]
-    var vu  = typeof v === 'string' ? "'" + v + "'" : v && typeof v === 'object' && !Array.isArray(v) ? '{ ' + (typeof v.fx === 'string' ? "fx: '" + v.fx + "', " : '') + '… }' : String(v);
-    var reg = sp[sp.length - 1];
+    var seen = typeof v === 'string' ? "'" + v + "'" : v && typeof v === 'object' && !Array.isArray(v) ? '{ ' + (typeof v.fx === 'string' ? "fx: '" + v.fx + "', " : '') + '… }' : String(v);
+    var reg  = sp[sp.length - 1];
     µ.warn(r[1] === 1
-      ? µ._mjs_msg('fxBrought', { name: name, k: k, vu: vu, to: r[0], reg: reg, at: ou }, '*{name} : {k} = {vu} ramené à {to} — permis : {reg}{at}')
-      : µ._mjs_msg('fxRefused', { name: name, k: k, vu: vu, reg: reg, at: ou }, '*{name} : {k} = {vu} refusé, valeur par défaut — permis : {reg}{at}'));
+      ? µ._mjs_msg('fxBrought', { name: name, k: k, seen: seen, to: r[0], reg: reg, at: where }, '*{name} : {k} = {seen} ramené à {to} — permis : {reg}{at}')
+      : µ._mjs_msg('fxRefused', { name: name, k: k, seen: seen, reg: reg, at: where }, '*{name} : {k} = {seen} refusé, valeur par défaut — permis : {reg}{at}'));
   }
   // @@
   return r[0];
@@ -1415,7 +1415,7 @@ var _mjsFxEveryWarned = {};
   var mode = µ._typesMode;
   if (!(mode === 'warn' || mode === 'error') || Object.prototype.hasOwnProperty.call(_mjsFxEveryWarned, v)) return;
   _mjsFxEveryWarned[v] = true;
-  µ.warn(µ._mjs_msg('fxEveryRefused', { vu: "'" + v + "'", at: el && el.localName ? ' (<' + el.localName + '>)' : '' }, 'la variable de thème $$mjs-fx-every vaut {vu}, une valeur refusée : chaque effet garde sa cadence par défaut — permis : une durée (300ms, 1.5s, 0){at}'));
+  µ.warn(µ._mjs_msg('fxEveryRefused', { seen: "'" + v + "'", at: el && el.localName ? ' (<' + el.localName + '>)' : '' }, 'la variable de thème $$mjs-fx-every vaut {seen}, une valeur refusée : chaque effet garde sa cadence par défaut — permis : une durée (300ms, 1.5s, 0){at}'));
 };
 // @@
 
@@ -1550,9 +1550,9 @@ function _mjsFxPlant(def, el, name, s, comp) {
   if (typeof set === 'function') stop.set = function(k, v) { return k !== 'visible' && _mjsFxAt(s.visible, function() { return set(k, v); }); };
   return stop;
   // </visible>
-  // <sans-visible>
+  // <no-visible>
   // return µ._mjs_fxKeep ? µ._mjs_fxKeep(def, el, name, s, comp) : def.setup(el, s, comp);
-  // </sans-visible>
+  // </no-visible>
 }
 
 µ._mjs_fxGoLite = function() {
@@ -1618,9 +1618,9 @@ function _mjsFxPlant(def, el, name, s, comp) {
     el.style.borderRadius = s.radius + 'px';
   }
   // un effet lourd : suivi par les effets économes (décidés AVANT la pose : il compte ses particules)
-  var pose = def.heavy ? { el: el, name: name } : null;
-  if (pose) {
-    _mjsFxHeavy.add(pose);
+  var sets = def.heavy ? { el: el, name: name } : null;
+  if (sets) {
+    _mjsFxHeavy.add(sets);
     if (µ._mjs_fxGauge) µ._mjs_fxGauge(_mjsFxHeavy);
   }
   var stop = null;
@@ -1664,7 +1664,7 @@ function _mjsFxPlant(def, el, name, s, comp) {
       stop = def.setup ? _mjsFxPlant(def, el, name, s, comp) : null;
     }
     catch (e) {
-      if (pose) _mjsFxHeavy.delete(pose);
+      if (sets) _mjsFxHeavy.delete(sets);
       for (var j = 0; j < props.length; j++) el.style.removeProperty(props[j]);
       if (r0 !== null) el.style.borderRadius = r0;
       _mjsFxTokenOf(el, 'mjs-fx', name, false);
@@ -1681,7 +1681,7 @@ function _mjsFxPlant(def, el, name, s, comp) {
     done = true;
     if (wake) wake();
     if (typeof stop === 'function') stop();
-    if (pose) _mjsFxHeavy.delete(pose);
+    if (sets) _mjsFxHeavy.delete(sets);
     for (var i = 0; i < props.length; i++) el.style.removeProperty(props[i]);
     if (off._r0 !== null) el.style.borderRadius = off._r0;
     _mjsFxTokenOf(el, 'mjs-fx', name, false);
@@ -1745,8 +1745,8 @@ function _mjsFxPlant(def, el, name, s, comp) {
     var v = _mjsFxValue(el, name, k, d[k], sp && sp[k]);
     // une liste, un effet nommé par une variable (`{ fx, s }`, un objet neuf à chaque passage) se
     // comparent par leur contenu ; une connexion (`sock`), par elle-même
-    var parValeur = sp && sp[k] && sp[k][0] === 'v';
-    if (v === next[k] || (!parValeur && v !== null && typeof v === 'object' && JSON.stringify(v) === JSON.stringify(next[k]))) continue;
+    var byValue = sp && sp[k] && sp[k][0] === 'v';
+    if (v === next[k] || (!byValue && v !== null && typeof v === 'object' && JSON.stringify(v) === JSON.stringify(next[k]))) continue;
     if (v === void 0) delete next[k];
     else next[k] = v;
     changed.push(k);

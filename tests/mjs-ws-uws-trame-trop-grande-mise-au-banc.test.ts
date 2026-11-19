@@ -100,7 +100,7 @@ describe('mjs-ws — uWS : la coupure pour trame trop grande arrive au cœur en 
         c.couper(1006, TROP_GRANDE)
         await tick(5)
       }
-      assert.equal(app.stats().garde.misesAuBanc, 1)
+      assert.equal(app.stats().guard.bans, 1)
       const quatrieme = uws.connecter()
       quatrieme.recevoir('µ:hello', { protocol: 1 })
       await tick(10)
@@ -121,7 +121,7 @@ describe('mjs-ws — uWS : la coupure pour trame trop grande arrive au cœur en 
         c.couper(code, texte)
         await tick(5)
       }
-      assert.equal(app.stats().garde.misesAuBanc, 0)
+      assert.equal(app.stats().guard.bans, 0)
       const suivante = uws.connecter()
       suivante.recevoir('µ:hello', { protocol: 1 })
       await tick(10)
@@ -182,9 +182,9 @@ describe('mjs-ws — uWS : trame trop grande et mise au banc (vrai paquet uWebSo
       for (const [i, geste] of gestes.entries()) {
         const r = await connexion(port, geste)
         assert.equal(r.accueillie, true, `connexion ${i + 1} accueillie`)
-        await attendre(() => app.stats().connexions.fermees >= i + 1, `fermeture ${i + 1} vue du serveur`)
+        await attendre(() => app.stats().connections.closed >= i + 1, `fermeture ${i + 1} vue du serveur`)
       }
-      assert.equal(app.stats().garde.misesAuBanc, 1)
+      assert.equal(app.stats().guard.bans, 1)
       assert.deepEqual(await connexion(port, (ws) => ws.close(1000)), { code: 4001, accueillie: false })
     }
     finally { await app.stop() }
@@ -208,9 +208,9 @@ describe('mjs-ws — uWS : trame trop grande et mise au banc (vrai paquet uWebSo
       ]
       for (const [i, geste] of gestes.entries()) {
         await connexion(port, geste)
-        await attendre(() => app.stats().connexions.fermees >= i + 1, `fermeture ${i + 1} vue du serveur`)
+        await attendre(() => app.stats().connections.closed >= i + 1, `fermeture ${i + 1} vue du serveur`)
       }
-      assert.equal(app.stats().garde.misesAuBanc, 0)
+      assert.equal(app.stats().guard.bans, 0)
       assert.deepEqual(await connexion(port, (ws) => ws.close(1000)), { code: 1000, accueillie: true })
     }
     finally { await app.stop() }

@@ -13,7 +13,7 @@ import { stripEsm } from '../src/server/renderToString.js'
 import { mjsTmp } from './helpers/tmp.js'
 import { attendre, pause } from './helpers/coeur-monter.js'
 
-const REPRISE       = ['prototype._mjs_tryReviveDying = function', 'this._mjs_tryReviveDying(', '__en._mjs_dying', 'dyingTail.push(']
+const REPRISE       = ['prototype._mjs_tryReviveDying = function', 'this._mjs_tryReviveDying(', '__entNode._mjs_dying', 'dyingTail.push(']
 const FILTREES      = ['µ._mjs_filtPut = function', 'prototype._mjs_filtPurgeEntry = function', 'this._mjs_filtPurgeCache(', '__idxBulk']
 const VUE           = 'customElements.define(\'metamjs-view\''
 const ETAT_PARTAGE  = 'µ._mjs_registerUniversalDep = function'

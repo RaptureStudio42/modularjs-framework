@@ -1,4 +1,4 @@
-// mjs_router.coffee
+// mjs_router.ts
 µ.Router = {
   // Cache de vues PAR INSTANCE (WeakMap composant → Map clé → élément) :
   // l'ancienne Map globale keyée par TAG faisait que deux instances
@@ -8,11 +8,20 @@
   cache: new WeakMap(),
   _mjs_awareComponents: new Set(),
   // pages écrites par le serveur, sorties de la page avec leur vue quand un `{if}` rebâtit sa branche à la reprise : clé
-  // `<vue>-<module>`, reprises par la vue neuve (_mjs_viewOut, _mjs_injectView)
+  // `<view-tag>-<module>`, reprises par la vue neuve (_mjs_viewOut, _mjs_injectView)
   _mjs_ssrPages: new Map(),
   // Compteur de génération anti-ré-entrance de `navigate()` (cf. son propre
   // commentaire) — bumpé à CHAQUE appel, pas seulement les racines.
   _mjs_navGen: 0,
+  // la dernière navigation partie quand l'entrée courante de l'historique était la sienne (cf. `navigate`, `own`) ; 0 :
+  // l'ouverture de la page
+  _mjs_ownGen: 0,
+  // posé par mjs_ujs.ts juste avant une navigation que le navigateur a déjà faite (Précédent, Suivant, adresse changée, page
+  // reçue) : l'entrée courante de l'historique est celle de la destination ; repris par `navigate`
+  _mjs_follow: 0,
+  // la navigation dont une garde `µurlChange` joue en ce moment (cf. `_mjs_runGuard`), -1 hors de toute garde, ou quand l'entrée
+  // courante de l'historique n'est pas celle de la page gardée
+  _mjs_guardGen: -1,
   // PERF — mémo du tri des motifs de
   // route PAR OBJET `routeMap` (les motifs sont STATIQUES après compilation).
   // WeakMap : un `comp.routes` remplacé (nouvel objet) régénère naturellement
@@ -85,7 +94,7 @@
     // le redirect (la page que la garde voulait précisément interdire).
     gen = this._mjs_navGen;
     if (typeof comp._mjs_hooks?.urlChange === "function") {
-      comp._mjs_hooks.urlChange.call(comp, matchPath, this._mjs_extractParams(comp, matchPath));
+      this._mjs_runGuard(comp, matchPath, gen);
     }
     if (gen !== this._mjs_navGen) { return; }
     // Un composant routé vient de monter : rafraîchit `µ.url` (ses params de
@@ -97,6 +106,17 @@
     this._mjs_scheduleNoMatchCheck(matchPath);
     return this._mjs_injectViewsForComponent(comp, matchPath);
   },
+  // joue le `µurlChange` d'un composant, garde de la navigation `gen` (au montage : celle du moment) : pendant son appel, une
+  // adresse ajoutée sans `replace` écrit est une redirection de garde (cf. `navigate`), si cette navigation est partie quand
+  // l'entrée courante de l'historique était la sienne (`_mjs_ownGen`) ; sinon (`µRouter.to(route, false)`, `{ push: false }`), elle
+  // ajoute la sienne. Une navigation lancée depuis la garde a sa propre génération : ce qu'y écrit le montage d'une page n'est pas
+  // une redirection de garde. La valeur d'avant revient ensuite, même si la garde lève
+  _mjs_runGuard: function(comp, matchPath, gen) {
+    var before         = this._mjs_guardGen;
+    this._mjs_guardGen = this._mjs_ownGen === gen ? gen : -1;
+    try { comp._mjs_hooks.urlChange.call(comp, matchPath, this._mjs_extractParams(comp, matchPath)); }
+    finally { this._mjs_guardGen = before; }
+  },
   // Sucre de navigation programmatique : `µ.Router.to '/success'`.
   // Le routeur MJS travaille TOUJOURS sur la partie hash de l'URL → l'API
   // publique ne demande QUE la route (`/success`), jamais le `#` (qui est
@@ -104,15 +124,12 @@
   // déléguer à `navigate` (qui reste l'implémentation bas-niveau, aussi
   // appelée par mjs_ujs avec des URLs complètes lors des back/forward).
   to: function(route, pushHistory = true) {
-    var dest, replace = false;
-    // DURCISSEMENT — mode `replace` : une
-    // garde `@urlChange` qui redirige (`to('/login')`) empilait `/login` APRÈS
-    // `/admin` → chaque « Précédent » repassait par `/admin`, re-déclenchait la
-    // garde, re-poussait `/login` : piège sans issue. `to(route, {replace:true})`
-    // remplace l'entrée courante au lieu d'en ajouter une. Rétrocompat :
-    // `to(route)` (push), `to(route, false)` (ni push ni replace).
+    var dest, replace;
+    // `to(route, {replace: true})` remplace l'entrée courante au lieu d'en ajouter une, `{replace: false}` l'ajoute toujours ;
+    // `replace` non écrit : `navigate` décide (ajoutée, ou remplacée par une garde `µurlChange` qui renvoie ailleurs).
+    // `to(route, false)`, `{push: false}` : ni ajout ni remplacement, l'entrée courante n'est pas celle de la route (cf. `navigate`)
     if (pushHistory && typeof pushHistory === 'object') {
-      replace = !!pushHistory.replace;
+      replace     = pushHistory.replace;
       pushHistory = pushHistory.push !== false;
     }
     if (typeof route !== 'string' || route.length === 0) {
@@ -292,7 +309,7 @@
   // de route, segment d'adresse calculé une fois) — le chemin même que trouvait l'essai PRÉSENT puis ABSENT, réussite ou échec,
   // paramètres compris, sans rejouer ses impasses. Sans elle, chaque segment facultatif doublait les essais de la suite :
   // vingt-quatre segments facultatifs devant un lien que la route ne prend pas figeaient la page près de deux minutes
-  _matchSegs: function(rp, ri, mp, mi, params, vu) {
+  _matchSegs: function(rp, ri, mp, mi, params, seen) {
     var seg, opt, name, all, withVal;
     if (ri >= rp.length) {
       // MATCH EXACT — la route est épuisée : elle ne
@@ -329,27 +346,27 @@
     if (opt) {
       if (mi < mp.length) {
         // mémoire née au premier segment facultatif : rien ne se ramifie avant lui ; une case par position (`_mjs_canMatchSegs`)
-        vu ||= new Uint8Array((rp.length + 1) * (mp.length + 1));
+        seen ||= new Uint8Array((rp.length + 1) * (mp.length + 1));
         if (seg.charCodeAt(0) === 58) { // ':' → segment paramétré → capture
-          if (this._mjs_canMatchSegs(rp, ri + 1, mp, mi + 1, vu)) {
+          if (this._mjs_canMatchSegs(rp, ri + 1, mp, mi + 1, seen)) {
             withVal       = Object.assign({}, params);
             name          = seg.slice(1);
             withVal[name] = this._mjs_dec(mp[mi]);
-            return this._matchSegs(rp, ri + 1, mp, mi + 1, withVal, vu);
+            return this._matchSegs(rp, ri + 1, mp, mi + 1, withVal, seen);
           }
         } else {
           // Littéral optionnel : décoder le segment URL avant comparaison
           // (parité avec le littéral NON optionnel) → `/(café)` matche
           // `/caf%C3%A9`.
-          if (seg === this._mjs_dec(mp[mi]) && this._mjs_canMatchSegs(rp, ri + 1, mp, mi + 1, vu)) {
-            return this._matchSegs(rp, ri + 1, mp, mi + 1, params, vu);
+          if (seg === this._mjs_dec(mp[mi]) && this._mjs_canMatchSegs(rp, ri + 1, mp, mi + 1, seen)) {
+            return this._matchSegs(rp, ri + 1, mp, mi + 1, params, seen);
           }
         }
       }
       // ABSENT : le param nommé (s'il y en a un) vaut explicitement undefined.
       withVal = Object.assign({}, params);
       if (seg.charCodeAt(0) === 58) { withVal[seg.slice(1)] = void 0; }
-      return this._matchSegs(rp, ri + 1, mp, mi, withVal, vu);
+      return this._matchSegs(rp, ri + 1, mp, mi, withVal, seen);
     }
     if (mi >= mp.length) {
       // Plus de segments dans l'URL alors que CE segment n'est pas optionnel.
@@ -359,7 +376,7 @@
       name          = seg.slice(1);
       withVal       = Object.assign({}, params);
       withVal[name] = this._mjs_dec(mp[mi]);
-      return this._matchSegs(rp, ri + 1, mp, mi + 1, withVal, vu);
+      return this._matchSegs(rp, ri + 1, mp, mi + 1, withVal, seen);
     }
     // un segment LITTÉRAL de route (ex.
     // `/café`) était comparé tel quel à `mp[mi]`, qui peut être ENCODÉ si
@@ -371,7 +388,7 @@
     // ne doit pas faire planter le routeur, juste comparer la valeur brute
     // (échoue proprement au pire, comme avant ce fix).
     if (seg !== this._mjs_dec(mp[mi])) { return { ok: false, params: {} }; }
-    return this._matchSegs(rp, ri + 1, mp, mi + 1, params, vu);
+    return this._matchSegs(rp, ri + 1, mp, mi + 1, params, seen);
   },
   // décode un segment d'adresse ; un `%` mal formé ressort brut
   _mjs_dec: function(s) {
@@ -382,21 +399,21 @@
   // position (0 pas encore, 1 non, 2 oui), dans un tableau d'octets — ni tableau creux (sous V8, il ralentit d'un coup passé un
   // millier de segments), ni objet (une clé numérique posée sur Object.prototype par une fusion de JSON portant `__proto__` s'y
   // lirait comme une réponse)
-  _mjs_canMatchSegs: function(rp, ri, mp, mi, vu) {
+  _mjs_canMatchSegs: function(rp, ri, mp, mi, seen) {
     var seg, opt, can, pos;
     if (ri >= rp.length) { return mi >= mp.length; }
     pos = ri * (mp.length + 1) + mi;
-    if (vu[pos]) { return vu[pos] === 2; }
+    if (seen[pos]) { return seen[pos] === 2; }
     seg = rp[ri];
     opt = seg.charCodeAt(0) === 40 && seg.charCodeAt(seg.length - 1) === 41; // '(' … ')'
     if (opt) { seg = seg.slice(1, -1); }
     can = seg === '*';
     if (!can && mi < mp.length) {
       // même comparaison que `_matchSegs` : `:param` prend tout segment, un littéral se compare au segment décodé
-      can = (seg.charCodeAt(0) === 58 || seg === this._mjs_dec(mp[mi])) && this._mjs_canMatchSegs(rp, ri + 1, mp, mi + 1, vu);
+      can = (seg.charCodeAt(0) === 58 || seg === this._mjs_dec(mp[mi])) && this._mjs_canMatchSegs(rp, ri + 1, mp, mi + 1, seen);
     }
-    if (!can && opt) { can = this._mjs_canMatchSegs(rp, ri + 1, mp, mi, vu); }
-    vu[pos] = can ? 2 : 1;
+    if (!can && opt) { can = this._mjs_canMatchSegs(rp, ri + 1, mp, mi, seen); }
+    seen[pos] = can ? 2 : 1;
     return can;
   },
   // PERF — motifs triés par SPÉCIFICITÉ,
@@ -478,10 +495,21 @@
   },
   // `fresh` : l'appelant vient de poser lui-même une entrée neuve (lien `#/…` suivi par la navigation, mjs_ujs.ts) —
   // comme une entrée que `navigate` ajoute (`pushHistory` sans `replaceHistory`), la route part du haut de la page ;
-  // le retour arrière, lui, rend sa position (mjs_ujs.ts, popstate)
-  navigate: function(destination, pushHistory = true, replaceHistory = false, fresh = false) {
-    var comp, matchPath, ref, results, gen, toTop = fresh || (pushHistory && !replaceHistory);
-    // <routes-repos>
+  // le retour arrière, lui, rend sa position (mjs_ujs.ts, popstate). `own` : l'entrée courante de l'historique est celle de la
+  // destination (rejeu d'une navigation qui attendait le code d'une page)
+  navigate: function(destination, pushHistory = true, replaceHistory, fresh = false, own) {
+    var comp, matchPath, ref, results, gen, toTop;
+    // une adresse ajoutée pendant la garde `µurlChange` de la navigation en cours (montage compris), sans `replace` écrit, prend
+    // la place de l'entrée de la page gardée quand l'entrée courante est la sienne : le retour ramène à la page d'avant, sans
+    // rejouer la garde (cf. `_mjs_runGuard`)
+    if (replaceHistory === undefined) { replaceHistory = !!pushHistory && this._mjs_guardGen === this._mjs_navGen; }
+    toTop = fresh || (pushHistory && !replaceHistory);
+    // l'entrée courante de l'historique est-elle celle de la destination ? oui si cette navigation l'écrit, si un lien suivi vient
+    // de la poser (`fresh`) ou si le navigateur y est déjà (`_mjs_follow`) ; non pour `µRouter.to(route, false)`, `{ push: false }`
+    // et `µRouter.navigate(adresse, false)`, qui n'écrivent aucune entrée
+    own = own || this._mjs_follow || fresh || !!pushHistory || replaceHistory;
+    this._mjs_follow = 0;
+    // <routes-idle>
     // une page de la destination dont le code n'est pas arrivé : rien ne change encore (adresse, µ.url, crochets, vues) — elle est
     // demandée et attendue, au plus 1,5 s, l'ancienne page reste à l'écran ; puis la navigation se joue en entier, comme sans
     // attente. Une navigation suivante l'emporte (jeton) ; l'appel rejoué ne réattend pas ; la même destination redemandée pendant
@@ -497,6 +525,8 @@
     if (!_mjsReady) { this._mjs_navWaitKey = null; }
     if (_mjsLate.length) {
       var _mjsGen = ++this._mjs_navGen;
+      // la note aussi pendant l'attente : une garde qui monte avant l'arrivée du code compte avec elle (cf. `_mjs_runGuard`)
+      if (own) { this._mjs_ownGen = _mjsGen; }
       this._mjs_navWaitKey = _mjsKey;
       // µ.Router.to() : l'adresse change dès l'appel, comme au clic sur un lien — `location` la dit aussitôt, un retour du navigateur
       // pendant l'attente revient à la page affichée, et un rechargement de la page du navigateur (fichier périmé) se fait sur la destination
@@ -525,12 +555,12 @@
         if (_mjsGen !== this._mjs_navGen) { return false; }
         this._mjs_navWait = null;
         this._mjs_navReady = true;
-        this.navigate(destination, pushHistory, replaceHistory, fresh);
+        this.navigate(destination, pushHistory, replaceHistory, fresh, own);
         return true;
       });
       return [];
     }
-    // </routes-repos>
+    // </routes-idle>
     // garde de RÉ-ENTRANCE : un `@urlChange`
     // qui redirige (garde d'authentification typique : "si pas connecté →
     // navigate('/login')") ré-entre dans CETTE MÊME fonction PENDANT que la
@@ -543,6 +573,8 @@
     // dessus et abandonne : les composants restants ont de toute façon déjà
     // été traités par l'appel imbriqué (sa boucle couvre TOUT `_mjs_awareComponents`).
     gen = ++this._mjs_navGen;
+    // la navigation note, en partant, si l'entrée courante de l'historique est la sienne (cf. `_mjs_runGuard`)
+    if (own) { this._mjs_ownGen = gen; }
     // la barre de navigation (mjs_nav_progress.ts) : armée ici, elle part quand les composants des
     // vues nouvelles sont arrivés (cf. `_mjs_navProgressEnd`) — rien à l'écran si c'est rapide
     this._mjs_navWaiting = [];
@@ -616,10 +648,10 @@
       if (toTop && typeof window.scrollTo === 'function') { window.scrollTo({ left: 0, top: 0, behavior: 'instant' }); }
       // la navigation finit (barre de navigation) même si un `urlChange` ou une vue lève : l'erreur
       // reste visible, la barre ne reste pas à l'écran jusqu'à la navigation suivante
-      // <routes-repos>
+      // <routes-idle>
       // une navigation demandée pendant que celle-ci joue ses crochets et pose ses vues (garde `µurlChange`, renvoi depuis un `µawake`) s'applique dans le tour, sans attente
       this._mjs_navBusy = (this._mjs_navBusy || 0) + 1;
-      // </routes-repos>
+      // </routes-idle>
       try {
         for (comp of ref) {
           if (gen !== this._mjs_navGen) {
@@ -630,14 +662,17 @@
             break;
           }
           if (typeof comp._mjs_hooks?.urlChange === "function") {
-            comp._mjs_hooks.urlChange.call(comp, matchPath, this._mjs_extractParams(comp, matchPath));
+            this._mjs_runGuard(comp, matchPath, gen);
+            // sa propre garde a renvoyé ailleurs (jumelle de celle du montage) : ses vues sont déjà celles du vrai chemin, la
+            // page gardée ne repasse pas par-dessus
+            if (gen !== this._mjs_navGen) break;
           }
           results.push(this._mjs_injectViewsForComponent(comp, matchPath));
         }
       } finally {
-        // <routes-repos>
+        // <routes-idle>
         this._mjs_navBusy--;
-        // </routes-repos>
+        // </routes-idle>
         if (gen === this._mjs_navGen) { this._mjs_navProgressEnd(gen); }
       }
       // Après la salve : l'URL a-t-elle trouvé preneur quelque part ? (cf.
@@ -729,29 +764,9 @@
   },
   // ──────────────────────────────────────────────────────────────────────────
   // TRANSITIONS DE PAGE (@viewTransition) — la permutation des <@view> peut être enveloppée dans
-  // l'API View Transitions du navigateur. Cascade à 3 niveaux, le plus précis gagne : attribut
-  // data-mjs-vt de la balise <@view> (posé par le compilateur), puis directive racine
-  // @viewTransition du composant routeur (_mjs_viewTransition), puis défaut global µ.viewTransition
-  // (clé viewTransition de mjs.config.json émise dans le manifeste — modifiable au runtime).
-  //
-  // Retour : `false` (désactivé), `true` (fondu natif du navigateur), ou une CHAÎNE = nom de
-  // préréglage de la bibliothèque (mjs_vt_presets.ts, cf. µ._mjs_vtApplyPreset) — implique activé.
-  // Chaque niveau peut poser 'on'/'off' (bool) OU un nom ('zoom', 'cube={ dir: left }'…) tel quel.
-  // `'none'` ≡ `'off'` à tous les niveaux — même mot que la valeur « désactivé » de la clé de config.
-  _mjs_vtResolve: function(comp, viewNode) {
-    var attr = viewNode && viewNode.getAttribute ? viewNode.getAttribute('data-mjs-vt') : null;
-    if (attr === 'on') { return true; }
-    if (attr === 'off' || attr === 'none') { return false; }
-    if (attr) { return attr; }
-    var mod = comp ? comp._mjs_viewTransition : null;
-    if (mod === 'on') { return true; }
-    if (mod === 'off' || mod === 'none') { return false; }
-    if (mod) { return mod; }
-    var cfg = µ.viewTransition;
-    return (cfg && cfg !== 'none') ? cfg : false;
-  },
+  // l'API View Transitions du navigateur (cascade et priorité : `_mjs_vtResolveWithPriority`, plus bas).
   // Garde D'ENVIRONNEMENT pure (accessibilité) — SANS
-  // rapport avec la résolution de cascade (_mjs_vtResolve, cf. _mjs_vtResolveNavigation plus bas,
+  // rapport avec la résolution de cascade (_mjs_vtResolveWithPriority, cf. _mjs_vtResolveNavigation plus bas,
   // seule consommatrice réelle de cette cascade pour navigate()). PARTAGÉE : mjs_ujs.ts l'appelle
   // telle quelle (`µ.Router._mjs_vtEnabled()`) pour ses propres transitions de PAGE (swap de
   // #app-root, cascade lien/config distincte de celle-ci) — mjs_router.ts est chargé AVANT
@@ -771,10 +786,11 @@
   // gagne (qu'elle soit posée sur la page de DÉPART ou celle d'ARRIVÉE) ; à
   // égalité (le cas le plus courant : 1 partout par défaut), c'est TOUJOURS la
   // page de DÉPART qui gagne. Résolution en {value, priority} plutôt qu'une
-  // simple valeur — DISTINCTE de `_mjs_vtResolve` (gardé tel quel, testé) : celle-ci ne sait
-  // pas dire « rien de configuré » (false) d'un « off » explicite (les deux valent `false`) — ici
-  // les deux cas doivent se comporter différemment (rien configuré ⇒ ce côté
-  // NE PARTICIPE PAS au départage, cf. `_mjs_vtSideResolve`/`_mjs_vtWinner`).
+  // simple valeur : `value` vaut `false` (désactivé), `true` (fondu natif du navigateur) ou une CHAÎNE,
+  // nom de préréglage de la bibliothèque (mjs_vt_presets.ts, cf. µ._mjs_vtApplyPreset) ; chaque niveau
+  // pose 'on'/'off' OU un nom ('zoom', 'cube={ dir: left }'…) tel quel, `'none'` ≡ `'off'` partout.
+  // « Rien de configuré » (`null`) n'est pas un « off » explicite : ce côté NE PARTICIPE PAS au
+  // départage, cf. `_mjs_vtSideResolve`/`_mjs_vtWinner`.
   //
   // Cascade (du plus au moins spécifique) : attribut `data-mjs-vt`/`-p` de la
   // balise `<@view>` > directive racine `@viewTransition` du composant ROUTEUR >
@@ -1063,21 +1079,26 @@
   // s'enregistrent un par un — le premier `initComponent` verrait un état
   // partiel (« rien ne matche » alors que le composant qui matche n'a pas
   // encore monté). Un seul contrôle par salve, sur le DERNIER chemin demandé.
-  // un composant routé dont le montage attend encore (premier rendu gelé par l'attente des textes traduits, levé au
-  // plus tard par le secours) peut rediriger dans son `µmount` : le contrôle attend qu'il ait monté, puis juge l'adresse
-  // où l'on est arrivé ; sans montage en attente, il passe à l'image qui suit, comme avant
+  // un composant routé dont le montage attend encore (premier rendu gelé par l'attente des textes traduits) peut rediriger
+  // dans son `µmount` : le contrôle attend qu'il ait monté, puis juge l'adresse où l'on est arrivé ; sans montage en attente,
+  // il passe à l'image qui suit, comme avant. Tant que des textes sont en route (sous `*loader`, le gel dure jusqu'à la fin du
+  // chargement, sans secours), il ne demande aucune image : la fin d'un chargement, le montage d'un composant ou une nouvelle
+  // demande le réveillent. « Aucune route » ne se juge ainsi jamais avant le montage d'un composant qui attend ses textes
   _mjs_scheduleNoMatchCheck: function(matchPath) {
     if (µ._isServer || typeof document === 'undefined') { return; }
     var self = this;
     this._mjs_noMatchPath = matchPath;
     // l'adresse de la demande : changée d'ici le contrôle, c'est la nouvelle qui compte
     this._mjs_noMatchHref = window.location.href;
+    // contrôle en attente des textes : la nouvelle demande le réveille (la vue a pu changer)
+    this._mjs_noMatchWake?.();
     if (this._mjs_noMatchPending) { return; }
     this._mjs_noMatchPending = true;
+    var waiting = function(comp) { return comp._mjs_pendingMount && !comp._mjs_mounted && comp.isConnected && !comp._mjs_has_crashed; };
     var run = function() {
       var comp, path, hash;
       for (comp of self._mjs_awareComponents) {
-        if (comp._mjs_pendingMount && !comp._mjs_mounted && comp.isConnected && !comp._mjs_has_crashed) { return arm(); }
+        if (waiting(comp)) { return hold(); }
       }
       self._mjs_noMatchPending = false;
       path = self._mjs_noMatchPath;
@@ -1097,6 +1118,24 @@
     var arm = function() {
       if (typeof requestAnimationFrame === 'function') { requestAnimationFrame(run); }
       else { setTimeout(run, 0); }
+    };
+    // un montage attend : textes en route, réveil à la fin d'un chargement (arrivée ou échec) ou au montage d'un composant
+    // qui attend ; sinon l'image qui suit
+    var hold = function() {
+      var comp;
+      var wake = function() {
+        if (self._mjs_noMatchWake !== wake) { return; }
+        self._mjs_noMatchWake = null;
+        arm();
+      };
+      if (!µ.i18n?._mjs_inFlight?.(wake)) { return arm(); }
+      self._mjs_noMatchWake = wake;
+      for (comp of self._mjs_awareComponents) {
+        if (waiting(comp)) { (comp._mjs_mount_cbs ||= []).push(wake); }
+      }
+      // filet : un composant qui attend peut quitter la page sans navigation ni montage, et aucun réveil ne vient ; l'attente
+      // est revue à l'échéance de l'attente des textes (`i18n.timeout`, 3 s par défaut), sans juger si elle tient encore
+      setTimeout(wake, µ._i18nData?.timeout > 0 ? µ._i18nData.timeout : 3000);
     };
     arm();
   },
@@ -1244,7 +1283,7 @@
       // (targetId, moduleName) déjà vue) accumule un ARBRE DOM COMPLET
       // hiberné par entrée, POUR TOUJOURS — même dérive mémoire que
       // pageCache/_mjs_scrollPos/_mjs_preloadCache avant leur passage en LRU (cf.
-      // mjs_ujs.ts). `µ._mjs_destroyEvictedTree` (mjs_init.ts) mentionne DÉJÀ
+      // mjs_ujs.ts). `µ._mjs_destroyEvictedTree` (mjs_page_cache.ts) mentionne DÉJÀ
       // explicitement "vues du routeur" dans son propre commentaire comme
       // consommateur visé — jamais câblé jusqu'ici. Fix : même bornage que
       // pageCache (10, portée comparable : un arbre DOM+composants complet
@@ -1292,10 +1331,10 @@
     }
     newComponent._mjs_page_cached = false;
     targetNode.textContent = '';
-    // <routes-repos>
+    // <routes-idle>
     // la page montée est demandée par le routeur lui-même, sans attendre le guetteur de l'ombre ; sans effet si elle est déjà en vol
     if (typeof customElements !== 'undefined' && !customElements.get(expectedTagName) && µ.Autoloader) { µ.Autoloader.load(expectedTagName); }
-    // </routes-repos>
+    // </routes-idle>
     return targetNode.appendChild(newComponent);
   },
   // (_applyRouteParams RETIRÉ : les params de route ne sont plus injectés en
@@ -1304,7 +1343,7 @@
   //  _mjs_updateUrlStore ; l'ancien `$id`-par-attribut n'existe plus.)
 };
 
-// <routes-repos>
+// <routes-idle>
 // les pages d'une table de routes (réglage routes.preload, liste émise par le compilateur), préchargées une à la fois, chacune après
 // l'attente commune des files du repos (µ._idle, mjs_autoloader.ts : après load, plus rien en vol, puis un repos), par un lien
 // modulepreload : le fichier est téléchargé, jamais exécuté ici — rien ne se définit avant la visite, qui l'importe sans le
@@ -1338,7 +1377,7 @@
   };
   µ._idle(next);
 };
-// </routes-repos>
+// </routes-idle>
 // Boot : snapshot initial de `µ.url` dès le chargement du runtime. `µ.state`
 // (défini dans mjs_runes, concaténé AVANT mjs_router) est déjà là ; les params
 // restent vides tant qu'aucune vue routée n'a monté, puis complétés par

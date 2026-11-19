@@ -73,7 +73,7 @@ describe('sortie dans le dossier des sources : manifestPath ne remplace jamais u
     assert.ok(!existsSync(join(root, 'public')), 'dossier de sortie créé')
   })
 
-  it('lecture de mjs.config.json : aucun refus (mjs ws et mjs serveur démarrent) ; la construction refuse en nommant le fichier', () => {
+  it('lecture de mjs.config.json : aucun refus (mjs ws et mjs server démarrent) ; la construction refuse en nommant le fichier', () => {
     const root = projet({ sourceDir: 'app/modularjs', outputDir: 'app/modularjs/build', manifestPath: 'app/modularjs/outil.js' })
     assert.doesNotThrow(() => findConfig(root))
     const { status, sortie } = build(root)

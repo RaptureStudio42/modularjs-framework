@@ -24,8 +24,8 @@
 // `<!--` jamais refermé se lit une fois). Chercher le `-->` suivant avalait tout ce qui suit un `<!-->` jusqu'au
 // commentaire d'après : le gabarit perdait des balises que le navigateur affiche.
 
-import { maskInertSameLength } from './lexer/index.js'
-import { ouvreUneRegex, regexEnArgument, scanRegexLiteral } from './sigils.js'
+import { maskInertSameLength, opensHashBlock } from './lexer/index.js'
+import { opensRegex, regexInArgument, scanRegexLiteral } from './sigils.js'
 
 export { maskInertSameLength }
 
@@ -72,15 +72,15 @@ export function maskNonCode(src: string, lang = 'civet'): string {
         if(depth === 0) return i
         depth--
       }
-      if(c === '#' && c1 === '#' && c2 === '#') { const s = closeAt(i + 3, '###'); blank(i, s); i = s; continue }
+      if(opensHashBlock(src, i)) { const s = closeAt(i + 3, '###'); blank(i, s); i = s; continue }
       if(heredocs && c === '/' && c1 === '/' && c2 === '/') { const s = closeAt(i + 3, '///'); blank(i, s); i = s; continue }
       if(c === '/' && c1 === '/') { const s = lineEnd(i); blank(i, s); i = s; continue }
       if(c === '/' && c1 === '*') { const s = closeAt(i + 2, '*/'); blank(i, s); i = s; continue }
       if(c === '#' && (coffee || !(c1 !== undefined && /[a-zA-Z_!]/.test(c1)))) { const s = lineEnd(i); blank(i, s); i = s; continue }
       // appel implicite (`s.split /@/`) : regex en Coffee et en Civet seulement
-      if(c === '/' && (ouvreUneRegex(src.slice(0, i)) || (heredocs && regexEnArgument(src, i)))) {
-        const fin = scanRegexLiteral(src, i)
-        if(fin !== -1) { blank(i, fin); i = fin; continue }
+      if(c === '/' && (opensRegex(src.slice(0, i)) || (heredocs && regexInArgument(src, i)))) {
+        const end = scanRegexLiteral(src, i)
+        if(end !== -1) { blank(i, end); i = end; continue }
       }
       if(heredocs && (c === '"' || c === "'") && c1 === c && c2 === c) { i = text(i, i + 3, c + c + c, c === '"' ? '#{' : null); continue }
       if(c === '`') { i = text(i, i + 1, '`', '${'); continue }
@@ -122,14 +122,14 @@ export function findBlocks(text: string, kinds: readonly string[], selfClosing =
   const blocks  = [] as { start: number, end: number, kind: string }[]
   const live    = [...kinds]
   // motif d'une sorte, trois groupes : ouverture, fin de balise ou de commentaire, fermante (vide ou absente sans elle)
-  const motif   = (k: string): string => k === '<!--' ? '(<!--)((?:-?>|[\\s\\S]*?--!?>)?)()' : selfClosing ? `(<${k}\\b)([^>]*>)?()` : `(<${k}\\b)(?:([^>]*>)([\\s\\S]*?</${k}>)?)?`
-  const sticky  = new Map(kinds.map((k) => [k, new RegExp(motif(k), 'iy')]))
+  const pattern = (k: string): string => k === '<!--' ? '(<!--)((?:-?>|[\\s\\S]*?--!?>)?)()' : selfClosing ? `(<${k}\\b)([^>]*>)?()` : `(<${k}\\b)(?:([^>]*>)([\\s\\S]*?</${k}>)?)?`
+  const sticky  = new Map(kinds.map((k) => [k, new RegExp(pattern(k), 'iy')]))
   const closing = new Map(kinds.map((k) => [k, nextMatch(text, new RegExp(`</${k}>`, 'gi'))]))
-  let openings  = new RegExp(live.map(motif).join('|'), 'gi')
+  let openings  = new RegExp(live.map(pattern).join('|'), 'gi')
   // une sorte qui ne peut plus se fermer sort de la regex des ouvertures
   const drop = (kind: string): void => {
     live.splice(live.indexOf(kind), 1)
-    if (live.length > 0) openings = new RegExp(live.map(motif).join('|'), 'gi')
+    if (live.length > 0) openings = new RegExp(live.map(pattern).join('|'), 'gi')
   }
   // fin du bloc de cette sorte ouvert en `at`, lue sur les morceaux captés par son motif ; -1 sans bloc
   const endOf = (kind: string, at: number, tag: string | undefined, close: string | undefined): number => {

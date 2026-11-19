@@ -574,7 +574,6 @@ describe("mjs_ujs — µ._mjs_navInstallNodes : method 'none' (cas 13)", functio
     // état de zone PRÉEXISTANT, posé par une navigation antérieure — doit survivre INTACT.
     µ._mjs_navContainer = main
     µ._mjs_navZone = main
-    µ._mjs_navZoneMode = 'replaced'
     µ._mjs_navCachePolicy = 'revalidate'
     µ._mjs_navHibernated = { path: '/prev', nodes: [hibernatedNode] }
 
@@ -585,7 +584,6 @@ describe("mjs_ujs — µ._mjs_navInstallNodes : method 'none' (cas 13)", functio
     assert.deepEqual(main.children, [existingChild], "rien installé : le contenu affiché n'a pas bougé")
     assert.equal(µ._mjs_navContainer, main, 'µ._mjs_navContainer inchangé')
     assert.equal(µ._mjs_navZone, main, 'µ._mjs_navZone inchangé')
-    assert.equal(µ._mjs_navZoneMode, 'replaced', 'µ._mjs_navZoneMode inchangé')
     assert.equal(µ._mjs_navCachePolicy, 'revalidate', "µ._mjs_navCachePolicy inchangé (le 'no-cache' passé en argument est IGNORÉ en method:'none')")
     assert.equal(µ._mjs_navHibernated, null, "l'hibernation en cours est annulée (µ._mjs_navDropHibernation)")
     assert.equal(hibernatedNode._mjs_page_cached, false)

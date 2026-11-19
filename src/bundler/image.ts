@@ -36,15 +36,15 @@ function ispeSize(buf: Buffer): ImageSize | null {
 /** La balise OUVRANTE `<svg …>` (de `<svg` à son premier `>` HORS guillemets), ou `null` si elle
  *  n'est jamais refermée dans la fenêtre lue — jamais ce qui suit (les enfants). */
 function svgOpeningTag(str: string): string | null {
-  const debut = str.search(/<svg[\s>]/i)
-  if (debut < 0) return null
-  let i = debut + 4
-  let guillemet: string | null = null
+  const start = str.search(/<svg[\s>]/i)
+  if (start < 0) return null
+  let i = start + 4
+  let quote: string | null = null
   while (i < str.length) {
     const c = str[i]
-    if (guillemet) { if (c === guillemet) guillemet = null }
-    else if (c === '"' || c === '\'') guillemet = c
-    else if (c === '>') return str.slice(debut, i + 1)
+    if (quote) { if (c === quote) quote = null }
+    else if (c === '"' || c === '\'') quote = c
+    else if (c === '>') return str.slice(start, i + 1)
     i++
   }
   return null
@@ -68,13 +68,13 @@ export function readImageSize(buf: Buffer): ImageSize | null {
 
   // WebP — conteneur RIFF, trois variantes de bloc
   if (buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') {
-    const bloc = buf.toString('ascii', 12, 16)
-    if (bloc === 'VP8 ' && buf.length >= 30) return { width: buf.readUInt16LE(26) & 0x3fff, height: buf.readUInt16LE(28) & 0x3fff }
-    if (bloc === 'VP8L' && buf.length >= 25) {
+    const block = buf.toString('ascii', 12, 16)
+    if (block === 'VP8 ' && buf.length >= 30) return { width: buf.readUInt16LE(26) & 0x3fff, height: buf.readUInt16LE(28) & 0x3fff }
+    if (block === 'VP8L' && buf.length >= 25) {
       const bits = buf.readUInt32LE(21)
       return { width: (bits & 0x3fff) + 1, height: ((bits >> 14) & 0x3fff) + 1 }
     }
-    if (bloc === 'VP8X' && buf.length >= 30) return { width: buf.readUIntLE(24, 3) + 1, height: buf.readUIntLE(27, 3) + 1 }
+    if (block === 'VP8X' && buf.length >= 30) return { width: buf.readUIntLE(24, 3) + 1, height: buf.readUIntLE(27, 3) + 1 }
     return null
   }
 
@@ -82,19 +82,19 @@ export function readImageSize(buf: Buffer): ImageSize | null {
   if (buf.length >= 12 && buf.toString('ascii', 4, 8) === 'ftyp') return ispeSize(buf)
 
   // SVG — pas de pixels natifs : on prend `width`/`height`, sinon le `viewBox`
-  const debut = buf.toString('utf-8', 0, Math.min(buf.length, 2048))
-  if (/<svg[\s>]/i.test(debut)) {
+  const start = buf.toString('utf-8', 0, Math.min(buf.length, 2048))
+  if (/<svg[\s>]/i.test(start)) {
     // `width`/`height`/`viewBox` étaient cherchés dans TOUT le préambule : un
     // enfant (`<rect width="10" height="10"/>`) pouvait fournir la taille à la place du `<svg>`
     // lui-même. On isole d'abord la balise OUVRANTE (jusqu'à son `>`, hors guillemets) et on ne
     // cherche plus que DEDANS.
-    const balise = svgOpeningTag(debut) ?? ''
+    const tag = svgOpeningTag(start) ?? ''
     // l'attribut ENTIER (précédé d'un blanc : `stroke-width` n'est pas `width`), et seulement une taille en
     // pixels, nombre nu ou `px` : `100%`, `10em`… ne sont pas des pixels, le `viewBox` donne alors la taille
-    const w = balise.match(/\swidth\s*=\s*(["'])\s*(\d*\.?\d+)\s*(?:px)?\s*\1/i)
-    const h = balise.match(/\sheight\s*=\s*(["'])\s*(\d*\.?\d+)\s*(?:px)?\s*\1/i)
+    const w = tag.match(/\swidth\s*=\s*(["'])\s*(\d*\.?\d+)\s*(?:px)?\s*\1/i)
+    const h = tag.match(/\sheight\s*=\s*(["'])\s*(\d*\.?\d+)\s*(?:px)?\s*\1/i)
     if (w && h) return { width: Math.round(Number(w[2])), height: Math.round(Number(h[2])) }
-    const vb = balise.match(/\bviewBox\s*=\s*["']\s*[-\d.]+\s+[-\d.]+\s+([\d.]+)\s+([\d.]+)/i)
+    const vb = tag.match(/\bviewBox\s*=\s*["']\s*[-\d.]+\s+[-\d.]+\s+([\d.]+)\s+([\d.]+)/i)
     if (vb) return { width: Math.round(Number(vb[1])), height: Math.round(Number(vb[2])) }
     return null
   }
@@ -111,19 +111,19 @@ export function readImageSize(buf: Buffer): ImageSize | null {
       if (buf[i] !== 0xff) { i++; continue }
       while (buf[i] === 0xff) i++            // bourrage — le marqueur est le premier octet non-FF
       if (i >= buf.length) return null        // bourrage jusqu'à la fin, plus rien à lire
-      const marqueur = buf[i]
+      const marker = buf[i]
       i++                                      // i pointe maintenant juste APRÈS l'octet de marqueur
-      if (marqueur === 0xd9) return null      // EOI — fin de flux, aucune trame trouvée
-      if (marqueur === 0x01 || (marqueur >= 0xd0 && marqueur <= 0xd8)) continue   // TEM/RSTn/SOI : pas de longueur
+      if (marker === 0xd9) return null      // EOI — fin de flux, aucune trame trouvée
+      if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd8)) continue   // TEM/RSTn/SOI : pas de longueur
       if (i + 1 >= buf.length) return null    // pas la place de lire la longueur du segment
       // SOF0-SOF3, SOF5-SOF7, SOF9-SOF11, SOF13-SOF15 : les trames qui portent la taille
-      if (marqueur >= 0xc0 && marqueur <= 0xcf && marqueur !== 0xc4 && marqueur !== 0xc8 && marqueur !== 0xcc) {
+      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
         if (i + 7 > buf.length) return null   // segment tronqué avant la hauteur/largeur
         return { width: buf.readUInt16BE(i + 5), height: buf.readUInt16BE(i + 3) }
       }
-      const longueur = buf.readUInt16BE(i)
-      if (longueur < 2) return null           // longueur invalide (elle s'inclut elle-même)
-      i += longueur
+      const length = buf.readUInt16BE(i)
+      if (length < 2) return null           // longueur invalide (elle s'inclut elle-même)
+      i += length
     }
   }
 
@@ -138,19 +138,19 @@ export function animatedKind(buf: Buffer): 'gif' | 'webp' | 'apng' | 'avif' | nu
 
   // GIF — on saute les blocs (extensions 0x21, images 0x2C), dès la deuxième image il est animé
   if (n >= 13 && buf.toString('ascii', 0, 4) === 'GIF8') {
-    let i      = 13 + ((buf[10] & 0x80) ? 3 << ((buf[10] & 7) + 1) : 0)
-    let images = 0
-    const blocs = () => { while (i < n && buf[i] !== 0) i += buf[i] + 1; i++ }
+    let i            = 13 + ((buf[10] & 0x80) ? 3 << ((buf[10] & 7) + 1) : 0)
+    let images       = 0
+    const skipBlocks = () => { while (i < n && buf[i] !== 0) i += buf[i] + 1; i++ }
     while (i < n) {
       if (buf[i] === 0x21) {
         i += 2
-        blocs()
+        skipBlocks()
       }
       else if (buf[i] === 0x2c) {
         if (++images > 1) return 'gif'
         if (i + 10 > n) return null
         i += 11 + ((buf[i + 9] & 0x80) ? 3 << ((buf[i + 9] & 7) + 1) : 0)
-        blocs()
+        skipBlocks()
       }
       else return null
     }
@@ -174,16 +174,16 @@ export function animatedKind(buf: Buffer): 'gif' | 'webp' | 'apng' | 'avif' | nu
 
   // AVIF — la boîte ftyp : marque principale, version, puis les marques compatibles ; `avis` annonce une suite d'images
   if (n >= 16 && buf.toString('ascii', 4, 8) === 'ftyp') {
-    const fin = Math.min(n, buf.readUInt32BE(0))
-    for (let i = 8; i + 4 <= fin; i += i === 8 ? 8 : 4) if (buf.toString('ascii', i, i + 4) === 'avis') return 'avif'
+    const end = Math.min(n, buf.readUInt32BE(0))
+    for (let i = 8; i + 4 <= end; i += i === 8 ? 8 : 4) if (buf.toString('ascii', i, i + 4) === 'avis') return 'avif'
   }
 
   return null
 }
 
 /** Nom de fichier d'une variante : `hero-960-<empreinte>.webp`. */
-export function variantName(baseName: string, largeur: number, format: string, empreinte: string): string {
-  return `${baseName}-${largeur}-${empreinte}.${format}`
+export function variantName(baseName: string, width: number, format: string, digest: string): string {
+  return `${baseName}-${width}-${digest}.${format}`
 }
 
 let sharpCache: Promise<any | null> | null = null
@@ -235,40 +235,40 @@ export async function generateVariants(req: VariantRequest): Promise<GeneratedVa
   const animation = animatedKind(req.bytes)
   if (animation === 'apng' || animation === 'avif') return []
   const formats = animation ? req.formats.filter(f => f === 'webp') : req.formats
-  const sorties: GeneratedVariant[] = []
-  const vues = new Set<string>()
-  for (const largeur of req.widths) {
+  const outputs: GeneratedVariant[] = []
+  const seen = new Set<string>()
+  for (const width of req.widths) {
     for (const format of formats) {
       // try/catch PAR VARIANTE (largeur × format) : sharp peut refuser une combinaison précise
       // (largeur invalide, format non supporté pour ce contenu…) sans que les AUTRES variantes
       // de la même image en pâtissent — le message NOMME l'image, la largeur et le format
       // demandés, jamais le seul message interne brut de sharp.
-      let sortie: any
+      let output: any
       try {
-        const pipeline = sharp(req.bytes, animation ? { animated: true } : undefined).resize({ width: largeur, withoutEnlargement: true })
-        sortie = await (format === 'avif' ? pipeline.avif({ quality: req.quality })
+        const pipeline = sharp(req.bytes, animation ? { animated: true } : undefined).resize({ width: width, withoutEnlargement: true })
+        output = await (format === 'avif' ? pipeline.avif({ quality: req.quality })
                      : format === 'webp' ? pipeline.webp({ quality: req.quality })
                      : format === 'png'  ? pipeline.png()
                      : pipeline.jpeg({ quality: req.quality })).toBuffer({ resolveWithObject: true })
       } catch (e: any) {
-        throw new Error(`${req.baseName} (${largeur}px, .${format}) : ${e?.message ?? String(e)}`)
+        throw new Error(`${req.baseName} (${width}px, .${format}) : ${e?.message ?? String(e)}`)
       }
-      const bytes: Buffer = sortie.data
+      const bytes: Buffer = output.data
       // LARGEUR RÉELLE, jamais la largeur DEMANDÉE — `withoutEnlargement` PLAFONNE au
       // natif : une largeur demandée au-dessus rend un fichier plus petit que promis. On indexait
       // pourtant la demande, et le `srcset` annonçait des largeurs jamais produites — le
       // navigateur choisit alors sur une information fausse. Le cas arrive dès que
       // `readImageSize` ne reconnaît pas le format : faute de largeur native connue, le filtre de
       // l'appelant (`w <= taille.width`) laisse TOUT passer.
-      const reelle    = typeof sortie?.info?.width === 'number' ? sortie.info.width : largeur
-      const empreinte = createHash('md5').update(bytes).digest('hex').slice(0, 8)
-      const filename  = variantName(req.baseName, reelle, format, empreinte)
+      const real     = typeof output?.info?.width === 'number' ? output.info.width : width
+      const digest   = createHash('md5').update(bytes).digest('hex').slice(0, 8)
+      const filename = variantName(req.baseName, real, format, digest)
       // deux largeurs demandées plafonnées à la MÊME largeur réelle rendent le même fichier :
       // une seule entrée de `srcset`, jamais un doublon qui annonce deux fois la même image
-      if (vues.has(filename)) continue
-      vues.add(filename)
-      sorties.push({ filename, bytes, width: reelle, format })
+      if (seen.has(filename)) continue
+      seen.add(filename)
+      outputs.push({ filename, bytes, width: real, format })
     }
   }
-  return sorties
+  return outputs
 }

@@ -121,6 +121,21 @@ Les règles :
 
 > ⚠️ **Une limite à connaître.** Une même image affichée sur la **même page** par une vue Rails ET par un composant MJS est téléchargée **deux fois** : Rails la publie sous l'adresse de son pipeline d'assets, MJS sous la sienne (`urlPrefix`, avec l'empreinte de MJS) — deux adresses, que le navigateur ne peut pas rapprocher. Pour qu'une page ne la télécharge qu'une fois, affichez-la d'un seul côté.
 
+## Les SVG contrôlés à la construction
+
+Un SVG copié par `µasset()`, `µimage()` ou `<@@img>` est servi depuis l'adresse du site : ouvert directement, il peut jouer un script. La construction lit donc chaque SVG avant de le copier, et le refuse en nommant le fichier s'il porte :
+
+- une balise `<script>`, `<foreignObject>`, `<iframe>`, `<embed>` ou `<object>`, même écrite avec un préfixe d'espace de noms, en lettres ASCII ou non (`<svg:script>`, `<é:script>`) ;
+- un gestionnaire `on…=` (`onload`, `onclick`…), une adresse `javascript:` ou `data:text/html`, une animation qui vise un gestionnaire ou un lien (`<set attributeName="onclick">`) ;
+- une DTD interne (`<!DOCTYPE svg [ … ]>`), dont les entités recomposent un mot sans l'écrire ;
+- l'espace de noms de XHTML (`xmlns="http://www.w3.org/1999/xhtml"`, ou sous un préfixe : `xmlns:h="…"`), même cité dans un commentaire : ses éléments sont du vrai HTML pour le navigateur (`<meta http-equiv="refresh">`, `<form action>`), sans aucun script ; retirez la déclaration et ces éléments ;
+- une feuille XSLT (`<?xml-stylesheet type="text/xsl" …?>`, ou l'espace de noms de XSLT) ;
+- un codage que le contrôle ne lit pas : UTF-16, UTF-32, UTF-7, ISO-2022, EBCDIC, ou tout autre codage. UTF-8, l'ASCII, ISO-8859-1 à 16 et windows-1250 à 1258 passent.
+
+Enregistrez vos SVG en UTF-8 : c'est le conseil du message quand le codage est refusé.
+
+Un SVG peut charger une feuille de style par un `@import` dans son `<style>` ou par `<?xml-stylesheet type="text/css"?>` : ouvert directement, le navigateur la charge et l'applique, mais aucun script n'y joue (Chromium, Firefox, WebKit).
+
 ## Le module cœur `<@@img>`
 
 Forme courte, `src` littéral résolu au build (cf. plus haut) :

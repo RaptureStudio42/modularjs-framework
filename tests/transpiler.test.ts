@@ -618,9 +618,9 @@ $rows = []
     // Le `-` dans data-active est normalisé en `_` car les identifiers JS
     // ne supportent pas `-`.
     assert.match(output, /\['selected__attr_data_active__\w+'\]\s*\?\?=\s*\{ idx: null, prev: void 0 \}/)
-    // setAttribute('data-active', 'true') / 'false' pour les 2 branches.
-    assert.match(output, /setAttribute\('data-active', 'true'\)/)
-    assert.match(output, /setAttribute\('data-active', 'false'\)/)
+    // les 2 branches écrivent par la mise à jour d'un attribut calculé, comme hors du filtre : `false` y retire un `data-*`
+    assert.match(output, /µ\._mjs_updAttrNode\(_mjs_node, 'data-active', true, 1\)/)
+    assert.match(output, /µ\._mjs_updAttrNode\(_mjs_node, 'data-active', false, 1\)/)
   })
 
   it('NE pose PAS de filtered dispatch hors {for}', async () => {

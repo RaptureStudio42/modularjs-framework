@@ -13,7 +13,7 @@ describe('MJS-Server — game.timer() : seule une minuterie déclarée est armé
   it('un nom non déclaré est refusé, le message cite les minuteries déclarées ; un nom déclaré est armé', () => {
     const game = createGame(fakeApp(), resolveGameDef('minuterie', { seats: 1, state: () => ({}), moves: {}, timers: { rappel: () => {}, fin: () => {} } }), () => {}, 'm1')
     try {
-      assert.throws(() => game.timer('rapel', 50), (e: any) => e.message === t('serveur.partie-timer-inconnu', { nom: 'rapel', timers: 'rappel, fin' }) && /rappel, fin/.test(e.message))
+      assert.throws(() => game.timer('rapel', 50), (e: any) => e.message === t('mjs-server.game-timer-unknown', { name: 'rapel', timers: 'rappel, fin' }) && /rappel, fin/.test(e.message))
       assert.equal(game._timers.has('rapel'), false)
       game.timer('rappel', 50)
       assert.equal(game._timers.has('rappel'), true)
@@ -27,7 +27,7 @@ describe('MJS-Server — game.timer() : seule une minuterie déclarée est armé
     const game = createGame(fakeApp(), resolveGameDef('minuterie', { seats: 1, state: () => ({}), moves: {} }), () => {}, 'm2')
     try {
       for (const nom of ['toString', 'constructor', 'hasOwnProperty']) {
-        assert.throws(() => game.timer(nom, 50), (e: any) => e.message === t('serveur.partie-timer-inconnu', { nom, timers: t('serveur.partie-timer-aucun') }))
+        assert.throws(() => game.timer(nom, 50), (e: any) => e.message === t('mjs-server.game-timer-unknown', { name: nom, timers: t('mjs-server.game-timer-none') }))
       }
       assert.equal(game._timers.size, 0)
     }
@@ -40,9 +40,9 @@ describe('MJS-Server — game.timer() : seule une minuterie déclarée est armé
     const avant = getMessagesLang()
     try {
       setMessagesLang('en')
-      assert.match(t('serveur.partie-timer-inconnu', { nom: 'x', timers: 'a' }), /undeclared timer/)
+      assert.match(t('mjs-server.game-timer-unknown', { name: 'x', timers: 'a' }), /undeclared timer/)
       setMessagesLang('fr')
-      assert.match(t('serveur.partie-timer-inconnu', { nom: 'x', timers: 'a' }), /minuterie non déclarée/)
+      assert.match(t('mjs-server.game-timer-unknown', { name: 'x', timers: 'a' }), /minuterie non déclarée/)
     }
     finally {
       setMessagesLang(avant)

@@ -36,19 +36,19 @@
 // (cœur, pensé pour un contexte navigateur uniquement) — inadapté ici, où le repli EST le contrat.
 
 // période/tampon — constantes locales (mangle-safe, jamais sur `µ`)
-var MJINTERP_BUF_MAX    = 30;   // échantillons bruts conservés (≈ mjs_smooth.ts maxSamples)
-var MJINTERP_PERIODE_ECH = 8;   // fenêtre de la moyenne glissante des écarts d'arrivée
+var MJINTERP_BUF_MAX       = 30;   // échantillons bruts conservés (≈ mjs_smooth.ts maxSamples)
+var MJINTERP_SAMPLE_PERIOD = 8;   // fenêtre de la moyenne glissante des écarts d'arrivée
 
 // boucle rAF (repli setInterval 16ms si indisponible) — LOCALE à ce fichier (chaque module runtime
 // optionnel reste concaténé SEUL, cf. mjs_schema.ts tête de fichier : zéro import/export, jamais de
 // dépendance à un AUTRE mjs_*.ts optionnel qui pourrait être absent de la sélection bundler).
 // Renvoie directement la fonction `stop`.
 function _mjinterpLoop(step) {
-  var raf = typeof requestAnimationFrame === 'function', vivant = true, id;
-  function frame() { if (!vivant) { return; } step(); if (raf) { id = requestAnimationFrame(frame); } }
+  var raf = typeof requestAnimationFrame === 'function', live = true, id;
+  function frame() { if (!live) { return; } step(); if (raf) { id = requestAnimationFrame(frame); } }
   if (raf) { id = requestAnimationFrame(frame); } else { id = setInterval(step, 16); }
   return function() {
-    vivant = false;
+    live = false;
     if (raf) { if (typeof cancelAnimationFrame === 'function') { cancelAnimationFrame(id); } }
     else { clearInterval(id); }
   };
@@ -90,7 +90,7 @@ function _mjinterpSnap(game, fields) {
 }
 
 // lerp d'une entité — numériques interpolés (r peut dépasser 1 : extrapolation, cf.
-// _mjinterpExtrapoler), non-numériques = valeur de `b` (le plus récent des deux échantillons).
+// _mjinterpExtrapolate), non-numériques = valeur de `b` (le plus récent des deux échantillons).
 function _mjinterpLerpEnt(a, b, r) {
   var out = {}, k;
   for (k in b) { _mjinterpPut(out, k, (typeof a[k] === 'number' && typeof b[k] === 'number') ? a[k] + (b[k] - a[k]) * r : b[k]); }
@@ -120,10 +120,10 @@ function _mjinterpLerpFrame(a, b, r, fields) {
 // entre les 2 DERNIERS échantillons, borné à ~1 période (`gap <= periode`) ; au-delà (ou vélocité
 // inconnue : buffer trop court/période pas encore mesurée), GEL sur le dernier échantillon (r=1,
 // aucune extrapolation) — jamais de projection sans fin.
-function _mjinterpExtrapoler(buf, target, periode, fields) {
+function _mjinterpExtrapolate(buf, target, period, fields) {
   var n = buf.length, last = buf[n - 1], before, gap, dt, r;
   gap = target - last.t;
-  if (n < 2 || periode <= 0 || gap > periode) { return last.val; }
+  if (n < 2 || period <= 0 || gap > period) { return last.val; }
   before = buf[n - 2];
   dt = last.t - before.t;
   r = dt > 0 ? 1 + gap / dt : 1;
@@ -158,7 +158,7 @@ function _mjinterpArrival(st) {
   if (st.buffer.length) {
     last = st.buffer[st.buffer.length - 1];
     st.deltas.push(now - last.t);
-    if (st.deltas.length > MJINTERP_PERIODE_ECH) { st.deltas.shift(); }
+    if (st.deltas.length > MJINTERP_SAMPLE_PERIOD) { st.deltas.shift(); }
   }
   st.buffer.push({ t: now, val: snap });
   if (st.buffer.length > MJINTERP_BUF_MAX) { st.buffer.shift(); }
@@ -168,7 +168,7 @@ function _mjinterpArrival(st) {
 // en place) : même stratégie que _syncGameStore (mjs_game.ts), robuste à un `µ.state` aussi bien
 // profondément réactif (proxy imbriqué, cf. mjs_runes.ts) qu'un stub plat de test — le trap de SET
 // de PREMIER NIVEAU se déclenche à coup sûr dans les deux cas. Sautée si valeur INCHANGÉE (perf).
-function _mjinterpPublier(st, val) {
+function _mjinterpPublish(st, val) {
   var i, c;
   for (i = 0; i < st.fields.length; i++) {
     c = st.fields[i];
@@ -178,20 +178,20 @@ function _mjinterpPublier(st, val) {
 
 // pas de rendu — calcule la cible T-retard×période, résout par bracket/extrapolation/gel, publie.
 function _mjinterpRender(st) {
-  var now = Date.now(), buf = st.buffer, n = buf.length, periode, target, i, a, b, r, val;
+  var now = Date.now(), buf = st.buffer, n = buf.length, period, target, i, a, b, r, val;
   if (n === 0) { return; }
-  periode = st.deltas.length ? (st.deltas.reduce(function(acc, d) { return acc + d; }, 0) / st.deltas.length) : 0;
-  target = now - st.delay * periode;
+  period = st.deltas.length ? (st.deltas.reduce(function(acc, d) { return acc + d; }, 0) / st.deltas.length) : 0;
+  target = now - st.delay * period;
   if (n === 1 || target <= buf[0].t) {
     val = buf[0].val;
   } else if (target >= buf[n - 1].t) {
-    val = _mjinterpExtrapoler(buf, target, periode, st.fields);
+    val = _mjinterpExtrapolate(buf, target, period, st.fields);
   } else {
     for (i = 0; i < n - 1; i++) { if (target >= buf[i].t && target <= buf[i + 1].t) { a = buf[i]; b = buf[i + 1]; break; } }
     r = (b.t - a.t) > 0 ? (target - a.t) / (b.t - a.t) : 1;
     val = _mjinterpLerpFrame(a.val, b.val, r, st.fields);
   }
-  _mjinterpPublier(st, val);
+  _mjinterpPublish(st, val);
 }
 
 // --- entrée publique -----------------------------------------------------------------------------
@@ -201,36 +201,36 @@ function _mjinterpRender(st) {
   var fields = opts.fields || [];
   var delay = opts.delay != null ? opts.delay : 2;
   var st = { game: game, fields: fields, delay: delay, buffer: [], deltas: [], mirror: µ.state({}) };
-  var comp = µ.activeComponent, arrete = false, offState, offStart, stopLoop, fin, i;
+  var comp = µ.activeComponent, stops = false, offState, offStart, stopLoop, end, i;
   for (i = 0; i < fields.length; i++) { st.mirror[fields[i]] = {}; }
 
   // abonnements + boucle, tampon amorcé avec l'état COURANT — pas d'attente du 1er événement réseau
-  function lancer() {
-    if (arrete || offState) { return; }
+  function launch() {
+    if (stops || offState) { return; }
     st.buffer = []; st.deltas = [];
     _mjinterpArrival(st);
     offState = game.on('state', function() { _mjinterpArrival(st); });
     offStart = game.on('start', function() { _mjinterpArrival(st); });
     stopLoop = _mjinterpLoop(function() { _mjinterpRender(st); });
   }
-  function couper() {
+  function cut() {
     if (offState) { stopLoop(); offState(); offStart(); offState = null; }
   }
-  lancer();
+  launch();
   // rattaché au composant qui l'appelle, comme µevery : sa destruction coupe la boucle et les abonnements (sans quoi la
   // boucle tournait à chaque image et les écouteurs de partie restaient à vie) ; remis dans la page, il repart à son montage
   if (comp && typeof comp._mjs_onDestroy === 'function') {
-    fin = function() {
-      if (arrete) { return; }
-      couper();
-      comp._mjs_onDestroy(fin);
-      (comp._mjs_mount_cbs || (comp._mjs_mount_cbs = [])).push(lancer);
+    end = function() {
+      if (stops) { return; }
+      cut();
+      comp._mjs_onDestroy(end);
+      (comp._mjs_mount_cbs || (comp._mjs_mount_cbs = [])).push(launch);
     };
-    comp._mjs_onDestroy(fin);
+    comp._mjs_onDestroy(end);
   }
 
   Object.defineProperty(st.mirror, 'stop', {
-    value: function() { arrete = true; couper(); },
+    value: function() { stops = true; cut(); },
     enumerable: false,
     configurable: true
   });

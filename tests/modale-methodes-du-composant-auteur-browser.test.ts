@@ -43,7 +43,7 @@ const SCENE = [
 ].join('\n')
 
 // le clic de l'utilisateur demande le plein écran de l'élément posé dans `window.__pleinEcran`
-const PAGE = (script: string) => `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0}</style></head><body><mjs-scene tabindex="0"></mjs-scene><svg id="forme" tabindex="0" width="20" height="20"><rect width="20" height="20"></rect></svg><script>${script}</script><script>window.__pleinEcran = null; document.addEventListener('click', function () { if (window.__pleinEcran) window.__pleinEcran.requestFullscreen().catch(function (e) { window.__refus = String(e) }) })</script></body></html>`
+const PAGE = (script: string) => `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0}</style></head><body><mjs-scene tabindex="0"></mjs-scene><svg id="forme" tabindex="0" width="20" height="20"><rect width="20" height="20"></rect></svg><script>${script}</script><script>window.__pleinEcran = null; document.addEventListener('click', function () { if (window.__pleinEcran) window.__pleinEcran.requestFullscreen().catch(function (e) { window.__reject = String(e) }) })</script></body></html>`
 
 for (const nom of ['chromium', 'firefox'] as const) {
   describe(`µ.modal et les méthodes de l'auteur (${nom} réel)`, function () {

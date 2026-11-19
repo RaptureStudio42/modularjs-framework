@@ -7,10 +7,10 @@
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { parse, pileDebordee } from '../src/parser/index.js'
+import { parse, stackOverflow } from '../src/parser/index.js'
 import { compile } from '../src/generator/index.js'
 import { transpile } from '../src/transpiler/index.js'
-import { lireFichier, parcourir } from '../src/reader/index.js'
+import { readFile, traverse } from '../src/reader/index.js'
 import { createHarness } from '../src/testing/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 
@@ -39,24 +39,24 @@ describe('imbrication trop profonde : message clair, avec la ligne', function ()
 
   it('parcours de l\'arbre : 200 000 niveaux visités sans épuiser la pile', () => {
     let vus = 0
-    parcourir(lireFichier(balises(200000), { gabarit: true }), () => { vus++ })
+    traverse(readFile(balises(200000), { template: true }), () => { vus++ })
     assert.ok(vus > 200000, vus + ' nœuds visités')
   })
 
   it('parcours de l\'arbre : parent avant enfants, enfants dans l\'ordre, branches des blocs comprises', () => {
-    const arbre   = lireFichier('<a><b>1</b>{if $x}<c>2</c>{elsif $y}<d>{for v in $l}<e>3</e>{if v}<h></h>{else}vide{end}{end}</d>{else}5{end}<f>{$z}</f></a><g></g>', { gabarit: true })
+    const arbre          = readFile('<a><b>1</b>{if $x}<c>2</c>{elsif $y}<d>{for v in $l}<e>3</e>{if v}<h></h>{else}vide{end}{end}</d>{else}5{end}<f>{$z}</f></a><g></g>', { template: true })
     const attendu: any[] = []
     const visites: any[] = []
-    const reference = (n: any): void => {
+    const reference      = (n: any): void => {
       attendu.push(n)
-      for (const enfant of n.enfants ?? []) reference(enfant)
-      for (const branche of n.branches ?? []) for (const enfant of branche.enfants) reference(enfant)
+      for (const enfant of n.children ?? []) reference(enfant)
+      for (const branche of n.branches ?? []) for (const enfant of branche.children) reference(enfant)
     }
     reference(arbre)
-    parcourir(arbre, (n) => { visites.push(n) })
+    traverse(arbre, (n) => { visites.push(n) })
     assert.ok(attendu.length > 12, attendu.length + ' nœuds dans l\'arbre du test')
-    assert.ok(attendu.some((n) => n.sorte === 'bloc' && n.branches.length === 3), 'un bloc à trois branches dans l\'arbre du test')
-    assert.ok(attendu.some((n) => n.sorte === 'bloc' && n.nom === 'for'), 'un {for} dans une branche')
+    assert.ok(attendu.some((n) => n.kind === 'block' && n.branches.length === 3), 'un bloc à trois branches dans l\'arbre du test')
+    assert.ok(attendu.some((n) => n.kind === 'block' && n.name === 'for'), 'un {for} dans une branche')
     assert.equal(visites.length, attendu.length)
     assert.ok(visites.every((n, i) => n === attendu[i]), 'même ordre que la descente parent, enfants, branches')
   })
@@ -75,12 +75,12 @@ describe('imbrication trop profonde : message clair, avec la ligne', function ()
   // ramasse-miettes a jeté sa forme compilée) : l'erreur est alors une SyntaxError « Invalid regular expression … Maximum
   // call stack size exceeded », et non une RangeError — c'est le même débordement
   it('le débordement reconnu sous ses deux formes : RangeError, et SyntaxError d\'une regex compilée trop profond', () => {
-    assert.equal(pileDebordee(new RangeError('Maximum call stack size exceeded')), true)
-    assert.equal(pileDebordee(new SyntaxError('Invalid regular expression: /(?<![\\w.$])µ\\.?minmax\\b/: Maximum call stack size exceeded')), true)
-    assert.equal(pileDebordee(new SyntaxError('Invalid regular expression: /(?<![\\w.$])µ\\.?minmax\\b/: Stack overflow')), true)
-    assert.equal(pileDebordee(new SyntaxError('Invalid regular expression: /(/: Unterminated group')), false)
-    assert.equal(pileDebordee(new Error('Maximum call stack size exceeded')), false)
-    assert.equal(pileDebordee(new TypeError('x is not a function')), false)
+    assert.equal(stackOverflow(new RangeError('Maximum call stack size exceeded')), true)
+    assert.equal(stackOverflow(new SyntaxError('Invalid regular expression: /(?<![\\w.$])µ\\.?minmax\\b/: Maximum call stack size exceeded')), true)
+    assert.equal(stackOverflow(new SyntaxError('Invalid regular expression: /(?<![\\w.$])µ\\.?minmax\\b/: Stack overflow')), true)
+    assert.equal(stackOverflow(new SyntaxError('Invalid regular expression: /(/: Unterminated group')), false)
+    assert.equal(stackOverflow(new Error('Maximum call stack size exceeded')), false)
+    assert.equal(stackOverflow(new TypeError('x is not a function')), false)
   })
 
   it('construction d\'un projet : le fichier ET la ligne sont cités', async () => {

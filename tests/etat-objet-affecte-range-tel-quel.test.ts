@@ -21,7 +21,7 @@ const COEUR = `<script lang="js">
   $la = null; $lb = null; $lg = null; $big = null; $bigo = null;
   @panier = function() { $box = { items: $list.filter(() => true), get count() { return this.items.length; } }; };
   @ajouter = function() { $box.items.push({n: 4}); };
-  @lecture = function() { window.__lu = 0; $plain = { n: 1, get lu() { window.__lu++; return 1; } }; return window.__lu; };
+  @lecture = function() { window.__read = 0; $plain = { n: 1, get lu() { window.__read++; return 1; } }; return window.__read; };
   @leve = function() { $bad = { n: 1, get plusTard() { throw new Error('pas prêt'); } }; return 'ok'; };
   @chaine = function(n) { let c = null; for (let i = 0; i < n; i++) c = { next: c, i: i }; $chain = c; return $chain.i; };
   @cycle = function() { const o = { list: $list.filter(() => true) }; o.self = o; $cyc = o; return o; };
