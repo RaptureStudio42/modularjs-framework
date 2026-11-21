@@ -16,11 +16,15 @@
 //     `csp`, liens) doivent rester celles que sert le back, pas celles d'un dossier éphémère ;
 //   · les assets ÉCRITS POUR ÊTRE SERVIS (feuilles hachées du mode `csp`) — ils vont dans le vrai
 //     dossier de sortie, sinon le `<link>` du fragment pointerait un fichier déjà supprimé.
+//
+// Au prérendu de `mjs build`, la construction vient d'écrire ce que le moteur compilerait dans le vrai
+// dossier de sortie : le moteur la reprend telle quelle (cf. reusableCompile) au lieu de compiler le
+// projet une seconde fois par-dessus.
 
 import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
-import { deriveUrlPrefix } from '../bundler/index.js'
+import { Bundler, deriveUrlPrefix, type CompileStats } from '../bundler/index.js'
 
 /** Nom du cache de noms courts, tel que le Bundler le situe (`<outputDir>/.mangle-cache.json`). */
 const MANGLE_CACHE = '.mangle-cache.json'
@@ -81,4 +85,35 @@ export function openRenderCompileDir(opts: RenderCompileDirOptions): RenderCompi
     assetsDir,
     cleanup() { try { rmSync(workspace, { recursive: true, force: true }) } catch { /* best-effort */ } },
   }
+}
+
+/** Compilation qu'une construction vient d'écrire dans le vrai dossier de sortie, avec le résultat de son `compile()` (cf. prerenderPages) */
+export interface RenderCompiled {
+  bundler: Bundler
+  stats: CompileStats
+}
+
+/** Ce que le moteur de rendu compilerait lui-même : sources, dossier de sortie et manifeste résolus, préfixe public donné (ou rien), environnement */
+export interface RenderCompileTarget {
+  sourceDir: string
+  outputDir: string
+  manifestPath: string
+  urlPrefix?: string
+  env: 'dev' | 'prod'
+}
+
+/**
+ * La compilation reçue sert-elle au moteur de rendu à la place de la sienne ? Oui quand il aurait écrit les mêmes octets au même
+ * endroit : mêmes sources, même dossier de sortie, même manifeste, même préfixe public (un `--output` relatif sans `urlPrefix` dérive
+ * le sien autrement que le moteur, qui part du chemin absolu), même environnement ; une construction en unités séparées
+ * (`js: 'split'`, que le moteur relit fichier par fichier), qui garde ce que le rendu serveur relit (`canRenderOnServer`), sans
+ * erreur. Le reste des options vient de la même configuration. Sinon `null` : le moteur compile à part, comme sans compilation reçue
+ */
+export function reusableCompile(compiled: RenderCompiled | undefined, target: RenderCompileTarget): RenderCompiled | null {
+  if (!compiled) return null
+  const { bundler, stats } = compiled
+  const same               = (a: string, b: string): boolean => resolve(a) === resolve(b)
+  if (stats.errors.length > 0 || bundler.jsMode !== 'split' || !bundler.canRenderOnServer || bundler.envMode !== target.env) return null
+  if (!same(bundler.sourceDir, target.sourceDir) || !same(bundler.outputDir, target.outputDir) || !same(bundler.manifestPath, target.manifestPath)) return null
+  return bundler.urlPrefix === Bundler.urlPrefixFor({ urlPrefix: target.urlPrefix, outputDir: target.outputDir }) ? compiled : null
 }

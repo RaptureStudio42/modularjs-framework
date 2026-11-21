@@ -138,6 +138,11 @@ Les processus d'un même bus MJS WS (adaptateur Redis ou mémoire) passent ensem
 - La trace du cache de construction s'appelle `last.json` (`last-render.json` pour le prérendu) : vous pouvez effacer l'ancien `dernier.json` de `node_modules/.cache/mjs/build/`.
 - Un `µeffect` ou un composant qui appelle une méthode de sa connexion `µsocket` (`on()`, `connect()`, `send()`…) ne suit plus l'état de la connexion : il ne repart plus et n'est plus redessiné quand cet état change. Ce qui doit suivre l'état le lit lui-même (`{@sock.state}`, `@sock.connected`).
 
+## Depuis la 4.1.2
+
+- Rien à changer dans votre code. `mjs build` d'un projet qui prérend ses pages ne compile plus qu'une fois : la ligne des modules du cœur, les avertissements de la compilation et, sous `--cache`, la ligne `Prérendu — cache : …` ne sortent plus deux fois. Un script qui compte ces lignes dans la sortie de la commande n'en voit plus qu'une.
+- Quand le projet convertit des images avec `sharp`, le dossier de sortie porte un fichier de plus, `.mjs-images.json` : il note les variantes déjà encodées, pour ne pas les refaire à la construction suivante. Traitez-le comme le reste du dossier de sortie ; un déploiement qui garde ce dossier d'une fois sur l'autre ne réencode plus les images qui n'ont pas changé.
+
 ## Noms internes renommés, pour vos tests et vos sondes
 
 Aucune appli ne doit lire un nom qui commence par `_mjs_` : il peut changer sans préavis. Si vos tests ou vos sondes en lisent quand même un (`µ._mjs_…`, `el._mjs_…`), voici ceux qui changent dans la 4.1. Les autres gardent leur nom (`_shadow`, `µ._mjs_store`, `µ._mjs_txt`, `µ._mjs_ws`, `µ._mjs_dispatch`, `µ._mjs_setComputed`…).

@@ -720,6 +720,8 @@ async function run(argv: string[]): Promise<void> {
       const verdict        = args.cache === 'verify' && stats.errors.length === 0 ? await bundler.verifyDiskCache() : null
       const cacheDiscarded = verdict !== null && !verdict.ok
       const base           = verdict?.rebuilt ?? bundler
+      // le résultat du compile() de `base`, que le prérendu reprend (cf. PrerenderOverrides.compiled)
+      const baseStats      = verdict?.rebuilt ? verdict.rebuiltStats : stats
       const rest           = stats.errors.length === 0 && (verdict?.errors.length ?? 0) === 0
       if (verdict?.ok) console.log(verdict.line)
       else if (verdict) {
@@ -760,7 +762,8 @@ async function run(argv: string[]): Promise<void> {
           // re-dérivait ses propres chemins depuis `mjs.config.json`,
           // ignorant un build redirigé — le prérendu recompilait puis
           // écrasait les fichiers du VRAI projet.
-          // `env` transmis pour la MÊME raison que `outputDir`/`manifestPath` : ce prérendu
+          // `env` transmis pour la MÊME raison que `outputDir`/`manifestPath` : quand ce prérendu
+          // ne peut pas reprendre la compilation de la construction (`compiled` ci-dessous), il
           // RECOMPILE dans le vrai dossier de sortie, par-dessus le build qu'on vient de faire.
           // Sans lui il retomberait sur son défaut (développement) et DÉFERAIT un `--prod` —
           // sortie non minifiée, manifeste `dev:true`, fragments i18n en clair.
@@ -768,9 +771,12 @@ async function run(argv: string[]): Promise<void> {
             outputDir: args.output,
             manifestPath: args.manifest,
             env: envBuild,
-            // `--cache` : le prérendu est servi par le même cache ; sous `--cache=verify`, il recompile tout (rien de ce qui sort du
-            // cache n'échappe à la vérification), et en production aussi (sa reprise n'y est pas prouvée à l'octet)
+            // `--cache` : quand le prérendu compile à part (`js: 'bundle'`, cf. `compiled` ci-dessous), sa compilation est servie par le
+            // même cache ; sous `--cache=verify` et en production, elle recompile tout
             cache: args.cache === true && envBuild !== 'prod',
+            // la compilation que cette construction vient d'écrire (sous `--cache=verify`, celle qui fait foi) : les moteurs de rendu
+            // rendent dessus sans recompiler le projet, sauf quand ils compileraient autre chose (cf. reusableCompile)
+            compiled: baseStats ? { bundler: base, stats: baseStats } : undefined,
           })
           if (report.generated.length) {
             console.log(t('cli.prerender-result', { count: report.generated.length, dir: report.outDir }))

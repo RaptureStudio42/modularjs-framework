@@ -87,7 +87,7 @@ import { ssrCoreOf, collectAwaitStates, hasPendingAwait, settleRender, reflectFi
 import { isServableFile, MIME } from './render-server.js'
 import { writeRenderSheet, sheetsToBind, withoutImports } from './render-outputs.js'
 import { rootProps } from './root-props.js'
-import { openRenderCompileDir } from './render-compile-dir.js'
+import { openRenderCompileDir, reusableCompile, type RenderCompiled } from './render-compile-dir.js'
 import { t, type MsgKey } from '../messages/index.js'
 // (SSRF) — même défense en profondeur que renderToString.ts
 // (cf. son commentaire d'import) : un `forwardedUrl` pointant vers une cible
@@ -825,6 +825,11 @@ export interface BrowserRendererOptions {
   /** Environnement du build (`mjs build --prod`). Défaut : développement. Même motif que
    *  `outputDir` ci-dessus — ce renderer recompile dans le VRAI dossier de sortie. */
   env?: 'dev' | 'prod'
+  /** Compilation que la construction vient d'écrire dans le vrai dossier de sortie, avec le résultat de son `compile()` (prérendu de
+   *  `mjs build`, cf. prerender.ts) : ce renderer rend dessus sans compiler quand il aurait compilé la même (cf. reusableCompile,
+   *  render-compile-dir.ts), sinon il compile la sienne, comme sans elle. Le `Bundler` repris n'est jamais fermé par `close()` : son
+   *  appelant le ferme */
+  compiled?: RenderCompiled
   /** Plancher de la borne de FERMETURE, ms (défaut CLOSE_FLOOR_MS). Injectable pour les
    *  tests seulement, comme `log` : un test qui attend l'abandon d'une fermeture n'a pas à
    *  patienter 10 s. Jamais lu depuis `mjs.config.json`. */
@@ -900,17 +905,23 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
   // d'assets du HTML rendu désignent ce que sert le back, jamais un dossier éphémère.
   const workspace = openRenderCompileDir({ js: bundlerOpts.js, outputDir, manifestPath, urlPrefix: bundlerOpts.urlPrefix })
   // construction d'un moteur de rendu (`serverRender`) : les morceaux du runtime qui ne servent qu'au rendu serveur restent (cf. Bundler.rendersOnServer)
-  const bundler = new Bundler({ ...bundlerOpts, sourceDir, outputDir: workspace.outputDir, manifestPath: workspace.manifestPath, urlPrefix: workspace.urlPrefix, js: 'split', serverRender: true, cache: opts.cache === true, ...(opts.env ? { env: opts.env } : {}) })
-  let stats
-  try {
-    stats = await bundler.compile()
-  } catch (e) {
-    await bundler.close()
-    workspace.cleanup()
-    throw e
+  // la compilation de la construction, reprise quand ce renderer aurait compilé la même (cf. `BrowserRendererOptions.compiled`)
+  const reused  = reusableCompile(opts.compiled, { sourceDir, outputDir: workspace.outputDir, manifestPath: workspace.manifestPath, urlPrefix: workspace.urlPrefix, env: opts.env ?? 'dev' })
+  const bundler = reused?.bundler ?? new Bundler({ ...bundlerOpts, sourceDir, outputDir: workspace.outputDir, manifestPath: workspace.manifestPath, urlPrefix: workspace.urlPrefix, js: 'split', serverRender: true, cache: opts.cache === true, ...(opts.env ? { env: opts.env } : {}) })
+  // le Bundler de ce renderer se ferme avec lui ; celui d'une compilation reprise, jamais : son appelant le ferme
+  const closeBundler = async (): Promise<void> => { if (!reused) await bundler.close() }
+  let stats = reused?.stats
+  if (!stats) {
+    try {
+      stats = await bundler.compile()
+    } catch (e) {
+      await closeBundler()
+      workspace.cleanup()
+      throw e
+    }
   }
   if (stats.errors.length) {
-    await bundler.close()
+    await closeBundler()
     workspace.cleanup()
     throw new Error(t('server.browser-errors-compilation', { errors: stats.errors.map(e => e.message).join('\n') }))
   }
@@ -922,7 +933,7 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
   const coreFile  = basename(bundler.coreHashedPath)
   const coreFiles = readdirSync(workspace.outputDir).filter(f => /^mjs_core-.+\.js$/.test(f)).sort()
   if (!coreFile || !coreFiles.includes(coreFile)) {
-    await bundler.close()
+    await closeBundler()
     workspace.cleanup()
     throw new Error(t('server.browser-core-not-found'))
   }
@@ -1710,7 +1721,7 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
     // l'arrêt de `mjs dev` et la fin d'un prérendu. Bornée et signalée : l'abandon rend la main au
     // reste de l'arrêt (nettoyage du dossier de compilation ci-dessous), sans prétendre que le
     // réservoir est éteint.
-    await boundedClose(() => bundler.close(), 'server.browser-closing-bundler-too-long')
+    await boundedClose(() => closeBundler(), 'server.browser-closing-bundler-too-long')
     // dossier de travail de CETTE compilation (temporaire en `js: 'bundle'`, cf. plus haut)
     workspace.cleanup()
   }

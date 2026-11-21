@@ -794,6 +794,8 @@ export function pruneOrphans(bundler: Bundler): { removed: string[], failed: str
     removed.push(...fragments.removed)
     failed.push(...fragments.failed)
   }
+  // l'index des images ne cite plus les variantes que la purge vient de retirer (cf. Bundler.saveImageIndex)
+  if (removed.length > 0) bundler['saveImageIndex'](true)
   removed.sort((a, b) => a < b ? -1 : a > b ? 1 : 0)
   failed.sort((a, b) => a < b ? -1 : a > b ? 1 : 0)
   return { removed, failed }

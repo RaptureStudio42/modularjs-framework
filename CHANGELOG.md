@@ -2,6 +2,20 @@
 
 Toutes les évolutions notables de `modularjs-framework` sont consignées ici. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/), versionnage [SemVer](https://semver.org/lang/fr/).
 
+## [4.1.2] — 2026-11-21
+
+Ce qui change pour une application 4.1.1 : [guide de passage, « Depuis la 4.1.2 »](UPGRADE-V4.0-TO-V4.1.md#depuis-la-412).
+
+### Construction
+
+- **Corrigé — `mjs build` compile le projet une seule fois quand il prérend des pages** : le prérendu rend les pages sur la compilation que la construction vient d'écrire, au lieu de recompiler tout le projet par-dessus. Une construction qui prérend ses pages passe de deux compilations à une ; les fichiers écrits sont identiques à l'octet (dossier de sortie, manifeste, pages). La ligne des modules du cœur et les avertissements de la compilation ne sortent plus deux fois ; sous `--cache`, la ligne `Prérendu — cache : …` disparaît (sauf en `"js": "bundle"`) et un fichier repris du cache ne répète plus ses avertissements. Le prérendu compile encore à part en `"js": "bundle"` (il relit le cœur et chaque composant fichier par fichier, dans un dossier de travail à lui), ou quand ses sources ou son préfixe public ne sont pas ceux de la construction (par exemple `--output build/js` sans `urlPrefix`). `mjs dev` ne change pas.
+- **Changé — les images déjà converties sont gardées d'une construction à l'autre** : `mjs build` et le premier passage de `mjs dev` ne réencodent plus avec `sharp` une image qui n'a pas changé : ses variantes sont reprises du dossier de sortie, qui les note dans `.mjs-images.json` (gardez ce fichier avec le dossier ; un dossier de sortie neuf réencode tout). Chaque fichier repris est d'abord vérifié par l'empreinte de son nom. Une image se réencode quand elle change, quand les réglages `image` (largeurs, formats, qualité) ou la version de `sharp` changent, ou quand une de ses variantes est abîmée ou retirée. Sans `sharp`, rien ne change. En `"js": "bundle"`, le prérendu, qui compile dans un dossier à part, réencode encore ses images à chaque construction. `mjs build --cache=verify` compare ce fichier image par image ; son absence n'est pas un écart. Dans une sortie placée dans les sources, un fichier à vous nommé `.mjs-images.json` n'est jamais réécrit.
+
+### Documentation
+
+- **Documenté — le prérendu de `mjs build` et la compilation** (19 · SSR, 32 · CLI) : le projet est compilé une fois ; les cas où le prérendu compile à part ; le prérendu qui rend sur la construction servie par le cache ; un fichier repris du cache qui ne répète pas ses avertissements.
+- **Documenté — les images gardées d'une construction à l'autre** (35 · Images, 32 · CLI) : `.mjs-images.json` parmi les fichiers de travail du dossier de sortie, sa comparaison sous `--cache=verify`, un fichier de l'auteur de ce nom jamais réécrit.
+
 ## [4.1.1] — 2026-11-21
 
 Ce qui change pour une application 4.1.0 : [guide de passage, « Depuis la 4.1.1 »](UPGRADE-V4.0-TO-V4.1.md#depuis-la-411).

@@ -33,7 +33,7 @@ import { scanEffectImages, imageCall, type EffectImage } from '../transpiler/eff
 import { getAdapter } from '../languages/index.js'
 import { ParamReadOtherwiseError } from '../languages/civet-params.js'
 import { minifyJs, stripMsgFallbacks, collectInstanceNames, reserveMangleNames, reserveDataMarkers, CORE_HELPER_NAMES, CORE_API_NAMES, PLATFORM_NAMES, TRACE_READ_MESSAGES, levelCutsTraces, runtimeCallsCut, messagesWithoutTraces, messagesWithoutDevBlocks, traceMessages, traceKeysIn } from './minify.js'
-import { readImageSize, generateVariants, animatedKind, type GeneratedVariant } from './image.js'
+import { readImageSize, generateVariants, animatedKind, sharpVersions, imageIndexKey, readIndexedVariants, parseImageIndex, isImageIndex, serializeImageIndex, type GeneratedVariant, type IndexedVariant, type VariantRequest } from './image.js'
 import { shiftGeneratedPosition, chainOverMap } from '../transpiler/source-map-chain.js'
 import { oneByteSource } from './one-byte.js'
 import { compileThemeFile, assembleThemes, isThemeFile } from './themes.js'
@@ -126,8 +126,8 @@ export async function terminateSharedWorkerPool(): Promise<void> {
   }
 }
 
-// avertissements que buildWarn() a écrits au terminal, par dossier de sources : le prérendu recompile le même projet pour
-// rendre ses pages, et la compilation lui rend les mêmes avertissements avec chaque rendu — ceux que le bilan de la
+// avertissements que buildWarn() a écrits au terminal, par dossier de sources : chaque rendu du prérendu rend les avertissements de
+// la compilation sur laquelle il rend (celle de la construction, ou la sienne quand il compile à part) — ceux que le bilan de la
 // construction vient d'écrire n'y sont pas répétés (cf. prerenderPages, server/prerender.ts)
 const _writtenWarnings = new Map<string, Set<string>>()
 
@@ -1105,6 +1105,16 @@ function registryCovers(served: string, full: string, start: string | null): boo
     for (const x of theirs) if (!mine.has(x)) return false
     for (const x of mine) if (!theirs.has(x) && !before.has(x)) return false
   }
+  return true
+}
+
+// index des images de la construction servie contre celui de la construction complète faite à part : sur place, il garde aussi les
+// images des constructions d'avant dont les variantes sont encore là, et il ne cite pas celles d'un composant repris du cache quand
+// aucune construction d'avant ne les y a mises ; il est juste si chaque image qu'ils citent tous deux y a les mêmes variantes (ces
+// fichiers-là sont comparés à l'octet, comme les autres)
+function imageIndexAgrees(served: string, full: string): boolean {
+  const mine = parseImageIndex(served)
+  for (const [key, list] of parseImageIndex(full)) if (mine.has(key) && JSON.stringify(mine.get(key)) !== JSON.stringify(list)) return false
   return true
 }
 
@@ -2354,6 +2364,11 @@ export class Bundler {
   // variantes d'image déjà encodées, par fichier source et réglages (cf. variantsOf) : une image citée par plusieurs composants,
   // ou recompilée en `mjs dev`, n'est encodée qu'une fois tant que son contenu (empreinte des octets) ne change pas
   private variantsMemo = new Map<string, { digest: string; variants: Promise<GeneratedVariant[] | null> }>()
+  // index des images (`.mjs-images.json` du dossier de sortie, cf. encodeOrReuse) : les variantes que des constructions d'avant ont
+  // encodées, lu une fois par instance au premier besoin ; `imageIndexUsed` : il a servi (sharp présent, versions lisibles), il est
+  // réécrit à la publication (cf. saveImageIndex)
+  private imageIndex: Map<string, IndexedVariant[]> | null = null
+  private imageIndexUsed = false
   /** assetDirs : les avertissements « même image dans deux dossiers » de CE compile (versés à `stats.warnings` en fin de tour) */
   private pendingAssetWarnings: string[] = []
   /** … et les couples (retenue, écartée) déjà dits ce tour-ci : une image citée par vingt composants n'avertit qu'une fois */
@@ -2853,12 +2868,7 @@ export class Bundler {
     this.defaultTheme   = opts.defaultTheme ?? 'light'
     this.themeCss       = ''
     this.themeNames     = []
-    // même normalisation que mjs.config.json : `'/'` seul → aucun préfixe, jamais `//a-xxxxx.js` (URL vers un autre hôte) ;
-    // une adresse d'un autre hôte passée à l'API, absolue (`https://cdn…/m`) ou protocole-relative (`//cdn…/m`), garde son `//`
-    // et ne perd que ses slashs finaux
-    const prefix           = opts.urlPrefix ?? deriveUrlPrefix(opts.outputDir ?? 'public/modularjs')
-    const otherHost        = /^[a-z][a-z0-9+.-]*:\/\//i.test(prefix) || (opts.urlPrefix !== undefined && /^\/\/[^\/]/.test(prefix))
-    this.urlPrefix         = otherHost ? prefix.replace(/\/+$/, '') : normalizeUrlPrefix(prefix)
+    this.urlPrefix         = Bundler.urlPrefixFor(opts)
     this.defaultScriptLang = opts.defaultScriptLang ?? 'civet'
     this.templateLang      = opts.templateLang  // défaut 'civet' appliqué dans transpile() — source unique
     this.sigil             = opts.sigil ?? 'µ'
@@ -3652,8 +3662,8 @@ export class Bundler {
   // part sous celui du cache (retiré ensuite), qui garde la disposition de la sortie et du manifeste sous leur dossier commun ; chacun de
   // ses fichiers est comparé à l'octet à celui de la construction servie (sortie, manifeste, registre des sorties). Un écart : le cache est
   // jeté, et la construction complète est refaite sur place (`rebuilt`, dont le prérendu et la purge partent ensuite, comme après
-  // `mjs build`). Aucun cache en usage (pas de node_modules) : null
-  async verifyDiskCache(): Promise<{ ok: boolean, line: string, gaps: string[], errors: Error[], rebuilt?: Bundler } | null> {
+  // `mjs build` ; `rebuiltStats`, son résultat, sert au prérendu). Aucun cache en usage (pas de node_modules) : null
+  async verifyDiskCache(): Promise<{ ok: boolean, line: string, gaps: string[], errors: Error[], rebuilt?: Bundler, rebuiltStats?: CompileStats } | null> {
     if (this.diskCacheDir === '') return null
     let common = this.outputDir
     while (!pathInDir(dirname(this.manifestPath), common) && dirname(common) !== common) common = dirname(common)
@@ -3673,8 +3683,11 @@ export class Bundler {
       const gaps: string[] = []
       for (const rel of made) {
         const real = join(common, rel)
+        // l'index des images absent de la construction servie (retiré, ou jamais écrit quand toutes ses images viennent du cache) n'est
+        // pas un écart : il ne sert qu'à reprendre des variantes, et celles-ci sont comparées à l'octet
+        if (!existsSync(real) && real === this.imageIndexPath()) continue
         if (!existsSync(real)) gaps.push(t('bundler.index.cache-mismatch-missing', { file: relative(this.projectDir, real) }))
-        else if (real === this.outputsRegistryPath() ? !registryCovers(readFileSync(real, 'utf-8'), readFileSync(join(apart, rel), 'utf-8'), this.diskRegistryStart) : !readFileSync(real).equals(readFileSync(join(apart, rel)))) gaps.push(relative(this.projectDir, real))
+        else if (real === this.outputsRegistryPath() ? !registryCovers(readFileSync(real, 'utf-8'), readFileSync(join(apart, rel), 'utf-8'), this.diskRegistryStart) : real === this.imageIndexPath() ? !imageIndexAgrees(readFileSync(real, 'utf-8'), readFileSync(join(apart, rel), 'utf-8')) : !readFileSync(real).equals(readFileSync(join(apart, rel)))) gaps.push(relative(this.projectDir, real))
       }
       ok = gaps.length === 0
       if (ok) return { ok, line: t('bundler.index.cache-checked', { count: made.length }), gaps, errors: [] }
@@ -3690,7 +3703,7 @@ export class Bundler {
       else rmSync(this.mangleCachePath, { force: true })
       const rebuilt = new Bundler({ ...this.diskCacheOpts, cache: false, outputDir: this.outputDir, manifestPath: this.manifestPath, urlPrefix: this.urlPrefix })
       const again   = await rebuilt.compile()
-      return { ok, line: t('bundler.index.cache-dropped', { count: gaps.length }), gaps, errors: again.errors, rebuilt }
+      return { ok, line: t('bundler.index.cache-dropped', { count: gaps.length }), gaps, errors: again.errors, rebuilt, rebuiltStats: again }
     }
     finally {
       await full.close()
@@ -4476,6 +4489,8 @@ export class Bundler {
         // nouveau manifeste est sur disque, jamais avant (cf. cleanupOldHashes/flushPendingHashCleanup) ;
         // le registre des sorties, consommé par pruneOrphans(), suit
         this.flushPendingHashCleanup()
+        // l'index des images suit les variantes publiées (cf. saveImageIndex)
+        this.saveImageIndex()
         if (this.isProd()) this.removeThemeRegistry(warnings)
         written++
       }
@@ -6684,6 +6699,12 @@ export class Bundler {
     return !!render && (server(render.default || FALLBACK_MODE) || Object.values(render.routes ?? {}).some(route => server(route?.mode)))
   }
 
+  // lecture seule de rendersOnServer() : un moteur de rendu ne reprend que la compilation d'une construction qui garde ce que le rendu
+  // serveur relit (cf. server/render-compile-dir.ts)
+  get canRenderOnServer(): boolean {
+    return this.rendersOnServer()
+  }
+
   // --------------------------------------------------------------------------
   // runtimeLabelGroups() : les groupes de libellés du manifeste (src/runtime-labels.ts) dont un
   // lecteur part dans ce build. modal/toast ↔ mjs_modal.ts ; router ↔ mjs_router.ts et mjs_ujs.ts
@@ -7489,6 +7510,17 @@ export class Bundler {
 
   static minifies(mode: boolean | 'auto', env: 'dev' | 'prod'): boolean {
     return mode === 'auto' ? env === 'prod' : mode
+  }
+
+  // préfixe public d'une construction, tel que le constructeur le pose : celui donné, sinon dérivé du dossier de sortie tel qu'il est
+  // donné (relatif ou absolu). Même normalisation que mjs.config.json : `'/'` seul → aucun préfixe, jamais `//a-xxxxx.js` (URL vers un
+  // autre hôte) ; une adresse d'un autre hôte passée à l'API, absolue (`https://cdn…/m`) ou protocole-relative (`//cdn…/m`), garde son
+  // `//` et ne perd que ses slashs finaux. Le moteur de rendu s'en sert pour savoir si la compilation d'une construction est la sienne
+  // (cf. server/render-compile-dir.ts)
+  static urlPrefixFor(opts: { urlPrefix?: string, outputDir?: string }): string {
+    const prefix    = opts.urlPrefix ?? deriveUrlPrefix(opts.outputDir ?? 'public/modularjs')
+    const otherHost = /^[a-z][a-z0-9+.-]*:\/\//i.test(prefix) || (opts.urlPrefix !== undefined && /^\/\/[^\/]/.test(prefix))
+    return otherHost ? prefix.replace(/\/+$/, '') : normalizeUrlPrefix(prefix)
   }
 
   // oneByte() : le texte ARRÊTÉ d'un fichier JS d'une construction de production compactée, ses caractères au-delà de U+00FF écrits en
@@ -10693,12 +10725,64 @@ export class Bundler {
     const digest = createHash('md5').update(bytes).digest('hex')
     const known  = this.variantsMemo.get(key)
     if (known && known.digest === digest) return known.variants
-    const variants = generateVariants({ bytes, baseName: basename(source, extname(source)), widths: wanted, formats: this.imageConfig.formats, quality: this.imageConfig.quality })
+    const variants = this.encodeOrReuse({ bytes, baseName: basename(source, extname(source)), widths: wanted, formats: this.imageConfig.formats, quality: this.imageConfig.quality }, digest)
     this.variantsMemo.set(key, { digest, variants })
     variants.catch(() => {
       if (this.variantsMemo.get(key)?.variants === variants) this.variantsMemo.delete(key)
     })
     return variants
+  }
+
+  // encodeOrReuse() : les variantes d'une image, reprises du dossier de sortie quand l'index des images les y trouve intactes (une
+  // construction d'avant les a encodées : même image, mêmes réglages, même version de sharp), encodées sinon, et l'entrée de l'index
+  // remplacée ; une variante reprise suit ensuite le chemin d'une variante encodée (cf. resolveOneImage), son fichier n'est pas
+  // réécrit (writeFileAtomic n'écrit pas des octets déjà là). Sans sharp, ou sans ses versions : encodées comme avant, sans index
+  private async encodeOrReuse(req: VariantRequest, digest: string): Promise<GeneratedVariant[] | null> {
+    const versions = await sharpVersions()
+    if (versions === null) return generateVariants(req)
+    this.imageIndexUsed = true
+    const key  = imageIndexKey(req, digest, versions)
+    const kept = readIndexedVariants(this.outputDir, req.baseName, this.loadImageIndex().get(key))
+    if (kept !== null) return kept
+    const variants = await generateVariants(req)
+    // une image sans variante (animée, que sharp ne réécrit pas) n'y entre pas : rien à reprendre, et aucun fichier ne la bornerait
+    if (variants !== null && variants.length > 0) this.loadImageIndex().set(key, variants.map(v => ({ filename: v.filename, width: v.width, format: v.format })))
+    return variants
+  }
+
+  private imageIndexPath(): string {
+    return join(this.outputDir, '.mjs-images.json')
+  }
+
+  // loadImageIndex() : l'index des images, lu au premier besoin ; absent, illisible ou d'une autre forme : vide (tout s'encode, il
+  // est réécrit propre à la publication), jamais une erreur de construction
+  private loadImageIndex(): Map<string, IndexedVariant[]> {
+    if (this.imageIndex === null) {
+      let text = ''
+      try {
+        text = readFileSync(this.imageIndexPath(), 'utf-8')
+      } catch { /* pas encore d'index */ }
+      this.imageIndex = parseImageIndex(text)
+    }
+    return this.imageIndex
+  }
+
+  // saveImageIndex() : l'index réécrit avec ses entrées dont chaque fichier est dans le dossier de sortie — celles que cette instance a
+  // servies et celles d'avant (une recompilation partielle de `mjs dev` ne repasse que par les images des composants changés, un
+  // composant repris du cache sur disque par aucune : leurs entrées restent) ; borné par la purge, qui retire les variantes d'une
+  // image qui n'est plus citée. À la publication, seulement quand il a servi ; après la purge (`purged`), aussi quand il existe.
+  // un échec d'écriture (disque plein, droits) ne fait pas échouer la construction : la suivante réencode, comme avant l'index
+  private saveImageIndex(purged = false): void {
+    if (!this.imageIndexUsed && !(purged && existsSync(this.imageIndexPath()))) return
+    const kept = new Map([...this.loadImageIndex()].filter(([, list]) => list.every(v => existsSync(join(this.outputDir, v.filename)))))
+    this.imageIndex = kept
+    try {
+      // dans le dossier des sources, un fichier de ce nom qui n'a pas la forme de l'index est peut-être un fichier de l'auteur : jamais
+      // réécrit (cf. authorFileReject), les variantes n'y sont pas reprises d'une construction à l'autre
+      if (this.writesToSources() && existsSync(this.imageIndexPath()) && !isImageIndex(readFileSync(this.imageIndexPath(), 'utf-8'))) return
+      mkdirSync(this.outputDir, { recursive: true })
+      this.writeIfChanged(this.imageIndexPath(), serializeImageIndex(kept))
+    } catch { /* index non écrit : seule la reprise des variantes est perdue */ }
   }
 
   async resolveOneImage(logicalPath: string, widths: number[] = []): Promise<Record<string, unknown>> {

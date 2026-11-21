@@ -1,7 +1,8 @@
-// le build compile DEUX fois — pourquoi ces essais existent.
+// le prérendu peut encore compiler une seconde fois — pourquoi ces essais existent.
 //
-// `mjs build` compile une première fois (`bundler.compile()`), puis le prérendu RECOMPILE dans le même
-// dossier de sortie (second `Bundler`, un par moteur de rendu). Si une source change entre les deux (un
+// `mjs build` compile une première fois (`bundler.compile()`) ; le prérendu rend d'ordinaire sur cette compilation, mais
+// RECOMPILE dans le même dossier de sortie quand il ne peut pas la reprendre (sources ou préfixe public qui ne sont pas ceux de la
+// construction : second `Bundler`, un par moteur de rendu). Si une source change entre les deux (un
 // outil, un éditeur, un autre build), le second compile écrit d'autres empreintes et supprime les
 // anciennes fichiers. Or l'assemblage (fichier de page, fichier de groupe, liens de préchargement des
 // fragments) lisait le manifeste du PREMIER compile : il cherchait des fichiers disparus. Le message
@@ -13,10 +14,6 @@
 // `PrerenderReport.bundler`) ; et si malgré tout un fichier annoncé n'existe plus, une erreur claire
 // (« le dossier de sortie a été recompilé avec d'autres empreintes… relancez le build »), jamais un
 // fragment qui ment avec une sortie 0.
-//
-// Pour supprimer le second compile un jour : le prérendu devrait recevoir le `Bundler` du build (ou son
-// manifeste et ses unités compilées) au lieu d'en créer un ; `createSSRRenderer` et `createBrowserRenderer`
-// compilent pour servir le rendu et lisent les unités une à une depuis le dossier de sortie.
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync } from 'node:fs'

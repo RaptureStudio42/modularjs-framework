@@ -34,7 +34,7 @@ import type { LintToggles } from '../diagnostics.js'
 import { isBlockedForwardTarget } from './forward-origin.js'
 import { writeRenderSheet, createSheetPlan, withoutImports } from './render-outputs.js'
 import { lightHostCss } from './light-host-css.js'
-import { openRenderCompileDir } from './render-compile-dir.js'
+import { openRenderCompileDir, reusableCompile, type RenderCompiled } from './render-compile-dir.js'
 import { outdatedHappyDomVersion, HAPPY_DOM_MINIMUM } from './happy-dom-version.js'
 import { t } from '../messages/index.js'
 import { buildSeedRoot } from './i18n-seed-root.js'
@@ -130,6 +130,13 @@ export interface SSRRendererOptions {
    * (rétro-compat stricte des appelants directs de l'API publique, cf. docs/19-ssr.md).
    */
   bundlerOpts?: Partial<ReturnType<typeof resolveBundlerOpts>>
+  /**
+   * Compilation que la construction vient d'écrire dans le vrai dossier de sortie, avec le résultat de son `compile()` (prérendu de
+   * `mjs build`, cf. prerender.ts) : ce renderer rend dessus sans compiler, quand il aurait compilé la même (cf. reusableCompile,
+   * render-compile-dir.ts) et que ses options sont celles de `bundlerOpts`, sans autre clé explicite que `env` et `cache`. Sinon il
+   * compile la sienne, comme sans elle. Le `Bundler` repris n'est jamais fermé par `close()` : son appelant le ferme
+   */
+  compiled?: RenderCompiled
 }
 
 export interface RenderOptions {
@@ -1166,8 +1173,8 @@ export function guardStyleValues(Declaration: any): void {
 }
 
 /**
- * Crée un renderer SSR : compile UNE fois les composants, puis permet de
- * rendre plusieurs fois (chaque rendu dans une Window happy-dom isolée).
+ * Crée un renderer SSR : compile UNE fois les composants (ou reprend la compilation d'une construction, cf.
+ * `SSRRendererOptions.compiled`), puis permet de rendre plusieurs fois (chaque rendu dans une Window happy-dom isolée).
  */
 export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRenderer> {
   // Quand aucun `outputDir` n'est
@@ -1212,7 +1219,11 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
   const explicit: Record<string, unknown> = { defaultScriptLang: opts.defaultScriptLang, templateLang: opts.templateLang, sigil: opts.sigil, contextAlias: opts.contextAlias, stylesheetsDir: opts.stylesheetsDir, css: opts.css, csp: opts.csp, maxStateVars: opts.maxStateVars, a11y: opts.a11y, lint: opts.lint, colorsEnabled: opts.colorsEnabled, i18n: opts.i18n, env: opts.env, cache: opts.cache }
   for (const k of Object.keys(explicit)) if (explicit[k] === undefined) delete explicit[k]
 
-  const bundler = new Bundler({
+  // compilation de la construction reprise (cf. `SSRRendererOptions.compiled`) : seulement avec les options résolues du projet — une
+  // clé explicite autre que l'environnement et le cache dit une autre compilation
+  const resolvedOnly = Object.keys(explicit).every(k => k === 'env' || k === 'cache')
+  const reused       = resolvedOnly ? reusableCompile(opts.compiled, { sourceDir: opts.sourceDir, outputDir, manifestPath: workspace.manifestPath, urlPrefix: workspace.urlPrefix, env: opts.env ?? 'dev' }) : null
+  const bundler      = reused?.bundler ?? new Bundler({
     // Options RÉSOLUES du projet en socle (cf. `SSRRendererOptions.bundlerOpts`) : le
     // rendu serveur compile alors À L'IDENTIQUE du build principal, jamais un sous-ensemble.
     ...opts.bundlerOpts,
@@ -1239,17 +1250,21 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
     // le dossier de travail. `undefined` hors détournement : le Bundler dérive comme avant.
     urlPrefix: workspace.urlPrefix,
   })
-  let stats
-  try {
-    stats = await bundler.compile()
-  } catch (e) {
-    await bundler.close()
-    abandon()
-    throw e
+  // le Bundler de ce renderer se ferme avec lui ; celui d'une compilation reprise, jamais : son appelant le ferme
+  const closeBundler = async (): Promise<void> => { if (!reused) await bundler.close() }
+  let stats = reused?.stats
+  if (!stats) {
+    try {
+      stats = await bundler.compile()
+    } catch (e) {
+      await closeBundler()
+      abandon()
+      throw e
+    }
   }
   const compileWarnings = stats.warnings.slice()
   if (stats.errors.length) {
-    await bundler.close()
+    await closeBundler()
     abandon()
     throw new Error(t('server.ssr-errors-compilation', { errors: stats.errors.map(e => e.message).join('\n') }))
   }
@@ -1275,7 +1290,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
   const coreFile  = basename(bundler.coreHashedPath)
   const coreFiles = jsFiles.filter(f => /^mjs_core-/.test(f)).sort()
   if (!coreFile || !coreFiles.includes(coreFile)) {
-    await bundler.close()
+    await closeBundler()
     abandon()
     throw new Error(t('server.ssr-core-not-found'))
   }
@@ -1368,7 +1383,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
   try {
     sortedRestIds = topoSortFiles(restIds, depsById, idToFile)
   } catch (e) {
-    await bundler.close()
+    await closeBundler()
     abandon()
     throw e
   }
@@ -1425,7 +1440,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
   try {
     HappyDOM = await import('happy-dom')
   } catch {
-    await bundler.close()
+    await closeBundler()
     abandon()
     throw new Error(t('server.ssr-happydom-missing'))
   }
@@ -1433,7 +1448,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
   // que des rendus qui varient d'un passage à l'autre — cf. happy-dom-version.ts
   const outdated = outdatedHappyDomVersion()
   if (outdated !== null) {
-    await bundler.close()
+    await closeBundler()
     abandon()
     throw new Error(t('server.ssr-happydom-too-old', { found: outdated, required: HAPPY_DOM_MINIMUM }))
   }
@@ -1918,7 +1933,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
   }
 
   async function close(): Promise<void> {
-    await bundler.close()
+    await closeBundler()
     abandon()
   }
 

@@ -1,8 +1,8 @@
 // prerender — génère au BUILD le HTML des PAGES déclarées en mode 'prerender'.
 //
-// Réutilise le SSR programmatique (createSSRRenderer) : UN renderer compile le
-// sourceDir une seule fois, puis rend chaque page (fenêtre happy-dom neuve par
-// page → stores isolés). Écrit un fragment Declarative Shadow DOM (+ sharedScript)
+// Réutilise le SSR programmatique (createSSRRenderer) : UN renderer rend sur la
+// compilation que `mjs build` vient d'écrire (sinon il compile le sourceDir une
+// seule fois), puis rend chaque page (fenêtre happy-dom neuve par page → stores isolés). Écrit un fragment Declarative Shadow DOM (+ sharedScript)
 // que le back sert pour l'URL correspondante ; le bundle client hydrate par-dessus
 // (render-then-replace). Le dev ne déclare QUE la config — aucun script de rendu.
 //
@@ -19,6 +19,7 @@ import { warningAlreadyWritten, type Bundler } from '../bundler/index.js'
 import { createSSRRenderer, type SSRRenderer } from './renderToString.js'
 import { resolvePage, isBuildPrerenderable } from './render-routes.js'
 import { resolveEngine, createBrowserRenderer, type BrowserRenderer } from './render-browser.js'
+import type { RenderCompiled } from './render-compile-dir.js'
 import { t } from '../messages/index.js'
 import { readHtmlComment } from '../mask.js'
 import { typedLine, paintDiagnostic, resolveColorsEnabled } from '../diagnostics.js'
@@ -71,6 +72,10 @@ export interface PrerenderOverrides {
   env?: 'dev' | 'prod'
   /** `mjs build --cache` : la compilation du prérendu est servie par le cache de la construction (cf. Bundler.loadDiskCache) */
   cache?: boolean
+  /** Compilation que la construction vient d'écrire dans le vrai dossier de sortie, avec le résultat de son `compile()` : chaque moteur
+   *  rend dessus sans recompiler le projet quand il aurait compilé la même (cf. reusableCompile, render-compile-dir.ts) — sinon
+   *  (`js: 'bundle'`, autres chemins, autre préfixe public) il compile à part, comme sans elle. Son `Bundler` reste à fermer par l'appelant */
+  compiled?: RenderCompiled
 }
 
 /** URL de page → chemin de fichier relatif : '/' → 'index.html',
@@ -371,8 +376,8 @@ export async function prerenderPages(
   let happyRenderer: SSRRenderer | null = null
   let browserRenderer: BrowserRenderer | null = null
   try {
-    if (needsHappy) happyRenderer = await createSSRRenderer({ sourceDir, outputDir, manifestPath, bundlerOpts, env: overrides.env, cache: overrides.cache })
-    if (needsBrowser) browserRenderer = await createBrowserRenderer(config, { configDir, log, sourceDir, outputDir, manifestPath, env: overrides.env, cache: overrides.cache })
+    if (needsHappy) happyRenderer = await createSSRRenderer({ sourceDir, outputDir, manifestPath, bundlerOpts, env: overrides.env, cache: overrides.cache, compiled: overrides.compiled })
+    if (needsBrowser) browserRenderer = await createBrowserRenderer(config, { configDir, log, sourceDir, outputDir, manifestPath, env: overrides.env, cache: overrides.cache, compiled: overrides.compiled })
   } catch (e) {
     // Le moteur DÉJÀ construit (happy-dom, créé en premier) ne doit jamais fuir si le second
     // (navigateur) échoue à se construire — sans ce filet, il restait ouvert pour toujours.
@@ -380,8 +385,9 @@ export async function prerenderPages(
     throw e
   }
   const last = (browserRenderer ?? happyRenderer)?.bundler
-  // `--cache` : la ligne de bilan de chaque moteur qui a compilé, comme celle de la construction
-  for (const r of [happyRenderer, browserRenderer]) if (r?.bundler.diskCacheLine) log(t('server.prerender-cache', { line: r.bundler.diskCacheLine }))
+  // `--cache` : la ligne de bilan de chaque moteur qui a compilé, comme celle de la construction — jamais celle de la construction reprise,
+  // que son bilan a déjà écrite
+  for (const r of [happyRenderer, browserRenderer]) if (r && r.bundler !== overrides.compiled?.bundler && r.bundler.diskCacheLine) log(t('server.prerender-cache', { line: r.bundler.diskCacheLine }))
   if (last) Object.defineProperty(report, 'bundler', { value: last, enumerable: false, writable: true, configurable: true })
 
   // Prérendu multi-langue OPT-IN : `render.locales` avec ≥ 2 entrées déclenche

@@ -1,6 +1,6 @@
-// `mjs build --cache` sur un projet qui prérend ses pages (`render.routes`) : le prérendu, qui recompile le projet une seconde fois,
-// est servi par le même cache, ne recompile que ce qui a changé, et la sortie (pages prérendues comprises) reste identique à l'octet à
-// une construction complète, dans un dossier de sortie neuf comme sur place.
+// `mjs build --cache` sur un projet qui prérend ses pages (`render.routes`) : la construction servie par le cache ne recompile que ce
+// qui a changé, le prérendu rend sur elle sans recompiler le projet (aucune ligne de cache à lui), et la sortie (pages prérendues
+// comprises) reste identique à l'octet à une construction complète, dans un dossier de sortie neuf comme sur place.
 
 import assert from 'node:assert/strict'
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs'
@@ -23,10 +23,10 @@ const SOURCES: Record<string, string> = {
   'libre.mjs':   '<p class="l">libre</p>\n',
 }
 
-describe('mjs build --cache : le prérendu est servi par le même cache', function () {
+describe('mjs build --cache : le prérendu rend sur la construction servie par le cache', function () {
   this.timeout(300_000)
 
-  it('composant changé, puis rien de changé : le prérendu ne recompile que ce qui a changé, écart 0 pages comprises', function () {
+  it('composant changé, puis rien de changé : la construction ne recompile que ce qui a changé, le prérendu rien, écart 0 pages comprises', function () {
     const root    = mjsTmp('cache-prerendu')
     const cache   = join(root, 'node_modules/.cache')
     const state   = join(root, 'etat')
@@ -38,9 +38,9 @@ describe('mjs build --cache : le prérendu est servi par le même cache', functi
     const first = build(root, ['--cache'])
     assert.equal(first.status, 0, first.out)
     assert.equal(first.reason, 'premier passage', first.out)
-    assert.equal(first.prerender?.reason, 'premier passage', first.out)
+    assert.equal(first.prerender, null, `le prérendu ne compile pas, aucune ligne de cache à lui :\n${first.out}`)
     assert.ok(existsSync(join(publicD, 'mjs_pages/index.html')), first.out)
-    const report = [`premier passage : construction ${first.cold} compilés, prérendu ${first.prerender?.cold} compilés`]
+    const report = [`premier passage : construction ${first.cold} compilés, prérendu sans compilation`]
     renameSync(publicD, state)
 
     const steps: { label: string; change: () => void; cold: number }[] = [
@@ -65,10 +65,10 @@ describe('mjs build --cache : le prérendu est servi par le même cache', functi
       rmSync(state, { recursive: true, force: true })
       renameSync(publicD, state)
       for (const b of [fresh, freshFull, inPlace, inPlaceFull]) assert.equal(b.status, 0, `${step.label}\n${b.out}`)
-      report.push(`${step.label} : construction ${fresh.cold} / ${inPlace.cold} recompilés, prérendu ${fresh.prerender?.cold} / ${inPlace.prerender?.cold} recompilés (dossier neuf / sur place)`)
+      report.push(`${step.label} : construction ${fresh.cold} / ${inPlace.cold} recompilés, prérendu sans compilation (dossier neuf / sur place)`)
       for (const b of [fresh, inPlace]) {
         assert.equal(b.cold, step.cold, `${step.label} : unités recompilées par la construction\n${b.out}`)
-        assert.equal(b.prerender?.cold, step.cold, `${step.label} : unités recompilées par le prérendu\n${b.out}`)
+        assert.equal(b.prerender, null, `${step.label} : le prérendu ne recompile rien\n${b.out}`)
       }
       // la comparaison porte sur de vraies pages prérendues
       for (const page of [join(dir, 'neuf/mjs_pages/index.html'), join(dir, 'place/mjs_pages/index.html')]) assert.match(readFileSync(page, 'utf-8'), /carte/, page)

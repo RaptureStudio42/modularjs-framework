@@ -13,6 +13,7 @@
 //      pas compiler un binaire natif n'a jamais un build cassé pour autant.
 
 import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 
@@ -271,4 +272,104 @@ export async function generateVariants(req: VariantRequest): Promise<GeneratedVa
     }
   }
   return outputs
+}
+
+// --------------------------------------------------------------------------
+// INDEX DES IMAGES — `.mjs-images.json`, dans le dossier de sortie : les variantes qu'une construction a encodées, pour que la
+// suivante (un autre processus : `mjs build`, premier passage de `mjs dev`, prérendu) les reprenne au lieu de les réencoder.
+// clé : empreinte de ce qui fait les octets d'une variante (nom de base, contenu de l'image, largeurs, formats, qualité, versions
+// de sharp) ; valeur : les variantes, dans l'ordre de generateVariants. Rien du poste (aucun chemin) : le fichier est servi
+// avec les sorties. Jamais cru sur parole : chaque fichier repris est relu et vérifié par l'empreinte de son nom
+// --------------------------------------------------------------------------
+
+/** une variante telle que l'index la consigne : son fichier (dans le dossier de sortie), sa largeur réelle, son format */
+export interface IndexedVariant {
+  filename: string
+  width: number
+  format: string
+}
+
+let versionsCache: Promise<string | null> | null = null
+
+/**
+ * les versions de `sharp` et des bibliothèques qu'il embarque (libvips, encodeurs), lues une fois par processus dans
+ * `sharp.versions` : `null` sans `sharp`, ou quand elles ne disent pas au moins celles de `sharp` et de libvips — aucune
+ * variante n'est alors reprise d'une construction à l'autre, chacune s'encode comme avant ; ne lève jamais
+ */
+export async function sharpVersions(): Promise<string | null> {
+  if (!versionsCache) {
+    versionsCache = (async () => {
+      try {
+        const versions = (await resolveSharp())?.versions
+        if (typeof versions?.sharp !== 'string' || typeof versions?.vips !== 'string') return null
+        return Object.keys(versions).sort().filter(k => typeof versions[k] === 'string').map(k => `${k}@${versions[k]}`).join(' ')
+      } catch {
+        return null
+      }
+    })()
+  }
+  return versionsCache
+}
+
+/** clé d'une image dans l'index : `digest` est le md5 du contenu de l'image source, `versions` celles de sharpVersions() */
+export function imageIndexKey(req: VariantRequest, digest: string, versions: string): string {
+  return createHash('sha256').update(JSON.stringify([req.baseName, digest, req.widths, req.formats, req.quality, versions])).digest('hex')
+}
+
+/**
+ * les variantes qu'une entrée de l'index consigne, relues dans `dir` : chacune y porte le nom que generateVariants lui donnerait
+ * (`variantName`), et le md5 de ses octets commence par l'empreinte de ce nom (le même calcul) ; `null` au premier manque
+ * (fichier absent, coupé ou changé) : l'image s'encode de nouveau, l'entrée est remplacée
+ */
+export function readIndexedVariants(dir: string, baseName: string, listed: IndexedVariant[] | undefined): GeneratedVariant[] | null {
+  if (!listed || listed.length === 0) return null
+  const variants: GeneratedVariant[] = []
+  for (const v of listed) {
+    const digest = /-([a-f0-9]{8})\.[a-z0-9]+$/.exec(v.filename)?.[1]
+    if (digest === undefined || v.filename !== variantName(baseName, v.width, v.format, digest)) return null
+    let bytes: Buffer
+    try {
+      bytes = readFileSync(join(dir, v.filename))
+    } catch {
+      return null
+    }
+    if (!createHash('md5').update(bytes).digest('hex').startsWith(digest)) return null
+    variants.push({ filename: v.filename, bytes, width: v.width, format: v.format })
+  }
+  return variants
+}
+
+// une variante bien formée : un nom simple (jamais un chemin ni un fichier caché), une largeur entière, un format
+const indexedVariant = (v: any): boolean => v !== null && typeof v === 'object' && typeof v.filename === 'string' && /^[^/\\\0.][^/\\\0]*$/.test(v.filename) && Number.isInteger(v.width) && v.width > 0 && typeof v.format === 'string'
+
+/** l'index lu dans `text` ; vide pour un fichier illisible ou d'une autre forme, ignoré en entier (tout s'encode, il est réécrit) */
+export function parseImageIndex(text: string): Map<string, IndexedVariant[]> {
+  let read: any
+  try {
+    read = JSON.parse(text)
+  } catch {
+    return new Map()
+  }
+  if (read === null || typeof read !== 'object' || Array.isArray(read)) return new Map()
+  const index = new Map<string, IndexedVariant[]>()
+  for (const [key, list] of Object.entries(read)) {
+    if (!/^[a-f0-9]{64}$/.test(key) || !Array.isArray(list) || list.length === 0 || !list.every(indexedVariant)) return new Map()
+    index.set(key, list.map((v: any) => ({ filename: v.filename, width: v.width, format: v.format })))
+  }
+  return index
+}
+
+/** `text` a-t-il la forme de l'index (un objet vide en est un) ? Sinon, dans le dossier des sources, c'est peut-être un fichier de l'auteur */
+export function isImageIndex(text: string): boolean {
+  try {
+    const read = JSON.parse(text)
+    return read !== null && typeof read === 'object' && !Array.isArray(read) && Object.entries(read).every(([key, list]) => /^[a-f0-9]{64}$/.test(key) && Array.isArray(list) && list.length > 0 && list.every(indexedVariant))
+  } catch {
+    return false
+  }
+}
+
+/** forme écrite de l'index : clés triées, comme `.mjs-outputs.json` — les mêmes entrées donnent les mêmes octets */
+export function serializeImageIndex(index: Map<string, IndexedVariant[]>): string {
+  return JSON.stringify(Object.fromEntries([...index.keys()].sort().map(k => [k, index.get(k)])), null, 2) + '\n'
 }
