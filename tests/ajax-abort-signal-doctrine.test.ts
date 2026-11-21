@@ -35,6 +35,8 @@ function makeMu() {
     log: (...a: any[]) => calls.log.push(a),
     warn: (...a: any[]) => calls.warn.push(a),
     error: (...a: any[]) => calls.error.push(a),
+    // µ._mjs_txt du cœur (mjs_init.ts), sans table des libellés : le texte français de secours, variables remplacées
+    _mjs_txt: (k: string, v: any, fr: string) => fr.replace(/\{(\w+)\}/g, (m, n) => (v && n in v ? String(v[n]) : m)),
   }
   return { µ, calls }
 }

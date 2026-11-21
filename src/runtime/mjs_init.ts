@@ -446,10 +446,10 @@ var mjsLogLevel = function() {
 };
 
 // bloc `<page-start>` : retiré du cœur par le bundler quand aucun autre fichier du cœur ne se sert de cette aide (aucun
-// chargeur : appli en fichier unique sans langue, sans effet, sans feuille ni variante à la demande)
+// chargeur ni µajax : appli en fichier unique sans langue, sans effet, sans feuille ni variante à la demande, sans µajax)
 // <page-start>
 // DÉPART DE LA PAGE — un chargement du runtime (module d'un composant, fichier de langue, fragment de traduction, fichier
-// d'effet, feuille) coupé parce que le visiteur s'en va n'est pas une panne. Firefox et Safari coupent ce qui est en vol dès
+// d'effet, feuille) coupé parce que le visiteur s'en va n'est pas une panne, pas plus qu'une lecture µajax restée sans réponse (mjs_ajax.ts). Firefox et Safari coupent ce qui est en vol dès
 // que la navigation part (juste après `beforeunload`), la page restant affichée jusqu'à la réponse de la suivante ; Chromium
 // coupe après `pagehide`. Le départ est ANNONCÉ par une navigation vers un autre document (API Navigation : lien, formulaire,
 // script) ou par `beforeunload` (barre d'adresse, rechargement, retour), CONFIRMÉ par `pagehide`, oublié au `pageshow`

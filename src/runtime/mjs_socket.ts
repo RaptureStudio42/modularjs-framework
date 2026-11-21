@@ -123,6 +123,11 @@ var _mjsSockSameAuth = function(a, b) {
   return _mjsSockSame(a == null ? null : a, b == null ? null : b);
 };
 
+// <development>
+// ouvertures relevées en développement, par adresse (cf. MjsSocket.prototype._mjs_open) : leurs instants sur la dernière seconde, et la
+// rafale déjà dite — par adresse et non par connexion, pour voir aussi la connexion détruite puis refaite à chaque passage
+var _mjsSockOpens = Object.create(null);
+// </development>
 µ.socket = function(url, opts) {
   // la connexion propre d'un effet en direct (`server`) : à lui seul, jamais celle que l'appli tient ou tiendra à
   // la même adresse, ni ses options, ni son identité ; connue de µ._mjs_sockets (l'effet *offline la voit),
@@ -210,7 +215,7 @@ var _mjsSockSameAuth = function(a, b) {
   var roomName = null;
   var route    = null;
   var usable   = function(k) { return !!k && typeof k === 'object' && typeof k.room === 'function' && !k._mjs_destroyed; };
-  var ready    = function(k) { return !k._mjs_destroyed && (k.state === 'open' || !k.opts || k.opts.auth === void 0); };
+  var ready    = function(k) { return !k._mjs_destroyed && ((k._mjs_stRaw || k).state === 'open' || !k.opts || k.opts.auth === void 0); };
   var bind     = function(k) {
     sock  = k;
     roomName = more.room ? more.room() : null;
@@ -370,6 +375,10 @@ function MjsSocket(url, opts) {
   // état réactif (un seul store interne, exposé via getters)
   // resumed : true si le dernier µ:welcome clôt une reprise de session réussie, false pour un accueil neuf — MàJ par _mjs_onWelcome à chaque welcome
   this._mjs_st = µ.state({ state: 'closed', latency: null, lastError: null, resumed: false });
+  // le même état lu sans son enveloppe : le fil le lit pour lui-même sans le faire suivre — appelées dans un µeffect, connect(), close(),
+  // send()… ne le font pas repartir quand l'état change ; les accesseurs publics (plus bas) restent suivis et toute écriture passe par
+  // l'enveloppe, qui prévient ; un µ.state sans enveloppe : l'objet lui-même
+  this._mjs_stRaw = (µ._mjs_RAW && this._mjs_st[µ._mjs_RAW]) || this._mjs_st;
   this._mjs_ws = null;
   this._mjs_helloSent = false;      // µ:hello parti sur le fil courant — avant lui, rien d'autre ne part (cf. _mjs_rawSend)
   this._mjs_wantOpen = false;       // true = on veut être connecté (≠ close volontaire)
@@ -458,7 +467,7 @@ MjsSocket.prototype._mjs_setState = function(s) { this._mjs_st.state = s; };
 
 // --- ouverture / handshake ---
 MjsSocket.prototype.connect = function() {
-  if (this._mjs_destroyed || this._mjs_ws || this.state === 'open') { return this; }
+  if (this._mjs_destroyed || this._mjs_ws || this._mjs_stRaw.state === 'open') { return this; }
   // reconnexion explicite : sort d'un abandon éventuel (cf. _mjs_scheduleReconnect/_mjs_ensure),
   // compteur d'essais remis à zéro — un appel PUBLIC repart toujours à froid.
   this._mjs_abandoned     = false;
@@ -485,7 +494,7 @@ MjsSocket.prototype._mjs_ensure = function() {
   // connexion brute, hors de tout backoff/plafond (un client qu'on a voulu arrêter pouvait marteler
   // le serveur).
   if (this._mjs_abandoned) { return; }
-  if (!this._mjs_ws && this.state !== 'open' && !this._mjs_destroyed && !this._mjs_reconnectTimer) { this.connect(); }
+  if (!this._mjs_ws && this._mjs_stRaw.state !== 'open' && !this._mjs_destroyed && !this._mjs_reconnectTimer) { this.connect(); }
 };
 
 MjsSocket.prototype._mjs_open = function() {
@@ -495,7 +504,7 @@ MjsSocket.prototype._mjs_open = function() {
   if (this._mjs_reconnectTimer) { clearTimeout(this._mjs_reconnectTimer); this._mjs_reconnectTimer = null; }
   // Garde anti-double-socket : une connexion vit déjà → on ne la double pas.
   if (this._mjs_ws) { return; }
-  if (this.state !== 'reconnecting') { this._mjs_setState('connecting'); }
+  if (this._mjs_stRaw.state !== 'reconnecting') { this._mjs_setState('connecting'); }
   var ws;
   try { ws = new WebSocket(this.url, this.opts.protocols); }
   catch (e) {
@@ -513,6 +522,21 @@ MjsSocket.prototype._mjs_open = function() {
     return;
   }
   this._mjs_ws = ws;
+  // <development>
+  // plus de 20 ouvertures en une seconde à la même adresse : un µeffect ferme et rouvre sans doute la connexion à chaque passage, ou la
+  // détruit et en refait une — dit une fois pour cette adresse, rien n'est bloqué
+  var opens = _mjsSockOpens[this.url] || (_mjsSockOpens[this.url] = { at: [], told: false });
+  if (!opens.told) {
+    var openedAt = this._mjs_now();
+    opens.at.push(openedAt);
+    while (openedAt - opens.at[0] >= 1000) opens.at.shift();
+    if (opens.at.length > 20) {
+      opens.told = true;
+      opens.at   = [];
+      µ.warn('[µ.socket] ' + µ._mjs_txt('sockOpenStorm', { url: this.url }, '{url} : la connexion s\'est ouverte plus de 20 fois en une seconde. Un µeffect la ferme et la rouvre peut-être à chaque passage : gardez dans une variable la demande déjà servie.'));
+    }
+  }
+  // </development>
   // µschema (mjs_schema.ts) — extension MINIME : ArrayBuffer plutôt que Blob
   // pour les trames binaires entrantes (accès synchrone aux octets, cf. µ._mjs_mjschemaOnBinary plus bas
   // dans _mjs_onMessage) — sans incidence sur le texte JSON existant (readyState/onmessage inchangés pour
@@ -611,14 +635,14 @@ MjsSocket.prototype._mjs_onWelcome = function(msg) {
   // existant).
   // flux quittés : une session reprise garde ses abonnements, le désabonnement qui n'a pas pu partir (unstream() hors ligne)
   // part ici, avant tout le reste ; un accueil neuf n'en a plus aucun, rien à défaire
-  if (!this._mjs_st.resumed) { this._mjs_unsubs = Object.create(null); }
+  if (!this._mjs_stRaw.resumed) { this._mjs_unsubs = Object.create(null); }
   for (var __uq in this._mjs_unsubs) {
     if (this._mjs_unsubs[__uq] === null) { this._mjs_sendUnsub(__uq); }
   }
   // salons quittés dont le départ n'est pas encore sûr : une session reprise les garde — leur départ repart ici, une fois, avant les
   // re-joins, suivi d'un µ:ping dont la réponse le prouve (cf. _mjs_sendLeave) sans attendre un battement : une reprise de plus, avant
   // lui, le redirait encore ; un accueil neuf n'en a plus aucun
-  if (!this._mjs_st.resumed) { this._mjs_roomLeaves = Object.create(null); }
+  if (!this._mjs_stRaw.resumed) { this._mjs_roomLeaves = Object.create(null); }
   var __lvs = Object.keys(this._mjs_roomLeaves);
   for (var __lv = 0; __lv < __lvs.length; __lv++) { this._mjs_sendLeave(__lvs[__lv]); }
   if (__lvs.length) { this._mjs_beat(true); }
@@ -810,7 +834,7 @@ MjsSocket.prototype._mjs_onClose = function(ev) {
     this._mjs_cancelPending();
     this._mjs_queue = [];
     this._mjs_queueOverflowWarned = false;
-    if (!this._mjs_st.lastError) { this._mjs_st.lastError = { code: ev.code === 4003 ? 'replaced' : 'refused' }; }
+    if (!this._mjs_stRaw.lastError) { this._mjs_st.lastError = { code: ev.code === 4003 ? 'replaced' : 'refused' }; }
   }
   if (this._mjs_wantOpen && !this._mjs_destroyed) { this._mjs_scheduleReconnect(); }
   else { this._mjs_setState('closed'); }
@@ -1019,7 +1043,7 @@ MjsSocket.prototype.sendTo = function(room, type, payload, opts) {
 // antérieure, jamais atteint.
 MjsSocket.prototype._mjs_sendNow = function(type, payload, volatile) {
   var obj = { t: type, p: payload };
-  if (this.state === 'open') { return this._mjs_rawSend(obj); }
+  if (this._mjs_stRaw.state === 'open') { return this._mjs_rawSend(obj); }
   // périmée dans une seconde : elle ne chasse pas les messages de l'appli de la file, et n'est pas
   // rejouée d'un coup à la reconnexion (le serveur expulserait pour débit)
   if (volatile) { return false; }
@@ -1070,7 +1094,7 @@ MjsSocket.prototype._mjs_coalesceSend = function(type, payload, interval, key, v
     var tick = function() {
       if (self._mjs_ws && self._mjs_ws.bufferedAmount > maxBuf) { slot.timer = setTimeout(tick, ms); return; }
       // une trame d'effet au-delà de la part des effets : retenue, sa dernière valeur partira
-      if (slot.volatile && self.state === 'open' && !self._mjs_fxToken()) { slot.timer = setTimeout(tick, ms); return; }
+      if (slot.volatile && self._mjs_stRaw.state === 'open' && !self._mjs_fxToken()) { slot.timer = setTimeout(tick, ms); return; }
       slot.scheduled = false;
       slot.timer = null;
       // parti : la case n'a plus rien à garder (un salon de plus visité ne laisse pas une case de plus à vie)
@@ -1196,7 +1220,7 @@ MjsSocket.prototype.request = function(type, payload, opts) {
   var self = this;
   var id = ++this._mjs_reqSeq;
   return new Promise(function(resolve, reject) {
-    if (self.state !== 'open' && !opts.waitForOpen) {
+    if (self._mjs_stRaw.state !== 'open' && !opts.waitForOpen) {
       reject({ code: 'offline', message: 'socket non connecté' });
       return;
     }
@@ -1213,7 +1237,7 @@ MjsSocket.prototype.request = function(type, payload, opts) {
       reject({ code: 'timeout', message: 'request timeout' });
     }, timeoutMs);
     self._mjs_reqs[id] = { resolve: resolve, reject: reject, timer: timer };
-    if (self.state === 'open') {
+    if (self._mjs_stRaw.state === 'open') {
       self._mjs_rawSend({ t: type, p: payload, id: id });
     } else {
       // `waitForOpen: true` hors-ligne :

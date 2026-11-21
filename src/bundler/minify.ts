@@ -316,7 +316,7 @@ export const WARNING_ONLY_MESSAGES: readonly string[] = [
   'scratchBadMany', 'scratchBadOne', 'scratchColors', 'scratchIgnMany', 'scratchIgnNone', 'scratchIgnOne', 'scratchImage',
   'sigCycle', 'sigLoop',
   'smoothNonFinite',
-  'sockBinaryNoSchema', 'sockDuplicateAuth', 'sockOptionInvalid', 'sockQueueDenied', 'sockQueueFull', 'sockSendDropped',
+  'sockBinaryNoSchema', 'sockDuplicateAuth', 'sockOpenStorm', 'sockOptionInvalid', 'sockQueueDenied', 'sockQueueFull', 'sockSendDropped',
   'spotlightWhere',
   'spriteFps', 'spriteImage', 'spritePoses', 'spriteRow',
   'storeGCycle', 'storeGKey', 'storeGResKey', 'storeGResTag', 'storeGTheme', 'storeGWatch', 'storeKey', 'storeProto',
@@ -331,8 +331,8 @@ export const WARNING_ONLY_MESSAGES: readonly string[] = [
 
 /** clés du groupe `err` des messages du développement seul : un conseil d'écriture, une mauvaise utilisation que la construction
  *  de développement signale déjà (le code tel qu'il est écrit la déclenche, pas les données, le réseau ni le navigateur du visiteur),
- *  ou un message que seule une construction de développement peut écrire (bloc µ.debug, section `// @@ dev`, drapeau `dev` de
- *  l'i18n). Un appel µ.warn(…) ou µ.error(…) du runtime qui lit l'une d'elles est du développement seul : en production, dès que le
+ *  ou un message que seule une construction de développement peut écrire (bloc µ.debug, section `// @@ dev`, bloc `<development>` du
+ *  runtime, drapeau `dev` de l'i18n). Un appel µ.warn(…) ou µ.error(…) du runtime qui lit l'une d'elles est du développement seul : en production, dès que le
  *  niveau coupe les traces ('warn', 'error', 'silent'), la construction le retire du code envoyé avec ses arguments, et ces textes
  *  des fichiers de messages ; au niveau 'log', ils restent. Même règle pour le groupe `dev` des libellés, que la production n'écrit
  *  jamais. Dans le doute (une valeur qui peut venir d'une variable, des données reçues ou de la page), le message reste en production.
@@ -345,7 +345,7 @@ export const DEV_ONLY_MESSAGES: readonly string[] = [
   'collNotNamed',
   'dynAccept',
   'effectInit',
-  'storeDestroyed', 'storeDestroyedRead',
+  'sockOpenStorm', 'storeDestroyed', 'storeDestroyedRead',
   'everyHash', 'everyInit', 'everyUnknownOpt', 'everyWhileAsync',
   'fluidTextComponent',
   'fxBrought', 'fxEveryRefused', 'fxRefused',

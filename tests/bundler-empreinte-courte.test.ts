@@ -166,7 +166,7 @@ describe('empreinte courte — les fichiers du build', function () {
       const p = projet('empreinte-collision', { 'util.mjs': composant('avant') })
       const bundler = nouveau(p)
       // hachage forcé : tout contenu reçoit la même empreinte courte, l'empreinte complète reste celle du contenu
-      bundler.fingerprintOf = (contenu: string | Buffer) => ({ court: 'aaaaa', complet: createHash('md5').update(contenu).digest('hex') })
+      bundler.fingerprintOf = (contenu: string | Buffer) => ({ short: 'aaaaa', full: createHash('md5').update(contenu).digest('hex') })
       const premier = await bundler.compile()
       assert.equal(premier.errors.length, 0, premier.errors.map((e: any) => e.message).join('\n'))
       writeFileSync(join(p.srcDir, 'util.mjs'), composant('apres'))

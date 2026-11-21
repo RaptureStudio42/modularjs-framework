@@ -46,7 +46,7 @@ describe('mjs build --cache=verify et élagage du cache', function () {
     assert.equal(second.cold, 1, second.out)
     assert.ok(CHECKED.test(second.out), second.out)
     // la construction complète faite à part ne laisse rien derrière elle
-    const left = readdirSync(join(root, 'node_modules/.cache/mjs/build')).filter(f => !/^[0-9a-f]{16}\.json$|^dernier\.json$|^files$/.test(f))
+    const left = readdirSync(join(root, 'node_modules/.cache/mjs/build')).filter(f => !/^[0-9a-f]{16}\.json$|^last\.json$|^files$/.test(f))
     assert.deepEqual(left, [], second.out)
   })
 

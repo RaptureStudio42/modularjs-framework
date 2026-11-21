@@ -27,7 +27,7 @@ Un `µsocket(url)` est un **singleton par URL**, référence-compté : deux comp
 | `latency` | `number \| null` | Aller-retour du dernier `µ:ping`/`µ:pong`, en ms. |
 | `lastError` | `object \| null` | Dernière erreur (`µ:error`, `µ:denied`, coupure réseau…). |
 
-Toutes sont réactives : `<span class="dot" :class{@sock.connected}="on">` bascule tout seul.
+Toutes sont réactives : `<span class="dot" :class{@sock.connected}="on">` bascule tout seul. Les méthodes de la connexion (`connect()`, `close()`, `send()`…) lisent son état sans le faire suivre : appelées dans un `µeffect`, elles ne le font pas repartir quand l'état change ; un `µeffect` qui lit lui-même `sock.state` repart. Une limite : dans un composant que chaque ouverture redessine — il lit lui-même l'état de la connexion (un gabarit qui affiche `{@sock.state}`, une valeur dérivée, un autre `µeffect`) ou ce qu'elle reçoit à chaque ouverture (la présence d'un salon) —, ce rendu fait passer le `µeffect` qui n'a lu aucune variable `$` ni clé du magasin, celui que la construction met dans le doute (cf. [03 · Réactivité](03-reactivite.md)) et, sous `"proxy": false`, tous les `µeffect` ; s'il ferme puis rouvre la connexion, il en ouvre une nouvelle à chaque tour, sans fin. Gardez alors dans une variable la demande déjà servie : `return if @@renouvele is $$jeton`, puis `@@renouvele = $$jeton` avant `close()` et `connect()`. En développement, une adresse où la connexion s'ouvre plus de 20 fois en une seconde, même détruite puis refaite (`destroy()` puis `µsocket(…)`), le dit une fois en console (« la connexion s'est ouverte plus de 20 fois en une seconde ») ; rien n'est bloqué.
 
 ---
 

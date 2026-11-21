@@ -4,6 +4,8 @@
 // la confirmation n'écoutait qu'à la remontée, sur le document — le gestionnaire du composant léger
 // (délégation en capture) ou l'écouteur du bouton avaient déjà joué : l'action partait au premier
 // clic, la réponse à la question ne servait à rien. Un accord ne pose la question qu'une fois.
+// Un vrai lien `:confirm` placé dans un `<pre>` pose aussi sa question au clic, et un refus le
+// retient, construit en développement comme en production.
 // Chromium : les phases de l'événement (capture, remontée) et le shadow fermé tels qu'un vrai
 // navigateur les joue.
 
@@ -27,10 +29,14 @@ const SOURCES: Record<string, string> = {
   'suppr.mjs': '<script>\n$n = 3\n</script>\n<button class="b" :confirm="Vraiment ?" @click={$n--}>Supprimer</button>\n<p class="n">{$n}</p>\n'
 }
 
+// un vrai lien placé dans un exemple : il garde son mot de MJS
+const EXEMPLE = '<pre><a class="l" href="/ailleurs" :confirm="Quitter ?">aller</a></pre>\n'
+
 describe('@confirm sur un bouton (Chromium réel) — la question passe avant l\'action', function () {
   this.timeout(60000)
   let present = false
   let script  = ''
+  const exemples: Record<'dev' | 'prod', string> = { dev: '', prod: '' }
 
   before(async function () {
     present = await chromiumPresent()
@@ -50,6 +56,22 @@ describe('@confirm sur un bouton (Chromium réel) — la question passe avant l\
     const files = readdirSync(outDir).filter((f) => f.endsWith('.js'))
     const ordre = [...files.filter((f) => f.startsWith('mjs_')).sort(), ...files.filter((f) => !f.startsWith('mjs_')).sort()]
     script = ordre.map((f) => stripEsm(readFileSync(join(outDir, f), 'utf-8'))).join('\n') + '\nglobalThis.µ = µ;'
+    for (const mode of ['dev', 'prod'] as const) {
+      const base = mjsTmp(`confirm-lien-exemple-${mode}`)
+      const src  = join(base, 'src')
+      const out  = join(base, 'out')
+      mkdirSync(src, { recursive: true })
+      writeFileSync(join(src, 'exemple.mjs'), EXEMPLE)
+      // production : un seul fichier, le manifeste
+      const manifeste = join(out, 'bundle.js')
+      const construit = new Bundler({ sourceDir: src, outputDir: out, manifestPath: mode === 'prod' ? manifeste : join(base, 'bundle.js'), ...mode === 'prod' && { env: 'prod', js: 'bundle' } } as any)
+      const bilan     = await construit.compile()
+      await construit.close()
+      assert.equal(bilan.errors.length, 0, bilan.errors.map((e: any) => e.message).join('\n'))
+      const fichiers = readdirSync(out).filter((f) => f.endsWith('.js'))
+      const rangs    = [...fichiers.filter((f) => f.startsWith('mjs_')).sort(), ...fichiers.filter((f) => !f.startsWith('mjs_')).sort()]
+      exemples[mode] = mode === 'prod' ? stripEsm(readFileSync(manifeste, 'utf-8')) : rangs.map((f) => stripEsm(readFileSync(join(out, f), 'utf-8'))).join('\n') + '\nglobalThis.µ = µ;'
+    }
   })
 
   after(async () => { await terminateSharedWorkerPool() })
@@ -99,4 +121,40 @@ describe('@confirm sur un bouton (Chromium réel) — la question passe avant l\
       await browser.close()
     }
   })
+
+  for (const mode of ['dev', 'prod'] as const) {
+    it(`un vrai lien :confirm placé dans un <pre> pose sa question au clic ; refus : la page reste (construit en ${mode === 'dev' ? 'développement' : 'production'})`, async function () {
+      if (!present) { this.skip(); return }
+      const { chromium } = await import('playwright')
+      const browser = await chromium.launch({ args: ['--no-proxy-server'] })
+      try {
+        const page     = await browser.newPage()
+        const requetes: string[] = []
+        page.on('request', (r: any) => requetes.push(r.method() + ' ' + r.url()))
+        await page.route('http://t.test/**', (route: any) => {
+          if (route.request().url() === 'http://t.test/') return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><head><meta charset="utf-8"></head><body><mjs-exemple mjs-light></mjs-exemple><script>${exemples[mode]}</script></body></html>` })
+          return route.fulfill({ contentType: 'text/html', body: '<!doctype html><p>AILLEURS</p>' })
+        })
+        await page.goto('http://t.test/', { waitUntil: 'load' })
+        await page.waitForSelector('mjs-exemple pre a.l')
+
+        // refus dans la modale maison : la question posée, aucune requête, la page reste
+        await page.click('mjs-exemple pre a.l')
+        await page.waitForSelector('.mjs-modal-box', { timeout: 5000 })
+        assert.match(await page.textContent('.mjs-modal-box') ?? '', /Quitter \?/)
+        await page.click('.mjs-modal-cancel')
+        await page.waitForSelector('.mjs-modal-box', { state: 'detached', timeout: 5000 })
+        await page.waitForTimeout(300)
+        assert.deepEqual(requetes.filter((r) => r.includes('/ailleurs')), [], 'refus : aucune requête vers le lien')
+        assert.equal(page.url(), 'http://t.test/')
+
+        // témoin, accord : le lien part (le refus retient un vrai lien)
+        await page.click('mjs-exemple pre a.l')
+        await page.waitForSelector('.mjs-modal-box', { timeout: 5000 })
+        await Promise.all([page.waitForRequest('http://t.test/ailleurs', { timeout: 5000 }), page.click('.mjs-modal-confirm')])
+      } finally {
+        await browser.close()
+      }
+    })
+  }
 })

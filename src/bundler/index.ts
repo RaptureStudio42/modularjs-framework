@@ -67,7 +67,7 @@ import { checkProject, type ProjectDictionary } from './build-checks.js'
 import { loadSites } from '../transpiler/load-sites.js'
 import { unescapeMu } from '../transpiler/mu-escapes.js'
 import { sectionBounds, extractSections } from '../transpiler/sections.js'
-import { scanCompiledFeatures, FIELD_BIND, scanJsTimers, scanJsReffets, scanCollections, COLLECTIONS, WEAK_COLLECTIONS, optionalSignal, fxAliasSignal, FX_KEYS, FX_CHUNK_KEYS, FX_NAMED, FX_NAMEABLE_KEYS, AUTOLOADER_MENTION, PRELOAD_MENTION, I18N_PACKS, I18N_LOADER, I18N_USED, LOOPS, FINE, VIEW_PART, STORE_HELD, RES_READ, RETAINED_WAKES, ROUTES_IDLE, CHILD_PROPS, PRELOAD_LINK, WAKE_INTERACTION, FILTERED_BINDINGS, VIEW_TAG, NATIVE_HELPERS, SPREAD_CLASS, SPREAD_TAG_CLASS, SPREAD_COMPONENT, GLOBAL_ATTR_COMPONENT, ATTR_UPDATE, ATTR_SELECT, PROPS_PENDING, ATTR_FILTER, ROOT_TEXT, DYNAMIC_ELEMENT, DYNAMIC_MODULE, DERIVED_VALUES, SIG_READS, DERIVED_CHOICE, REFRESH_RUNE, STATE_ALIAS, EVERY_ID, EVERY_PAGE, EFFECT_BEFORE, EFFECT_STORE, EFFECT_ROOT, STORE_DESTROY, SIG_FREE, SIG_QUEUE, AWAIT_KEEP, AWAIT_PENDING, AWAIT_SIGNAL, LOAD_REVIEW, LOAD_FORGOTTEN, OPAQUE_MU, OPAQUE_MU_AT, opaqueMuSignal, opaqueMuOffset, opaqueMuSourceLine, OPAQUE_AJAX, OPAQUE_AJAX_AT, NAV_SERVER, VT_USED, opaqueAjaxSignal, opaqueAjaxOffset, opaqueAjaxSourceLine, TYPES_DEFAULTS, TYPES_STRICT, TYPES_HARD, AJAX_CALL, DEEP_GUARD, STORE_GUARD, STORE_KEY, TRANSITION_DIRECTIVES } from './features.js'
+import { scanCompiledFeatures, FIELD_BIND, scanJsTimers, scanJsReffets, scanCollections, COLLECTIONS, WEAK_COLLECTIONS, optionalSignal, fxAliasSignal, FX_KEYS, FX_CHUNK_KEYS, FX_NAMED, FX_NAMEABLE_KEYS, AUTOLOADER_MENTION, PRELOAD_MENTION, I18N_PACKS, I18N_LOADER, I18N_USED, LOOPS, FINE, VIEW_PART, STORE_HELD, RES_READ, RETAINED_WAKES, ATTACH_KEEP, ROUTES_IDLE, CHILD_PROPS, PRELOAD_LINK, WAKE_INTERACTION, FILTERED_BINDINGS, VIEW_TAG, NATIVE_HELPERS, SPREAD_CLASS, SPREAD_TAG_CLASS, SPREAD_COMPONENT, GLOBAL_ATTR_COMPONENT, ATTR_UPDATE, ATTR_SELECT, PROPS_PENDING, ATTR_FILTER, ROOT_TEXT, DYNAMIC_ELEMENT, DYNAMIC_MODULE, DERIVED_VALUES, SIG_READS, DERIVED_CHOICE, REFRESH_RUNE, STATE_ALIAS, EVERY_ID, EVERY_PAGE, EFFECT_BEFORE, EFFECT_STORE, EFFECT_ROOT, STORE_DESTROY, SIG_FREE, SIG_QUEUE, AWAIT_KEEP, AWAIT_PENDING, AWAIT_SIGNAL, LOAD_REVIEW, LOAD_FORGOTTEN, OPAQUE_MU, OPAQUE_MU_AT, opaqueMuSignal, opaqueMuOffset, opaqueMuSourceLine, OPAQUE_AJAX, OPAQUE_AJAX_AT, NAV_SERVER, VT_USED, opaqueAjaxSignal, opaqueAjaxOffset, opaqueAjaxSourceLine, TYPES_DEFAULTS, TYPES_STRICT, TYPES_HARD, AJAX_CALL, DEEP_GUARD, STORE_GUARD, STORE_KEY, TRANSITION_DIRECTIVES } from './features.js'
 import { ROW_CLONE, RAW_ROWS, LAYOUT_VAR, ATTACHMENTS, LONE_HELPERS, loneHelperSignal, scanRawRows } from './features.js'
 import { parsePlaceholder, PLACEHOLDER_CONFIG, type Placeholder } from '../effects/placeholder.js'
 import { selectFxSections, type FxClient } from './fx-sections.js'
@@ -3618,7 +3618,7 @@ export class Bundler {
   // trace du dernier passage (raison d'un cache écarté) : à part pour la construction d'un moteur de rendu (prérendu), dont les options
   // diffèrent toujours de celles de la construction qui la précède
   private diskCacheTrace(): string {
-    return this.serverRender ? 'dernier-rendu.json' : 'dernier.json'
+    return this.serverRender ? 'last-render.json' : 'last.json'
   }
 
   // élagage, après l'écriture d'une clé : restent les DISK_CACHE_KEYS clés servies le plus récemment (le fichier d'une clé est réécrit à
@@ -6687,7 +6687,7 @@ export class Bundler {
   // --------------------------------------------------------------------------
   // runtimeLabelGroups() : les groupes de libellés du manifeste (src/runtime-labels.ts) dont un
   // lecteur part dans ce build. modal/toast ↔ mjs_modal.ts ; router ↔ mjs_router.ts et mjs_ujs.ts
-  // (le panneau 404 lit les libellés du routeur) ; ujs ↔ mjs_ujs.ts ; load ↔ mjs_load.ts (le texte de l'erreur d'une réponse qui n'est pas du JSON) ; fx ↔ un fichier d'effet qui
+  // (le panneau 404 lit les libellés du routeur) ; ujs ↔ mjs_ujs.ts ; load ↔ mjs_load.ts (le texte de l'erreur d'une réponse qui n'est pas du JSON) ; ajax ↔ mjs_ajax.ts (le texte d'un délai dépassé) ; fx ↔ un fichier d'effet qui
   // écrit un texte (FX_LABEL_EFFECTS : garde, hors ligne, chargement, texte masqué, carte), dans le cœur comme à part ;
   // core ↔ un module cœur que le build emporte et qui a des libellés (CORE_LABEL_MODULES, cf. coreLabelModules),
   // ou un fichier du projet qui lit lui-même le groupe (`coreModules` indéfini).
@@ -6700,6 +6700,7 @@ export class Bundler {
     if (has('mjs_router.ts') || has('mjs_ujs.ts')) groups.add('router')
     if (has('mjs_ujs.ts')) groups.add('ujs')
     if (has('mjs_load.ts')) groups.add('load')
+    if (has('mjs_ajax.ts')) groups.add('ajax')
     if (fxLabelKeys(fxEffects).size > 0) groups.add('fx')
     if (coreModules === undefined || coreLabelKeys(coreModules).size > 0) groups.add('core')
     return groups
@@ -7157,6 +7158,9 @@ export class Bundler {
     if (selectedFiles.includes('mjs_effect.ts') && selectedFiles.includes('mjs_runes.ts') && !this.reffetsAll) slim = withoutBlock(slim, 'no-reffets-state')
     else slim = withoutBlock(slim, 'reffets-state').replace(/^[ \t]*\/\/ <no-reffets-state>\n([\s\S]*?)^[ \t]*\/\/ <\/no-reffets-state>\n/gm, (_, body: string) => body.replace(/^([ \t]*)\/\/ ?/gm, '$1'))
     if (!used.has(RETAINED_WAKES)) slim = withoutBlock(slim, 'retained-wakes')
+    // l'aide qui garde le nettoyage d'une attache (`<attach-keep>`, mjs_destroy_hooks.ts) : seulement si une unité de ce build a une
+    // attache ; un build de développement complet la garde, pour une attache compilée à la volée hors de ce build
+    if (!used.has(ATTACH_KEEP) && !full) slim = withoutBlock(slim, 'attach-keep')
     // les pages d'une table de routes chargées au repos et demandées par le routeur (`<routes-idle>`, mjs_router.ts, mjs_autoloader.ts)
     if (!used.has(ROUTES_IDLE)) slim = withoutBlock(slim, 'routes-idle')
     // l'attente commune des files du repos (`<idle>`, mjs_autoloader.ts, et le compte des demandes en vol, mjs_ajax.ts) : avec les pages d'une table de routes au repos, ou avec un composant écrit seulement sous un `{if}` fermé sous blocks.preload "idle" (`µIdle` du manifeste)
@@ -7284,7 +7288,7 @@ export class Bundler {
     if (selectedFiles.includes('mjs_await_derived.ts') && !this.rendersOnServer()) slim = withoutBlock(slim, 'wait-server')
     // l'aide qui tait un chargement coupé par le départ de la page (`<page-start>`, mjs_init.ts) : seulement si un fichier
     // du cœur, ou un fichier d'effet à part, l'appelle (les chargeurs des composants, des langues, des effets, des feuilles et
-    // des variantes à la demande) ; leurs appels la cherchent avant de s'en servir. Lu sur le texte : un chargeur ajouté
+    // des variantes à la demande, µajax pour une lecture restée sans réponse) ; leurs appels la cherchent avant de s'en servir. Lu sur le texte : un chargeur ajouté
     // demain la garde sans qu'on y pense
     // ce que le rendu serveur relit d'un composant (`<server-info>` : µ._ssrInfo, mjs_element.ts, et son enveloppe du variant appliqué,
     // mjs_layout_variant.ts) : en production, seulement dans une construction qui peut rendre côté serveur (cf. rendersOnServer) ; les moteurs

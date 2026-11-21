@@ -280,8 +280,10 @@ var _mjsHeatmapRoom = function(share) {
 };
 
 // une connexion qui annonce un état autre que `open` : fermée (paresseuse, ou fermée par l'appli), en train de s'ouvrir, coupée
+// (lu sans le faire suivre, cf. `_mjs_stRaw`, mjs_socket.ts ; une connexion simulée : son `state`)
 var _mjsHeatmapWaiting = function(k) {
-  return typeof k.state === 'string' && k.state !== 'open';
+  var at = (k._mjs_stRaw || k).state;
+  return typeof at === 'string' && at !== 'open';
 };
 
 // un lien saturé : ce que le navigateur n'a pas encore envoyé dépasse la borne de la connexion — rien de plus n'y part
@@ -332,7 +334,7 @@ var _mjsHeatmapOut = function(k) {
     if (_mjsHeatmapWaiting(k) && typeof k._mjs_ensure === 'function') k._mjs_ensure();
     // fermée pour de bon (l'appli l'a voulu) : rien ne la rouvrira — un effet encore là garde le lot jusqu'au point suivant, sans minuteur
     // qui tourne à vide ; un effet parti y renonce
-    if (k.state === 'closed') {
+    if ((k._mjs_stRaw || k).state === 'closed') {
       if (out.until) out.chunk = [];
       end();
       return;

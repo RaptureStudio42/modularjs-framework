@@ -72,7 +72,7 @@ import { changingNames } from '../analyzer/derived-reads.js'
 import { classifyDerived, chosenDerived, RAW_WRITE, type ClassifiedDerived } from '../analyzer/derived-classes.js'
 import { typedLine, printDiagnostic, type LintToggles } from '../diagnostics.js'
 import { t, type MsgKey } from '../messages/index.js'
-import { maskHtmlComments as maskCommentsInHtml, readHtmlComment, createMaskTable, nextMatch, replaceBlocks } from '../mask.js'
+import { maskHtmlComments as maskCommentsInHtml, readHtmlComment, createMaskTable, replaceBlocks } from '../mask.js'
 import { decode, encode } from '@jridgewell/sourcemap-codec'
 import { chainSourceMaps, shiftGeneratedPosition, finalizeSourceMap, chainOverMap } from './source-map-chain.js'
 import { MASK_STRINGS_AND_COMMENTS_RE, lintSingletonConsume, lintImportDollarName, lintEffectTopLevel, lintEffectHandler, lintEffectOldName, lintEmitInModule, lintOnUrlChangeLegacy, parseModuleAst, lintUndeclaredTopLevelAssignment, collectInstanceProps, collectHandlerInstanceProps, lintElementPropertyAtConstruction, sourceLineOf, lintNoRawImport, INLINE_ARROW_CIVET_RE, checkInlineHandlers, lintHandlerSelfRefDeclaration, lintHandlerBareMethod, checkHandlerReferences, maskDocBlocks, maskStringsAndComments } from './lint.js'
@@ -1711,72 +1711,36 @@ function replaceDoubleBraceDirective(html: string, marker: string, attrName: str
 // saute directement à son vrai `>` (scanTagClose, guillemets respectés) sans jamais y chercher de
 // commentaire. Un commentaire jamais refermé n'est PAS masqué (même sort que l'ancienne regex, qui
 // ne matchait pas non plus sans `-->`) — le texte continue d'être scanné normalement ensuite.
-// Avec `block` (`pre` ou `code`), le passage masque ces blocs à la place des commentaires, qu'il saute
-// sans les masquer : un `<pre>` ou un `<code>` cité dans un commentaire n'ouvre rien ; un bloc reste
-// cherché partout, valeur d'attribut comprise, et se ferme au premier `</pre>` / `</code>`, comme le
-// faisait sa regex ; fins de balise, fermetures et fins de commentaire se cherchent en avançant seulement (blockEnds,
-// readHtmlComment) : ce passage lit le texte en temps linéaire, constructions jamais fermées comprises (`<!--` sans fin,
-// `<pre x` sans `>`, `<code>` sans `</code>`). Un passage qui n'a rien à lire ne parcourt pas le texte : sans son ouverture
-// (`<pre`, `<code`, `<!--`), il le rend tel quel ; sans commentaire, les blocs se lisent d'ouverture en ouverture
-// (replaceBlocks, mêmes bornes, chaque `<` y étant comme ici un départ de bloc possible) ; ailleurs, le texte entre deux `<`
-// se recopie d'un coup, jamais caractère à caractère
-function maskHtmlComments(html: string, mask: (m: string) => string, block: 'pre' | 'code' | null = null): string {
-  if (block !== null && !BLOCK_OPENING[block].test(html)) return html
-  if (!html.includes('<!--')) return block === null ? html : replaceBlocks(html, [block], mask)
-  const blockEnd = block === null ? (_at: number) => -1 : blockEnds(html, block)
-  let noClose    = html.length   // à partir d'ici, plus aucun commentaire ne se referme
-  let out        = ''
-  let i          = 0
+// Fins de balise et fins de commentaire se cherchent en avançant seulement (readHtmlComment) : ce
+// passage lit le texte en temps linéaire, `<!--` sans fin compris. Sans `<!--`, il rend le texte tel
+// quel ; ailleurs, le texte entre deux `<` se recopie d'un coup, jamais caractère à caractère
+function maskHtmlComments(html: string, mask: (m: string) => string): string {
+  if (!html.includes('<!--')) return html
+  let noClose = html.length   // à partir d'ici, plus aucun commentaire ne se referme
+  let out     = ''
+  let i       = 0
   while (i < html.length) {
-    const end = blockEnd(i)
-    if (end !== -1) {
-      out += mask(html.slice(i, end))
-      i = end
-      continue
-    }
     if (html.startsWith('<!--', i)) {
       const comment = i < noClose ? readHtmlComment(html, i) : null
       if (comment === null) { noClose = Math.min(noClose, i); out += html.slice(i, i + 4); i += 4; continue }
-      out += block === null ? mask(html.slice(i, comment.end)) : html.slice(i, comment.end)
+      out += mask(html.slice(i, comment.end))
       i = comment.end
       continue
     }
     if (html[i] === '<' && /[a-zA-Z/]/.test(html[i + 1] ?? '')) {
       const close = scanTagClose(html, i + 1)
-      let stop    = close === -1 ? html.length : close + 1
-      // un bloc ouvert dans la balise (valeur d'attribut) se masque à son départ
-      for (let at = html.indexOf('<', i + 1); at !== -1 && at < stop; at = html.indexOf('<', at + 1)) if (blockEnd(at) !== -1) stop = at
+      const stop  = close === -1 ? html.length : close + 1
       out += html.slice(i, stop)
       i = stop
       continue
     }
-    // texte jusqu'au `<` suivant : rien d'autre n'y ouvre un bloc, un commentaire ni une balise
+    // texte jusqu'au `<` suivant : rien d'autre n'y ouvre un commentaire ni une balise
     const next = html.indexOf('<', i + 1)
     const stop = next === -1 ? html.length : next
     out += html.slice(i, stop)
     i = stop
   }
   return out
-}
-
-// ouverture d'un bloc `<pre>` ou `<code>`, cherchée avant tout passage de blocs
-const BLOCK_OPENING = { pre: /<pre\b/i, code: /<code\b/i }
-
-// fin du bloc `<pre>` ou `<code>` ouvert à une position (-1 sans bloc), au premier `</pre>` / `</code>` qui suit sa balise
-// ouvrante ; fin de balise et fermeture se cherchent en avançant seulement (nextMatch) : une balise sans `>` ou un bloc
-// jamais fermé ne relance pas la recherche jusqu'à la fin à chaque ouverture
-function blockEnds(html: string, block: 'pre' | 'code'): (at: number) => number {
-  const opening = new RegExp(`<${block}\\b`, 'iy')
-  const tagEnd  = nextMatch(html, />/g)
-  const closing = nextMatch(html, new RegExp(`</${block}>`, 'gi'))
-  return (at: number): number => {
-    if (html[at] !== '<') return -1
-    opening.lastIndex = at
-    if (!opening.test(html)) return -1
-    const gt    = tagEnd(at + block.length + 1)
-    const close = gt === null ? null : closing(gt.index + 1)
-    return close === null ? -1 : close.index + block.length + 3
-  }
 }
 
 // maskAttrQuotes — même principe que maskHtmlComments juste au-dessus (scanTagClose, guillemets
@@ -1868,22 +1832,21 @@ function preprocessHtml(html: string, moduleName: string, dialect: boolean): str
     }
   }
 
-  // Directives d'attribut (`@noUJS`, `@preload`) → attributs HTML. On MASQUE
-  // d'abord les blocs <pre>/<code> ET les commentaires HTML <!-- --> : un tuto/doc
-  // qui AFFICHE `@preload="on"` dans un exemple de code, ou une forme refusée dans un commentaire
-  // purement documentaire, ne doit pas faire échouer la compilation du reste.
+  // Directives d'attribut (`:noUJS`, `:preload`) → attributs HTML. On MASQUE
+  // d'abord les commentaires HTML <!-- --> : une forme refusée dans un commentaire
+  // purement documentaire ne doit pas faire échouer la compilation du reste.
   // On masque AUSSI les expressions `{…}` (texte ou attribut) : les directives ci-dessous ne
   // sont réécrites QUE dans du vrai balisage, jamais dans une chaîne de code (maskInterpolations,
-  // même raison que <pre>/<code>/commentaires juste au-dessus).
-  // blocs <pre>, puis <code>, puis commentaires, comme toujours (un `<pre>` ouvert dans un `<code>` l'emporte sur lui), les deux
-  // premiers passages sautant les commentaires : un `<pre>` cité dans un commentaire n'ouvre rien ; jetons et remise : createMaskTable
+  // même raison que les commentaires juste au-dessus).
+  // les balises d'un `<pre>` ou d'un `<code>` sont de vraies balises, lues comme les autres ; le texte d'un exemple
+  // (`&lt;a :confirm="…"&gt;`) n'est jamais une balise (inTags) ; jetons et remise : createMaskTable
   const codeMasks = createMaskTable(out, 'CM')
-  for (const block of ['pre', 'code', null] as const) out = maskHtmlComments(out, codeMasks.stash, block)
+  out = maskHtmlComments(out, codeMasks.stash)
   out = maskInterpolations(out, codeMasks.stash)
 
   // les mots de MJS lus sur le texte (liens, formulaires, navigation) : dans les balises du gabarit seulement (inTags, tagWords) — un
   // `:title=` du texte, un `:disabled` d'une feuille de style ou d'une chaîne n'est jamais un mot
-  out = inTags(out, dialect, tagWords)
+  out = inTags(out, dialect, tagWordsBesideValues)
   return codeMasks.restore(out)
 }
 
@@ -1909,6 +1872,45 @@ function inTags(html: string, dialect: boolean, fn: (tag: string) => string): st
     pos  = tag.end
   }
   return open >= pos ? out + html.slice(pos, open) + fn(html.slice(open)) : out + html.slice(pos)
+}
+
+// le nom d'un attribut et ce qui ouvre sa valeur (un guillemet ou une accolade), l'espace qui le précède compris
+const ATTR_OPEN_RE = /\s([^\s"'=<>`{}]+)\s*=\s*(["'{])/g
+
+// les signes que la passe du texte lit sur une balise : celui des mots, et `@` (`@vt=`)
+const READ_SIGNS_RE = new RegExp(`[${SIGN_RE}@]`, 'g')
+
+// la passe du texte sur UNE balise : la valeur d'un attribut qui n'est ni un mot de MJS ni un événement, entre guillemets
+// (`title='voir :noUJS="x"'`, `data-x='ancien @vt="cube"'`) ou entre accolades (`title={"tapez :confirm='oui'"}`), n'est qu'un
+// texte : chacun de ses signes y est suivi, le temps de lire les mots (tagWords), d'un caractère d'usage privé absent de la balise,
+// retiré ensuite, message d'un refus compris ; la valeur d'un mot ou d'un événement reste lue ; une balise qui porte tous ces
+// caractères est lue telle quelle
+function tagWordsBesideValues(tag: string): string {
+  if (!tag.includes(SIGN) && !tag.includes('@vt')) return tagWords(tag)
+  let code = 0xe000
+  while (code < 0xf8ff && tag.includes(String.fromCharCode(code))) code++
+  const held = String.fromCharCode(code)
+  if (tag.includes(held)) return tagWords(tag)
+  const attr = new RegExp(ATTR_OPEN_RE)
+  let kept = ''
+  let pos  = 0
+  for (let m = attr.exec(tag); m !== null; m = attr.exec(tag)) {
+    const open = attr.lastIndex - 1
+    const end  = m[2] === '{' ? expressionEnd(tag, open) : tag.indexOf(m[2], open + 1) + 1
+    if (end <= 0) break
+    attr.lastIndex = end
+    if (m[1].startsWith(SIGN) || m[1].startsWith('@')) continue
+    kept += tag.slice(pos, open) + tag.slice(open, end).replace(READ_SIGNS_RE, '$&' + held)
+    pos   = end
+  }
+  if (pos === 0) return tagWords(tag)
+  try {
+    return tagWords(kept + tag.slice(pos)).replaceAll(held, '')
+  }
+  catch (e) {
+    if (e instanceof Error) e.message = e.message.replaceAll(held, '')
+    throw e
+  }
 }
 
 // les mots de MJS lus sur le texte d'UNE balise, avant le lecteur (directives d'attribut → attributs HTML) ; une balise sans le signe des

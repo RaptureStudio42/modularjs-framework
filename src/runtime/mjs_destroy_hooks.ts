@@ -21,6 +21,37 @@
   if (p) Node.prototype.removeChild.call(p, n);
 };
 
+// <attach-keep>
+// garde le nettoyage que rend un passage d'attache (generator/attributes, `bindingAttach`) : sur la balise (`_mjs_td`, appelé au
+// passage suivant ou à son retrait, `_mjs_destroyWithHooks` plus bas) et dans `_mjs_attachments` (appelé à la destruction du
+// composant). Une attache qui écrit, pendant sa partie synchrone, ce qu'elle lit est rejouée DANS son propre passage : quand le
+// passage englobant finit, le nettoyage du passage imbriqué est déjà sur la balise. Il n'est pas appelé tout de suite (il arrête aussi
+// les minuteries déjà posées par le passage englobant, `µ._mjs_attStop`, mjs_every.ts) : les deux s'enchaînent, l'imbriqué puis
+// l'englobant, et seul l'enchaînement reste à appeler. La main d'arrêt d'un `µafter … always: true` (marque 2, mjs_every.ts) n'est
+// pas un nettoyage : son tir part même après la disparition de la balise ; un `µevery … always: true` tourne jusqu'à la destruction
+// du composant. Rend vrai quand le passage a rendu une fonction
+µ._mjs_attKeep = function(comp, node, clean) {
+  if (typeof clean !== 'function') return false;
+  if (clean._mjs_timer === 2) return true;
+  var set   = comp._mjs_attachments || (comp._mjs_attachments = new Set());
+  var inner = node._mjs_td;
+  var outer = clean;
+  if (inner) {
+    set.delete(inner);
+    clean = function() {
+      try {
+        inner.apply(this, arguments);
+      } finally {
+        outer.apply(this, arguments);
+      }
+    };
+  }
+  node._mjs_td = clean;
+  set.add(clean);
+  return true;
+};
+// </attach-keep>
+
 // <exit-reverse>
 // le retrait en cours de chaque balise : remise puis retirée de nouveau pendant sa sortie (une microtâche suffit), elle change de
 // retrait, et seul le dernier la retire (cf. `_mjs_destroyWithHooks`)

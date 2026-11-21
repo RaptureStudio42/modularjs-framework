@@ -85,8 +85,14 @@ describe('masques du compilateur : un sceau pour chacun', function () {
     const { masked, restore } = maskDocBlocks(src)
     assert.ok(masked.startsWith('<code>a') && !masked.includes('</pre>') && masked.includes('<p>d</p>'), JSON.stringify(masked))
     assert.equal(restore(masked), src)
-    // `</code>` écrit dans une valeur d'attribut du `<pre>` : le `<pre>` reste un bloc entier, sa directive n'est pas lue
-    const code = await compile(SCRIPT + '<code>a<pre title="</code>"><a href="/x" :noUJS>l</a></pre>c</code>\n')
-    assert.ok(!code.includes('mjs-no-ujs'), vers(code, 'href'))
+    // témoin : la même balise, hors de tout <pre> et de tout <code>, reçoit bien son mot (sans lui, le cas passerait à vide)
+    const temoin = await compile(SCRIPT + '<a href="/x" :noUJS>l</a>\n')
+    assert.ok(temoin.includes('mjs-no-ujs'), 'témoin : ' + vers(temoin, 'href'))
+    // seul dans un <code>, seul dans un <pre>, ou `</code>` écrit dans une valeur d'attribut du `<pre>` (guillemets doubles ou simples) :
+    // le lien reçoit son mot comme le témoin
+    for (const exemple of ['<code><a href="/x" :noUJS>l</a></code>', '<pre><a href="/x" :noUJS>l</a></pre>', '<code>a<pre title="</code>"><a href="/x" :noUJS>l</a></pre>c</code>', '<code>a<pre title=\'</code>\'><a href="/x" :noUJS>l</a></pre>c</code>']) {
+      const code = await compile(SCRIPT + exemple + '\n')
+      assert.ok(code.includes('mjs-no-ujs'), exemple + ' : ' + vers(code, 'href'))
+    }
   })
 })

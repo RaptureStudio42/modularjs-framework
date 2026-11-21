@@ -24,8 +24,10 @@ import { dirname, join } from 'node:path'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const AJAX_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ajax.ts'), 'utf-8')
 
+// µ._mjs_txt du cœur (mjs_init.ts), sans table des libellés : le texte français de secours, variables remplacées
+const txt = (k: string, v: any, fr: string) => fr.replace(/\{(\w+)\}/g, (m, n) => (v && n in v ? String(v[n]) : m))
 function makeMu() {
-  return { log() {}, warn() {}, error() {} }
+  return { log() {}, warn() {}, error() {}, _mjs_txt: txt }
 }
 const fakeDocument = { querySelector: () => null }
 

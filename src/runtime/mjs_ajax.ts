@@ -20,13 +20,15 @@ function _mjajaxSameOrigin(url) {
   catch { return false; }
 }
 
+// la fonction d'erreur par défaut, qui écrit en console : la seule que suit la règle du départ de la page (cf. _request)
+var _mjajaxError = function(err) {
+  return µ.error(err.message || err);
+};
 µ.ajax = {
   success: function(json) {
     return µ.log("[µ.ajax] Success", json);
   },
-  error: function(err) {
-    return µ.error(err.message || err);
-  },
+  error: _mjajaxError,
   always: function() {}
 };
 
@@ -41,7 +43,7 @@ function _mjajaxOwnProps(o) {
 
 // Internal Engine (private)
 _request = function(options) {
-  var base, base1, fetchOptions, ref, ref1, sameOrigin, controller, timeoutId, failed, schemaRegistry, schemaErr, schemaBody;
+  var base, base1, fetchOptions, ref, ref1, sameOrigin, controller, timeoutId, failed, answered, schemaRegistry, schemaErr, schemaBody;
   options = _mjajaxOwnProps(options);
   if (options.success == null) {
     options.success = µ.ajax.success;
@@ -160,7 +162,8 @@ _request = function(options) {
     fetchOptions.signal = controller.signal;
     timeoutId = setTimeout(function() { controller.abort(); }, options.timeout);
   }
-  failed = false;
+  // `answered` : le serveur a répondu (en-têtes reçus) ; faux tant que fetch peut encore être rejeté
+  failed = answered = false;
   // <idle>
   // une demande en vol retient les files du repos jusqu'à sa fin, réponse traitée (µ._idle, mjs_autoloader.ts)
   µ._mjs_busy = (µ._mjs_busy || 0) + 1;
@@ -168,6 +171,7 @@ _request = function(options) {
   // Execution
   return fetch(options.url, fetchOptions).then(function(response) {
     var isJson, ref2, nav;
+    answered = true;
     if (timeoutId) { clearTimeout(timeoutId); }
     // en-têtes de navigation (version de build + contenant HTML + politique de
     // cache + demande de rechargement dur), lus une seule fois ici : propagés sur TOUS les retours
@@ -245,6 +249,7 @@ _request = function(options) {
       });
     }
   }).catch(function(err) {
+    var value;
     if (timeoutId) { clearTimeout(timeoutId); }
     failed = true;
     if (err && err.name === 'AbortError') {
@@ -261,7 +266,17 @@ _request = function(options) {
       // Un abort() déclenché par NOTRE timeout produit une DOMException/Error
       // générique 'AbortError' — message cryptique côté appelant. Normalisée
       // en une erreur explicite qui nomme le délai dépassé.
-      err = new Error(`Requête expirée après ${options.timeout}ms (timeout)`);
+      err = new Error(µ._mjs_txt('ajax.timeout', { ms: options.timeout }, 'Requête expirée après {ms}ms (timeout)'));
+    }
+    // aucune réponse (fetch rejeté : réseau coupé, délai dépassé) et la fonction d'erreur par défaut, qui l'écrit en console : la règle
+    // du départ de la page du cœur (µ._mjs_loadFailed, mjs_init.ts). Sans départ, elle l'écrit aussitôt, comme avant ; départ annoncé,
+    // plus tard si la page reste ; page partie, jamais. La promesse rend ce que rend cette fonction (undefined), départ ou non. Une
+    // fonction d'erreur de l'appli (donnée à l'appel, ou µ.ajax.error remplacé) est appelée comme avant, départ ou non : une appli qui
+    // relance sa lecture depuis elle la perdrait au retour de la page par le cache de navigation. Une réponse du serveur en erreur
+    // (4xx, 5xx) est toujours dite
+    if (!answered && options.error === _mjajaxError && µ._mjs_loadFailed) {
+      µ._mjs_loadFailed(err, function() { value = options.error(err); });
+      return value;
     }
     return options.error(err);
   }).then(function(result) {

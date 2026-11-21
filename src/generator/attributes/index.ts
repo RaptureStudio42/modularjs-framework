@@ -3608,8 +3608,9 @@ function bindingAttach(env: AttrCtx): AttrResult {
   rejectTemplateTimer(jsFunc)
 
   // `.once` : aucune variable suivie, la balise déjà attachée n'est jamais reposée
-  // une attache agit, elle ne s'affiche pas : une fonction du <script> qu'elle appelle n'y est pas suivie, elle garde son seul
-  // passage (une fonction qui écrit un magasin s'y relançait sur sa propre écriture) ; une méthode `@f` l'est, comme toujours
+  // sinon l'attache suit les variables de son expression, et ce que lit une méthode ou une fonction du <script> qu'elle appelle, comme
+  // une méthode : son corps et les méthodes qu'il appelle, pas les fonctions du <script> qu'il appelle ou passe en valeur (un écouteur
+  // qui lit l'état ne la relance pas) ; ce qu'écrit la fonction n'est pas une lecture
   const vars = once ? [] : getEffectVars(rawExpr, false, true)
   const id = env.id ?? `a${++state.counter}`
   // `@attach` installe un teardown `_mjs_td` → destroy walker requis.
@@ -3633,11 +3634,13 @@ function bindingAttach(env: AttrCtx): AttrResult {
 
   // `_mjs_att` : connexion du composant (`_mjs_ae`, avancé à chaque déconnexion) où la balise a reçu
   // son attache ; remis à zéro quand son nettoyage tourne (mjs_destroy_hooks.ts)
-  // développement : une valeur rendue qui n'est ni une fonction ni rien (le nombre de `requestAnimationFrame`, un objet) est ignorée, mjs_debug.ts le dit
-  const notFunction = state.devWarnings ? ` else if (_mjs_clean != null) µ._mjs_attachNotFn?.(this, _node, _mjs_clean, ${env.node.line ?? 0});` : ''
-  // la main d'arrêt d'un `µafter … always: true` (marque 2, runtime/mjs_every.ts) n'est pas un nettoyage : son tir part
-  // même après la disparition de la balise ; un `µevery … always: true` tourne jusqu'à la destruction du composant
-  const attachLogic = `/* Purge précédente si params mutent */ if (_node._mjs_td) { _node._mjs_td(); if (this._mjs_attachments) this._mjs_attachments.delete(_node._mjs_td); _node._mjs_td = null; } /* Execution (mode ${mode}) */ ${evalBlock} _node._mjs_att = this._mjs_ae; if (typeof _mjs_clean === 'function') { if (_mjs_clean._mjs_timer !== 2) { _node._mjs_td = _mjs_clean; this._mjs_attachments = this._mjs_attachments || new Set(); this._mjs_attachments.add(_mjs_clean); } }${notFunction}`
+  // le nettoyage rendu est gardé par le cœur (`µ._mjs_attKeep`, runtime/mjs_destroy_hooks.ts) : sur la balise et pour la destruction du
+  // composant, enchaîné à celui qu'un passage imbriqué (l'attache rejouée par sa propre écriture) a déjà laissé sur la balise ; vrai pour
+  // une fonction. Développement : une valeur rendue qui n'est ni une fonction ni rien (le nombre de `requestAnimationFrame`, un objet) est
+  // ignorée, mjs_debug.ts le dit
+  const keep        = 'µ._mjs_attKeep(this, _node, _mjs_clean)'
+  const keepBlock   = state.devWarnings ? `if (!${keep} && _mjs_clean != null) µ._mjs_attachNotFn?.(this, _node, _mjs_clean, ${env.node.line ?? 0});` : `${keep};`
+  const attachLogic = `/* Purge précédente si params mutent */ if (_node._mjs_td) { _node._mjs_td(); if (this._mjs_attachments) this._mjs_attachments.delete(_node._mjs_td); _node._mjs_td = null; } /* Execution (mode ${mode}) */ ${evalBlock} _node._mjs_att = this._mjs_ae; ${keepBlock}`
   // rendu qui repasse sans rien changer pour l'attache : la balise déjà attachée ne se rejoue pas.
   // Exception, une lecture qu'aucun effet ne suit (paramètre de route `&x`, `µurl`…) : seul le
   // rendu complet de la navigation la rattrape, l'attache garde alors le rejeu à chaque rendu ; le code seul

@@ -52,7 +52,8 @@
         var k = all[u];
         if (!k || k._mjs_destroyed) continue;
         n += (k._mjs_queue ? k._mjs_queue.length : 0) + (k._mjs_pendingOpenReqs ? k._mjs_pendingOpenReqs.length : 0);
-        if (k._mjs_wantOpen && k.state !== 'open') lost = true;
+        // l'état lu sans le faire suivre (cf. `_mjs_stRaw`, mjs_socket.ts) : le bandeau interroge, il ne suit pas
+        if (k._mjs_wantOpen && (k._mjs_stRaw || k).state !== 'open') lost = true;
       }
       return { lost: lost, n: n };
     };

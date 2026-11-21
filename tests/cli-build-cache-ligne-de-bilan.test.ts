@@ -39,7 +39,7 @@ describe('mjs build --cache : ligne de bilan', function () {
 
   it('premier passage, reprise, fichier illisible, nouvelle version du framework, options changées, mjs.config.json changé', function () {
     const root  = project('raisons')
-    const last  = join(cacheDir(root), 'dernier.json')
+    const last  = join(cacheDir(root), 'last.json')
     const first = run(root, ['--cache'])
     assert.equal(first.status, 0, first.out)
     assert.match(first.line, /^cache écarté — premier passage : construction complète \(\d+ fichiers compilés\)$/, first.out)

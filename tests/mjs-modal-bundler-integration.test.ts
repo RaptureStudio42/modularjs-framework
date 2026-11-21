@@ -125,10 +125,10 @@ describe('mjs_modal — µ._runtimeLabels : émission INCONDITIONNELLE du manife
   // `lang` du CLI) — le choix de la langue AFFICHÉE se fait au runtime, via µ._mjs_label
   // (mjs_init.ts, cf. tests/runtime-labels-langue-affichee.test.ts).
   // seuls les groupes que le build lit partent au manifeste : ici l'hôte n'écrit ni effet à libellé ni module
-  // cœur, donc ni `fx` ni `core` (cf. tests/bundler-detection-libelles-manifeste.test.ts). Les groupes modal, router, toast et ujs ne partent
+  // cœur, donc ni `fx` ni `core` (cf. tests/bundler-detection-libelles-manifeste.test.ts). Les groupes modal, router, toast, ujs et ajax ne partent
   // qu'avec leurs modules, que le composant trivial ne nomme pas : 'all' les embarque, la table se relit en entier
-  const FR = { modal: { ok: 'OK', cancel: 'Annuler', deny: 'Non' }, router: { notFound: 'Page introuvable', noRoute: 'Aucune route ne correspond à cette adresse.', declared: 'Routes déclarées' }, toast: { success: 'Succès', error: 'Erreur', warning: 'Attention', info: 'Info' }, ujs: { sendFailed: 'Échec de l\'envoi — le serveur n\'a pas répondu.' }, err: RUNTIME_LABELS.fr.err, dev: RUNTIME_LABELS.fr.dev }
-  const EN = { modal: { ok: 'OK', cancel: 'Cancel', deny: 'No' }, router: { notFound: 'Page not found', noRoute: 'No route matches this address.', declared: 'Declared routes' }, toast: { success: 'Success', error: 'Error', warning: 'Warning', info: 'Info' }, ujs: { sendFailed: 'Sending failed — the server did not respond.' }, err: RUNTIME_LABELS.en.err, dev: RUNTIME_LABELS.en.dev }
+  const FR = { ajax: { timeout: 'Requête expirée après {ms}ms (timeout)' }, modal: { ok: 'OK', cancel: 'Annuler', deny: 'Non' }, router: { notFound: 'Page introuvable', noRoute: 'Aucune route ne correspond à cette adresse.', declared: 'Routes déclarées' }, toast: { success: 'Succès', error: 'Erreur', warning: 'Attention', info: 'Info' }, ujs: { sendFailed: 'Échec de l\'envoi — le serveur n\'a pas répondu.' }, err: RUNTIME_LABELS.fr.err, dev: RUNTIME_LABELS.fr.dev }
+  const EN = { ajax: { timeout: 'Request timed out after {ms}ms (timeout)' }, modal: { ok: 'OK', cancel: 'Cancel', deny: 'No' }, router: { notFound: 'Page not found', noRoute: 'No route matches this address.', declared: 'Declared routes' }, toast: { success: 'Success', error: 'Error', warning: 'Warning', info: 'Info' }, ujs: { sendFailed: 'Sending failed — the server did not respond.' }, err: RUNTIME_LABELS.en.err, dev: RUNTIME_LABELS.en.dev }
 
   it('lang absente (défaut fr) : µ._runtimeLabels sert les DEUX langues, µ._runtimeLabelsLang vaut "fr"', async function () {
     const { manifestPath } = await buildProject({ runtime: 'all' })

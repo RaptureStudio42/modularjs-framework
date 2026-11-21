@@ -1,9 +1,8 @@
 // Une fonction du <script> lue par le gabarit compte ses lectures comme une méthode, avec trois bornes :
 // - ce qu'elle ÉCRIT n'est pas une lecture : toute la chaîne d'objet d'une cible d'affectation simple (`$o.a.b = …`, `$$ui.locked = …`,
 //   `[$p.a] = …`) ; une clé calculée (`$q[$k] = …`) garde la lecture de `$k`, `+=` reste une lecture ;
-// - une attache `:attach={f(_node)}` qui appelle une fonction du <script> garde son seul passage : une attache agit, elle ne
-//   s'affiche pas (une fonction qui écrit un magasin dans son attache se relançait sur sa propre écriture) ; `:attach={@f(_node)}` ne
-//   change pas ;
+// - une attache `:attach={f(_node)}` suit sa fonction du <script> comme `:attach={@f(_node)}` suit sa méthode : son corps, sans
+//   les fonctions du <script> qu'il appelle ; une méthode n'y apporte pas non plus la fonction du <script> qu'elle appelle ;
 // - l'avertissement d'un nom que la construction ne sait pas lire ne vise que deux affectations au premier niveau du <script>, ou une
 //   valeur rendue par un appel : une variable du même nom déclarée dans une autre fonction, une fonction du langage ou du navigateur
 //   (`Math.round`, `new Intl.NumberFormat(…).format`) n'en font pas ; son conseil vaut en Civet, en CoffeeScript et en JavaScript
@@ -42,12 +41,12 @@ describe('gabarit : fonctions du <script> — écritures, attaches, avertissemen
     assert.match(c, /"r"/)
   })
 
-  it(':attach={f(_node)} avec une fonction du <script> garde son seul passage ; :attach={@f(_node)} ne change pas', async () => {
+  it(':attach={f(_node)} suit sa fonction du <script> comme :attach={@f(_node)} sa méthode, sans la fonction qu\'appelle la méthode', async () => {
     const locale  = await construire('<script>\n$shown = false\nhook = (node) ->\n  node.dataset.vu = String($shown)\n  null\n</script>\n<div :attach={hook(_node)}>x</div>', 'attache-fonction')
     const methode = await construire('<script>\n$shown = false\n@hook = (node) ->\n  node.dataset.vu = String($shown)\n  null\n</script>\n<div :attach={@hook(_node)}>x</div>', 'attache-methode')
-    // une méthode qui appelle une fonction du <script> : l'attache ne suit que les lectures de la méthode elle-même, comme avant
+    // une méthode qui appelle une fonction du <script> : l'attache ne suit que les lectures de la méthode elle-même
     const relais  = await construire('<script>\n$shown = false\n$autre = 0\nlire = -> $autre\n@hook = (node) ->\n  node.dataset.vu = String($shown) + lire()\n  null\n</script>\n<div :attach={@hook(_node)}>x</div>', 'attache-methode-relais')
-    assert.doesNotMatch(carte(locale.output), /"shown"/)
+    assert.match(carte(locale.output), /"shown"/)
     assert.match(carte(methode.output), /"shown"/)
     assert.match(carte(relais.output), /"shown"/)
     assert.doesNotMatch(carte(relais.output), /"autre"/)

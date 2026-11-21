@@ -78,7 +78,7 @@ L'état du serveur (`app.stats()`, `createStatsRegistry()`, `GET /stats`, page `
 
 ## Trouver les anciens noms
 
-Cinq recherches de texte et une recherche de fichiers, à la racine de votre projet :
+Sept recherches de texte et une recherche de fichiers, à la racine de votre projet :
 
 ```bash
 grep -rnIE --exclude-dir={node_modules,.git,vendor,tmp,log,dist,public} "MjschemaRegistre|\b(parNom|parId)\b|\.pousser\(|\bretard:|\binstaller\s*(\(|:|,|\}|=|$)|\.(champs|ordre)\b|\bchamps['\"]?(:|\s*=>)|kind['\"]?\s*(:|=>)\s*['\"]bits|intervallesPing|refusees(Plafond|Origine|Ban)|kicks(Debit|Engorgement|ChargeUtile)|expirationsJeton|misesAuBanc|membresTotal|abonnesPresence|deltasEmis|resyncsRejeu|requetesParEndpoint|webhooks(Envoyes|Echoues|Abandonnes)|reordonnances|binaire(Recues|Ignorees)|texteRejete|fluxCompteurs|ignoresOrigin|\breconnexions\b|MjsWsStats(Connexions|Flux|Pont|Adaptateur|Erreurs|Latences)" .
@@ -131,6 +131,12 @@ Chaque ligne trouvée se relit : un mot français peut aussi appartenir à vos p
 Un onglet resté ouvert sur la 4.0.0 et qui déclare les mêmes schémas que le serveur n'est pas touché. S'il n'en déclare pas, ou d'autres, il écrit « définitions µ:schema invalides » dans la console et perd les messages que le serveur lui envoie en binaire ; les messages JSON passent. Rechargez-le. Il en va de même d'un onglet 4.1.0 face à un serveur resté en 4.0.0 : passez le serveur et les pages ensemble. Une requête `µ.ajax.binary` n'échoue que si le navigateur doit recharger les définitions (hash différent). Aucune autre trame `µ:` ne change.
 
 Les processus d'un même bus MJS WS (adaptateur Redis ou mémoire) passent ensemble en 4.1.0 : le canal `:ban` porte `{ key, duration }`, et un processus 4.0 et un processus 4.1 ne s'appliquent plus leurs bannissements.
+
+## Depuis la 4.1.1
+
+- Une attache qui appelle une fonction du `<script>` (`:attach={f(_node)}`) se rejoue quand ce que lit la fonction change, comme `:attach={@f(_node)}` avec une méthode : nettoyage, puis nouvelle pose. Si elle ne doit passer qu'une fois, écrivez `:attach.once={f(_node)}`.
+- La trace du cache de construction s'appelle `last.json` (`last-render.json` pour le prérendu) : vous pouvez effacer l'ancien `dernier.json` de `node_modules/.cache/mjs/build/`.
+- Un `µeffect` ou un composant qui appelle une méthode de sa connexion `µsocket` (`on()`, `connect()`, `send()`…) ne suit plus l'état de la connexion : il ne repart plus et n'est plus redessiné quand cet état change. Ce qui doit suivre l'état le lit lui-même (`{@sock.state}`, `@sock.connected`).
 
 ## Noms internes renommés, pour vos tests et vos sondes
 

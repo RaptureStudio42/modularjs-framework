@@ -134,6 +134,10 @@ export const RES_READ = 'res_read'
 // les réveils retenus des lignes (blocs balisés `<retained-wakes>` de mjs_for.ts) n'entrent au cœur que si une unité de ce build en a une.
 // Signal à part, comme BOUCLES : une liste dans une liste, sans directive, n'en paie pas un octet, ni un `{if}` de ligne sans composant
 export const RETAINED_WAKES = 'retained_wakes'
+// le nettoyage gardé d'une attache (`µ._mjs_attKeep(`, émis pour chaque `:attach` par generator/attributes) : l'aide (bloc balisé
+// `<attach-keep>` de mjs_destroy_hooks.ts) n'entre au cœur que si une unité de ce build en a une ; une transition, un `:this=!`, un
+// `:flip` ou un effet, qui joignent aussi ce fichier, n'en paient pas un octet
+export const ATTACH_KEEP = 'attach_keep'
 // pages d'une table de routes confiées au routeur (`µ._mjs_routesIdle?.(`, émis par le compilateur sous `routes.preload` "idle" ou "off") :
 // la file au repos et la demande de la page par le routeur (blocs balisés `<routes-idle>` de mjs_router.ts et mjs_autoloader.ts)
 // n'entrent au cœur que si une unité de ce build en émet un. Sans table, ou sous "on", pas un octet
@@ -873,6 +877,7 @@ const REGEX_COMPONENT_PROP = /\._set\('/
 // la marque des composants d'une ligne peuplée après son insertion, cherchée sans son objet (`µ`/`mjs` selon la config du projet), appel
 // facultatif compris (`?.(`)
 const REGEX_RETAINED_WAKES = /\._mjs_waitRow(?:\?\.)?\(/
+const REGEX_ATTACH_KEEP    = /\._mjs_attKeep\(/
 const REGEX_ROUTES_IDLE    = /\._mjs_routesIdle\?\.\(/
 const REGEX_CHILD_PROPS    = /\b_mjs_kb\b/
 const REGEX_PRELOAD_LINK   = /data-mjs-preload/
@@ -1543,6 +1548,7 @@ export function scanCompiledFeatures(compile: string, data?: FeatureScanData, al
   if (REGEX_FINE.test(js)) used.add(FINE)
   if (REGEX_STORE_HELD.test(masked) || (REGEX_STORE_ROWS.test(masked) && (REGEX_COMPONENT_PROP.test(masked) || holdsRow(masked)))) used.add(STORE_HELD)
   if (REGEX_RETAINED_WAKES.test(js)) used.add(RETAINED_WAKES)
+  if (REGEX_ATTACH_KEEP.test(js)) used.add(ATTACH_KEEP)
   if (REGEX_ROUTES_IDLE.test(js)) used.add(ROUTES_IDLE)
   if (REGEX_CHILD_PROPS.test(js)) used.add(CHILD_PROPS)
   if (REGEX_PRELOAD_LINK.test(js)) used.add(PRELOAD_LINK)

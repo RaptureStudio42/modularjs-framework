@@ -380,8 +380,8 @@ export interface MjsConfig {
    * (`NODE_ENV !== 'production'`) ; une CHAÎNE = jeton qui protège ces 3 routes en TOUTE
    * circonstance (`?token=<jeton>`, comparaison à temps constant) ; `false` = jamais servi
    * (404 indistinct d'une route inconnue). `maxEntries` (entier > 0, défaut `200`) et
-   * `maxBytes` (entier > 0, défaut `1048576`) bornent CHAQUE fichier NDJSON (purge FIFO du
-   * plus vieux `dernier` au-delà).
+   * `maxBytes` (entier > 0, défaut `1048576`) bornent CHAQUE fichier NDJSON (purge FIFO des
+   * plus vieilles entrées au-delà).
    */
   journal?: JournalConfig
 }

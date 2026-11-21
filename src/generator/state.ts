@@ -355,8 +355,8 @@ export class CompilerState {
    * `{...}`) : un `$var` mentionné dans un commentaire Civet `#…` ou une chaîne littérale
    * ('texte #$exemple') y est neutralisé (maskNonCode) avant extraction — sinon fausse
    * dépendance silencieuse (effet réabonné à une var jamais lue). */
-  // `withoutScriptFunctions` : les fonctions du <script> qu'appelle l'expression n'y comptent pas (une attache, cf. Analyzer.getEffectVars)
-  getEffectVars(expr: string | null | undefined, isRawText = false, withoutScriptFunctions = false): string[] {
+  // `attach` : l'expression est celle d'une attache, qui suit ses méthodes et ses fonctions du <script> comme des méthodes (cf. Analyzer.getEffectVars)
+  getEffectVars(expr: string | null | undefined, isRawText = false, attach = false): string[] {
     const raw = (expr ?? '').toString().trim()
     if (raw === '') return []
     // même conversion Coffee `"...#{X}..."` →
@@ -561,14 +561,14 @@ export class CompilerState {
     const masks = templateLocalsInScope()
     // une expression qui appelle un nom du `<script>` que la construction ne sait pas lire (valeur rendue par un appel, fonction
     // affectée deux fois au premier niveau) ne suit pas ce qu'il lit : dit une fois par expression et par nom, comme une dépendance non analysable
-    for (const name of this.analyzer?.unreadableFunctions?.(cleanCodeForAst, masks, withoutScriptFunctions) ?? []) {
+    for (const name of this.analyzer?.unreadableFunctions?.(cleanCodeForAst, masks) ?? []) {
       if (this.toldUnreadableFunctions.has(`${raw}\u0000${name}`)) continue
       this.toldUnreadableFunctions.add(`${raw}\u0000${name}`)
       const moduleHint = this.moduleName ? t('generator.hint-in-module', { moduleName: this.moduleName }) : ''
       const line = typedLine('reactivity', t('generator.script-function-unreadable', { expr: raw, name: name, moduleHint }), this.lint)
       if (line !== null) printDiagnostic(line, this.colorsEnabled)
     }
-    return this.analyzer?.getEffectVars?.(cleanCodeForAst, masks, withoutScriptFunctions) ?? []
+    return this.analyzer?.getEffectVars?.(cleanCodeForAst, masks, attach) ?? []
   }
 
   /** Enregistre un code d'update pour chaque var de la liste `vars`.
@@ -666,8 +666,8 @@ export function genId(prefix: string): string {
 }
 
 /** Récupère la closure des state vars dont dépend une expression (V2). */
-export function getEffectVars(expr: string | null | undefined, isRawText = false, withoutScriptFunctions = false): string[] {
-  return currentState().getEffectVars(expr, isRawText, withoutScriptFunctions)
+export function getEffectVars(expr: string | null | undefined, isRawText = false, attach = false): string[] {
+  return currentState().getEffectVars(expr, isRawText, attach)
 }
 
 /** Enregistre un code dans le dispatch direct (V2). */

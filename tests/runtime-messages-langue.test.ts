@@ -286,6 +286,7 @@ const REFERENCE: Array<[string, Record<string, string>, string, boolean]> = [
   ['sockSendDropped', { url: 'url1' }, 'envoi ignoré : connexion abandonnée (close() volontaire, essais épuisés ou reconnect.enabled:false) — appelez connect() pour reprendre : url1', false],
   ['sockOptionInvalid', { name: 'name1', value: 'value1' }, 'option name1 ignorée : valeur invalide value1', false],
   ['sockBadUrl', { url: 'url1' }, 'URL invalide, connexion abandonnée : url1', false],
+  ['sockOpenStorm', { url: 'url1' }, 'url1 : la connexion s\'est ouverte plus de 20 fois en une seconde. Un µeffect la ferme et la rouvre peut-être à chaque passage : gardez dans une variable la demande déjà servie.', false],
   ['sockDuplicateAuth', { url: 'url1' }, 'url1 : une connexion à cette adresse existe déjà avec un autre auth — elle vous revient telle quelle, sous sa première identité ; fermez-la (destroy()) avant d\'en ouvrir une autre sous une autre identité', false],
   ['sockHandleGone', { fn: 'fn1', room: 'room1' }, 'fn1() sur une poignée du salon « room1 » déjà partie (leave()) : rien n\'est inscrit ni envoyé — pour reprendre ce salon, prenez une poignée neuve avec sock.room()', false],
   ['sockBinaryNoSchema', {}, 'trame binaire reçue et ignorée : sans le module \'schema\', le cœur ne sait pas la lire (un serveur MJS-WS encode en binaire les messages dont il déclare le schéma, app.schema) — ajoutez "schema" à la liste "runtime" de mjs.config.json, ou écrivez "runtime": "all"', false],

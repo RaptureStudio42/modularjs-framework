@@ -123,6 +123,26 @@ function nameMark(node: any, ancestors: any[], script: ReadonlyMap<string, boole
   return parent?.type === 'CallExpression' && parent.callee === node ? `!${node.name}` : null
 }
 
+// noms du `<script>` qu'une expression APPELLE (`f(…)`) : une attache suit la fonction qu'elle appelle, pas celle qu'elle passe
+// seulement en valeur, comme une méthode passée en valeur n'est pas lue (cf. Analyzer.getEffectVars)
+function calledScriptNames(jsCode: string, script: ReadonlyMap<string, boolean>): Set<string> {
+  const names = new Set<string>()
+  let ast: acorn.Node
+  try {
+    ast = acorn.parse(jsCode, { ecmaVersion: 'latest', sourceType: 'module' })
+  }
+  catch {
+    return names
+  }
+  walk.ancestor(ast, {
+    Identifier(node: any, _s: any, ancestors: any[]) {
+      const parent = ancestors[ancestors.length - 2]
+      if (parent?.type === 'CallExpression' && parent.callee === node && nameMark(node, ancestors, script) === `%${node.name}`) names.add(node.name)
+    },
+  })
+  return names
+}
+
 // ============================================================================
 // Analyse standalone d'un snippet de JS (utilisée par batchCalculateVars)
 //
@@ -1038,6 +1058,9 @@ export class Analyzer {
    * locale → locale, locale → méthode, méthode → locale (cf. resolveMethodReadsFixedPoint) ; `null` sans nom du script, le
    * gabarit lit alors `methodReads`, que les reffets lisent toujours (effect-deps.ts) */
   private templateReads: Record<string, string[]> | null = null
+  /** lectures de chaque fonction du `<script>` ('%nom') pour une attache, comme celles d'une méthode : son corps, et les méthodes qu'il
+   * appelle (`methodReads`) — pas les fonctions du `<script>` qu'il appelle ou passe en valeur ; `null` sans nom du script */
+  private attachReads: Record<string, string[]> | null = null
   /** dépendances BRUTES des snippets qui lisent un nom du `<script>` ('%nom', '!nom') : relues quand le gabarit masque ce nom
    * (getEffectVars) et pour l'avertissement d'un nom que l'analyse ne sait pas lire (unreadableFunctions) */
   private snippetNames: Map<string, string[]> = new Map()
@@ -1131,6 +1154,16 @@ export class Analyzer {
       for (const [k, v] of Object.entries(methodsFiltered)) table[`@${k}`] = v.concat(out.methodFunctions?.[k] ?? [])
       for (const [k, v] of Object.entries(out.functions)) table[`%${k}`] = v.filter(d => !this.externalVarsSet.has(`$${d}`))
       this.templateReads = resolveMethodReadsFixedPoint(table, { lint: this.lint, colorsEnabled: this.colorsEnabled }, true)
+      this.attachReads   = Object.create(null)  // même remède, cf. dependencies (analyze())
+      for (const [k, v] of Object.entries(table)) {
+        if (k[0] !== '%') continue
+        const reads = new Set<string>()
+        for (const d of v) {
+          if (d[0] === '@') for (const r of this.methodReads[d.slice(1)] ?? []) reads.add(r)
+          else if (d[0] !== '%') reads.add(d)
+        }
+        this.attachReads![k] = Array.from(reads)
+      }
     }
 
     this.allDependencies = [...this.stateVars]
@@ -1303,23 +1336,28 @@ export class Analyzer {
   /** Récupère la closure des state vars d'un snippet (dispatch direct V2).
    * Retourne [] si snippet inconnu ou aucune state var référencée.
    * `masques` : noms que le gabarit met en portée à cet endroit (variable d'un `{for}`, `{const}`, valeur d'une branche) — une
-   * fonction du `<script>` du même nom n'est pas celle qu'appelle l'expression, ses lectures ne comptent pas. `withoutFunctions` :
-   * aucune fonction du `<script>` n'y compte (une attache, qui agit sans s'afficher, garde son seul passage). */
-  getEffectVars(snippetCode: string, masks?: ReadonlySet<string> | null, withoutFunctions = false): string[] {
-    // attache : le snippet relu sans les noms du script, ses méthodes résolues par `methodReads` (sans les lectures des fonctions
-    // du script qu'elles appellent), comme avant que le gabarit ne suive ces fonctions
-    if (withoutFunctions && this.templateReads) return this.resolveSnippetDeps(analyzeSnippet(snippetCode, true), true)
+   * fonction du `<script>` du même nom n'est pas celle qu'appelle l'expression, ses lectures ne comptent pas. `attach` : l'expression
+   * est celle d'une attache, qui suit les méthodes qu'elle appelle par `methodReads` et une fonction du `<script>` qu'elle appelle
+   * comme une méthode (`attachReads`) */
+  getEffectVars(snippetCode: string, masks?: ReadonlySet<string> | null, attach = false): string[] {
     const rawNames = masks && masks.size > 0 ? this.snippetNames.get(snippetCode) : undefined
     const masked   = (d: string): boolean => (d[0] === '%' || d[0] === '!') && masks!.has(d.slice(1))
+    // attache : ses dépendances brutes relues, marqueurs des noms du script compris (snippetNames), hors des noms masqués et des
+    // fonctions du script qu'elle passe seulement en valeur
+    if (attach && this.templateReads) {
+      const deps   = this.snippetNames.get(snippetCode) ?? analyzeSnippet(snippetCode, true)
+      const called = deps.some((d) => d[0] === '%') ? calledScriptNames(snippetCode, this.scriptNames!) : null
+      return this.resolveSnippetDeps(deps.filter((d) => !(masks && masks.size > 0 && masked(d)) && !(called && d[0] === '%' && !called.has(d.slice(1)))), true)
+    }
     if (rawNames && rawNames.some(masked)) return this.resolveSnippetDeps(rawNames.filter((d) => !masked(d)))
     return this.batchVarsCache.get(snippetCode) ?? []
   }
 
   /** Noms du premier niveau du `<script>` que l'expression appelle sans que l'analyse sache les lire ('!nom', cf.
    * scriptFunctions), hors des noms que le gabarit masque à cet endroit : l'expression ne suit pas ce qu'ils lisent. */
-  unreadableFunctions(snippetCode: string, masks?: ReadonlySet<string> | null, withoutFunctions = false): string[] {
+  unreadableFunctions(snippetCode: string, masks?: ReadonlySet<string> | null): string[] {
     const rawNames = this.snippetNames.get(snippetCode)
-    if (!rawNames || withoutFunctions) return []
+    if (!rawNames) return []
     return rawNames.filter((d) => d[0] === '!' && !masks?.has(d.slice(1))).map((d) => d.slice(1))
   }
 
@@ -1353,8 +1391,9 @@ export class Analyzer {
    * computeds dans la liste pour permettre au store universel de matcher
    * `$$key` aussi — c'est sans effet sur le dispatch puisque _mjs_effectsByVar
    * n'aura d'entrée que pour les vars réellement émises. */
-  // `methods` : les méthodes résolues par `methodReads`, sans les lectures des fonctions du script qu'elles appellent (attache)
-  private resolveSnippetDeps(deps: string[], methods = false): string[] {
+  // `attach` : les méthodes résolues par `methodReads` et les fonctions du script par `attachReads`, sans les fonctions du script
+  // qu'elles appellent (attache)
+  private resolveSnippetDeps(deps: string[], attach = false): string[] {
     const out = new Set<string>()
     // `()` : l'expression appelle une fonction (analyzeSnippetOrNull)
     let call = false
@@ -1370,7 +1409,7 @@ export class Analyzer {
       // (jamais collectée dans <script>, ex. mixin externe) → ignorée en
       // silence, aucune contribution.
       if (d.startsWith('@')) {
-        const reads = this.templateReads && !methods ? this.templateReads[d] : this.methodReads[d.slice(1)]
+        const reads = this.templateReads && !attach ? this.templateReads[d] : this.methodReads[d.slice(1)]
         if (reads) for (const r of reads) this.expandOneDep(r, out)
         continue
       }
@@ -1379,7 +1418,7 @@ export class Analyzer {
       // est signalée à la construction (generator/state.ts, `generator.script-function-unreadable`), comme une dépendance
       // non analysable : une méthode inconnue, elle, ne contribue rien sans un mot (ci-dessus)
       if (d[0] === '%') {
-        const reads = this.templateReads?.[d]
+        const reads = attach ? this.attachReads?.[d] : this.templateReads?.[d]
         if (reads) for (const r of reads) this.expandOneDep(r, out)
         continue
       }

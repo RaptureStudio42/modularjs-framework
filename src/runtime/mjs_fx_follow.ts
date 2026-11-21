@@ -226,7 +226,9 @@
       });
       var offHi   = sock.on('welcome', last);
       // une connexion qui s'ouvre : son `welcome` demande déjà — une seule demande à la première ouverture
-      if (k.state !== 'connecting' && k.state !== 'reconnecting') last();
+      // l'état lu sans le faire suivre (cf. `_mjs_stRaw`, mjs_socket.ts) ; une connexion simulée : son `state`
+      var at = (k._mjs_stRaw || k).state;
+      if (at !== 'connecting' && at !== 'reconnecting') last();
       return function() {
         offAt();
         offCur();

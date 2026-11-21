@@ -196,7 +196,7 @@ if (typeof MjsSocket !== 'undefined') {
       self.on('welcome', onWelcome);
       self.on('denied', onDenied);
       prober = setInterval(function() {
-        if (settled || self.state !== 'closed') { return; }
+        if (settled || self._mjs_stRaw.state !== 'closed') { return; }
         settled = true;
         finished();
         reject(self.lastError || { code: 'account-elevation-failed', message: 'connexion fermée' });

@@ -2,6 +2,39 @@
 
 Toutes les évolutions notables de `modularjs-framework` sont consignées ici. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/), versionnage [SemVer](https://semver.org/lang/fr/).
 
+## [4.1.1] — 2026-11-21
+
+Ce qui change pour une application 4.1.0 : [guide de passage, « Depuis la 4.1.1 »](UPGRADE-V4.0-TO-V4.1.md#depuis-la-411).
+
+### Composants
+
+- **Corrigé — un vrai lien placé dans un `<pre>` ou un `<code>` reçoit ses mots de MJS comme ailleurs** : dans un `<pre>` ou un `<code>` (sur sa balise comprise), un mot lu sur le texte d'une balise (`:noUJS`, `:permanent`, `:preload`, `:method`, `:confirm`, `:callback`, `:flash`, `:title`, `:pageTransition`, `:viewTransition`) devenait l'événement du même nom : la construction s'arrêtait (« « @noUJS », écrit sans valeur, appelle la fonction « noUJS »… », ou un échec de compilation Civet pour `:confirm="Sûr ?"`), ou, quand sa valeur nommait une fonction du `<script>` (`:callback="fini"`), l'écouteur de cet événement était posé sans rien dire. Il y produit maintenant le même attribut qu'ailleurs : `<pre><a href="/x" :confirm="Sûr ?">` pose sa question au clic, et une forme refusée ailleurs y est refusée avec le même message. Un `<pre>` ou un `<code>` cité dans une valeur d'attribut (`title="<code>"`) ne cache plus les mots des vraies balises qui le suivent : la construction s'arrêtait. Le texte d'un exemple (`&lt;a :confirm="…"&gt;`) reste tel qu'écrit. Le défaut était déjà dans la 4.0.0, où `:noUJS` et `:permanent` devenaient en plus, sans rien dire, un écouteur de l'événement de ce nom.
+- **Corrigé — la valeur d'un attribut qui cite un mot de MJS reste telle qu'écrite** : entre guillemets ou entre accolades, la valeur d'un attribut qui n'est ni un mot de MJS ni un événement est un texte, sur toute balise. `title='voir :noUJS="x"'`, `data-x=':preload=eager'`, `data-x='ancien @vt="cube"'`, `title={"tapez :confirm='oui'"}` arrêtaient la construction ; `title='<a :confirm="Sûr ?">'` et `title={"voir :permanent ici"}` étaient réécrits sans rien dire (la bulle affichait `<a mjs-confirm="Sûr ?">`). Ils se construisent tels qu'écrits ; les vrais mots de la balise restent lus. La valeur d'un mot de MJS ou d'un événement, et une valeur sans guillemets, restent lues (02 · Composant). Le défaut était déjà dans la 4.0.0, hors d'un `<pre>` ou d'un `<code>`.
+- **Changé — une attache suit la fonction du `<script>` qu'elle appelle comme une méthode** : `:attach={publish(_node)}`, dont la fonction `publish` lit `$locked`, est rejouée (nettoyage, puis nouvelle pose) quand `$locked` change, comme `:attach={@publish(_node)}` ; elle gardait son premier passage. Comptent son corps, fonctions écrites sur place comprises (un écouteur `-> …`), et les méthodes qu'il appelle, pas les fonctions du `<script>` qu'il appelle ou passe en valeur ; ce qu'elle écrit n'est pas une lecture ; passée telle quelle (`:attach={publish}`), elle n'est pas suivie. Comme pour la méthode, une attache qui lit une variable peut être posée, nettoyée puis reposée au montage : son nettoyage doit tout défaire. Une attache qui ne doit passer qu'une fois s'écrit `:attach.once={f(_node)}`. Une fonction que la construction ne sait pas lire est signalée. En 4.0.0, la fonction n'était pas rejouée non plus.
+- **Corrigé — une attache rejouée par sa propre écriture nettoie chacune de ses poses** : une attache qui écrit, pendant sa pose, une variable qu'elle suit (`:attach={@watch(_node)}`) est rejouée pendant cette pose ; le nettoyage de ce passage imbriqué était écrasé et n'était appelé qu'à la destruction du composant (un observateur de taille ou une minuterie restaient actifs sur une balise retirée). Les deux nettoyages jouent maintenant au rejeu suivant ou au retrait, le plus récent d'abord ; les minuteries posées pendant la pose s'arrêtent avec eux (sauf un `µafter … always: true`). Le défaut était déjà dans la 4.0.0.
+
+### Modules du cœur
+
+- **Corrigé — `µajax` : une lecture coupée par le départ de la page (lien suivi, rechargement, envoi d'un formulaire) ne s'écrit plus en console** : la fonction d'erreur par défaut (`µ.ajax.error`) se tait après `pagehide` ; si le départ est annoncé mais que la page reste (réponse 204, téléchargement), elle écrit l'erreur 10 secondes plus tard. La promesse rend `undefined`, comme avant. Votre fonction `error` (celle de l'appel, ou un `µ.ajax.error` remplacé) est appelée comme avant, et `µload` garde l'erreur comme avant. Limite : Firefox écrit encore un départ par la barre d'adresse. Le défaut était déjà dans la 4.0.0.
+- **Corrigé — un `µeffect` qui appelle une méthode d'une connexion `µsocket` ne suit plus son état** : `connect()`, `send()`, `sendTo()`, `request()`, `refresh()`, `on()`, `room()`, `presence()` et `stream()` lisaient l'état de la connexion par son enveloppe réactive ; le `µeffect` qui les appelait (d'un composant ou d'un module), ou la valeur dérivée, repartait à chaque changement d'état, y compris ceux qu'il provoquait : un `µeffect` qui fermait puis rouvrait la connexion en ouvrait une nouvelle à chaque tour, sans fin. Les méthodes lisent maintenant l'état sans le faire suivre ; ce qui lit lui-même `sock.state` ou `sock.connected` (gabarit, valeur dérivée, `µeffect`) suit toujours la connexion. Limite, écrite dans 20 · Temps réel : dans un composant que chaque ouverture redessine (il affiche l'état de la connexion, ou la présence d'un salon), le `µeffect` qui ne lit aucune variable `$` ni clé du magasin, celui que la construction met dans le doute et, sous `"proxy": false`, tout `µeffect` passent encore à chaque ouverture : gardez dans une variable la demande déjà servie. Le défaut était déjà dans la 4.0.0.
+- **Ajouté — en développement, une adresse `µsocket` où la connexion s'ouvre plus de 20 fois en une seconde le dit une fois en console** : un `µeffect` la ferme et la rouvre sans doute à chaque passage, ou la détruit et en refait une (`destroy()` puis `µsocket(…)`) ; la console le dit une fois par adresse, rien n'est bloqué. Rien en production.
+
+### Traductions
+
+- **Corrigé — `µajax` : le message d'un délai dépassé suit la langue de la page** (clé `mjs.ajax.timeout`, en français et en anglais) ; il était toujours en français. Le défaut était déjà dans la 4.0.0.
+
+### Construction
+
+- **Changé — la trace du cache de construction porte un nom anglais** : `last.json` (`last-render.json` pour le prérendu), dans `node_modules/.cache/mjs/build/`, à la place de `dernier.json` et `dernier-rendu.json`. Après la mise à jour, la première construction avec `--cache` dit une fois « cache écarté — premier passage » (prérendu compris) au lieu de « nouvelle version du framework ». Les anciens `dernier.json` et `dernier-rendu.json` ne sont plus lus, et l'élagage ne les retire pas : vous pouvez les effacer.
+
+### Documentation
+
+- **Documenté — les balises d'un `<pre>` ou d'un `<code>`** (03 · Réactivité) : de vraies balises, dont les mots de MJS et les événements marchent comme ailleurs ; un exemple de balise s'écrit en texte (`&lt;a :confirm="…"&gt;`) et reste tel qu'écrit.
+- **Documenté — un mot de MJS cité dans une valeur** (02 · Composant) : un texte dans la valeur d'un attribut ordinaire ; lu dans la valeur d'un mot de MJS ou d'un événement, et dans une valeur sans guillemets.
+- **Documenté — `µajax` et le départ de la page** (21 · Navigation, 37 · Types) ; la clé du message d'un délai dépassé (29 · i18n).
+- **Documenté — l'attache et sa fonction du `<script>`** (03 · Réactivité, 9 · Directives DOM) : ce qui est suivi, ce qui ne l'est pas, la forme passée telle quelle.
+- **Documenté — l'état d'une connexion `µsocket` et ses méthodes** (20 · Temps réel, 03 · Réactivité) : les méthodes lisent l'état sans le faire suivre ; la limite, la garde qui l'arrête et l'avertissement des ouvertures en rafale.
+
 ## [4.1.0] — 2026-11-19
 
 Ce qui change pour une application 4.0.0 : [guide de passage](UPGRADE-V4.0-TO-V4.1.md).
