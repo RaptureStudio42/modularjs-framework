@@ -136,6 +136,8 @@ export interface TranspileMsg {
   typesText?: boolean | 'names'
   /** avertissements du développement dans le code émis (cf. TranspileOpts.devWarnings) : `false` en production */
   devWarnings?: boolean
+  /** empreintes `restHash` et `hotHash` à rendre (cf. watchHashesOf) : seul le mode veille du bundler les compare d'un tour à l'autre */
+  watchHashes?: boolean
   /** construction qui peut rendre côté serveur (cf. TranspileOpts.serverRendered) */
   serverRendered?: boolean
   /** les chargements qui montrent un squelette d'eux-mêmes (cf. TranspileOpts.skeleton) */
@@ -291,6 +293,14 @@ export function hotNatureHash(data: any): string {
   const template = [data.createFnBody ?? '', ...(data.structUpdates ?? []), ...(data.transUpdates ?? [])].join('\n')
   const nature   = [lifecycleHookTexts(data.jsInitBase ?? ''), data.typesDecl ?? '', data.typesLine ?? '', data.storeTypes ?? {}, data.storeDeclareLine ?? '', !!data.hasDynamicSlots, template.match(/<slot\b[^>]*>/g) ?? [], !!data.moduleFormAssociated, ...(data.aliasLine ? [data.aliasLine] : [])]
   return createHash('sha256').update(JSON.stringify(nature)).digest('hex').slice(0, 16)
+}
+
+/** Empreintes que le mode veille compare d'un tour à l'autre (cf. TranspileMsg.watchHashes) : `restHash`, tout le TranspileData sauf le
+ *  style de base et les tailles du texte qui le suivent (leur changement seul garde le rechargement du CSS à chaud), et `hotHash` (cf.
+ *  hotNatureHash). Hors veille personne ne les lit : elles ne sont pas calculées. */
+function watchHashesOf(data: any): { restHash: string, hotHash: string } {
+  const { baseCss: _bc, fontSizes: _fs, ...restData } = data
+  return { restHash: createHash('sha256').update(JSON.stringify(restData)).digest('hex').slice(0, 16), hotHash: hotNatureHash(data) }
 }
 
 const hotIsFn   = (n: any): boolean => !!n && (n.type === 'FunctionExpression' || n.type === 'ArrowFunctionExpression')
@@ -820,12 +830,10 @@ export async function transpileFromMsg(msg: TranspileMsg): Promise<TranspileMsgR
   // besoin de savoir si TOUT hors-baseCss est identique au compile précédent,
   // SANS ré-expédier les gros champs : on les résume ici en une EMPREINTE
   // (`restHash`, SHA-256 du TranspileData privé de baseCss — ordre de clés
-  // déterministe, l'objet est un littéral construit par transpile()). Seuls
+  // déterministe, l'objet est un littéral construit par transpile()), en mode
+  // veille seulement (cf. watchHashesOf). Seuls
   // transitent en plus les petits champs utiles au payload css-only :
   // tagName/aliasTag (clés), baseCss + moduleDisplay (CSS scopé).
-  // les tailles du texte suivent le style de base : leur changement seul garde le rechargement du CSS à chaud
-  const { baseCss: _bc, fontSizes: _fs, ...restData } = result.data
-  const restHash = createHash('sha256').update(JSON.stringify(restData)).digest('hex').slice(0, 16)
   return {
     output: result.output,
     // carte de source du composant (chaîne complète .mjs → fichier
@@ -860,9 +868,9 @@ export async function transpileFromMsg(msg: TranspileMsg): Promise<TranspileMsgR
       usesProjectEffects: result.data.usesProjectEffects,
       // seulement quand le classement est demandé (cf. TranspileOpts.derived)
       ...(result.data.derivedClasses ? { derivedClasses: result.data.derivedClasses } : {}),
-      restHash,
-      // rechargement à chaud des composants (cf. hotNatureHash) : comparé au compile précédent par le bundler en mode watch
-      hotHash: hotNatureHash(result.data),
+      // CSS seul et rechargement à chaud des composants (cf. watchHashesOf) : comparés au compile précédent par le bundler en mode watch,
+      // calculés quand il les demande, jamais pour une construction
+      ...(msg.watchHashes ? watchHashesOf(result.data) : {}),
       // ce que le script fait hors de ses fonctions et ses valeurs de départ (cf. hotScriptFacts) : développement seulement
       ...(msg.devWarnings ? { hotScript: hotScriptFacts(result.data.jsInitBase ?? '', result.output) } : {}),
     },

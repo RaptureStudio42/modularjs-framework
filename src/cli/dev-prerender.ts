@@ -14,7 +14,7 @@
 // top-level, l'importer déclencherait une vraie exécution CLI.
 
 import type { MjsConfig } from '../bundler/config.js'
-import type { Bundler } from '../bundler/index.js'
+import type { Bundler, CompileStats } from '../bundler/index.js'
 import { prerenderPages, type PrerenderReport, type PrerenderOverrides } from '../server/prerender.js'
 import { emitStartup } from '../bundler/startup.js'
 import { t } from '../messages/index.js'
@@ -74,9 +74,15 @@ export async function prerenderOnDevRecompile(
  *  `prerenderOnDevRecompile` absorbe déjà ses propres échecs, cf. son commentaire) — l'appelant
  *  (cli.ts) attend cette promesse AVANT de notifier le rechargement du navigateur : un reload
  *  déclenché avant la fin de la passe pouvait faire recharger le navigateur sur le HTML FIGÉ
- *  d'AVANT ce changement (fichier pas encore réécrit sur disque). */
+ *  d'AVANT ce changement (fichier pas encore réécrit sur disque).
+ *  `stats` : le résultat du `compile()` du veilleur qui déclenche la passe — ses moteurs de rendu rendent dessus sans recompiler le
+ *  projet quand ils auraient compilé la même, comme le prérendu de `mjs build` (cf. PrerenderOverrides.compiled) ; sans lui, ou sans
+ *  `bundler`, la passe compile à part. `idle()` : promesse résolue quand plus aucune passe programmée ne lit le dossier de sortie du
+ *  veilleur (unités séparées : sa compilation reprise, ou celle du moteur écrite par-dessus) — la compilation suivante du veilleur
+ *  l'attend (cli.ts) : lancée plus tôt, elle réécrirait ce dossier et l'état de son Bundler sous une page en cours de rendu. */
 export interface DevPrerenderScheduler {
-  schedule(): Promise<void>
+  schedule(stats?: CompileStats): Promise<void>
+  idle(): Promise<void>
 }
 
 export function createDevPrerenderScheduler(
@@ -88,17 +94,27 @@ export function createDevPrerenderScheduler(
   // coalescence (une rafale de N changements produit N passes en série, jamais en parallèle) :
   // choix le plus simple et le plus sûr, le debounce du bundler (chokidar) amortit déjà la
   // fréquence des recompiles réels avant qu'ils n'atteignent ce planificateur.
-  let chain: Promise<void> = Promise.resolve()
+  let chain: Promise<void>   = Promise.resolve()
+  // la dernière passe programmée qui lit le dossier de sortie du veilleur (cf. idle)
+  let reading: Promise<void> = Promise.resolve()
   return {
-    schedule(): Promise<void> {
-      const run = chain
+    schedule(stats?: CompileStats): Promise<void> {
+      // la compilation que le veilleur vient de finir, reprise par les moteurs de rendu quand ils auraient compilé la même (cf. reusableCompile)
+      const compiled = opts.bundler && stats ? { bundler: opts.bundler, stats } : undefined
+      const pass     = compiled ? { ...opts, overrides: { ...opts.overrides, compiled } } : opts
+      const run      = chain
         // Une passe précédente qui rejetterait (jamais censé arriver, cf. commentaire ci-dessus)
         // ne doit pas bloquer la CHAÎNE pour de bon — chaque `schedule()` reste indépendant.
         .catch(() => {})
-        .then(() => prerenderOnDevRecompile(config, configDir, opts))
+        .then(() => prerenderOnDevRecompile(config, configDir, pass))
         .then(() => undefined)
       chain = run
+      // unités séparées : la passe lit le dossier de sortie du veilleur ; en `js: 'bundle'`, son moteur compile dans son dossier de travail
+      if (compiled?.bundler.jsMode === 'split') reading = run
       return run
+    },
+    idle(): Promise<void> {
+      return reading
     },
   }
 }

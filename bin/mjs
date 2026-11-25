@@ -11,6 +11,12 @@ const distCli = join(here, '..', 'dist', 'cli.js')
 const srcCli  = join(here, '..', 'src', 'cli.ts')
 
 if (existsSync(distCli)) {
+  // cache de compilation de Node, ouvert AVANT de charger la CLI (cf. src/cli/compile-cache.ts) : une accélération seulement, son échec n'arrête jamais la CLI
+  try {
+    await import(join(here, '..', 'dist', 'compile-cache.js'))
+  } catch {
+    // pas de cache
+  }
   // Build de prod
   await import(distCli)
 } else if (existsSync(srcCli)) {

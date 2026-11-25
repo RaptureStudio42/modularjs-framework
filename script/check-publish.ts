@@ -137,11 +137,18 @@ function staleBuild(dir: string, script: string | undefined, modes: Map<string, 
   }
 }
 
+// les fichiers d'un `npm pack --dry-run --json` : jusqu'à npm 11, un tableau d'un paquet ; depuis npm 12, un objet nommé par le paquet
+export function packedFiles(stdout: string): unknown {
+  const out   = JSON.parse(stdout)
+  const entry = Array.isArray(out) ? out[0] : (out && typeof out === 'object' ? Object.values(out)[0] : undefined)
+  return (entry as { files?: unknown } | undefined)?.files
+}
+
 export function checkPackage(dir: string): PackageCheck {
   const pkg  = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
   const pack = spawnSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], { cwd: dir, encoding: 'utf8' })
   if (pack.status !== 0) throw new Error(`npm pack --dry-run a échoué (code ${pack.status}) :\n${pack.stderr}`)
-  const listed = JSON.parse(pack.stdout)[0]?.files
+  const listed = packedFiles(pack.stdout)
   if (!Array.isArray(listed) || !listed.length) throw new Error(`npm pack --dry-run n'a rendu aucune liste de fichiers :\n${pack.stdout}`)
   const modes    = new Map<string, number>(listed.map((f: { path: string, mode: number }) => [f.path, f.mode]))
   const bins     = (typeof pkg.bin === 'string' ? [pkg.bin] : Object.values(pkg.bin ?? {}) as string[]).map(packagePath)

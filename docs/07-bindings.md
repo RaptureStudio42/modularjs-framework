@@ -164,6 +164,10 @@ Sur un `<select>`, `value=!{$x}` lie l'option choisie. Avec l'attribut `multiple
 
 Dans l'autre sens, la variable choisit l'option de son texte exact : `$selectedId = 1` choisit `<option value="1">`, jamais `<option value="01">`, et `$flavours = [1]` de même. Une liste, simple ou à choix multiples, liée dans les deux sens à une variable typée (`value=!{$mois}` avec `$mois  int 1..12`, ou `int 1..12[]` pour une liste à choix multiples, cf. [37 · Types et valeurs permises](37-types.md)) choisit, pour un nombre qu'aucune option n'écrit exactement, celle qui l'écrit autrement (`<option value="01">` pour `1`), même quand elle arrive après la liste (`{for}`) : la choisir redonne `1` à la variable. Liée dans un seul sens (`value={$mois}`), elle choisit l'option de son texte exact, comme une variable libre.
 
+Vous n'avez pas à poser `selected` sur les options : la liste choisit l'option qui porte sa valeur liée, même quand ses options arrivent après elle (`{for}`, données chargées ensuite) ou que leur valeur est calculée (leur attribut `value`, ou leur texte pour une option sans `value`), au premier affichage comme quand elle change ensuite (`<option value={µStep.DAY}>`, `<option value={$id}>`, `<option>{nom}</option>`) ; un choix de l'utilisateur reste jusqu'à la prochaine écriture de la variable. Quand plus aucune option ne porte la valeur liée, la liste n'en montre aucune. Au rendu du serveur, le HTML montre déjà l'option choisie, que la liste soit liée à un texte ou à un nombre.
+
+Une limite : au premier affichage, une liste dont les options ont une valeur calculée choisit son option juste après le rendu ; lue dans `µmount` ou dans `:attach`, sa valeur peut être encore vide : lisez plutôt la variable liée.
+
 ## Zone de texte & contenu riche
 
 `<textarea>` se lie comme un `<input>`, avec `value=!{$x}` (et non via le contenu entre les balises) :

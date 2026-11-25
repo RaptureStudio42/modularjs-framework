@@ -1874,8 +1874,10 @@ function inTags(html: string, dialect: boolean, fn: (tag: string) => string): st
   return open >= pos ? out + html.slice(pos, open) + fn(html.slice(open)) : out + html.slice(pos)
 }
 
-// le nom d'un attribut et ce qui ouvre sa valeur (un guillemet ou une accolade), l'espace qui le précède compris
-const ATTR_OPEN_RE = /\s([^\s"'=<>`{}]+)\s*=\s*(["'{])/g
+// le nom d'un attribut et ce qui ouvre sa valeur (un guillemet ou une accolade) ; avant le nom, un blanc ou la fin de la valeur d'avant,
+// collée sans blanc (guillemet ou accolade fermante : `href="/x"title='…'`), regardé sans être pris : la lecture reprend juste après une
+// valeur ; un seul caractère regardé, aucun retour en arrière qui se multiplie
+const ATTR_OPEN_RE = /(?<=[\s"'}])([^\s"'=<>`{}]+)\s*=\s*(["'{])/g
 
 // les signes que la passe du texte lit sur une balise : celui des mots, et `@` (`@vt=`)
 const READ_SIGNS_RE = new RegExp(`[${SIGN_RE}@]`, 'g')

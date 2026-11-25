@@ -25,6 +25,8 @@ export const en = {
   'cli.build-purge-registry-unreadable': ({ dir }: MsgVars) => `⚠️  purge skipped: the '.mjs-outputs.json' registry in ${dir} is unreadable or malformed — rerun a build to regenerate it`,
   'cli.build-purge-registry-empty': ({ dir }: MsgVars) => `⚠️  purge skipped: the '.mjs-outputs.json' registry in ${dir} lists no usable extension — rerun a build to regenerate it`,
   'cli.build-purge-cache': ({ dir }: MsgVars) => `⚠️  purge skipped: this build reused at least one component from cache — its side assets were not all re-emitted, pruning ${dir} now could remove a still-used file`,
+  'cli.build-files-missing': ({ count, files, more }: MsgVars) => `❌ ${count} file${Number(count) > 1 ? 's' : ''} of this build ${Number(count) > 1 ? 'are' : 'is'} missing at the end:${files}${Number(more) > 0 ? `\n   … and ${more} more` : ''}\n   Likely cause: another program deleted part of the output during the build (a test run, a second build at the same time, a cleanup). Run the build again.`,
+  'cli.build-cited-missing': ({ count, files, more, cache }: MsgVars) => `❌ ${count} file${Number(count) > 1 ? 's' : ''} cited by the output ${Number(count) > 1 ? 'are' : 'is'} missing (on the left the missing file, on the right the first file that cites it):${files}${Number(more) > 0 ? `\n   … and ${more} more` : ''}\n   Do not put this output online: the page would load files that do not exist. Likely cause: a module reused from an earlier build, or part of the output deleted during the build.${Number(cache) > 0 ? ' The cache (--cache) no longer keeps the modules that cite them.' : ''} Run the build again${Number(cache) > 0 ? ': it will recompile these modules' : ''}.`,
   'cli.n-more': ({ count }: MsgVars) => `+ ${count} other${Number(count) === 1 ? '' : 's'}`,
   'cli.usage': `
 mjs — ModularJS V4 compiler
@@ -631,6 +633,7 @@ This block is kept up to date by \`mjs init\`, \`mjs dev\` and \`mjs check\`: wr
   'bundler.index.cache-reason-unreadable': `unreadable cache file`,
   'bundler.index.cache-order-broken': ({ file, unit }: MsgVars) => `[bundler] build cache: recompiling ${file} requested ${unit}, already past in the minification order; the build stops rather than produce other short names. Run again without --cache.`,
   'bundler.index.cache-reason-node-modules': `no node_modules folder`,
+  'bundler.index.cache-file-vanished': ({ file }: MsgVars) => `[bundler] cache: the kept file ${file} disappeared during the build (another build running at the same time may have pruned the cache). Run the build again: it will recompile this file.`,
   'bundler.index.cache-not-written': ({ reason }: MsgVars) => `[bundler] the build cache could not be written: ${reason}. The build is still valid; the next one will recompile everything.`,
   'bundler.index.cache-checked': ({ count }: MsgVars) => `cache verified: ${count} file${Number(count) === 1 ? '' : 's'} byte-identical`,
   'bundler.index.cache-dropped': ({ count }: MsgVars) => `cache discarded: ${count} file${Number(count) === 1 ? ' differs' : 's differ'} from a full build without the cache. The full build is redone in place, and the output becomes its own, prerendered pages included; the next build will recompile everything. Files that differ:`,

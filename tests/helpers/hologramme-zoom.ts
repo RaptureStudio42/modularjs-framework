@@ -1,6 +1,6 @@
 // Aides des tests navigateur du zoom de *hologram : une page construite par le vrai moteur (les cartes dans un composant, des voisins
 // positionnés sur le trajet de leur retour), ouverte dans Chromium ou Firefox ; un relevé pris à chaque image d'animation ; les
-// attentes communes. Le dossier temporaire est rendu par le nettoyeur du harnais (tmp-sweep).
+// attentes communes. Le dossier temporaire part avec le dossier de la série, retiré à la fin (script/test-enclos.sh, tmp-sweep).
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readdirSync, readFileSync, existsSync } from 'node:fs'

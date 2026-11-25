@@ -245,6 +245,7 @@ export async function generateVariants(req: VariantRequest): Promise<GeneratedVa
       // de la même image en pâtissent — le message NOMME l'image, la largeur et le format
       // demandés, jamais le seul message interne brut de sharp.
       let output: any
+      // ces réglages font aussi les octets d'une variante : un changement ici avance IMAGE_ENCODING_FORMAT (index des images)
       try {
         const pipeline = sharp(req.bytes, animation ? { animated: true } : undefined).resize({ width: width, withoutEnlargement: true })
         output = await (format === 'avif' ? pipeline.avif({ quality: req.quality })
@@ -278,7 +279,7 @@ export async function generateVariants(req: VariantRequest): Promise<GeneratedVa
 // INDEX DES IMAGES — `.mjs-images.json`, dans le dossier de sortie : les variantes qu'une construction a encodées, pour que la
 // suivante (un autre processus : `mjs build`, premier passage de `mjs dev`, prérendu) les reprenne au lieu de les réencoder.
 // clé : empreinte de ce qui fait les octets d'une variante (nom de base, contenu de l'image, largeurs, formats, qualité, versions
-// de sharp) ; valeur : les variantes, dans l'ordre de generateVariants. Rien du poste (aucun chemin) : le fichier est servi
+// de sharp, numéro des réglages d'encodage du framework) ; valeur : les variantes, dans l'ordre de generateVariants. Rien du poste (aucun chemin) : le fichier est servi
 // avec les sorties. Jamais cru sur parole : chaque fichier repris est relu et vérifié par l'empreinte de son nom
 // --------------------------------------------------------------------------
 
@@ -311,9 +312,17 @@ export async function sharpVersions(): Promise<string | null> {
   return versionsCache
 }
 
-/** clé d'une image dans l'index : `digest` est le md5 du contenu de l'image source, `versions` celles de sharpVersions() */
-export function imageIndexKey(req: VariantRequest, digest: string, versions: string): string {
-  return createHash('sha256').update(JSON.stringify([req.baseName, digest, req.widths, req.formats, req.quality, versions])).digest('hex')
+// numéro des réglages d'encodage écrits dans generateVariants (largeur jamais agrandie, animation gardée, appels avif, webp, png et
+// jpeg) : ils font aussi les octets d'une variante ; avancé quand l'un d'eux change, il change la clé de chaque image, et les variantes
+// encodées par une version d'avant se réencodent au lieu d'être reprises
+export const IMAGE_ENCODING_FORMAT = 1
+
+/**
+ * clé d'une image dans l'index : `digest` est le md5 du contenu de l'image source, `versions` celles de sharpVersions(), `format` le
+ * numéro des réglages d'encodage (IMAGE_ENCODING_FORMAT)
+ */
+export function imageIndexKey(req: VariantRequest, digest: string, versions: string, format = IMAGE_ENCODING_FORMAT): string {
+  return createHash('sha256').update(JSON.stringify([req.baseName, digest, req.widths, req.formats, req.quality, versions, format])).digest('hex')
 }
 
 /**

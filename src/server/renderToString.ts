@@ -36,6 +36,7 @@ import { writeRenderSheet, createSheetPlan, withoutImports } from './render-outp
 import { lightHostCss } from './light-host-css.js'
 import { openRenderCompileDir, reusableCompile, type RenderCompiled } from './render-compile-dir.js'
 import { outdatedHappyDomVersion, HAPPY_DOM_MINIMUM } from './happy-dom-version.js'
+import { provideStructuredClone } from './structured-clone.js'
 import { t } from '../messages/index.js'
 import { buildSeedRoot } from './i18n-seed-root.js'
 import { rootProps } from './root-props.js'
@@ -1498,6 +1499,8 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
       },
     })
     const document = window.document
+    // `structuredClone` comme au navigateur, que happy-dom ne donne pas (cf. structured-clone.ts) ; son canal se ferme avec la fenêtre
+    const closeStructuredClone = provideStructuredClone(window)
     // fin du contenu glissé de chaque composant bâti à plat, notée à l'arrivée de sa page (cf. `noteLightPage`)
     let appendOwner: any = window.HTMLElement.prototype
     while (appendOwner && !Object.prototype.hasOwnProperty.call(appendOwner, 'appendChild')) appendOwner = Object.getPrototypeOf(appendOwner)
@@ -1928,6 +1931,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
       // tourne bien au SSR, contrat documenté) fuyait INDÉFINIMENT (VRAI timer Node process-level,
       // happy-dom lie ses timers directement à ceux du host) — best-effort : ne doit jamais masquer
       // l'erreur/résultat du try.
+      closeStructuredClone()
       try { await window.happyDOM?.close?.() } catch { /* ignore */ }
     }
   }

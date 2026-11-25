@@ -34,7 +34,8 @@
 // import(variable) permis — `lintNoRawImport` (transpiler/index.ts), MÊME garde que <script>/
 // <script module>, avec ses clés catalogue propres (entry serveur) substituées via son 5e paramètre.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync, lstatSync, chmodSync, accessSync, constants, statSync, readlinkSync, symlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync, accessSync, constants, statSync, readlinkSync, symlinkSync } from 'node:fs'
+import { privateTmpDir } from './private-tmp-dir.js'
 import { dirname, join, resolve, extname, relative, basename } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { tmpdir } from 'node:os'
@@ -138,14 +139,7 @@ function linkTo(link: string, target: string): void {
 // groupe privé de l'utilisateur) laisse les anciens dossiers en 775. Un dossier à nous ouvert au
 // groupe ou lisible par les autres est refermé en 0700.
 function sharedTmpCacheDir(dir: string): void {
-  if (!existsSync(dir)) {
-    try { mkdirSync(dir, { mode: 0o700 }) } catch (err: any) { if (err?.code !== 'EEXIST') throw err }
-  }
-  const uid = process.getuid?.()
-  if (uid === undefined) return   // Windows : ni propriétaire ni mode POSIX à vérifier
-  const st = lstatSync(dir)
-  if (!st.isDirectory() || st.uid !== uid || (st.mode & 0o002) !== 0) throw new Error(t('cli.entry-cache-not-safe', { dir }))
-  if ((st.mode & 0o077) !== 0) chmodSync(dir, 0o700)
+  if (!privateTmpDir(dir)) throw new Error(t('cli.entry-cache-not-safe', { dir }))
 }
 
 // écriture atomique par l'aide commune (bundler/outputs.ts) : temporaire unique puis renameSync, jamais de fichier tronqué visible par un

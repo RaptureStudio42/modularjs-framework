@@ -336,14 +336,15 @@ describe('mjs-core-number — séparateur de la langue, `separator`, `precision`
     window.close()
   })
 
-  it('`strict` et les milliers : dans un champ décimal, le premier séparateur est la virgule décimale, « 1.234,56 » est refusé ; sous un pas entier, « 1,000 » passe et vaut 1000', async () => {
+  it('`strict` et les milliers : dans un champ décimal, le premier séparateur est la virgule décimale, « 1.234,56 » est refusé ; sous un pas entier, « 1,000 » est refusé en entier (rien que des chiffres)', async () => {
     const { window, hote } = await monterHote(REPRISE, 'number-strict-milliers')
     const milliers = champ(hote, '.milliers')
     await taper(window, milliers, '1.234,56')
     assert.equal(milliers.value, '12,30', 'refusé en entier, le texte d\'avant reste')
     assert.equal(lire(hote, '.vm'), '12.3')
     await taper(window, champ(hote, '.entier'), '1,000')
-    assert.equal(lire(hote, '.vi'), '1000')
+    assert.equal(champ(hote, '.entier').value, '5', 'refusé en entier, le texte d\'avant reste')
+    assert.equal(lire(hote, '.vi'), '5')
     window.close()
   })
 

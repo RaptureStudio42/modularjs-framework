@@ -162,6 +162,20 @@ if (µ.Element) {
   }
   // </fine-grained>
 
+  // les props livrées aux composants d'une ligne, oubliées, ceux des blocs qu'elle porte compris (un {for} imbriqué tient les siens à part) :
+  // la passe qui suit les leur écrit toutes (cf. µ._mjs_prop, mjs_init.ts)
+  function _mjs_forgetProps(ent) {
+    const refs = ent.__nodes, roots = ent.nodes;
+    for (const k in refs) {
+      const n = refs[k];
+      if (n && n._mjs_pv) n._mjs_pv = null;
+    }
+    for (let i = 0; i < roots.length; i++) {
+      const all = roots[i].getElementsByTagName ? roots[i].getElementsByTagName('*') : [];
+      for (let j = 0; j < all.length; j++) if (all[j]._mjs_pv) all[j]._mjs_pv = null;
+    }
+  }
+
   // passe des liaisons, dans l'ordre de la liste : chaque ligne reçoit son élément et son index (`ens` : les entrées dans cet ordre, jamais
   // cherchées dans le cache). Une ligne dont le gabarit vient de poser l'état (`_mjs_init`) attend la passe suivante. Les lignes relisent
   // le parent (retenue des écritures liées, en bas de fichier). La passe faite, les entrées restent notées sur le tableau des clés
@@ -186,6 +200,10 @@ if (µ.Element) {
       const x  = isArray ? (ix ? ix[i] : i) : keysArr[i];
       const p  = ent._mjs_p;
       if (ent._mjs_it !== it) {
+        // la ligne porte désormais un autre élément (une autre valeur d'une liste rangée par la place, sans `by`, ou un autre objet, même à
+        // la même clé : liste rechargée) : ses composants reçoivent toutes leurs props, même inchangées, comme ceux d'une ligne neuve ; la
+        // ligne dont l'objet change sur place, ou qu'un tri déplace, garde son élément et ses composants ce qu'ils ont écrit
+        _mjs_forgetProps(ent);
         ent._mjs_it = it;
         ent._mjs_br = 0;
       }

@@ -141,6 +141,8 @@ Et depuis `Harness` — ce que rend `createHarness(opts?)` :
 | `components` | les composants trouvés dans le projet compilé, par nom |
 | `destroy()` | ferme la fenêtre et libère le compilateur — à appeler en fin de fichier de test ; le pool de threads du compilateur, partagé par tout le processus, reste à un autre Bundler qui compile encore (un second harnais, un Bundler du test) |
 
+La fenêtre simulée connaît `structuredClone`, comme celle du rendu serveur, avec les mêmes limites ([19 · SSR](19-ssr.md)).
+
 Et les options de `createHarness(opts)` :
 
 | Option | Défaut | Rôle |

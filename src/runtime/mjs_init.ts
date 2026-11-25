@@ -1104,6 +1104,21 @@ function _mjsPendRegistry(el, k, v) {
   }
   m[k] = v;
 }
+
+// une prop à sens unique que le parent livre à la balise d'un composant déjà mis à niveau (`ouvert={$o}`, cf. componentLogic,
+// generator/attributes/index.ts) : écrite quand sa valeur change chez le parent, comparée à la dernière que ce parent a livrée à cette
+// balise pour cette prop (`_mjs_pv`, qui tient aussi les props versées du registre à la connexion, cf. connectedCallback, mjs_element.ts),
+// et non chaque fois que sa liaison se rejoue (ligne de {for} redessinée ou triée, autre variable lue qui change) : l'enfant qui l'a
+// changée lui-même (un champ où l'on tape, un volet fermé) la garde jusque-là. Un objet passe toujours par `_set`, qui le redit à l'enfant
+// quand il a changé en profondeur (époques, µrefresh). La ligne d'une liste rangée par index qui porte un autre élément oublie ces valeurs
+// (cf. _mjs_updRows, mjs_for.ts) : elle reçoit tout, même valeur comprise. Les écritures du composant lui-même (`µ._set`) n'y passent pas
+µ._mjs_prop = function(el, k, v) {
+  var pv = el._mjs_pv;
+  if (!pv) pv = el._mjs_pv = Object.create(null);
+  else if (pv[k] === v && (v !== void 0 || k in pv) && (v === null || typeof v !== 'object')) return;
+  pv[k] = v;
+  el._set(k, v);
+};
 // </pending-props>
 
 // Path-tracking compile-time avec auto-Proxy fallback.

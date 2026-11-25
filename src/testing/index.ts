@@ -29,6 +29,7 @@ import { Bundler } from '../bundler/index.js'
 import { findConfig, resolveBundlerOpts } from '../bundler/config.js'
 import { stripEsm, ssrScopeFile, fileToId, topoSortFiles } from '../server/renderToString.js'
 import { outdatedHappyDomVersion, HAPPY_DOM_MINIMUM } from '../server/happy-dom-version.js'
+import { provideStructuredClone } from '../server/structured-clone.js'
 import { t } from '../messages/index.js'
 
 export interface HarnessOptions {
@@ -158,6 +159,8 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
 
   const window: any   = new HappyDOM.Window({ url: opts.url ?? 'http://localhost/' })
   const document: any = window.document
+  // `structuredClone` comme au navigateur, que happy-dom ne donne pas (cf. server/structured-clone.ts) ; son canal se ferme avec la fenêtre
+  const closeStructuredClone = provideStructuredClone(window)
   const outDir        = bundler.outputDir
   const files         = existsSync(outDir) ? readdirSync(outDir).sort() : []
   // le runtime (cœur, feuilles partagées, effets) ne se prend que parmi les fichiers que CETTE compilation a écrits ou repris : le
@@ -172,6 +175,7 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
     // (API DOM standard) est un NO-OP sur une Window happy-dom créée nue — `window.happyDOM.close()`
     // est la VRAIE API de nettoyage (annule les tâches en cours ET ferme), sans quoi un
     // `setInterval`/`setTimeout` posé par un `µeffect` pendant le montage fuit indéfiniment.
+    closeStructuredClone()
     try { await window.happyDOM?.close?.() } catch { /* happy-dom peut refuser de fermer deux fois */ }
     await bundler.close()
   }

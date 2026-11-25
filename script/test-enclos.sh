@@ -26,10 +26,12 @@
 # cumulée) de l'arbre de processus de mocha est relevée toutes les 0,5 s, et l'arbre entier tué
 # au-delà de MJS_TEST_MEM, avec le même verdict, ou au-delà de MJS_TEST_MAXSEC (un nombre de
 # secondes) ; un processus sorti de l'arbre lui échappe, seul l'enclos le rattrape.
-# TMPDIR court : tsx ouvre une socket sous TMPDIR (`tsx-<uid>/<pid>.pipe`) et le noyau refuse un
-# chemin de socket de plus de 107 octets (`listen EINVAL … .pipe`, faux rouges sans rapport avec le
-# code). Un TMPDIR trop long cède la place, le temps du run, à un dossier court à lui sous /tmp,
-# annoncé puis retiré à la fin ; s'il ne peut pas être créé, un message le dit.
+# Dossier de la série : chaque run travaille dans son propre dossier temporaire, créé sous le TMPDIR
+# reçu, exporté comme TMPDIR pour mocha et ses enfants, et retiré à la sortie du script, même sur
+# échec, garde-temps ou signal ; rien d'autre du TMPDIR reçu n'est touché. Il doit rester court : tsx
+# y ouvre une socket (`tsx-<uid>/<pid>.pipe`) et le noyau refuse un chemin de socket de plus de 107
+# octets (`listen EINVAL … .pipe`, faux rouges sans rapport avec le code) ; sous un TMPDIR trop long,
+# il se crée sous /tmp, annoncé ; s'il ne peut pas être créé, un message le dit et le run ne part pas.
 # Arguments : sans argument, la suite complète ; avec, les seuls fichiers passés.
 #   npm test                              → tout
 #   npm test -- tests/csp-runtime.test.ts → ce fichier seul, sous enclos
@@ -47,23 +49,28 @@ if [ "$#" -gt 0 ]; then MOCHA+=("$@")
 else MOCHA+=(--recursive "$ROOT/tests/" --extension ts)
 fi
 
-# --- 1 bis. TMPDIR assez court pour une socket Unix ---
+# --- 1 bis. Dossier de la série, assez court pour une socket Unix ---
 
-# la plus longue socket que les tests ouvrent sous TMPDIR : celle de tsx, au plus long numéro de processus (4194304) ; au-delà de
-# 107 octets, un dossier court à ce run sous /tmp (droits 700, cf. mktemp), retiré à la sortie du script
-SOCKET="${TMPDIR:-/tmp}"
-SOCKET="${SOCKET%/}/tsx-$UID/4194304.pipe"
+# mktemp -d (droits 700) sous le TMPDIR reçu, ou sous /tmp quand la plus longue socket que les tests y ouvriraient (celle de tsx, au
+# plus long numéro de processus : 4194304) passerait 107 octets ; retiré par le piège EXIT, que bash joue aussi à une mort par TERM ou
+# HUP, attente d'un jeton comprise. Nom sans « mjs- » : le balai d'un harnais plus ancien, qui vide les mjs-* apparus pendant sa série
+# dans le même TMPDIR, ne le voit pas. MJS_TEST_RUN_DIR dit au crochet commun (tests/helpers/tmp-sweep.ts) que ce dossier a déjà son
+# maître ; un mocha lancé sans ce script y prend le sien
+RECEIVED_TMP="${TMPDIR:-/tmp}"
+RECEIVED_TMP="${RECEIVED_TMP%/}"
+SOCKET="$RECEIVED_TMP/tests-XXXXXX/tsx-$UID/4194304.pipe"
 SOCKET_BYTES=$(( $(printf '%s' "$SOCKET" | wc -c) ))
-if [ "$SOCKET_BYTES" -gt 107 ]; then
-  SHORT_TMP="$(mktemp -d /tmp/enclos-XXXXXX)"
-  if [ -n "$SHORT_TMP" ] && [ -d "$SHORT_TMP" ]; then
-    trap 'rm -rf "${SHORT_TMP:?}"' EXIT
-    echo "⚠  TMPDIR trop long pour une socket Unix ($SOCKET_BYTES octets avec celle de tsx, 107 au plus) — le run prend $SHORT_TMP, retiré à la fin"
-    export TMPDIR="$SHORT_TMP"
-  else
-    echo "⚠  TMPDIR trop long pour une socket Unix ($SOCKET_BYTES octets avec celle de tsx, 107 au plus) et aucun dossier court sous /tmp — les tests qui lancent tsx échoueront par « listen EINVAL » : prenez un TMPDIR court (ex. /tmp/claude-1000/t1)"
-  fi
+if [ "$SOCKET_BYTES" -gt 107 ]; then RUN_PARENT='/tmp'
+else RUN_PARENT="$RECEIVED_TMP"
 fi
+if ! RUN_DIR="$(mktemp -d "$RUN_PARENT/tests-XXXXXX" 2>&1)"; then
+  echo "⚠  dossier de la série impossible à créer sous $RUN_PARENT ($RUN_DIR) — tests non lancés"
+  exit 1
+fi
+trap 'rm -rf "${RUN_DIR:?}"' EXIT
+if [ "$SOCKET_BYTES" -gt 107 ]; then echo "⚠  TMPDIR trop long pour une socket Unix ($SOCKET_BYTES octets avec le dossier de la série et la socket de tsx, 107 au plus) — le run prend $RUN_DIR, retiré à la fin"; fi
+export TMPDIR="$RUN_DIR"
+export MJS_TEST_RUN_DIR="$RUN_DIR"
 
 # --- 1 ter. Sans DISPLAY, sauf MJS_TEST_DISPLAY=1 ---
 

@@ -7,8 +7,8 @@
 
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs'
+import { join, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mjsTmp } from './helpers/tmp.js'
 
@@ -63,20 +63,18 @@ describe('harnais — test-enclos.sh arrête un run qui crève MJS_TEST_MEM, enc
     const r   = runScript(tmp, [
       "import { spawn } from 'node:child_process'",
       "import { writeFileSync } from 'node:fs'",
-      "import { join } from 'node:path'",
-      "import { tmpdir } from 'node:os'",
       SLEEP,
       "describe('run témoin', function () {",
       "  it('enfant gourmand', async function () {",
       '    this.timeout(0)',
       "    const code  = 'const k = []; for(let i = 0; i < 75; i++) k.push(Buffer.alloc(16 * 1024 * 1024, 1)); setTimeout(() => {}, 30000)'",
       "    const child = spawn(process.execPath, ['-e', code], { stdio: 'ignore' })",
-      "    writeFileSync(join(tmpdir(), 'enfant.pid'), String(child.pid))",
+      `    writeFileSync(${JSON.stringify(join(tmp, 'enfant.pid'))}, String(child.pid))`,
       '    await sleep(32000)',
       '  })',
       '})',
     ].join('\n'), '600M')
-    const pid = Number(readFileSync(join(tmp, 'tmp', 'enfant.pid'), 'utf-8'))
+    const pid = Number(readFileSync(join(tmp, 'enfant.pid'), 'utf-8'))
     assert.ok(r.code !== null && r.code >= 128, `code ${r.code}, attendu ≥ 128 :\n${r.out}`)
     assert.ok(r.ms < 25000, `run arrêté en ${r.ms} ms : l'enfant n'a pas été compté`)
     assert.equal(alive(pid), false, `l'enfant ${pid} a survécu au run`)
@@ -85,18 +83,19 @@ describe('harnais — test-enclos.sh arrête un run qui crève MJS_TEST_MEM, enc
   it('script tué seul (pas son groupe) pendant le run : la garde continue de surveiller mocha, la bombe meurt quand même', async function () {
     const tmp      = mjsTmp('enclos-garde-script-tue')
     const specPath = join(tmp, 'spec', 'temoin.spec.mjs')
-    const pidFile  = join(tmp, 'tmp', 'mocha.pid')
+    const pidFile  = join(tmp, 'mocha.pid')
+    const runFile  = join(tmp, 'serie.txt')
     mkdirSync(dirname(specPath), { recursive: true })
     mkdirSync(join(tmp, 'tmp'), { recursive: true })
     writeFileSync(specPath, [
       "import { writeFileSync } from 'node:fs'",
-      "import { join } from 'node:path'",
       "import { tmpdir } from 'node:os'",
       SLEEP,
       "describe('run témoin', function () {",
       "  it('bombe différée', async function () {",
       '    this.timeout(0)',
-      "    writeFileSync(join(tmpdir(), 'mocha.pid'), String(process.pid))",
+      `    writeFileSync(${JSON.stringify(runFile)}, tmpdir())`,
+      `    writeFileSync(${JSON.stringify(pidFile)}, String(process.pid))`,
       '    await sleep(2500)',
       '    const keep = []',
       '    for(let i = 0; i < 100; i++) { keep.push(Buffer.alloc(16 * 1024 * 1024, 1)); await sleep(20) }',
@@ -114,6 +113,11 @@ describe('harnais — test-enclos.sh arrête un run qui crève MJS_TEST_MEM, enc
     while(alive(mocha) && Date.now() - t0 < 20000) await sleep(200)
     const vivant = alive(mocha)
     if(vivant) process.kill(mocha, 'SIGKILL')
+    // tué par KILL, le script n'a pas joué son piège EXIT : son dossier de série reste, à même /tmp quand ce TMPDIR imbriqué est trop long
+    // pour la socket de tsx ; ce test le rend
+    const run = readFileSync(runFile, 'utf-8')
+    if(basename(run).startsWith('tests-')) rmSync(run, { recursive: true, force: true })
+    assert.equal(existsSync(run), false, `dossier de série du script tué laissé : ${run}`)
     assert.equal(vivant, false, 'mocha a survécu 20 s à la mort du script : plus rien ne le surveillait')
   })
 

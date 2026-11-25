@@ -9,7 +9,7 @@ import { t } from '../messages/index.js'
 import { normalizePreload } from './config.js'
 import { FINGERPRINT_LENGTH } from './fingerprint.js'
 import { runtimeCallsCut, buildPureList, withMangleCacheLock } from './minify.js'
-import { OUTPUT_MARK, bundleNeighborFiles } from './outputs.js'
+import { DeliveredFiles, OUTPUT_MARK, bundleNeighborFiles } from './outputs.js'
 import type { Bundler } from './index.js'
 
 /**
@@ -515,7 +515,7 @@ export function writeManifest(bundler: Bundler): void {
   // un lien vers un dossier ne se lit pas : l'aide commune des écritures le refuse plus bas, par son message
   if (existsSync(bundler.manifestPath) && statSync(bundler.manifestPath).isFile()) {
     const current = readFileSync(bundler.manifestPath, 'utf-8')
-    if (current === newContent) return
+    if (current === newContent) return DeliveredFiles.note(bundler.outputDir, bundler.manifestPath)
   }
   // garde-fou ESM (cf. assertValidEsm) — bundle_modular.js est lui aussi du
   // JS émis, même exposé au risque « build vert qui ment ».
@@ -854,7 +854,7 @@ export async function writeBundleManifest(bundler: Bundler): Promise<void> {
   // un lien vers un dossier ne se lit pas : l'aide commune des écritures le refuse plus bas, par son message
   if (existsSync(bundler.manifestPath) && statSync(bundler.manifestPath).isFile()) {
     const current = readFileSync(bundler.manifestPath, 'utf-8')
-    if (current === newContent) return
+    if (current === newContent) return DeliveredFiles.note(bundler.outputDir, bundler.manifestPath)
   }
   // garde-fou ESM (cf. assertValidEsm) — même exigence que writeManifest().
   bundler['assertValidEsm'](newContent, basename(bundler.manifestPath))

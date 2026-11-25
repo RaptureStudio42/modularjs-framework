@@ -2110,14 +2110,19 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
 // <attr-select>
 // valeur liée d'un <select>, en liaison simple ou double sens (code généré par attributes/index.ts) : un tableau
 // choisit les options d'un `multiple` (`.value = tableau` ne choisissait rien). Ses <option> peuvent arriver après
-// elle (liste chargée ensuite, `{for}`) : la valeur (`_mjs_sv`, jamais undefined ici) est réappliquée à chaque
-// changement des options, observé dès la première écriture, sauf si l'utilisateur a choisi depuis la dernière écriture
-// de la variable (`null`) — en double sens, son choix écrit la variable, réappliquée ensuite comme avant. L'observateur rappelle
+// elle (liste chargée ensuite, `{for}`) ou prendre leur valeur après elle (valeur calculée, `<option value={µPas.JOUR}>` :
+// au premier rendu, la valeur du <select> s'écrit avant celle de ses options, clonées à `value=''`) : la valeur (`_mjs_sv`,
+// jamais undefined ici) est réappliquée quand une option arrive, part ou change de valeur (son attribut `value`, ou son texte
+// pour une option sans `value`, `<optgroup>` compris), observé dès la première écriture, sauf si l'utilisateur a choisi depuis la dernière écriture
+// de la variable (`null`) — en double sens, son choix écrit la variable, réappliquée ensuite comme avant. Réappliquer n'écrit
+// aucun attribut ni aucun texte (`.value`, `.selected` : des propriétés), l'observateur ne se relance donc pas. La valeur se pose
+// en texte, comme le navigateur la lit : la page du rendu serveur compare les options sans conversion, un nombre n'y choisissait
+// rien. L'observateur rappelle
 // µ._mjs_selVal, jamais cette fonction elle-même : mjs_types.ts l'enveloppe (µ._mjs_tsel) pour une liste, simple ou à choix multiples,
 // liée à une variable typée, où un nombre sans option de son texte exact choisit celle qui l'écrit autrement (`01` pour 1)
 µ._mjs_selVal = (node, val) => {
   if (node._mjs_sv === void 0) {
-    new MutationObserver(() => node._mjs_sv !== null && µ._mjs_selVal(node, node._mjs_sv)).observe(node, { childList: true, subtree: true });
+    new MutationObserver(() => node._mjs_sv !== null && µ._mjs_selVal(node, node._mjs_sv)).observe(node, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['value'] });
     node.addEventListener('input', () => node._mjs_sv = null);
   }
   node._mjs_sv = val;
@@ -2125,7 +2130,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     val = val.map(String);
     for (const o of node.options) o.selected = val.includes(o.value);
   }
-  else node.value = val;
+  else node.value = String(val);
 };
 // </attr-select>
 
@@ -3813,6 +3818,8 @@ var _mjs_agK = new WeakMap(), _mjs_agW = new WeakSet();
       for (const __pk in __pend) {
         this._set(__pk, __pend[__pk]);
       }
+      // les dernières valeurs livrées par le parent : sa liaison rejouée sans les changer ne les réécrit pas (cf. µ._mjs_prop, mjs_init.ts)
+      this._mjs_pv = this._mjs_pv ? Object.assign(this._mjs_pv, __pend) : __pend;
     }
     this._mjs_bindOpen = true;
     if (this._mjs_var_bits) {

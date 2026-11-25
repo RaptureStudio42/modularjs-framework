@@ -1,19 +1,20 @@
 // Chaque construction réencodait avec sharp toutes les variantes des images, même inchangées : la mémoire des variantes ne vivait
 // que le temps d'un processus, et `mjs build`, le premier passage de `mjs dev` ou le prérendu repartaient de zéro. Les variantes
-// déjà encodées sont maintenant reprises du dossier de sortie d'une construction à l'autre, tant que l'image, les réglages et la
-// version de sharp ne changent pas (index `.mjs-images.json`, à côté des sorties), chaque fichier repris vérifié par l'empreinte
-// de son nom. Une construction = un processus, comme deux `mjs build` (compilation puis purge) ; `sharp` est un sharp factice qui
-// compte ses encodages (dossier courant du processus), sauf dans le dernier cas : le vrai, quand il est installé.
+// déjà encodées sont maintenant reprises du dossier de sortie d'une construction à l'autre, tant que l'image, les réglages, la
+// version de sharp et le numéro des réglages d'encodage du framework ne changent pas (index `.mjs-images.json`, à côté des sorties),
+// chaque fichier repris vérifié par l'empreinte de son nom. Une construction = un processus, comme deux `mjs build` (compilation puis purge) ; `sharp` est un sharp factice qui
+// compte ses encodages (dossier courant du processus), sauf dans le dernier cas : le vrai, quand il est installé, ou celui dont
+// MJS_TEST_SHARP donne le dossier (un sharp installé ailleurs, lu sans rien installer ici) ; sans l'un ni l'autre, ce cas reste en attente.
 
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { mjsTmp } from './helpers/tmp.js'
 import { validPng } from './helpers/valid-png.js'
-import { resolveSharp } from '../src/bundler/image.js'
+import * as image from '../src/bundler/image.js'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -69,7 +70,8 @@ const REGLAGES = { widths: [320, 640], formats: ['webp'], quality: 78 }
 
 const composant = (image: string): string => `<script>\n  photo = µimage('${image}')\n</script>\n<p>${image}</p>\n`
 
-// un projet de deux images (deux largeurs chacune), un composant par image ; `sharp` : 'faux', 'vrai' (celui qu'on trouve) ou 'absent'
+// un projet de deux images (deux largeurs chacune), un composant par image ; `sharp` : 'faux', 'vrai' (celui de MJS_TEST_SHARP, lié
+// dans le projet, sinon celui qu'on trouve) ou 'absent'
 function projet(etiquette: string, sharp: 'faux' | 'vrai' | 'absent' = 'faux'): string {
   const root = mjsTmp('image-reprises-' + etiquette)
   mkdirSync(join(root, 'cwd'), { recursive: true })
@@ -77,6 +79,11 @@ function projet(etiquette: string, sharp: 'faux' | 'vrai' | 'absent' = 'faux'): 
   if (sharp === 'faux') {
     mkdirSync(join(root, 'cwd/node_modules/sharp'), { recursive: true })
     writeFileSync(join(root, 'cwd/node_modules/sharp/index.js'), FAUX_SHARP)
+  }
+  if (sharp === 'vrai' && process.env.MJS_TEST_SHARP) {
+    mkdirSync(join(root, 'cwd/node_modules'), { recursive: true })
+    // chemin relatif lu depuis le dossier courant, comme la vérification du before : la cible d'un lien relatif se lirait depuis le dossier du lien
+    symlinkSync(resolve(process.env.MJS_TEST_SHARP), join(root, 'cwd/node_modules/sharp'))
   }
   writeFileSync(join(root, 'src/a.png'), validPng(1200, 800))
   writeFileSync(join(root, 'src/b.png'), validPng(1000, 700))
@@ -163,6 +170,28 @@ describe('bundler — les variantes d\'image déjà encodées sont reprises d\'u
     assert.equal(construire(root, {}, { FAUX_SHARP_VERSION: '1.0.0' }).encodages, 4)
     assert.equal(construire(root, {}, { FAUX_SHARP_VERSION: '1.0.1' }).encodages, 4, 'version de sharp changée')
     assert.equal(construire(root, {}, { FAUX_SHARP_VERSION: '1.0.1' }).encodages, 0)
+  })
+
+  it('un autre numéro des réglages d\'encodage du framework : toutes les variantes se réencodent ; le même numéro : aucune', () => {
+    const root     = projet('numero-encodage')
+    const premiere = construire(root)
+    const avant    = empreintes(join(root, 'out'))
+    // la clé d'une image comme la construction la calcule (faux sharp : versions 1.0.0 et 8.0.0), sous un numéro donné
+    const cle    = (nom: string, numero: number): string => image.imageIndexKey({ bytes: Buffer.alloc(0), baseName: nom, ...REGLAGES }, createHash('md5').update(readFileSync(join(root, 'src', `${nom}.png`))).digest('hex'), 'sharp@1.0.0 vips@8.0.0', numero)
+    const numero = image.IMAGE_ENCODING_FORMAT
+    assert.deepEqual(Object.keys(lireIndex(root)).sort(), [cle('a', numero), cle('b', numero)].sort(), 'chaque clé suit le numéro du framework')
+    const meme  = construire(root)
+    // l'index tel qu'une version aux réglages d'encodage d'un autre numéro l'aurait écrit
+    const index = lireIndex(root)
+    writeFileSync(cheminIndex(root), JSON.stringify(Object.fromEntries(['a', 'b'].map((nom) => [cle(nom, numero + 1), index[cle(nom, numero)]]))))
+    const autre = construire(root)
+    assert.deepEqual([premiere.errors, meme.errors, autre.errors], [[], [], []])
+    assert.deepEqual([premiere.encodages, meme.encodages, autre.encodages], [4, 0, 4], 'encodages : première construction, même numéro, autre numéro')
+    // l'entrée de l'autre numéro reste tant que ses fichiers sont là (comme après un changement de version de sharp) : elle ne sert plus
+    const cles = Object.keys(lireIndex(root))
+    for (const nom of ['a', 'b']) assert.ok(cles.includes(cle(nom, numero)), `l'index cite ${nom} sous le numéro du framework : ${cles.join(', ')}`)
+    const sansIndex = (fichiers: Record<string, string>) => Object.fromEntries(Object.entries(fichiers).filter(([f]) => f !== '.mjs-images.json'))
+    assert.deepEqual(sansIndex(empreintes(join(root, 'out'))), sansIndex(avant), 'mêmes réglages : mêmes fichiers')
   })
 
   it('un index illisible ou mal formé : la construction passe, tout est encodé, l\'index est réécrit lisible', () => {
@@ -308,11 +337,13 @@ describe('mjs build --cache=verify — l\'index des images ne fait pas d\'écart
   })
 })
 
-describe('avec le vrai sharp — la seconde construction n\'encode rien', function () {
+describe('avec le vrai sharp (installé, ou son dossier dans MJS_TEST_SHARP ; sinon en attente) — la seconde construction n\'encode rien', function () {
   this.timeout(240000)
 
   before(async function () {
-    if (!await resolveSharp()) this.skip()
+    const donne = process.env.MJS_TEST_SHARP
+    if (donne) assert.ok(existsSync(join(donne, 'package.json')), `MJS_TEST_SHARP ne donne pas le dossier d'un sharp installé : ${donne}`)
+    else if (!await image.resolveSharp()) this.skip()
   })
 
   it('deux constructions de suite : 0 encodage la seconde fois, octets identiques', () => {

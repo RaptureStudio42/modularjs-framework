@@ -421,8 +421,8 @@ const NOT_A_PROP = /^(?:data|aria|mjs)-/i
 // µ._mjs_modGlob, mjs_dynamic.ts)
 const COMPONENT_GLOBAL_ATTR = /^(?:id|class|title|role|hidden|tabindex|lang|dir|slot)$/i
 
-/** Le code qui livre la valeur calculée `jsVar` d'un attribut à la balise d'un composant `mjs-…` (`_mjs_node`) : toujours sa prop (`_set`, ou le
- * registre d'attente avant sa mise à niveau, cf. µ._mjs_pend) ; `data-*` et `aria-*` se posent en plus sur la balise, un attribut global
+/** Le code qui livre la valeur calculée `jsVar` d'un attribut à la balise d'un composant `mjs-…` (`_mjs_node`) : toujours sa prop (µ._mjs_prop,
+ * qui ne l'écrit que quand le parent en change la valeur, ou le registre d'attente avant sa mise à niveau, cf. µ._mjs_pend) ; `data-*` et `aria-*` se posent en plus sur la balise, un attribut global
  * (COMPONENT_GLOBAL_ATTR) aussi, sauf quand le composant déclare lui-même une prop de ce nom (`_mjs_var_bits`) : il la garde pour lui, sans
  * attribut (`<@@chart hidden={['a']}>` ne cache pas le graphique). Le nom se compare sans la casse, comme un attribut HTML : `tabIndex={…}`
  * va à une prop `$tabindex`, `tabindex={…}` à une prop `$tabIndex`, qui reçoit alors la valeur sous son nom. Une balise pas encore mise à
@@ -432,15 +432,15 @@ const COMPONENT_GLOBAL_ATTR = /^(?:id|class|title|role|hidden|tabindex|lang|dir|
  * valeur calculée une fois et notée avant de partir ; `null` en production, où rien n'est noté. `toggles` : les jetons des bascules `@class{…}`
  * de la balise, que la première écriture de sa classe garde (cf. writeEnd) */
 function componentLogic(attrName: string, prop: string, pendProp: string, jsVar: string, received: string | null, toggles = ''): string {
-  if (COMPONENT_DOM_ATTR.test(attrName)) return `const __mjsV = ${jsVar}; if (_mjs_node._set) { _mjs_node._set('${attrName}', __mjsV); } else { µ._mjs_pend(_mjs_node, '${attrName}', __mjsV); } µ._mjs_updAttrNode(_mjs_node, '${attrName}', __mjsV${safeAttrFlag(attrName)});`
+  if (COMPONENT_DOM_ATTR.test(attrName)) return `const __mjsV = ${jsVar}; if (_mjs_node._set) { µ._mjs_prop(_mjs_node, '${attrName}', __mjsV); } else { µ._mjs_pend(_mjs_node, '${attrName}', __mjsV); } µ._mjs_updAttrNode(_mjs_node, '${attrName}', __mjsV${safeAttrFlag(attrName)});`
   const note = received === null ? '' : `µ._mjs_oneWay?.(_mjs_node, '${prop}', this, __mjsV${received}); `
   if (!COMPONENT_GLOBAL_ATTR.test(attrName)) {
-    if (received === null) return `if (_mjs_node._set) { _mjs_node._set('${prop}', ${jsVar}); } else { µ._mjs_pend(_mjs_node, ${pendProp}, ${jsVar}); }`
-    return `const __mjsV = ${jsVar}; ${note}if (_mjs_node._set) { _mjs_node._set('${prop}', __mjsV); } else { µ._mjs_pend(_mjs_node, ${pendProp}, __mjsV); }`
+    if (received === null) return `if (_mjs_node._set) { µ._mjs_prop(_mjs_node, '${prop}', ${jsVar}); } else { µ._mjs_pend(_mjs_node, ${pendProp}, ${jsVar}); }`
+    return `const __mjsV = ${jsVar}; ${note}if (_mjs_node._set) { µ._mjs_prop(_mjs_node, '${prop}', __mjsV); } else { µ._mjs_pend(_mjs_node, ${pendProp}, __mjsV); }`
   }
   const name = attrName.toLowerCase()
   const end  = writeEnd({ name: name, toggles: name === 'class' ? toggles : '' })
-  return `const __mjsV = ${jsVar}; ${note}if (_mjs_node._set) { _mjs_node._set('${prop}', __mjsV); } else { µ._mjs_pend(_mjs_node, ${pendProp}, __mjsV); } µ._mjs_attrGlob(_mjs_node, '${name}', __mjsV, '${prop}'${end});`
+  return `const __mjsV = ${jsVar}; ${note}if (_mjs_node._set) { µ._mjs_prop(_mjs_node, '${prop}', __mjsV); } else { µ._mjs_pend(_mjs_node, ${pendProp}, __mjsV); } µ._mjs_attrGlob(_mjs_node, '${name}', __mjsV, '${prop}'${end});`
 }
 
 function propName(name: string): string {

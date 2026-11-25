@@ -12,7 +12,7 @@
 
 import { FaultFix } from '../fault-fix.js'
 import { readImportDirectives, importActiveView, DIRECTIVE_LINE_RE } from '../transpiler/directives.js'
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, existsSync, unlinkSync, realpathSync, copyFileSync, rmSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, existsSync, unlinkSync, realpathSync, copyFileSync, rmSync, utimesSync } from 'node:fs'
 import type { Dirent } from 'node:fs'
 import { resolve, basename, extname, dirname, relative, isAbsolute, join, sep, posix } from 'node:path'
 import { createHash } from 'node:crypto'
@@ -32,7 +32,7 @@ import { tagsOf, readComponent, nameOf } from '../transpiler/template-tree.js'
 import { scanEffectImages, imageCall, type EffectImage } from '../transpiler/effect-images.js'
 import { getAdapter } from '../languages/index.js'
 import { ParamReadOtherwiseError } from '../languages/civet-params.js'
-import { minifyJs, stripMsgFallbacks, collectInstanceNames, reserveMangleNames, reserveDataMarkers, CORE_HELPER_NAMES, CORE_API_NAMES, PLATFORM_NAMES, TRACE_READ_MESSAGES, levelCutsTraces, runtimeCallsCut, messagesWithoutTraces, messagesWithoutDevBlocks, traceMessages, traceKeysIn } from './minify.js'
+import { esbuiltText, minifyJs, stripMsgFallbacks, collectInstanceNames, reserveMangleNames, reserveDataMarkers, CORE_HELPER_NAMES, CORE_API_NAMES, PLATFORM_NAMES, TRACE_READ_MESSAGES, levelCutsTraces, runtimeCallsCut, messagesWithoutTraces, messagesWithoutDevBlocks, traceMessages, traceKeysIn } from './minify.js'
 import { readImageSize, generateVariants, animatedKind, sharpVersions, imageIndexKey, readIndexedVariants, parseImageIndex, isImageIndex, serializeImageIndex, type GeneratedVariant, type IndexedVariant, type VariantRequest } from './image.js'
 import { shiftGeneratedPosition, chainOverMap } from '../transpiler/source-map-chain.js'
 import { oneByteSource } from './one-byte.js'
@@ -619,11 +619,12 @@ type TranspileDataLike = {
   /** EMPREINTE (SHA-256, 16 hex) de TOUT le TranspileData privé de baseCss,
    * calculée DANS LE WORKER (cf. worker.ts) : préserve l'optimisation (les gros
    * champs — surgicalHtml, createFnBody… — ne repassent jamais au master)
-   * tout en permettant le test « hors-baseCss strictement identique ». */
-  restHash: string
+   * tout en permettant le test « hors-baseCss strictement identique ». En mode
+   * veille seulement (cf. TranspileMsg.watchHashes) : absente d'une construction, que rien ne compare. */
+  restHash?: string
   /** tailles du texte rendues adaptables (cf. TranspileData.fontSizes), hors de restHash comme baseCss */
   fontSizes?: string[]
-  /** empreinte de la nature du composant (crochets de vie, règles des variables, slots…), cf. hotNatureHash (transpile-msg.ts) */
+  /** empreinte de la nature du composant (crochets de vie, règles des variables, slots…), cf. hotNatureHash (transpile-msg.ts) ; en mode veille seulement */
   hotHash?: string
   /** ce que le script fait hors de ses fonctions et ses valeurs de départ, développement seulement (cf. hotScriptFacts, transpile-msg.ts) */
   hotScript?: { pure: boolean, inits: Record<string, string>, reason?: string }
@@ -1082,6 +1083,10 @@ const mangledProps = (code: string): string[] => [...new Set(code.match(/_mjs_[\
 // empreinte du cache des noms courts, indépendante de l'ordre de ses clés
 const mangleDigest = (cache: Record<string, string | false>): string => createHash('sha256').update(JSON.stringify(Object.keys(cache).sort().map(k => [k, cache[k]]))).digest('hex')
 
+// empreinte courte d'un fichier que le cache sur disque reprend sans le relire : module côté serveur d'une classe globale, carte d'une
+// unité (cf. CacheEntry.nodeClass, CacheEntry.mapDigest)
+const contentDigest = (data: string | Buffer): string => createHash('sha256').update(data).digest('hex').slice(0, 16)
+
 // registre des sorties de la construction servie contre celui de la construction complète faite à part : sur place, il cite encore
 // ce que la purge va retirer (le fichier d'un composant retiré des sources, un ancien fragment de traduction) ; il est juste s'il cite
 // tout ce que cite la construction complète, et en plus seulement ce que citait le registre d'avant (cf. verifyDiskCache)
@@ -1224,10 +1229,11 @@ export interface CacheEntry {
    * `this.pendingComponentDeps` sur un cache-hit, un composant inchangé disparaît de
    * la table de préchargement au rebuild incrémental (writeManifest, µ_DEPS). */
   componentDeps?: string[]
-  /** chemins RÉELS embarqués par CE fichier à sa dernière émission (cœur + feuilles
-   * split et fichiers d'effets qu'il cite, triés) : un cache-hit n'est valide EN PHASE C que si
-   * chacun de ces chemins est encore embarquable ce tour-ci et que le cœur courant y figure (sinon
-   * périmé, recompilé au chemin froid, cf. emitPendingUnits()).
+  /** chemins RÉELS embarqués par CE fichier à sa dernière émission (cœur, feuilles split et
+   * fichiers d'effets qu'il cite, unités qu'il importe, triés) : un cache-hit n'est valide EN PHASE C
+   * que si chacun de ces chemins est encore embarquable ce tour-ci ou est l'adresse d'une unité
+   * elle-même reprise, et que le cœur courant y figure (sinon périmé, recompilé au chemin froid, cf.
+   * emitPendingUnits()) : son empreinte ne suit que les sources de ses dépendances, pas leur adresse.
    * Remplace le sel de hash (cssSalt/coreHashedPath dans le hash lui-même, retiré). */
   embeds?: string[]
   /** signaux compilés (scanCompiledFeatures) de CE fichier, hydratés dans
@@ -1256,6 +1262,12 @@ export interface CacheEntry {
    * courante — sinon une correspondance qu'il utilise a été retirée entre-temps, il est
    * recompilé au chemin froid comme une entrée périmée. */
   mangleGen?: number
+  /** classe globale SEULEMENT : empreinte du contenu de son module côté serveur (`node/<Classe>.js`) à sa dernière compilation ; le
+   * cache sur disque le garde sous `files/` à un nom qui la porte (cf. keptNodeClassName), d'où une reprise le remet en place */
+  nodeClass?: string
+  /** cache sur disque : empreinte du contenu de la carte (`.map`) de CE fichier, gardée sous `files/` ; la carte porte le nom de son
+   * .js, pas de son contenu : une reprise compare la carte en place à cette empreinte, sans relire `files/` (cf. restoreWanted) */
+  mapDigest?: string
 }
 
 // Fin (exclue) de la parenthèse/du crochet/de l'accolade ouvert en `s[openIdx]` — profondeur
@@ -2828,6 +2840,9 @@ export class Bundler {
   /** production : la suite des minifications lue au cache (celle de la construction qui l'a écrit) et celle de ce tour */
   private diskTrail   = new Map<string, MangleStep>()
   private mangleTrail = new Map<string, MangleStep>()
+  /** fichier de la clé du cache sur disque tel qu'il a été lu ou écrit en dernier (nom et texte) : réécrit seulement s'il change (cf.
+   * saveDiskCache) */
+  private diskCacheRead: { key: string, text: string } | null = null
   /** `.mangle-cache.json` du dossier de sortie au départ de la construction, null s'il n'y en avait pas (cf. verifyDiskCache) */
   private diskMangleStart: Buffer | null = null
   /** registre `.mjs-outputs.json` au départ de la construction, null s'il n'y en avait pas (cf. verifyDiskCache) */
@@ -3429,6 +3444,7 @@ export class Bundler {
       // (temp + rename). `writeFileAtomic` ne convient PAS ici (il skippe si la
       // cible existe — or le cache CHANGE à chaque build) : writeFileAtomicAlways.
       outputs.writeFileAtomicAlways(this.mangleCachePath, JSON.stringify(sorted, null, 2))
+      outputs.DeliveredFiles.note(this.outputDir, this.mangleCachePath)
     } catch {
       // Échec d'écriture (disque plein, permissions) → silencieux. Le build
       // a réussi, on perd juste la stabilité pour le prochain run.
@@ -3452,13 +3468,18 @@ export class Bundler {
     // depuis ses sources (`src/bundler/`), tout `src/` ; publié, `dist/`, le cœur et les modules cœur restant sous `src/`
     const code   = basename(here) === 'bundler' ? dirname(here) : here
     const config = join(this.projectDir, 'mjs.config.json')
-    // en production, la clé ne suit pas `.mangle-cache.json` : chaque fichier repris y est vérifié à sa place (cf. flushPendingMinifyTasks)
-    const names  = !this.isProd() && Bundler.minifies(this.minifyMode, this.envMode) && existsSync(this.mangleCachePath) ? sha(readFileSync(this.mangleCachePath)) : ''
+    const names  = this.diskCacheKeyFollowsNames() && existsSync(this.mangleCachePath) ? sha(readFileSync(this.mangleCachePath)) : ''
     return {
       config:    existsSync(config) ? sha(readFileSync(config)) : '',
       framework: frameworkPrint([code, this.runtimeDir, this.coreModulesDir, this.hologramImagesDir]),
       settings:  sha(JSON.stringify({ options: this.diskCacheOptions, server: this.rendersOnServer(), env: this.envMode, minify: this.minifyMode, js: this.jsMode, css: this.cssMode, url: this.urlPrefix, src: this.sourceDir, map: this.shouldEmitSourceMap(), colors: this.colorsEnabled, names })),
     }
+  }
+
+  // la clé du cache sur disque suit `.mangle-cache.json` quand il sert, hors production ; en production, non : chaque fichier repris y
+  // est vérifié à sa place (cf. flushPendingMinifyTasks)
+  private diskCacheKeyFollowsNames(): boolean {
+    return !this.isProd() && this.shouldMinify()
   }
 
   private diskCacheKey(parts: DiskCacheParts): string {
@@ -3468,6 +3489,20 @@ export class Bundler {
   // état d'une dépendance que les empreintes de contenu ne suivent pas toutes : le contenu d'un fichier (celui d'un motif de µasset n'entre
   // pas dans l'empreinte de l'unité qui l'écrit), la liste d'un dossier (motif de µasset), et lesquels de ses jumeaux existent sous les
   // dossiers d'images (cf. assetTwins) — la surveillance de `mjs dev` les suit par ses événements
+  private depStatesRead = new Map<string, string>()
+
+  // état d'une dépendance tel que la construction l'a trouvé : au chargement du cache, puis à l'inscription d'un parent (cf.
+  // updatePartialDependents, notePatternDeps), et c'est lui que le cache écrit (cf. saveDiskCache) — une dépendance éditée pendant la
+  // construction, après sa lecture, garde l'état lu, et la construction suivante voit qu'elle a changé et recompile ses dépendants
+  private depStateRead(dep: string): string {
+    let state = this.depStatesRead.get(dep)
+    if (state === undefined) {
+      state = this.depState(dep)
+      this.depStatesRead.set(dep, state)
+    }
+    return state
+  }
+
   private depState(dep: string): string {
     const hash = createHash('sha256')
     for (const twin of this.assetTwins(dep)) hash.update(existsSync(twin) ? '1' : '0')
@@ -3506,11 +3541,53 @@ export class Bundler {
       const target = join(this.outputDir, name)
       const kept   = join(this.diskCacheDir, 'files', name)
       if (!name.endsWith('.map')) this.emittedThisCompile.add(name)
-      // la carte porte le nom de son .js, pas de son contenu : la copie gardée remplace un fichier du dossier de sortie qui en diffère
-      if (!existsSync(kept) || (existsSync(target) && readFileSync(target).equals(readFileSync(kept)))) continue
+      // repris du cache : livré, déjà en place ou recopié (cf. DeliveredFiles)
+      outputs.DeliveredFiles.note(this.outputDir, target)
+      if (!this.restoreWanted(name, target, kept, entry)) continue
       mkdirSync(dirname(target), { recursive: true })
       copyFileSync(kept, target)
     }
+    // classe : son module côté serveur (nom fixe) remis depuis la copie gardée quand il manque ou que son contenu n'a pas l'empreinte
+    // de l'entrée (construit ailleurs, d'une autre version de la classe)
+    if (entry.nodeClass === undefined || !isClassFile(file)) return
+    const target = this.nodeClassPath(file)
+    const kept   = join(this.diskCacheDir, 'files', this.keptNodeClassName(file, entry.nodeClass))
+    outputs.DeliveredFiles.note(this.outputDir, target)
+    if (!existsSync(kept) || (existsSync(target) && contentDigest(readFileSync(target)) === entry.nodeClass)) return
+    mkdirSync(dirname(target), { recursive: true })
+    copyFileSync(kept, target)
+  }
+
+  // fichier gardé sous `files/` à recopier dans le dossier de sortie : absent de celui-ci, ou d'une autre taille. Un nom qui porte
+  // l'empreinte de son contenu n'est jamais relu : un fichier abîmé à la main sous le même nom et de même taille reste en place
+  // (`--cache=verify` le voit). La carte porte le nom de son .js, pas de son contenu : à même taille, la carte en place se compare à
+  // l'empreinte gardée dans l'entrée (cf. CacheEntry.mapDigest), sans relire `files/` ; une entrée sans empreinte compare les deux. Ni
+  // copie gardée ni fichier en place (élagué par une autre construction après la confirmation) : une erreur, jamais une sortie qui
+  // cite un fichier absent
+  private restoreWanted(name: string, target: string, kept: string, entry: CacheEntry): boolean {
+    const keptSize = statSync(kept, { throwIfNoEntry: false })?.size
+    const size     = statSync(target, { throwIfNoEntry: false })?.size
+    if (keptSize === undefined && size === undefined) throw new Error(t('bundler.index.cache-file-vanished', { file: name }))
+    if (keptSize === undefined) return false
+    if (size !== keptSize) return true
+    if (!name.endsWith('.map')) return false
+    if (entry.mapDigest === undefined) return !readFileSync(target).equals(readFileSync(kept))
+    return contentDigest(readFileSync(target)) !== entry.mapDigest
+  }
+
+  // classe : son module côté serveur gardé sous `files/` au nom de son empreinte, copié du dossier de sortie s'il n'y est pas encore et
+  // que le fichier en place porte bien cette empreinte ; rend son nom gardé, ou null (l'entrée n'est alors pas gardée)
+  private keepNodeClass(file: string, entry: CacheEntry, filesDir: string): string | null {
+    if (entry.nodeClass === undefined) return null
+    const name = this.keptNodeClassName(file, entry.nodeClass)
+    const kept = join(filesDir, name)
+    if (existsSync(kept)) return name
+    const output = this.nodeClassPath(file)
+    const data   = existsSync(output) ? readFileSync(output) : null
+    if (data === null || contentDigest(data) !== entry.nodeClass) return null
+    mkdirSync(dirname(kept), { recursive: true })
+    outputs.writeFileAtomicAlways(kept, data)
+    return name
   }
 
   // repris une fois par instance, sous la même clé seulement : jamais sans dossier node_modules au projet (rien n'est créé), ni après un
@@ -3532,8 +3609,10 @@ export class Bundler {
       return
     }
     try {
-      const saved: DiskCacheFile = decodeDiskCache(readFileSync(path, 'utf-8'))
+      const text = readFileSync(path, 'utf-8')
+      const saved: DiskCacheFile = decodeDiskCache(text)
       if (saved.version !== DISK_CACHE_VERSION) throw new Error(`version ${saved.version}`)
+      this.diskCacheRead = { key: basename(path), text }
       this.diskTrail = new Map(saved.trail ?? [])
       for (const [file, entry] of saved.entries) {
         // toujours un hit d'un tour antérieur (cf. cacheHitsThisCompile) ; noms courts réalignés sur la génération de ce processus
@@ -3549,7 +3628,7 @@ export class Bundler {
       }
       // signature des classes globales d'alors : une classe changée depuis vide le cache (cf. compileClassFiles)
       this.classesSig = saved.classesSig
-      const stale = saved.dependents.filter(([dep, state]) => this.depState(dep) !== state).map(([dep]) => dep)
+      const stale = saved.dependents.filter(([dep, state]) => this.depStateRead(dep) !== state).map(([dep]) => dep)
       const seen  = new Set<string>()
       while (stale.length > 0) {
         for (const parent of this.partialDependents.get(stale.pop()!) ?? []) {
@@ -3567,6 +3646,7 @@ export class Bundler {
       this.partialDependents = new Map()
       this.classesSig        = ''
       this.diskTrail         = new Map()
+      this.diskCacheRead     = null
       this.diskCacheSkip     = 'unreadable'
     }
   }
@@ -3584,8 +3664,10 @@ export class Bundler {
     }
   }
 
-  // écrit après un tour sans erreur : les entrées dont chaque fichier est gardé sous `files/`, puis le fichier de la clé et la trace du
-  // dernier passage (raison d'un cache écarté), chacun par un fichier temporaire renommé
+  // écrit à la fin de chaque tour, en échec compris (cf. compile(), qui dit quand il ne l'est pas) : les entrées dont chaque fichier est
+  // gardé sous `files/`, puis le fichier de la clé et la trace du dernier passage (raison d'un cache écarté), chacun par un fichier
+  // temporaire renommé. Le fichier de la clé n'est réécrit que si son texte change depuis sa lecture ; sinon seule sa date avance, que
+  // l'élagage lit (cf. pruneDiskCache)
   private saveDiskCache(): void {
     try {
       const filesDir = join(this.diskCacheDir, 'files')
@@ -3603,25 +3685,77 @@ export class Bundler {
           if (existsSync(kept) && (entry.gen !== this.compileGeneration || !existsSync(output))) continue
           if (!existsSync(output)) { complete = false; continue }
           mkdirSync(dirname(kept), { recursive: true })
-          outputs.writeFileAtomicAlways(kept, readFileSync(output))
+          const data = readFileSync(output)
+          // la carte suit le nom de son .js : son empreinte, gardée dans l'entrée, la compare à une reprise (cf. restoreWanted)
+          if (name.endsWith('.map')) entry.mapDigest = contentDigest(data)
+          outputs.writeFileAtomicAlways(kept, data)
         }
         if (!complete) continue
-        entries.push([file, entry])
+        // classe : sans son module côté serveur gardé, l'entrée ne l'est pas (cf. keepNodeClass)
+        const nodeKept = isClassFile(file) ? this.keepNodeClass(file, entry, filesDir) : null
+        if (isClassFile(file) && nodeKept === null) continue
+        // le tour d'une entrée n'est pas gardé : à la lecture, toute entrée est un hit d'un tour antérieur (cf. loadDiskCache) ; une
+        // entrée compilée ce tour-ci s'écrit comme la même reprise au tour suivant
+        entries.push([file, entry.gen === -1 ? entry : { ...entry, gen: -1 }])
         for (const name of owned) names.add(name)
+        if (nodeKept !== null) names.add(nodeKept)
       }
       const parts      = this.diskCacheParts()
       const key        = `${this.diskCacheKey(parts)}.json`
-      const dependents = [...this.partialDependents].map(([dep, parents]) => [dep, this.depState(dep), [...parents]])
+      const dependents = [...this.partialDependents].map(([dep, parents]) => [dep, this.depStateRead(dep), [...parents]])
       const kept       = new Set(entries.map(([file]) => file))
       const trail      = [...this.mangleTrail].filter(([file]) => kept.has(file))
       const saved      = { version: DISK_CACHE_VERSION, mangleGen: this.mangleGeneration, classesSig: this.classesSig, entries, published: [...this.publishedAssets], dependents, names: [...names], trail }
-      // écriture d'un fichier du cache sur disque : un temporaire renommé, jamais un fichier à moitié écrit sous son vrai nom
-      outputs.writeFileAtomicAlways(join(this.diskCacheDir, key), encodeDiskCache(saved))
+      const text       = encodeDiskCache(saved)
+      const path       = join(this.diskCacheDir, key)
+      // texte identique à celui lu (ou écrit) sous cette clé : seule la date du fichier avance, l'élagage garde les clés servies le plus
+      // récemment ; sinon un temporaire renommé, jamais un fichier à moitié écrit sous son vrai nom
+      if (this.diskCacheRead?.key === key && this.diskCacheRead.text === text && existsSync(path)) {
+        const now = new Date()
+        // date refusée (fichier d'un autre utilisateur) : réécrit comme un fichier changé
+        try { utimesSync(path, now, now) }
+        catch { outputs.writeFileAtomicAlways(path, text) }
+      }
+      else outputs.writeFileAtomicAlways(path, text)
+      this.diskCacheRead = { key, text }
       outputs.writeFileAtomicAlways(join(this.diskCacheDir, this.diskCacheTrace()), JSON.stringify(parts))
       this.pruneDiskCache(key, names)
     }
     catch (e: any) {
       this.buildWarn(t('bundler.index.cache-not-written', { reason: e?.message ?? String(e) }))
+    }
+  }
+
+  // reprise confirmée en phase C sous le cache sur disque : son .js est dans le dossier de sortie ou gardé sous `files/` — une autre
+  // construction lancée en même temps a pu élaguer le cache depuis la phase A ; un autre de ses fichiers disparu à son tour est vu à
+  // la recopie (cf. restoreWanted). Hors cache sur disque, ou en `js: 'bundle'` (son code est dans l'entrée) : rien à relire
+  private keptStillThere(entry: CacheEntry): boolean {
+    if (this.diskCacheDir === '' || entry.code !== undefined) return true
+    const js = basename(entry.hashedPath)
+    return existsSync(join(this.outputDir, js)) || existsSync(join(this.diskCacheDir, 'files', js))
+  }
+
+  // garde de fin de `mjs build` (cf. citedMissing) : des fichiers que la sortie cite manquent. Les entrées de la clé de ce tour dont le
+  // fichier porte l'un de ces noms (le module qui cite, le fichier absent) en sont retirées : la construction suivante les recompile.
+  // Rend vrai si la clé en gardait
+  forgetDiskCacheUnits(names: string[]): boolean {
+    if (this.diskCacheRead === null) return false
+    const path = join(this.diskCacheDir, this.diskCacheRead.key)
+    try {
+      const saved: DiskCacheFile = decodeDiskCache(readFileSync(path, 'utf-8'))
+      const drop  = new Set(names.map(name => basename(name)))
+      const gone  = new Set(saved.entries.filter(([, entry]) => drop.has(basename(entry.hashedPath))).map(([file]) => file))
+      if (gone.size === 0) return false
+      saved.entries = saved.entries.filter(([file]) => !gone.has(file))
+      saved.trail   = (saved.trail ?? []).filter(([file]) => !gone.has(file))
+      const text    = encodeDiskCache(saved)
+      outputs.writeFileAtomicAlways(path, text)
+      this.diskCacheRead = { key: this.diskCacheRead.key, text }
+      return true
+    }
+    catch (e: any) {
+      this.buildWarn(t('bundler.index.cache-not-written', { reason: e?.message ?? String(e) }))
+      return false
     }
   }
 
@@ -3631,8 +3765,8 @@ export class Bundler {
     return this.serverRender ? 'last-render.json' : 'last.json'
   }
 
-  // élagage, après l'écriture d'une clé : restent les DISK_CACHE_KEYS clés servies le plus récemment (le fichier d'une clé est réécrit à
-  // chaque tour sans erreur qui la sert), et `files/` ne garde que les noms qu'elles citent. Une clé illisible, ou sans la liste de ses
+  // élagage, après l'écriture d'une clé : restent les DISK_CACHE_KEYS clés servies le plus récemment (le fichier d'une clé est réécrit, ou
+  // sa date avancée, à chaque tour sans erreur qui la sert), et `files/` ne garde que les noms qu'elles citent. Une clé illisible, ou sans la liste de ses
   // noms, part avec les plus anciennes
   private pruneDiskCache(current: string, names: Set<string>): void {
     const others = readdirSync(this.diskCacheDir).filter(f => DISK_CACHE_KEY.test(f) && f !== current)
@@ -3699,6 +3833,8 @@ export class Bundler {
         mkdirSync(dirname(join(common, rel)), { recursive: true })
         copyFileSync(join(apart, rel), join(common, rel))
       }
+      // le cache des noms courts revient à celui d'avant la construction servie : la construction refaite le réécrit
+      outputs.DeliveredFiles.drop(this.mangleCachePath)
       if (this.diskMangleStart !== null) writeFileSync(this.mangleCachePath, this.diskMangleStart)
       else rmSync(this.mangleCachePath, { force: true })
       const rebuilt = new Bundler({ ...this.diskCacheOpts, cache: false, outputDir: this.outputDir, manifestPath: this.manifestPath, urlPrefix: this.urlPrefix })
@@ -3738,6 +3874,8 @@ export class Bundler {
     // cache sur disque (`cache: true`) : compteurs du tour, puis reprise une fois par instance, avant toute lecture du cache
     this.diskCounts  = { cold: 0, served: 0 }
     this.mangleTrail = new Map()
+    // l'état des dépendances se note à chaque tour (cf. depStateRead)
+    this.depStatesRead = new Map()
     if (this.diskCacheWanted && !this.diskCacheLoaded) this.loadDiskCache()
     this.lintPrintedByTranspiles = 0
     this.derivedClasses = new Map()
@@ -4503,8 +4641,12 @@ export class Bundler {
       errors.push(e)
     }
 
-    // Persiste le mangleCache pour stabilité inter-builds (cache navigateur).
-    this.saveMangleCache()
+    // Persiste le mangleCache pour stabilité inter-builds (cache navigateur). Sous `--cache`, une construction en échec qui ne publie
+    // rien (`keepFailedComponents: false`, celui de `mjs build`) laisse celui d'avant : la construction complète relancée après elle
+    // (repli d'une mise en ligne) part des mêmes noms courts que si l'essai n'avait pas eu lieu, mêmes empreintes. Un tour en échec
+    // qui publie (composant repêché) inscrit les noms de ce qu'il publie, comme sans le cache
+    const failedWithCache = this.diskCacheWanted && errors.length > 0 && !this.keepFailedComponents
+    if (!failedWithCache) this.saveMangleCache()
 
     // la liste des fichiers émis, avec leurs empreintes, écrite à côté
     // d'eux. Elle ne sert à RIEN au framework : elle sert à l'auteur qui veut rendre son
@@ -4524,8 +4666,9 @@ export class Bundler {
     }
     // cache sur disque : écrit à chaque tour, en échec compris — n'y entrent que les unités écrites ce tour, toutes leurs dépendances
     // résolues, et les reprises encore valides (cf. saveDiskCache) —, une fois le cache des noms courts écrit (sa clé le lit) ; puis la
-    // ligne de bilan
-    if (this.diskCacheDir !== '') this.saveDiskCache()
+    // ligne de bilan. Sauf un échec dont la clé suit les noms courts : `.mangle-cache.json` est resté celui d'avant, les unités minifiées
+    // pendant ce tour portent des noms qu'il n'a pas
+    if (this.diskCacheDir !== '' && !(failedWithCache && this.diskCacheKeyFollowsNames())) this.saveDiskCache()
     if (this.diskCacheWanted) this.diskCacheLine = this.diskCacheReport()
 
     // assetDirs : un même nom d'image dans deux dossiers (trié, l'ordre de compilation des composants n'y est pour rien)
@@ -4687,11 +4830,15 @@ export class Bundler {
     type Task = typeof tasks[number]
     const cached = [...this.pendingUnits.values()].filter((u): u is Extract<PendingUnit, { kind: 'cached' }> => u.kind === 'cached')
     const steps: ({ stem: string, task: Task } | { stem: string, unit: Extract<PendingUnit, { kind: 'cached' }> })[] = [...tasks.map(task => ({ stem: task.stem, task })), ...cached.map(unit => ({ stem: unit.stem, unit }))].sort(byStem)
+    // empreinte du cache des noms courts, recalculée seulement quand il a pu changer : après une attente (minification, recompilation :
+    // un autre code a pu l'écrire) ou un rejeu qui y change un nom ; entre deux pas sans attente, rien d'autre ne l'écrit
+    let digest: string | null = null
     for (let i = 0; i < steps.length; i++) {
       const step   = steps[i]
-      const prior  = { ...this.mangleCache }
-      const before = mangleDigest(prior)
+      const before = digest ??= mangleDigest(this.mangleCache)
       if ('task' in step) {
+        const prior = { ...this.mangleCache }
+        digest      = null
         await attempt(step.task.stem, async () => {
           await step.task.run()
           this.noteMangleStep(step.task, prior, before)
@@ -4701,6 +4848,7 @@ export class Bundler {
       const unit = step.unit
       const kept = this.diskTrail.get(unit.file)
       if (kept !== undefined && kept.before === before) {
+        if (Object.entries(kept.delta).some(([prop, short]) => !Object.hasOwn(this.mangleCache, prop) || this.mangleCache[prop] !== short)) digest = null
         Object.assign(this.mangleCache, kept.delta)
         this.mangleTrail.set(unit.file, kept)
         continue
@@ -4709,6 +4857,7 @@ export class Bundler {
         this.mangleTrail.set(unit.file, { before, delta: {}, uses: kept.uses })
         continue
       }
+      digest = null
       await attempt(unit.stem, async () => {
         if (isComponentFile(unit.file)) await this.compileMjsCold(unit.file, unit.stem, undefined, { silent: true })
         else await this.recompileScriptModuleCold(unit.file, unit.stem)
@@ -4879,10 +5028,12 @@ export class Bundler {
   // .coffee, manifeste externe), chacune 'cold' (code prêt, repères non résolus) ou
   // 'cached' (cache-hit CANDIDAT posé en phase A, pas encore confirmé).
   //
-  // 1. Chaque 'cached' est confirmée SI `cached.embeds` (chemins réels embarqués à sa
-  //    dernière émission : cœur + feuilles split déclarées) est ÉGAL à la liste COURANTE
-  //    (`embedsNow`, déjà connue — cœur et feuilles split viennent d'être émis avant
-  //    l'appel) → rien à écrire, chemin final = `cached.hashedPath`. Sinon → PÉRIMÉE :
+  // 1. Chaque 'cached' est confirmée SI chaque chemin de `cached.embeds` (chemins réels
+  //    embarqués à sa dernière émission : cœur, feuilles split, fichiers d'effets, unités
+  //    importées) est dans la liste COURANTE (`embedsNow`, déjà connue — cœur et feuilles
+  //    split viennent d'être émis avant l'appel) ou est l'adresse d'une unité elle-même
+  //    confirmée, de proche en proche, et si ses fichiers sont encore là → rien à écrire,
+  //    chemin final = `cached.hashedPath`. Sinon → PÉRIMÉE :
   //    recompilée ICI par le chemin froid (`compileMjsCold`/`compileScriptModuleCold`,
   //    `silent: true` — ne repousse pas les métadonnées déjà hydratées en phase A),
   //    rejoint le pool 'cold'.
@@ -4904,11 +5055,11 @@ export class Bundler {
       for (const [name, path] of Object.entries(this.splitStyleHashedPaths)) finalPaths.set(this.splitStyleStem(name), path)
       if (this.splitRootHashedPath) finalPaths.set('mjs_style_root', this.splitRootHashedPath)
     }
-    // chemins réels EMBARQUABLES ce tour-ci (cœur, fichiers d'effets, feuilles split), par stem : un cache-hit CANDIDAT reste
-    // valide tant que chaque chemin qu'il embarque (`cached.embeds`) en fait encore partie — une feuille retouchée ou un effet
-    // apparu ne périme que les unités qui les citent, jamais les autres ; le cœur reste dans chaque liste
-    const embeddable = new Map(finalPaths)
-    const embedsNow  = new Set(finalPaths.values())
+    // chemins réels EMBARQUABLES ce tour-ci (cœur, fichiers d'effets, feuilles split) : un cache-hit CANDIDAT reste valide tant que
+    // chaque chemin qu'il embarque (`cached.embeds`) en fait encore partie, ou est celui d'une unité elle-même reprise (cf. plus bas)
+    // — une feuille retouchée ou un effet apparu ne périme que les unités qui les citent, jamais les autres ; le cœur reste dans
+    // chaque liste
+    const embedsNow = new Set(finalPaths.values())
 
     const coldQueue = new Map<string, Extract<PendingUnit, { kind: 'cold' }>>()
     // tri par stem — jamais l'ordre d'insertion (qui suivrait l'ordre d'achèvement
@@ -4918,16 +5069,39 @@ export class Bundler {
     // elle aussi des tâches dans pendingMinifyTasks) parte d'un ordre prévisible.
     const sortedPending = [...this.pendingUnits].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
     const staleStems: string[] = []
+    // reprises retenues : le cœur du tour, les noms courts du tour — une correspondance retirée depuis sa minification (cf.
+    // reserveInstanceNames()) la périme, même si le cœur garde son chemin (propriété absente du cœur, partagée entre unités) — et,
+    // sous le cache sur disque, son .js encore là (cf. keptStillThere)
+    const served = new Map<string, Extract<PendingUnit, { kind: 'cached' }>>()
     for (const [stem, unit] of sortedPending) {
       if (unit.kind === 'cold') { coldQueue.set(stem, unit); continue }
-      const cachedEmbeds = unit.cached.embeds ?? []
-      const same = cachedEmbeds.every(v => embedsNow.has(v)) && (this.coreHashedPath === '' || cachedEmbeds.includes(this.coreHashedPath))
-      // noms courts accordés au cache de CE tour : une correspondance retirée depuis sa
-      // minification (cf. reserveInstanceNames()) le rend périmé, même si le cœur, lui, garde
-      // son chemin (propriété absente du cœur, partagée entre unités)
+      const sameCore  = this.coreHashedPath === '' || (unit.cached.embeds ?? []).includes(this.coreHashedPath)
       const sameNames = unit.cached.mangleGen === this.mangleGeneration
-      if (same && sameNames) {
-        this.restoreOwned(unit.file, unit.cached)
+      if (sameCore && sameNames && this.keptStillThere(unit.cached)) served.set(stem, unit)
+    }
+    // de proche en proche : chaque chemin qu'une reprise embarque est du tour (cœur, effets, feuilles split) ou l'adresse d'une unité
+    // elle-même reprise. Une unité qu'elle importe et qui se recompile ce tour-ci (source changée, noms courts, course avec un autre
+    // écrivain pendant la construction qui l'a gardée) peut changer d'adresse : la reprise citerait un fichier absent, elle est
+    // périmée — son empreinte ne suit que les SOURCES de ses dépendances, pas leur adresse
+    for (let dropped = true; dropped;) {
+      dropped = false
+      const paths = new Set([...served.values()].map(u => u.cached.hashedPath))
+      for (const [stem, unit] of served) {
+        if ((unit.cached.embeds ?? []).every(v => embedsNow.has(v) || paths.has(v))) continue
+        served.delete(stem)
+        dropped = true
+      }
+    }
+    for (const [stem, unit] of sortedPending) {
+      if (unit.kind === 'cold') continue
+      if (served.has(stem)) {
+        try {
+          this.restoreOwned(unit.file, unit.cached)
+        }
+        catch (e: any) {
+          errors.push(e)
+          continue
+        }
         finalPaths.set(stem, unit.cached.hashedPath)
         this.emittedThisCompile.add(basename(unit.cached.hashedPath))
         this.keepCachedAssets(unit.cached)
@@ -4938,8 +5112,9 @@ export class Bundler {
         written++
         continue
       }
-      // PÉRIMÉE (cœur ou feuille split changé depuis sa dernière émission, ou correspondance de
-      // nom court retirée) : recompilée au chemin froid, silent (métadonnées déjà hydratées en
+      // PÉRIMÉE (cœur ou feuille split changé depuis sa dernière émission, correspondance de nom
+      // court retirée, fichier gardé disparu, unité importée qui ne garde pas l'adresse citée) :
+      // recompilée au chemin froid, silent (métadonnées déjà hydratées en
       // phase A) — pousse une minification DIFFÉRÉE (cf. compileMjsCold/compileScriptModuleCold),
       // relue après le flush groupé ci-dessous, jamais avant.
       try {
@@ -4997,7 +5172,8 @@ export class Bundler {
       }
       finalPaths.set(stem, hashedPath)
       if (unit.cacheFields) {
-        const embeds = [...new Set(['mjs_core', ...unit.deps].map(d => embeddable.get(d)).filter((c): c is string => c !== undefined))].sort()
+        // chaque chemin que son code embarque, celui des unités qu'il importe compris (cf. la confirmation des reprises plus haut)
+        const embeds = [...new Set(['mjs_core', ...unit.deps].map(d => finalPaths.get(d)).filter((c): c is string => c !== undefined))].sort()
         this.cache.set(unit.file, { ...unit.cacheFields, hashedPath, embeds, features: unit.features, gen: this.compileGeneration })
       }
       written++
@@ -7425,7 +7601,7 @@ export class Bundler {
       this.bundleVirtualSources.set('mjs_core', this.withInlineSourceMap(minified.code, minified.map))
       return 'mjs:core'
     }
-    const hashed = this.writeHashed('mjs_core', '.js', minified.code, minified.map)
+    const hashed = this.writeHashed('mjs_core', '.js', minified.code, minified.map, esbuiltText(minified))
     return hashed
   }
 
@@ -7528,10 +7704,11 @@ export class Bundler {
   // lieu de deux. S'appelle sur le texte final (repères résolus), AVANT ce qui en dépend : empreinte du nom, écriture, carte de source.
   // En développement, ou en production laissée lisible (`"minify": false`), le texte est rendu tel quel.
   // Une bibliothèque `.js` n'y passe pas : elle est copiée telle quelle, à l'octet près. Les deux manifestes (bundler/manifest.ts) y passent aussi.
-  private oneByte(code: string, map?: string): { code: string, map?: string } {
+  // `readAsModule` : le texte rendu vient d'être lu par acorn en module, avec ce qu'accepte le contrôle ESM (cf. OneByteResult.readAsModule)
+  private oneByte(code: string, map?: string): { code: string, map?: string, readAsModule?: boolean } {
     if (!this.isProd() || !this.shouldMinify()) return { code, map }
     const out = oneByteSource(code, map)
-    return { code: out.code, map: out.map }
+    return { code: out.code, map: out.map, readAsModule: out.readAsModule }
   }
 
   // currentLogLevel()/prodLogLevel() : niveau EFFECTIF de la console (clé `logLevel` de
@@ -8331,6 +8508,8 @@ export class Bundler {
       effectDefsWire: effectDefsToWire(this.effectDefs),
       typesText: !this.isProd() || (this.typesReport === undefined ? false : 'names'),
       devWarnings: !this.isProd(),
+      // empreintes que seul le mode veille compare d'un tour à l'autre (cf. watch(), dataEqualExceptBaseCss) : hors veille, l'ouvrier ne les calcule pas
+      watchHashes: this.cssOnlyTracking,
       serverRendered: this.rendersOnServer(),
       skeleton: this.effectsConf?.skeleton,
       guard: this.effectsConf?.guard,
@@ -8952,6 +9131,7 @@ export class Bundler {
     for (const set of this.partialDependents.values()) set.delete(parent)
     // Ajoute `parent` aux entrées des partials actuellement inclus.
     for (const partial of partials) {
+      if (this.diskCacheDir !== '') this.depStateRead(partial)
       let set = this.partialDependents.get(partial)
       if (!set) { set = new Set(); this.partialDependents.set(partial, set) }
       set.add(parent)
@@ -9105,8 +9285,8 @@ export class Bundler {
     const importedModules = this.importedModulesOf(src, true, moduleLang(ext))
     if (cached) {
       const expectedHash = this.hashWithDeps(src, [...(cached.importedModules ?? []), ...(cached.typesDeps ?? [])])
-      // classe reprise du cache sur disque (gen -1) : son module côté serveur (`node/<Classe>.js`, nom fixe) peut venir d'une autre version, elle se recompile
-      if (cached.hash === expectedHash && this.cachedUnitStillOnDisk(filePath, cached) && (!isClassFile(filePath) || (existsSync(this.nodeClassPath(filePath)) && cached.gen !== -1))) {
+      // classe : son module côté serveur (`node/<Classe>.js`, nom fixe) doit pouvoir être servi (cf. nodeClassServable)
+      if (cached.hash === expectedHash && this.cachedUnitStillOnDisk(filePath, cached) && (!isClassFile(filePath) || this.nodeClassServable(filePath, cached))) {
         // Cache hit CANDIDAT : réinjecte les animations détectées pour ce module — même
         // hygiène que _compileMjsInner (cf. son commentaire ci-dessus) : sinon
         // un module autonome inchangé disparaît du Set partagé `usedAnimations`
@@ -9278,9 +9458,12 @@ export class Bundler {
     // autonome aussi désormais (racines `µ.store` seules : pas d'état de composant ici)
     if (!library) js = applyPathTrackingMapped(js, { storeOnly: true }).code
     // classe globale : sa sortie pour Node, sans le cœur (cf. nodeClassSource)
-    if (isClassFile(filePath)) {
+    // l'empreinte de son contenu : le cache sur disque la garde et le reprend (cf. CacheEntry.nodeClass)
+    const nodeClass = isClassFile(filePath) ? nodeClassSource(js, this.classes) : null
+    if (nodeClass !== null) {
       mkdirSync(join(this.outputDir, 'node'), { recursive: true })
-      writeFileSync(this.nodeClassPath(filePath), nodeClassSource(js, this.classes))
+      writeFileSync(this.nodeClassPath(filePath), nodeClass)
+      outputs.DeliveredFiles.note(this.outputDir, this.nodeClassPath(filePath))
     }
     // module (fichier .civet ou .coffee, fichier d'un magasin compris ; le `<script module>` d'un composant de même, transpiler/index.ts) : ses reffets de premier niveau lui appartiennent — ils naissent
     // pendant que le fichier s'exécute, entre ces deux appels (mjs_effect.ts), vivent avec la page, et les clés `$$x` qu'ils lisent sont relevées
@@ -9409,6 +9592,7 @@ export class Bundler {
             reservedNames,
             coreCalls,
             mangleGen: this.mangleGeneration,
+            ...(nodeClass === null ? {} : { nodeClass: contentDigest(nodeClass) }),
           },
         })
       },
@@ -9498,6 +9682,20 @@ export class Bundler {
 
   private nodeClassPath(file: string): string {
     return join(this.outputDir, 'node', `${classNameOf(file)}.js`)
+  }
+
+  // module côté serveur d'une classe gardé sous `files/` du cache sur disque : son nom porte l'empreinte de son contenu (le nom de sa
+  // sortie est fixe, et `files/` sert toutes les clés gardées)
+  private keptNodeClassName(file: string, digest: string): string {
+    return `node/${classNameOf(file)}.${digest}.js`
+  }
+
+  // classe reprise : son module côté serveur est dans le dossier de sortie (reprise dans ce processus), ou, reprise du cache sur disque
+  // (gen -1), gardé sous `files/` à l'empreinte de sa dernière compilation, que restoreOwned remet en place — le fichier en place peut
+  // venir d'une autre version de la classe (construite ailleurs) ; une entrée sans empreinte se recompile
+  private nodeClassServable(file: string, cached: CacheEntry): boolean {
+    if (cached.gen !== -1) return existsSync(this.nodeClassPath(file))
+    return cached.nodeClass !== undefined && this.diskCacheDir !== '' && existsSync(join(this.diskCacheDir, 'files', this.keptNodeClassName(file, cached.nodeClass)))
   }
 
   // withClassImports() : la source d'un composant suivie des imports de classes que le transpileur lui posera (cf. classesCitedBy) —
@@ -9790,7 +9988,7 @@ export class Bundler {
     if (missing.length > 0) throw new Error(t('bundler.index.runtime-not-found', { missing: missing.length, total: keys.length, dir: this.runtimeDir, list: missing.map(k => 'mjs_' + k + '.ts').join(', ') }))
     // réglages qui changent le fichier produit : avec le texte de l'effet et l'état du cache de noms courts, la clé du mémo
     const settings = JSON.stringify([this.isProd(), this.shouldMinify(), this.shouldEmitSourceMap(), this.prodLogLevel(), this.journalInCore, [...this.fxToolsEmbarked ?? []].sort()])
-    const memos    = new Map<string, { src: string, entry: string, settings: string, names: string, code: string, map?: string }>()
+    const memos    = new Map<string, { src: string, entry: string, settings: string, names: string, code: string, map?: string, esbuilt?: string }>()
     for (const k of keys) {
       const src    = this.effectSource('mjs_' + k + '.ts', readFileSync(join(this.runtimeDir, 'mjs_' + k + '.ts'), 'utf-8'), used)
       // le texte remis au minifieur, import du cœur compris : un cœur qui change d'empreinte change la clé, jamais un fichier
@@ -9813,17 +10011,17 @@ export class Bundler {
           journal: this.journalInCore,
         })
         // clé prise sur le cache APRÈS minification : c'est l'état que le tour suivant retrouve quand rien n'a bougé
-        memo = { src, entry, settings, names: this.shouldMinify() ? JSON.stringify(this.mangleCache) : '', code: minified.code, map: minified.map }
+        memo = { src, entry, settings, names: this.shouldMinify() ? JSON.stringify(this.mangleCache) : '', code: minified.code, map: minified.map, esbuilt: esbuiltText(minified) }
       }
       memos.set(k, memo)
-      this.fxChunkPaths.set('mjs_' + k, this.writeHashed('mjs_' + k, '.js', memo.code, memo.map))
+      this.fxChunkPaths.set('mjs_' + k, this.writeHashed('mjs_' + k, '.js', memo.code, memo.map, memo.esbuilt))
     }
     this.fxChunkMemo = memos
     return keys.length
   }
 
   /** mémo de compileFxChunks : par effet, le texte lu, le texte remis au minifieur (import du cœur compris), les réglages, l'état du cache de noms courts et le fichier produit */
-  private fxChunkMemo: Map<string, { src: string, entry: string, settings: string, names: string, code: string, map?: string }> = new Map()
+  private fxChunkMemo: Map<string, { src: string, entry: string, settings: string, names: string, code: string, map?: string, esbuilt?: string }> = new Map()
 
   // --------------------------------------------------------------------------
   // compileMessageFiles() : en production, les messages que le framework écrit dans la console du
@@ -9860,7 +10058,7 @@ export class Bundler {
       runtimeSource: true,
       journal: this.journalInCore,
     })
-    this.msgLoaderName = this.writeHashed('mjs_msg', '.js', minified.code, minified.map).slice(this.urlPrefix.length + 1)
+    this.msgLoaderName = this.writeHashed('mjs_msg', '.js', minified.code, minified.map, esbuiltText(minified)).slice(this.urlPrefix.length + 1)
     return this.msgFileNames.size + 1
   }
 
@@ -9887,7 +10085,7 @@ export class Bundler {
       runtimeSource: true,
       journal: this.journalInCore,
     })
-    this.codeProgramName = this.writeHashed('mjs_code', '.js', minified.code, minified.map).slice(this.urlPrefix.length + 1)
+    this.codeProgramName = this.writeHashed('mjs_code', '.js', minified.code, minified.map, esbuiltText(minified)).slice(this.urlPrefix.length + 1)
     return 1
   }
 
@@ -10018,7 +10216,7 @@ export class Bundler {
       this.bundleVirtualSources.set('mjs_anims', this.withInlineSourceMap(minified.code, minified.map))
       hashedPath = 'mjs:anims'
     } else {
-      hashedPath = this.writeHashed('mjs_anims', '.js', minified.code)
+      hashedPath = this.writeHashed('mjs_anims', '.js', minified.code, undefined, esbuiltText(minified))
     }
     this.manifest['__animations'] = hashedPath
     return { written: emitted, missing }
@@ -10650,7 +10848,11 @@ export class Bundler {
     return filename
   }
 
-  writeHashed(baseName: string, ext: string, content: string, map?: string): string {
+  // `esbuilt` : le texte tel qu'esbuild l'a rendu (cf. esbuiltText, minify.ts) ; écrit à l'identique, il n'est pas relu par le contrôle ESM.
+  // Seulement pour un texte dont l'entrée est sûre (cœur, effets, fichiers que le framework écrit lui-même, assemblage de fichiers déjà
+  // contrôlés) : esbuild laisse passer une expression régulière invalide (`/a{2,1}/`) ou `eval = 1`, que le navigateur refuse. Jamais un
+  // composant ni un module de l'appli : ceux-là sont relus, sauf quand le passage à un octet vient de lire le texte écrit en module
+  writeHashed(baseName: string, ext: string, content: string, map?: string, esbuilt?: string): string {
     // ceinture + bretelles : garde-fou générique, en plus de celui d'emitPendingUnits
     // (qui vérifie AVANT d'appeler writeHashed pour les unités topologiques) — AUCUN appelant
     // de writeHashed() ne doit jamais écrire un repère non résolu sur disque, y compris un
@@ -10659,7 +10861,8 @@ export class Bundler {
       throw new Error(t('bundler.index.marker-not-resolved-write', { file: `${baseName}${ext}` }))
     }
     // texte arrêté d'un fichier JS de production : gardé sur un octet par caractère quand rien n'y change (cf. oneByte), avant l'empreinte de son nom
-    if (ext === '.js') ({ code: content, map } = this.oneByte(content, map))
+    let readAsModule = false
+    if (ext === '.js') ({ code: content, map, readAsModule = false } = this.oneByte(content, map))
     // filet central : enregistre CHAQUE émission de ce compile (le hash
     // dérive du contenu → « hash identique » = contenu identique, jamais un
     // changement). Le verdict css-only compare à `lastWrittenHashes` en fin de
@@ -10669,8 +10872,9 @@ export class Bundler {
       this.cssOnlyWrites.set(`${baseName}${ext}`, h)
     }
     // garde-fou ESM (cf. assertValidEsm) — scope .js uniquement, avant tout
-    // ajout de sourceMappingURL (les deux branches ci-dessous en profitent).
-    if (ext === '.js') this.assertValidEsm(content, `${baseName}${ext}`)
+    // ajout de sourceMappingURL (les deux branches ci-dessous en profitent). Pas relu : le texte d'esbuild écrit tel quel, et le texte
+    // que le passage à un octet vient de lire en module (une analyse au lieu de deux) ; lu en script seulement ou pas lu, il est relu
+    if (ext === '.js' && content !== esbuilt && !readAsModule) this.assertValidEsm(content, `${baseName}${ext}`)
     let finalContent = content
     if (map) {
       // Hash sur le contenu AVANT ajout du sourceMappingURL pour stabilité
@@ -11410,6 +11614,7 @@ export class Bundler {
   // appelée avant) : sous `mjs dev`, un fichier modifié, ajouté ou retiré sous le dossier d'un motif recompile l'unité qui l'écrit
   private notePatternDeps(parent: string, deps: Set<string>): void {
     for (const dep of deps) {
+      if (this.diskCacheDir !== '') this.depStateRead(dep)
       let set = this.partialDependents.get(dep)
       if (!set) {
         set = new Set()
@@ -12145,6 +12350,7 @@ export class Bundler {
 
   private writeFileAtomicAlways(target: string, content: string | Buffer): void {
     outputs.writeFileAtomicAlways(target, content)
+    outputs.DeliveredFiles.note(this.outputDir, target)
   }
 
   // --------------------------------------------------------------------------

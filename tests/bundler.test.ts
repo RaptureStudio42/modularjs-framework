@@ -396,7 +396,7 @@ describe('Bundler — écriture atomique (writeFileAtomic)', function () {
   it('writeHashed() route bien SES écritures via writeFileAtomic (pas de writeFileSync direct qui aurait survécu au refactor)', () => {
     const here = fileURLToPath(new URL('.', import.meta.url))
     const src = readFileSync(join(here, '..', 'src', 'bundler', 'index.ts'), 'utf-8')
-    const m = src.match(/writeHashed\(baseName: string, ext: string, content: string, map\?: string\): string \{[\s\S]*?\n  \}/)
+    const m = src.match(/writeHashed\(baseName: string, ext: string, content: string, map\?: string[^)]*\): string \{[\s\S]*?\n  \}/)
     assert.ok(m, 'writeHashed() introuvable (structure du bundler a changé ?)')
     assert.doesNotMatch(
       m![0], /\bwriteFileSync\(/,

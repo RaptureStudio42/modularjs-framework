@@ -42,8 +42,17 @@ import { dirname, join } from 'node:path'
 import { existsSync, mkdirSync, renameSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
+import module from 'node:module'
 import { build } from 'esbuild'
 import { t } from '../messages/index.js'
+
+// le cache de compilation de Node ouvert par la CLI (cf. cli/compile-cache.ts) : un ouvrier ne l'hérite pas de lui-même, il reçoit le même dossier
+// et relit son code déjà compilé au lieu de le recompiler à chaque démarrage. Rien quand le cache n'est pas ouvert, ni quand
+// NODE_COMPILE_CACHE le règle déjà (l'ouvrier hérite alors de la variable)
+function compileCacheEnv(): { env?: NodeJS.ProcessEnv } {
+  const dir = process.env.NODE_COMPILE_CACHE ? undefined : (module as { getCompileCacheDir?: () => string | undefined }).getCompileCacheDir?.()
+  return dir ? { env: { ...process.env, NODE_COMPILE_CACHE: dir } } : {}
+}
 
 interface WorkerSpec {
   /** Path absolu vers le script du worker (.mjs bootstrap ou .js compilé). */
@@ -160,6 +169,7 @@ export class WorkerPool {
   private spawn(): void {
     const w = new Worker(this.spec.workerPath, {
       workerData: this.spec.workerData,
+      ...compileCacheEnv(),
       // ses deux sorties passent par le pool (cf. forward), jamais par le renvoi automatique de Node : le pool sait ainsi quand tout
       // ce qu'un worker a écrit est passé
       stdout: true,

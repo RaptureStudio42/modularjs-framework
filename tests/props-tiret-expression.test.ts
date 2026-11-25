@@ -72,7 +72,7 @@ describe('props à tiret — le code émis', function () {
 
   it('`search-placeholder={$x}` sur un composant : la prop est posée sous `searchPlaceholder`, en attente comme en direct', async () => {
     const out = await emis('<@carte search-placeholder={$x}></@carte>')
-    assert.ok(out.includes("_mjs_node._set('searchPlaceholder', $.x)"), 'pose directe sous le nom camelCase')
+    assert.ok(out.includes("µ._mjs_prop(_mjs_node, 'searchPlaceholder', $.x)"), 'pose directe sous le nom camelCase')
     assert.ok(out.includes("? 'search-placeholder' : 'searchPlaceholder', $.x)"), 'registre des props en attente sous le nom camelCase (le nom écrit pour une balise tierce)')
     assert.ok(!out.includes("_set('search-placeholder'"), 'pose directe : plus aucune clé à tiret')
   })
@@ -95,8 +95,8 @@ describe('props à tiret — le code émis', function () {
 
   it('`data-x={$x}`, `aria-label={$x}` sur un composant : prop ET attribut de la balise, sous le nom écrit', async () => {
     const out = await emis('<@carte data-x={$x} aria-label={$x}></@carte>')
-    assert.ok(out.includes("_mjs_node._set('data-x', __mjsV)"))
-    assert.ok(out.includes("_mjs_node._set('aria-label', __mjsV)"))
+    assert.ok(out.includes("µ._mjs_prop(_mjs_node, 'data-x', __mjsV)"))
+    assert.ok(out.includes("µ._mjs_prop(_mjs_node, 'aria-label', __mjsV)"))
     assert.ok(out.includes("µ._mjs_updAttrNode(_mjs_node, 'data-x', __mjsV, 1)"))
   })
 
@@ -106,9 +106,9 @@ describe('props à tiret — le code émis', function () {
     assert.ok(!/myAttr|dataX|ariaLabel/.test(out))
   })
 
-  it('`some-thing={$x}` et `{...$x}` sur une balise `mjs-…` : la clé se choisit à l\'exécution (tierce : brute, du projet : camelCase), `_set` reste camelCase', async () => {
+  it('`some-thing={$x}` et `{...$x}` sur une balise `mjs-…` : la clé se choisit à l\'exécution (tierce : brute, du projet : camelCase), la prop reste camelCase', async () => {
     const expr = await emis('<@carte some-thing={$x}></@carte>')
-    assert.ok(expr.includes("_mjs_node._set('someThing', $.x)"))
+    assert.ok(expr.includes("µ._mjs_prop(_mjs_node, 'someThing', $.x)"))
     assert.ok(expr.includes("µ._mjs_pend(_mjs_node, (µ.paths && !Object.prototype.hasOwnProperty.call(µ.paths, _mjs_node.localName.slice(4))) ? 'some-thing' : 'someThing', $.x)"), 'registre : nom brut pour une balise tierce')
     const etale = await emis('<@carte {...$x}></@carte>')
     assert.ok(etale.includes('µ._mjs_pend(_mjs_node, (µ.paths && !Object.prototype.hasOwnProperty.call(µ.paths, _mjs_node.localName.slice(4))) ? _mjs_k : _mjs_p, _mjs_v)'), 'registre : clé de la donnée pour une balise tierce')
@@ -117,7 +117,7 @@ describe('props à tiret — le code émis', function () {
 
   it('une balise tierce (hors du framework) garde le nom écrit : `<my-widget some-prop={$x}>`', async () => {
     const out = await emis('<my-widget some-prop={$x}></my-widget>')
-    assert.ok(out.includes("_mjs_node._set('some-prop', $.x)"))
+    assert.ok(out.includes("µ._mjs_prop(_mjs_node, 'some-prop', $.x)"))
     assert.ok(!out.includes('someProp'))
   })
 })

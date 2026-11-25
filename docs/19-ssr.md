@@ -407,7 +407,7 @@ Le rendu lui-même ne change pas : il attend toujours ses `{await}` (§5), seule
 
 ### `mjs dev` sert aussi `render.routes`
 
-Pas besoin de basculer sur `mjs serve` pour prévisualiser le rendu en développement : le serveur de `mjs dev` (watch + HMR) applique **aussi** `render.routes` — chaque page déclarée est servie dans son mode réel (`prerender`/`ssr`/`csr`), régénérée à **chaque recompilation** (les pages `prerender` ne restent jamais figées sur une ancienne version pendant que vous développez).
+Pas besoin de basculer sur `mjs serve` pour prévisualiser le rendu en développement : le serveur de `mjs dev` (watch + HMR) applique **aussi** `render.routes` — chaque page déclarée est servie dans son mode réel (`prerender`/`ssr`/`csr`), régénérée à **chaque recompilation** (les pages `prerender` ne restent jamais figées sur une ancienne version pendant que vous développez). Comme au build, ces pages sont rendues sur la compilation que `mjs dev` vient de faire, sans recompiler le projet ; le prérendu ne compile à part que dans les mêmes cas qu'au build (`js: 'bundle'`, ou un dossier de sortie, un manifeste, des sources ou un préfixe public qui ne sont pas ceux de `mjs dev`). Hors `js: 'bundle'`, un fichier enregistré pendant ce rendu est compilé dès que le rendu se termine, et son éventuelle erreur ne s'affiche qu'à ce moment-là : aucune page n'est rendue sur une compilation à moitié écrite. **Limite :** cette attente n'a pas de plafond ; une page lente à se stabiliser retarde d'autant la compilation (son `settleMs` n'a pas de maximum).
 
 ## 8. Le moteur de rendu — `render.engine` et `render.browserPool`
 
@@ -431,6 +431,8 @@ Le rendu HTML tourne sur un **moteur d'exécution**, choisi par `render.engine`,
 | `'browser'` | vrai Chromium headless (Playwright) | maximale (CSS/JS complets, comme un vrai visiteur) | lance/maintient un processus navigateur |
 
 Pendant un rendu `'happy-dom'`, la fenêtre de rendu ne charge **aucune ressource** : ni feuille liée (`<link rel="stylesheet">`), ni script externe (`<script src>`), ni page de cadre (`<iframe src>`) ou de fenêtre ouverte par `window.open`. Aucune requête ne part du serveur ; l'élément reçoit un événement `error`, et le navigateur du visiteur chargera ces ressources au montage.
+
+`structuredClone` existe dans la fenêtre de rendu `'happy-dom'`, comme au navigateur : la copie est faite des objets de la page (`instanceof Array`, `instanceof Map` et `instanceof Date` y valent `true`, un cycle est gardé), une liste `transfer` est respectée, une fonction, un symbole ou un proxy lèvent une `DOMException` nommée `DataCloneError`, et une erreur levée par la page pendant la copie (un accesseur) sort telle quelle. Une balise, un événement, `location`, un `FormData`, un `Blob`, un `File`, un `DOMRect`, une `DOMException`… de la page simulée ne sont ni refusés ni copiés comme au navigateur : la copie est un objet ordinaire (une `Error` pour une `DOMException`), vide ou incomplet ; la fenêtre, un `style`, une `classList` ou une liste de nœuds sont refusés, comme au navigateur. Sous Node 20, quelques refus du navigateur passent aussi : une `URL` est copiée en objet vide, un tampon déjà transféré est accepté dans la liste `transfer`.
 
 **Limite connue :** avec `'happy-dom'`, le moteur par défaut d'une page rendue à la demande, l'initialisation de chaque composant est jouée deux fois : deux composants qui écrivent `$v = inc()` affichent 3 et 4 au lieu de 1 et 2. Le moteur `'browser'` et le navigateur du visiteur ne la jouent qu'une fois.
 

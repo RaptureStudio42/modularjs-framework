@@ -23,7 +23,7 @@ import { createHash } from 'node:crypto'
 import type { MjsConfig } from '../bundler/config.js'
 import { compileCss } from '../transpiler/css.js'
 import { FONT_SIZE_SHEET, fontSizeSettings, rewriteFontSizes, type FontSizeSettings } from '../transpiler/font-size.js'
-import { OUTPUT_MARK, writeFileAtomicAlways } from '../bundler/outputs.js'
+import { DeliveredFiles, OUTPUT_MARK, writeFileAtomicAlways } from '../bundler/outputs.js'
 import { deriveUrlPrefix } from '../bundler/index.js'
 import { t } from '../messages/index.js'
 
@@ -58,6 +58,8 @@ export function writeHashedAsset(outputDir: string, urlPrefix: string, baseName:
   if (!full) {
     writeFileAtomicAlways(target, content)
   }
+  // écrit ou déjà là : livré par le prérendu de `mjs build` (cf. DeliveredFiles)
+  DeliveredFiles.note(outputDir, target)
   return `${urlPrefix}/${filename}`
 }
 
@@ -258,7 +260,9 @@ function removeOldSizes(outputDir: string, guard: string): void {
   for (const name of readdirSync(outputDir)) {
     if (name === guard || !/^mjs_ssr_head-[0-9a-f]{8}\.css$/.test(name)) continue
     try {
-      if (ONLY_SIZES_RE.test(readFileSync(join(outputDir, name), 'utf-8'))) unlinkSync(join(outputDir, name))
+      if (!ONLY_SIZES_RE.test(readFileSync(join(outputDir, name), 'utf-8'))) continue
+      DeliveredFiles.drop(join(outputDir, name))
+      unlinkSync(join(outputDir, name))
     }
     catch {}
   }

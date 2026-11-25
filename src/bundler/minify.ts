@@ -27,6 +27,15 @@ export interface MinifyResult {
   map?: string
 }
 
+// le texte tel qu'esbuild l'a rendu, par résultat de minifyJs : hors du résultat, que le paquet exporte (cf. esbuiltText)
+const esbuiltTexts = new WeakMap<MinifyResult, string>()
+
+/** @internal le texte tel qu'esbuild l'a rendu pour ce résultat de minifyJs (le même que `code`), absent quand rien n'est compacté :
+ *  écrit à l'identique, le contrôle ESM ne le relit pas (cf. Bundler.writeHashed) */
+export function esbuiltText(result: MinifyResult): string | undefined {
+  return esbuiltTexts.get(result)
+}
+
 /** Liste `pure` au niveau `'warn'` : retire les traces (log/info/debug) et `µ.log`, garde avertissements et erreurs. */
 export const LOG_LEVEL_PURE_BASE = ['console.log', 'console.info', 'console.debug', 'µ.log']
 
@@ -1217,9 +1226,11 @@ export async function minifyJs(
       Object.assign(opts.mangleCache!, result.mangleCache)
     }
 
-    return {
+    const out: MinifyResult = {
       code: result.code,
       map: opts.sourceMap ? result.map : undefined,
     }
+    esbuiltTexts.set(out, result.code)
+    return out
   })
 }

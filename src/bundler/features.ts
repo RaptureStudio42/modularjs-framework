@@ -836,7 +836,7 @@ const REGEX_LOOPS = /\._mjs_lq\+\+;\s*try\s*\{/
 // la table de la mise à jour fine posée dans `init`, cherchée sans son receveur
 const REGEX_FINE = /\._mjs_fine = \{/
 // un objet du magasin ou d'un état de module qui peut finir dans une variable `$` (cf. STORE_HELD), cherché sans son objet (`µ`/`mjs`
-// selon la config du projet) : dans l'affectation d'une variable ou d'une prop ; rangé dans un nom, hors des variables de travail
+// selon la config du projet) : dans l'affectation d'une variable ou d'une prop (`_set`, ou `µ._mjs_prop` qui la livre à un enfant) ; rangé dans un nom, hors des variables de travail
 // d'une écriture compilée (`_mjs_ra_0 = µ.store.m` ; `_mjs_n = µ.store.c` d'un `++` / `--`, qui n'y prend que l'ancienne valeur,
 // convertie en nombre) et de la déclaration d'un état de module ; rendu par une fonction, hors de
 // l'affectation qu'elle rend (`return µ_state.l[0].nom = v`) ; par une flèche ; parcouru, étalé ; passé à une fonction de l'appli,
@@ -855,7 +855,7 @@ const LEADING_CALLS       = String.raw`(?:(?!(?:String|Number|Boolean|parseInt|p
 const APP_CALL         = String.raw`(?<![\w$.])(?!_mjs_|µ|mjs\b|(?:if|while|for|switch|return|typeof|void|catch|function|String|Number|Boolean|parseInt|parseFloat|isNaN|isFinite)\b)[A-Za-z_$][\w$]*\(\s*`
 const KEPT_SOURCE      = String.raw`(?<!(?:[-+%<]|[^*/]\/|[^/*]\*|[^=]>|[<>!=]=|typeof|!|\$\{|[\[{]\s*\.\.\.)\s*)(?:µ|mjs)(?:\.store\b(?!\.__mjs(?:Lang|Theme)\b)|_state(?=\.))` + SIMPLE_VALUE
 const REGEX_STORE_HELD = new RegExp([
-  String.raw`\b_set\([^;\n]*?(?:` + KEPT_SOURCE + String.raw`|[(,\s]\$[A-Za-z_])`,
+  String.raw`\b(?:_set|_mjs_prop)\([^;\n]*?(?:` + KEPT_SOURCE + String.raw`|[(,\s]\$[A-Za-z_])`,
   String.raw`(?<![=!<>]|_mjs_ra_\d+ |(?<![\w$])_mjs_n |export var \$[\w$]+ )=\s*` + LEADING_CALLS + KEPT_SOURCE,
   String.raw`\breturn\s+` + LEADING_CALLS + String.raw`(?:` + KEPT_SOURCE + String.raw`|\$[A-Za-z_])(?![^;\n]*?[^=!<>]=(?![=>]))`,
   String.raw`=>\s*\(*\s*` + LEADING_CALLS + KEPT_SOURCE,
@@ -864,16 +864,17 @@ const REGEX_STORE_HELD = new RegExp([
 ].join('|'))
 const REGEX_STORE_ROWS     = new RegExp(String.raw`\._mjs_updFor\('[^']*', ` + LEADING_CALLS + String.raw`(?:(?:µ|mjs)(?:\.store\b|_state\.)|\$[A-Za-z_])`)
 // la ligne d'un `{for}` que son gestionnaire garde (`@click={$sel = r}`, `@click={choisir(r)}`) : le nom de la ligne (`let r =
-// _mjs_ra_0[_mjs_ri_0]`), passé à `_set` ou à une fonction de l'appli
+// _mjs_ra_0[_mjs_ri_0]`), passé à `_set`, livré en prop (`µ._mjs_prop`) ou passé à une fonction de l'appli
 const REGEX_NAMED_ROW   = /\blet ([\w$]+) = _mjs_ra_\d+\[_mjs_ri_\d+\]/g
 function holdsRow(js: string): boolean {
   const names = new Set(Array.from(js.matchAll(REGEX_NAMED_ROW), (m) => m[1].replace(/\$/g, '\\$')))
   for (const name of names) {
-    if (new RegExp(String.raw`(?:\b_set\([^;\n]*?|` + APP_CALL + String.raw`(?:[^()\n]*?,\s*)?)(?<![\w$.])` + name + String.raw`(?![\w$])`).test(js)) return true
+    if (new RegExp(String.raw`(?:\b(?:_set|_mjs_prop)\([^;\n]*?|` + APP_CALL + String.raw`(?:[^()\n]*?,\s*)?)(?<![\w$.])` + name + String.raw`(?![\w$])`).test(js)) return true
   }
   return false
 }
-const REGEX_COMPONENT_PROP = /\._set\('/
+// la prop d'un composant enfant : sa pose directe, ou la livraison par le parent (`µ._mjs_prop(_mjs_node, 'item', …)`, componentLogic)
+const REGEX_COMPONENT_PROP = /\._set\('|\._mjs_prop\([\w$]+, '/
 // la marque des composants d'une ligne peuplée après son insertion, cherchée sans son objet (`µ`/`mjs` selon la config du projet), appel
 // facultatif compris (`?.(`)
 const REGEX_RETAINED_WAKES = /\._mjs_waitRow(?:\?\.)?\(/

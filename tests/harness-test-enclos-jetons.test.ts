@@ -7,8 +7,8 @@
 
 import assert from 'node:assert/strict'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs'
+import { join, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mjsTmp } from './helpers/tmp.js'
 
@@ -63,11 +63,14 @@ async function holdToken(dir: string, n: number, seconds: number): Promise<Child
 function longRun(tmp: string, ms: number) {
   const pid  = join(tmp, 'mocha.pid')
   const end  = join(tmp, 'premier.fin')
+  const run  = join(tmp, 'serie.txt')
   const spec = prepare(tmp, [
     "import { writeFileSync } from 'node:fs'",
+    "import { tmpdir } from 'node:os'",
     "describe('run témoin', function () {",
     "  it('long', async function () {",
     '    this.timeout(0)',
+    `    writeFileSync(${JSON.stringify(run)}, tmpdir())`,
     `    writeFileSync(${JSON.stringify(pid)}, String(process.pid))`,
     `    await new Promise((r) => setTimeout(r, ${ms}))`,
     `    writeFileSync(${JSON.stringify(end)}, String(Date.now()))`,
@@ -81,7 +84,7 @@ function longRun(tmp: string, ms: number) {
     assert.ok(existsSync(pid), 'mocha n\'a jamais démarré')
     return Number(readFileSync(pid, 'utf-8'))
   }
-  return { child, exited, started, end, pid }
+  return { child, exited, started, end, pid, run }
 }
 
 const UNE_SECONDE = "describe('run témoin', function () { it('une seconde', function (done) { setTimeout(done, 1000) }) })"
@@ -139,6 +142,10 @@ describe('harnais — test-enclos.sh : file commune (MJS_TEST_JETONS), MJS_TEST_
     }
     finally {
       try { process.kill(Number(readFileSync(run.pid, 'utf-8')), 'SIGKILL') } catch { /* déjà parti */ }
+      // tué par KILL, le script n'a pas joué son piège EXIT : son dossier de série reste, à même /tmp quand ce TMPDIR imbriqué est trop long
+      // pour la socket de tsx ; ce test le rend
+      const serie = existsSync(run.run) ? readFileSync(run.run, 'utf-8') : ''
+      if(serie && basename(serie).startsWith('tests-')) rmSync(serie, { recursive: true, force: true })
     }
   })
 

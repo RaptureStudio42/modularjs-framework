@@ -2,7 +2,8 @@
 // qui l'écrit ensuite (`$ouvert = false`) la garde quand sa ligne bouge dans un `{for … by id}` retourné, quand sa page revient du
 // cache des pages (`µ.pageCache`, nœuds parqués puis remis) et quand une balise racine à `mjs-props` est déplacée. Défaut garanti
 // absent : l'élément remis dans la page relisait l'attribut à sa reconnexion, la ligne déplacée rouvrait son volet.
-// Formes qui restent comme avant : le parent qui change lui-même la prop (`ouvert={$o}`), un attribut que le parent réécrit
+// Une prop liée (`ouvert={$o}`) que le composant a écrite lui-même est gardée de même quand sa ligne bouge : le parent ne la réécrit que
+// quand il en change la valeur. Formes qui restent comme avant : le parent qui change lui-même la prop, un attribut que le parent réécrit
 // (`setAttribute`), une ligne recréée (et non déplacée), qui repart de la valeur écrite. Chromium et Firefox réels, développement
 // et production (vrai build en un seul fichier, non minifié : le test appelle les noms internes du cache des pages)
 
@@ -98,7 +99,7 @@ async function scene() {
 const ATTENDU = {
   depart:          'oui,oui,oui | oui,oui,oui',
   fermes:          'non,non,non | non,non,non',
-  retournee:       'non,non,non | oui,oui,oui',
+  retournee:       'non,non,non | non,non,non',
   parentEcrit:     'oui,oui,oui',
   attributReecrit: 'oui,non,non',
   recreees:        'oui,oui | oui,oui',

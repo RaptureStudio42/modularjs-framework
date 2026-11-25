@@ -7,8 +7,8 @@ import { findConfig, resolveBundlerOpts } from '../src/bundler/config.js'
 import { mjsTmp, sweepRegistered } from './helpers/tmp.js'
 
 // modèle du pattern mjsTmp : après ce fichier, seuls les
-// FUTURS tests migrent, les 128 autres restent couverts par le balai global
-// tests/helpers/tmp-sweep.ts
+// FUTURS tests migrent, les 128 autres restent couverts par le dossier de la
+// série, retiré à la fin (script/test-enclos.sh, tests/helpers/tmp-sweep.ts)
 after(() => sweepRegistered())
 
 describe('findConfig', () => {

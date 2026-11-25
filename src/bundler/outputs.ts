@@ -4,7 +4,7 @@
 // privé de la classe s'y lit `bundler['nom']`, et tout appel de méthode passe par l'instance, comme avant la découpe
 import { createHash } from 'node:crypto'
 import { existsSync, writeFileSync, renameSync, unlinkSync, readdirSync, readFileSync, mkdirSync, statSync, realpathSync, lstatSync, chmodSync, type Stats } from 'node:fs'
-import { dirname, basename, join, extname } from 'node:path'
+import { dirname, basename, join, extname, resolve } from 'node:path'
 import { t } from '../messages/index.js'
 import { recordedSheets, staleRenderSheets } from '../server/render-outputs.js'
 import { pathInDir, rejectManifestPath } from './config.js'
@@ -164,6 +164,55 @@ function authorFilesError(files: [string, OutputKind][], sources: string, before
   return new Error(t('bundler.index.outputs-files-author', { count: files.length, files: files.map(([f]) => `\n  - ${f}`).join(''), sources, mark: OUTPUT_MARK, key: OUTPUT_MARK_KEY, before: before, reason: reason }))
 }
 
+// --------------------------------------------------------------------------
+// DeliveredFiles — les fichiers que `mjs build` livre : chacun de ceux qu'une écriture faite pour le dossier de sortie de la
+// construction suivie a écrits, gardés tels quels (même contenu déjà là) ou repris du cache, manifeste et voisins compris. La fin de
+// la commande relit chacun par un `stat`, jamais son contenu : un autre programme (balai d'une série de tests, seconde construction,
+// nettoyage) peut effacer la sortie pendant qu'elle tourne, `mkdirSync(…, { recursive: true })` recrée les dossiers sans rien dire, et
+// la construction se disait réussie. Ce que la construction retire elle-même (anciennes empreintes, purge) sort de la liste : jamais
+// un manque. La construction de contrôle de `--cache=verify` et celle du prérendu en `js: 'bundle'` écrivent dans des dossiers à
+// elles, retirés ensuite : jamais notées. Hors `mjs build` (API, `mjs dev`), rien n'est suivi
+// --------------------------------------------------------------------------
+export class DeliveredFiles {
+  private static outputDir: string | null = null
+  private static files                    = new Set<string>()
+
+  // suivre la construction qui écrit dans `outputDir` : la liste repart vide
+  static follow(outputDir: string): void {
+    DeliveredFiles.outputDir = resolve(outputDir)
+    DeliveredFiles.files     = new Set()
+  }
+
+  // `path` livré par une écriture faite pour le dossier de sortie `dir`
+  static note(dir: string, path: string): void {
+    if (DeliveredFiles.outputDir !== null && resolve(dir) === DeliveredFiles.outputDir) DeliveredFiles.files.add(resolve(path))
+  }
+
+  // `path` retiré par la construction elle-même
+  static drop(path: string): void {
+    if (DeliveredFiles.outputDir !== null) DeliveredFiles.files.delete(resolve(path))
+  }
+
+  // les fichiers livrés, triés (cf. citedMissing, la garde de ce qu'ils citent)
+  static list(): string[] {
+    return [...DeliveredFiles.files].sort()
+  }
+
+  // les fichiers livrés qui ne sont plus là, triés : un `stat` chacun ; un dossier à sa place, ou un chemin que le `stat` ne traverse
+  // plus, est un manque
+  static missing(): string[] {
+    const absent = (path: string): boolean => {
+      try {
+        return !statSync(path).isFile()
+      }
+      catch {
+        return true
+      }
+    }
+    return [...DeliveredFiles.files].filter(absent).sort()
+  }
+}
+
 // Écriture NON ATOMIQUE : un
 // `writeFileSync` direct sur le chemin FINAL peut être interrompu à
 // mi-chemin (crash process, OOM-kill, coupure d'alim) — le fichier reste
@@ -187,7 +236,8 @@ export function writeFileAtomic(bundler: Bundler, target: string, content: strin
   if (present) {
     const wanted  = typeof content === 'string' ? Buffer.from(content, 'utf-8') : content
     const current = readFileSync(target)
-    if (current.equals(wanted)) return
+    // déjà là : gardé tel quel, livré comme écrit
+    if (current.equals(wanted)) return DeliveredFiles.note(bundler.outputDir, target)
     const withoutLink = (b: Buffer): string => b.toString('latin1').replace(/\n\/\/# sourceMappingURL=[^\n]*\n$/, '')
     if (withoutLink(current) !== withoutLink(wanted) && !wanted.subarray(0, current.length).equals(current)) {
       // collision vraie : le contenu du disque porte lui aussi l'empreinte de ce nom ; sinon le fichier a été changé après son écriture
@@ -206,6 +256,7 @@ export function writeFileAtomic(bundler: Bundler, target: string, content: strin
     try { unlinkSync(tmp) } catch {}
     throw e
   }
+  DeliveredFiles.note(bundler.outputDir, target)
   // tient la liste mémoïsée de outputDir à jour (cf. son bandeau) : un fichier qui vient
   // d'apparaître doit être visible du PROCHAIN cleanupOldHashes() de CE tour, sans reforcer
   // une lecture disque. `dirname(target) === this.outputDir` : cette méthode sert aussi à
@@ -266,7 +317,8 @@ export function writeDeferredOutput(bundler: Bundler, target: string, content: s
 export function writeIfChanged(bundler: Bundler, target: string, content: string): void {
   if (existsSync(target)) {
     const current = readFileSync(target, 'utf-8')
-    if (current === content) return
+    // déjà là : gardé tel quel, livré comme écrit (une écriture, elle, est notée par Bundler.writeFileAtomicAlways)
+    if (current === content) return DeliveredFiles.note(bundler.outputDir, target)
   }
   bundler['writeFileAtomicAlways'](target, content)
 }
@@ -319,7 +371,10 @@ export function registeredOutputs(bundler: Bundler): Set<string> {
 // (fichiers de page de startup.ts) y entrent — le ménage du build suivant les connaîtra.
 export function flushPendingHashCleanup(bundler: Bundler): void {
   for (const f of bundler['pendingHashCleanup']) {
-    if (bundler['flushWillRemove'](basename(f))) try { unlinkSync(f) } catch {}
+    if (!bundler['flushWillRemove'](basename(f))) continue
+    // retiré par la construction elle-même : jamais un manque (cf. DeliveredFiles)
+    DeliveredFiles.drop(f)
+    try { unlinkSync(f) } catch {}
   }
   bundler['pendingHashCleanup'] = []
   bundler['writeOutputsRegistry']()
@@ -589,6 +644,7 @@ export function pruneI18nFragments(bundler: Bundler, knownExt: Set<string>, purg
         const path = join(bundler.outputDir, 'i18n', lang, name)
         // jamais une traduction de l'auteur (sortie = sources), même nommée par le registre : elle reste, et sort du registre
         if (pathInDir(path, join(bundler.sourceDir, 'i18n'))) continue
+        DeliveredFiles.drop(path)
         try {
           if (existsSync(path)) unlinkSync(path)
           removed.push(`i18n/${lang}/${name}`)
@@ -614,6 +670,7 @@ function pruneLayoutStyles(bundler: Bundler, removed: string[], failed: string[]
   for (const name of layoutStylesNoted(bundler).keys()) {
     const file = join(bundler.outputDir, name)
     if (bundler['layoutStylesWritten'].has(name) || !existsSync(file)) continue
+    DeliveredFiles.drop(file)
     try {
       unlinkSync(file)
       removed.push(name)
@@ -649,6 +706,7 @@ export function pruneBundleChunks(bundler: Bundler): { removed: string[], failed
     if (bundler['bundleChunkFiles'].has(name) || name.replace(/\.map$/, '') === manifest) continue // écrit ce tour-ci, ou le manifeste lui-même
     const file = join(dir, name)
     if (!existsSync(file)) continue
+    DeliveredFiles.drop(file)
     try {
       unlinkSync(file)
       removed.push(name)
@@ -779,6 +837,7 @@ export function pruneOrphans(bundler: Bundler): { removed: string[], failed: str
     if (name.endsWith('.map') && bundler['emittedThisCompile'].has(name.slice(0, -4))) continue // .map d'un .js émis ce tour-ci
     if (!knownExt.has(hashedOutputExt(name))) continue // Extension jamais produite par CE bundler : jamais un candidat
     if (name.endsWith('.json') && !name.startsWith('mjs_err-')) continue // en JSON, ce bundler n'écrit que les fichiers de messages : tout autre nom est au projet
+    DeliveredFiles.drop(join(bundler.outputDir, name))
     try {
       unlinkSync(join(bundler.outputDir, name))
       removed.push(name)

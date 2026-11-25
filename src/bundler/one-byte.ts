@@ -34,6 +34,9 @@ export interface OneByteResult {
   state: OneByteState
   /** unités UTF-16 au-delà de U+00FF du texte reçu */
   wide: number
+  /** le texte rendu (`code`) a été lu par acorn en module, `ecmaVersion: 'latest'` : les options du contrôle ESM du bundler, les autres
+   *  (`allowAwaitOutsideFunction`, déjà permis en module, `onToken`, `onComment`) n'acceptant rien de plus — sa syntaxe est prouvée */
+  readAsModule: boolean
 }
 
 /** plafond de poids : un fichier n'est touché que si son poids brut (UTF-8) monte de 2 % au plus */
@@ -151,11 +154,14 @@ function shiftMap(map: string, code: string, edits: Edit[]): string | null {
  */
 export function oneByteSource(code: string, map?: string, maxGrowth: number = ONE_BYTE_MAX_GROWTH, maxLength: number = ONE_BYTE_MAX_LENGTH): OneByteResult {
   const wide = countWide(code, 0, code.length)
-  const left = (state: OneByteState): OneByteResult => ({ code, map, state, wide })
+  // vrai dès que la première lecture est en module : le texte gardé tel quel est celui qu'elle a lu, le texte réécrit est relu dans la même grammaire (cf. sameProgram)
+  let readAsModule = false
+  const left = (state: OneByteState): OneByteResult => ({ code, map, state, wide, readAsModule })
   if (wide === 0) return left('narrow')
   if (code.length > maxLength) return left('size')
   const before = read(code)
   if (!before) return left('unreadable')
+  readAsModule = before.sourceType === 'module'
   for (const [start, end] of before.comments) if (hasWide(code, start, end)) return left('comment')
   // débuts des morceaux d'un gabarit étiqueté, débuts des chaînes écrites en directive
   const tagged     = new Set<number>()
@@ -206,7 +212,7 @@ export function oneByteSource(code: string, map?: string, maxGrowth: number = ON
   if (out.length >= 2 * code.length) return left('text')
   const after = read(out)
   if (!after || !sameProgram(before, after)) return left('changed')
-  if (map === undefined) return { code: out, state: 'converted', wide }
+  if (map === undefined) return { code: out, state: 'converted', wide, readAsModule }
   const shifted = shiftMap(map, code, edits)
-  return shifted === null ? left('map') : { code: out, map: shifted, state: 'converted', wide }
+  return shifted === null ? left('map') : { code: out, map: shifted, state: 'converted', wide, readAsModule }
 }

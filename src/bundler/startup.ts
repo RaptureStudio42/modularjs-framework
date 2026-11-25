@@ -428,7 +428,8 @@ export async function assembleGroups(bundler: Bundler, bundles: Record<string, B
     } catch (e: any) {
       throw new Error(t('bundler.groups.failed', { group: plan.name, reason: e?.message ?? String(e) }))
     }
-    const file = bundler.writeHashed(`mjs_group-${plan.name}`, '.js', code, map)
+    // le texte d'esbuild tel quel (cf. bundlePage), assemblé de composants déjà contrôlés : il est son propre témoin
+    const file = bundler.writeHashed(`mjs_group-${plan.name}`, '.js', code, map, code)
     groups.push({ name: plan.name, file, roots: plan.roots, names: plan.names, keys: plan.keys })
   }
   return { groups, warnings: [...failures, ...warnings] }
@@ -561,7 +562,8 @@ export async function emitStartup(
       } catch (e: any) {
         throw new Error(t('bundler.startup.failed', { page: slug, reason: e?.message ?? String(e) }))
       }
-      const href = bundler.writeHashed(`mjs_page-${slug}`, '.js', code, map)
+      // le texte d'esbuild tel quel (cf. bundlePage), assemblé de composants déjà contrôlés : il est son propre témoin
+      const href = bundler.writeHashed(`mjs_page-${slug}`, '.js', code, map, code)
       assembles.set(slug, href)
       output.pageFiles.push(href)
       log(t('bundler.startup.page-file', { page: slug, file: basename(href), count: files.length }))

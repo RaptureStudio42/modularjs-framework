@@ -13,7 +13,9 @@
   # le séparateur décimal montré : celui de la langue de la page (« 64,3 » en français, « 64.3 » en anglais), sauf « , » ou « . » écrits ici
   $separator    = null
   # `zero` : un champ vidé vaut 0, ramené dans les bornes (`min` s'il est plus grand, `max` s'il est plus petit), et l'écrit à la sortie ;
-  # `strict` : une frappe ou un collage qui donnerait plus de décimales que le champ n'en tient, ou qui allongerait le texte au-delà de 15 caractères, est refusé
+  # `strict` : une frappe ou un collage qui donnerait plus de décimales que le champ n'en tient, ou qui allongerait le texte au-delà de 15 caractères, est refusé ;
+  # sous un pas entier, toute frappe qui porte autre chose qu'un chiffre, ou qui sort des bornes sans retour possible, l'est aussi (cf. guard) ; chaque
+  # refus, et le nombre ramené à sa borne à la sortie, part par l'événement `refuse`, qui en dit la raison (cf. tooLong)
   $zero         = false
   $strict       = false
   $name         = ''
@@ -50,11 +52,15 @@
   SEPARATORS = /[.,]/g
   GROUPS     = /^-?[1-9]\d{0,2}(?:([.,])\d{3})(?:\1\d{3})*(?:(?!\1)[.,]\d*)?$/
   TAIL_SEP   = /[.,]+$/
+  DIGITS     = /^\d*$/
+  WHOLE      = /^-?\d*$/
   FIRST_WAIT = 420
 
   before    = undefined
   holdTimer = null
   holding   = false
+  queued    = []
+  late      = null
 
   toNum = (v)->
     return null if v is null or v is undefined or v is ''
@@ -186,6 +192,54 @@
 
   round = (n)-> roundTo(n, $digits)
 
+  # `strict` sous un pas entier (ni `decimals`, ni `precision`, ni `step` décimal) : la frappe se juge avant d'entrer (cf. guard)
+  whole = -> $digits is 0 and boolAttr($strict)
+
+  # sous `whole`, un texte qui ne porte que des chiffres, et le signe moins en tête quand la borne basse le permet (sans `min`, ou un `min` négatif)
+  fits = (text)-> WHOLE.test(text) and (text[0] isnt '-' or $lo is null or $lo < 0)
+
+  # sous `whole`, le refus d'un nombre que la suite de la frappe ne ramènerait plus dans les bornes : au-delà de `max` pour un nombre positif, en deçà
+  # de `min` pour un nombre négatif ({ reason, limit }) ; un nombre encore trop petit qui peut grandir (« 5 » sous `min="10"`) passe, ramené à la sortie
+  beyond = (n)->
+    return { reason: 'max', limit: $hi } if n isnt null and $hi isnt null and n > 0 and n > $hi
+    return { reason: 'min', limit: $lo } if n isnt null and $lo isnt null and n < 0 and n < $lo
+    null
+
+  # le refus d'un nombre hors des bornes, ramené à la sortie du champ ({ reason, limit })
+  outside = (n)->
+    return { reason: 'min', limit: $lo } if $lo isnt null and n < $lo
+    return { reason: 'max', limit: $hi } if $hi isnt null and n > $hi
+    null
+
+  # sous `strict`, le refus d'un texte de plus de 15 caractères, plus long que celui d'avant (`was`). Les raisons de `refuse` : `digits` (une lettre,
+  # une espace, un séparateur ou un signe que le champ ne prend pas), `decimals` (une décimale de trop, avec les décimales tenues), `length` (avec 15),
+  # `min` et `max` (avec la borne) ; un refus n'en dit qu'une, les bornes avant la longueur (16 chiffres sous `max="999"` : `max`)
+  tooLong = (text, was)-> if text.length > 15 and text.length > was.length then { reason: 'length', limit: 15 } else null
+
+  # sous `strict`, un refus jugé pendant `input`, ou à la fin d'une composition, part juste après l'événement : `input` traverse l'hôte après
+  # le module, et une page qui efface son message sur `@input` l'effacerait aussitôt ; un refus dit sur-le-champ (cf. guard, settle) fait
+  # d'abord partir ceux qui attendent, dans l'ordre des frappes
+  tell = (out)->
+    return unless out
+    queued.push(out)
+    return if late isnt null
+    late = µafter 0, ->
+      late = null
+      flush()
+
+  flush = ->
+    late?.()
+    late   = null
+    outs   = queued
+    queued = []
+    outs.forEach((out)-> µemit('refuse', out))
+
+  # une frappe refusée : le champ reprend son texte d'avant, celui que le module montre, et le curseur sa place, comme au-delà d'un `maxlength`
+  undo = (field)->
+    at = field.selectionStart - field.value.length + $shown.length
+    field.value = $shown
+    field.setSelectionRange(at, at) if at >= 0
+
   # la frappe porte-t-elle plus de décimales que le champ n'en tient ? Sa valeur lue en décide, pas son texte : un zéro final (« 12,500 ») ou
   # un groupe de milliers (« 1,000 » sous un pas entier) passent
   over = (text)->
@@ -250,19 +304,54 @@
   release = -> finish() if holding
   keyEnd  = (e)-> commit() if ARROWS.includes(e.key)
 
+  # sous `whole`, la frappe, le collage ou le dépôt se juge AVANT d'entrer, sur le texte qu'il laisserait (la sélection remplacée) : il ne porte que des
+  # chiffres, le signe moins seulement en tête (cf. fits), pas plus de 15 caractères, et ne sort pas des bornes sans retour (cf. beyond) ; refusé, il
+  # n'entre pas, et le refus part par l'événement `refuse`, avec sa raison (cf. tooLong), pour que la page le dise près du champ. Effacer passe toujours ;
+  # une composition (clavier IME, certains claviers de téléphone) ne se refuse pas en route : elle se juge à sa fin (cf. composed)
+  guard = (e)->
+    return unless whole() and not $ro and e.cancelable and not e.isComposing and String(e.inputType).startsWith('insert')
+    field = e.target
+    data  = e.data ?? e.dataTransfer?.getData('text/plain') ?? ''
+    from  = field.selectionStart
+    text  = field.value.slice(0, from) + data + field.value.slice(field.selectionEnd)
+    out   = if DIGITS.test(data) or (from is 0 and data.lastIndexOf('-') is 0 and fits(text)) then (beyond(toNum(text)) ?? tooLong(text, field.value)) else { reason: 'digits' }
+    return unless out
+    e.preventDefault()
+    flush()
+    µemit('refuse', out)
+
+  # la fin d'une composition : sous `strict`, le texte se juge (cf. typed)
+  composed = (e)-> typed(e) if boolAttr($strict)
+
   typed = (e)->
     return if $off
     field = e.target
-    raw   = clean(field.value, $lo is null or $lo < 0, $digits is 0)
+    # sous `strict`, une composition en cours ne se juge ni ne s'écrit (écrire dans le champ la couperait, sans `compositionend`) : elle se juge
+    # à sa fin (cf. composed), sous un pas entier comme décimal
+    return if e.isComposing and boolAttr($strict)
+    if whole()
+      # à la fin d'une composition, ou après une insertion que le navigateur ne laisse pas refuser, un texte refusé revient au dernier bon texte,
+      # celui que le module montre, et le refus le dit
+      raw = field.value
+      # effacer passe toujours, même dans une valeur de la page hors des bornes (« 50000 » sous `max="999"`) : elle se ramène à la sortie
+      out = if String(e.inputType).startsWith('delete') then null else if fits(raw) then (beyond(toNum(raw)) ?? tooLong(raw, $shown)) else { reason: 'digits' }
+      if out
+        undo(field)
+        tell(out)
+        return
+    else
+      raw = clean(field.value, $lo is null or $lo < 0, $digits is 0)
     # `strict` : la frappe ou le collage de trop est refusé en entier, comme au-delà d'un `maxlength` ; le champ reprend son texte d'avant
     # et le curseur sa place. La saisie n'a alors pas de `maxlength`, qui couperait un collage avant cette vérification : un texte de plus
     # de 15 caractères, plus long que celui d'avant, est refusé de même (sans `strict`, le navigateur le coupe à 15)
-    if boolAttr($strict) and (over(raw) or (raw.length > 15 and raw.length > $shown.length))
-      at = field.selectionStart - field.value.length + $shown.length
-      field.value = $shown
-      field.setSelectionRange(at, at) if at >= 0
-      return
-    field.value = raw if field.value isnt raw
+    if boolAttr($strict)
+      out = if over(raw) then { reason: 'decimals', limit: $digits } else tooLong(raw, $shown)
+      if out
+        undo(field)
+        tell(out)
+        return
+    dropped = field.value isnt raw
+    field.value = raw if dropped
     touch()
     $draft = raw
     n = read(raw)
@@ -274,14 +363,21 @@
       setValue(clamp(0))
     else if raw is '' and $nullable
       setValue('')
+    # `strict` : une lettre, une espace ou un signe en trop, retirés de la frappe comme sans `strict`, le disent
+    tell({ reason: 'digits' }) if dropped and boolAttr($strict)
 
   settle = ->
+    # les refus de la frappe qui attendent partent d'abord (cf. tell)
+    flush()
     return if $draft is null
     n = read($draft)
     n = toNum($value) if n is null
     $draft = null
     setValue(clamp(round(n))) if n isnt null
     commit()
+    # sous `strict`, le nombre ramené à sa borne le dit, après `change`
+    out = if boolAttr($strict) and n isnt null then outside(n) else null
+    µemit('refuse', out) if out
 
   key = (e)->
     return if $off or $ro
@@ -415,7 +511,7 @@
     <button type="button" class="step less big" part="button" tabindex="-1" aria-label={$bigLess} disabled={($off or $ro or $atMin) ? true : null} @pointerdown={press(-1, e, true)} @click={activate(-1, e, true)}>−−</button>
   {end}
   <button type="button" class="step less" part="button" tabindex="-1" aria-label={$lessText} disabled={($off or $ro or $atMin) ? true : null} @pointerdown={press(-1, e)} @click={activate(-1, e)}>−</button>
-  <input class="input" part="input" type="text" role="spinbutton" inputmode={$keypad} autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" maxlength={boolAttr($strict) ? null : 15} aria-label={$labelText} aria-valuemin={$lo} aria-valuemax={$hi} aria-valuenow={$cur} aria-required={boolAttr($required) ? 'true' : null} placeholder={$placeholder} value={$shown} readonly={$ro ? true : null} disabled={$off ? true : null} :this=!{inputRef} @input={typed(e)} @keydown={key(e)} @keyup={keyEnd(e)} @blur={settle()}>
+  <input class="input" part="input" type="text" role="spinbutton" inputmode={$keypad} autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" maxlength={boolAttr($strict) ? null : 15} aria-label={$labelText} aria-valuemin={$lo} aria-valuemax={$hi} aria-valuenow={$cur} aria-required={boolAttr($required) ? 'true' : null} placeholder={$placeholder} value={$shown} readonly={$ro ? true : null} disabled={$off ? true : null} :this=!{inputRef} @beforeinput={guard(e)} @input={typed(e)} @compositionend={composed(e)} @keydown={key(e)} @keyup={keyEnd(e)} @blur={settle()}>
   <button type="button" class="step more" part="button" tabindex="-1" aria-label={$moreText} disabled={($off or $ro or $atMax) ? true : null} @pointerdown={press(1, e)} @click={activate(1, e)}>+</button>
   {if $wide}
     <button type="button" class="step more big" part="button" tabindex="-1" aria-label={$bigMore} disabled={($off or $ro or $atMax) ? true : null} @pointerdown={press(1, e, true)} @click={activate(1, e, true)}>++</button>

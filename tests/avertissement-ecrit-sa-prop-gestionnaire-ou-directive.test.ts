@@ -71,7 +71,7 @@ describe('avertissement « écrit sa prop » : un gestionnaire d\'événement le
 
   it('dev : la livraison est notée avec le composant qui la fait et sa valeur, avant que la valeur ne parte vers l\'enfant', () => {
     const ordre = (code: string) => {
-      const pose = code.search(/\._set\(\s*["']x["']/)
+      const pose = code.search(/µ\._mjs_prop\([^,()]+,\s*["']x["']/)
       const lue  = code.search(/_mjs_oneWay\?\.\([^,()]+,\s*["']x["'],\s*this,/)
       return lue < 0 ? 'livraison non notée avec son donneur et sa valeur' : pose < 0 ? 'valeur non posée' : lue < pose ? 'notée avant' : 'notée après'
     }

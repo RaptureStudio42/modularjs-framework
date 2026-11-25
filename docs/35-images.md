@@ -89,7 +89,7 @@ Validation **stricte**, comme le reste de `mjs.config.json` (cf. [32 · CLI & co
 
 Une variante émise porte un nom haché — `hero-960-3f2a91c8.webp` (`<base>-<largeur>-<empreinte>.<format>`) — et son `srcset` liste chaque largeur produite (`960w`) ; `sizes` vaut `100vw` dès qu'au moins une variante existe, chaîne vide sinon (SVG, `sharp` absent, ou toutes les largeurs demandées supérieures à l'original).
 
-Les variantes déjà encodées sont reprises d'une construction à l'autre tant que l'image, les réglages `image` et la version de `sharp` ne changent pas : le fichier `.mjs-images.json` du dossier de sortie les retient, gardez-le avec lui.
+Les variantes déjà encodées sont reprises d'une construction à l'autre tant que l'image, les réglages `image`, la version de `sharp` et la façon dont MJS les encode ne changent pas : le fichier `.mjs-images.json` du dossier de sortie les retient, gardez-le avec lui.
 
 Dans le `srcset`, l'adresse de chaque variante est encodée : `photo de vacances.jpg` y devient `photo%20de%20vacances-960-3f2a91c8.webp 960w`. Une espace brute couperait l'adresse en deux, et le navigateur ignorerait tout le `srcset`. Le nom du fichier publié, lui, ne change pas.
 

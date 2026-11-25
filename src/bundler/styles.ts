@@ -7,8 +7,8 @@ import { compileCss } from '../transpiler/css.js'
 import { FONT_SIZE_SHEET, fontSizeRootCss, rewriteFontSizes } from '../transpiler/font-size.js'
 import { cssTrapWarnings } from '../transpiler/index.js'
 import { t } from '../messages/index.js'
-import { minifyJs } from './minify.js'
-import { OUTPUT_MARK, authorFileReject } from './outputs.js'
+import { esbuiltText, minifyJs } from './minify.js'
+import { DeliveredFiles, OUTPUT_MARK, authorFileReject } from './outputs.js'
 import type { Bundler } from './index.js'
 
 // feuille racine : adoptée par le document, son handle gardé pour µ._hotCss (dev, replaceSync en place) ; un bloc de
@@ -26,7 +26,7 @@ function rootSheetJs(css: string): string {
 async function writeRootSheet(bundler: Bundler, css: string): Promise<string> {
   const js       = `import { µ } from '${bundler.coreHashedPath}';\n` + rootSheetJs(css)
   const minified = await minifyJs(js, { force: bundler.shouldMinify(), filename: 'mjs_style_root.js', mangleCache: bundler.mangleCache, logLevel: bundler['prodLogLevel'](), dev: !bundler['isProd']() })
-  bundler.splitRootHashedPath = bundler.writeHashed('mjs_style_root', '.js', minified.code)
+  bundler.splitRootHashedPath = bundler.writeHashed('mjs_style_root', '.js', minified.code, undefined, esbuiltText(minified))
   return css
 }
 
@@ -55,7 +55,12 @@ async function fontSizeBlock(bundler: Bundler, files: string[]): Promise<string>
 function writeFontSizeSheet(bundler: Bundler, block: string): void {
   const target  = join(dirname(bundler.manifestPath), FONT_SIZE_SHEET)
   const content = (bundler['writesToSources']() ? `${OUTPUT_MARK}\n` : '') + block
-  if (existsSync(target) ? readFileSync(target, 'utf-8') === content : block === '') return
+  const present = existsSync(target)
+  if (present ? readFileSync(target, 'utf-8') === content : block === '') {
+    // déjà là : gardée telle quelle, livrée comme écrite (cf. DeliveredFiles)
+    if (present) DeliveredFiles.note(bundler.outputDir, target)
+    return
+  }
   const reject   = authorFileReject(bundler, target, 'sheet')
   if (reject !== null) throw reject
   mkdirSync(dirname(target), { recursive: true })
@@ -212,7 +217,7 @@ export async function bundleSharedStyles(bundler: Bundler): Promise<{ count: num
     bundler['bundleVirtualSources'].set('mjs_styles', bundler['withInlineSourceMap'](minified.code, minified.map))
     hashedPath = 'mjs:styles'
   } else {
-    hashedPath = bundler.writeHashed('mjs_styles', '.js', minified.code)
+    hashedPath = bundler.writeHashed('mjs_styles', '.js', minified.code, undefined, esbuiltText(minified))
   }
   bundler.manifest['__styles'] = hashedPath
   // diff sémantique feuille par feuille (avant le throw éventuel
@@ -356,7 +361,7 @@ export async function emitSplitStyles(bundler: Bundler): Promise<{ warnings: str
                  `  µ.CSS[${keyLit}] = s_${safeVar};\n` +
                  `}\n`
       const minified = await minifyJs(js, { force: bundler.shouldMinify(), filename: `mjs_style_${baseName}.js`, mangleCache: bundler.mangleCache, logLevel: bundler['prodLogLevel'](), dev: !bundler['isProd']() })
-      bundler.splitStyleHashedPaths[baseName] = bundler.writeHashed(stem, '.js', minified.code)
+      bundler.splitStyleHashedPaths[baseName] = bundler.writeHashed(stem, '.js', minified.code, undefined, esbuiltText(minified))
       newSharedCss.set(baseName, css)
     }
   }

@@ -5,6 +5,8 @@ import { isComponentFile } from './bundler/class-files.js'
 import { existsSync, readdirSync, readFileSync, statSync, realpathSync, accessSync, constants } from 'node:fs'
 import { createRequire } from 'node:module'
 import { Bundler, type CompileStats } from './bundler/index.js'
+import { DeliveredFiles } from './bundler/outputs.js'
+import { citedMissing } from './bundler/cited-files.js'
 import type { ClassifiedDerived } from './analyzer/derived-classes.js'
 import { StaticServer } from './server/index.js'
 import { findConfig, resolveBundlerOpts, rejectManifestPath, pathInDir } from './bundler/config.js'
@@ -709,6 +711,8 @@ async function run(argv: string[]): Promise<void> {
 
   switch (args.command) {
     case 'build': {
+      // chaque fichier que la construction écrit, garde ou reprend du cache est noté, pour la garde de fin (cf. DeliveredFiles)
+      DeliveredFiles.follow(bundler.outputDir)
       const stats = await bundler.compile()
       const above = await settleWarningLines()
       printBuildReport(stats)
@@ -789,6 +793,8 @@ async function run(argv: string[]): Promise<void> {
           // modifiée entre les deux donnerait sinon des empreintes de fichiers disparus (cf. latestBundler)
           last = latestBundler(base, report)
           await emitStartup(last, found.config.render, report, { prod: envBuild === 'prod', log: m => console.log(m) })
+          // pages prérendues, écrites ou gardées, avec leur en-tête de démarrage : livrées
+          for (const page of report.generated) DeliveredFiles.note(bundler.outputDir, page.file)
           for (const s of report.skipped) console.log(t('cli.prerender-page-ignored', { url: s.url, reason: s.reason }))
           if (!report.generated.length && !report.skipped.length) {
             console.log(t('cli.prerender-no-page'))
@@ -839,7 +845,20 @@ async function run(argv: string[]): Promise<void> {
       // Termine le worker pool pour que Node puisse exit proprement.
       await bundler.close()
       if (base !== bundler) await base.close()
-      process.exit(stats.errors.length > 0 || prerenderFatal || cacheDiscarded ? 1 : 0)
+      // garde de fin : chaque fichier que la construction a écrit, gardé ou repris du cache est encore là, un `stat` chacun — un autre
+      // programme a pu effacer une partie de la sortie pendant qu'elle tournait. Une construction déjà en échec ne la passe pas
+      const failed  = stats.errors.length > 0 || prerenderFatal || cacheDiscarded
+      const missing = failed ? [] : DeliveredFiles.missing()
+      const project = found?.configDir ?? process.cwd()
+      if (missing.length > 0) console.error(t('cli.build-files-missing', { count: missing.length, files: missing.slice(0, 10).map(f => `\n   ${relative(project, f)}`).join(''), more: missing.length - 10 }))
+      // … et chaque fichier que la sortie cite (modules, manifeste, précache) y existe ; un absent : les entrées du cache qui le citent
+      // sont retirées, la construction suivante les recompile (cf. citedMissing)
+      const cited = failed || missing.length > 0 ? [] : citedMissing(bundler.outputDir, bundler.urlPrefix, bundler.manifestPath, DeliveredFiles.list()).missing
+      if (cited.length > 0) {
+        const forgot = bundler.forgetDiskCacheUnits(cited.flatMap(c => [c.by, c.file]))
+        console.error(t('cli.build-cited-missing', { count: cited.length, files: cited.slice(0, 10).map(c => `\n   ${c.file} ← ${c.by}`).join(''), more: cited.length - 10, cache: forgot ? 1 : 0 }))
+      }
+      process.exit(failed || missing.length > 0 || cited.length > 0 ? 1 : 0)
     }
     case 'dev': {
       // Journal d'erreurs 3 étages, même magasin que `mjs serve` (cf. render-server.ts
@@ -965,17 +984,6 @@ async function run(argv: string[]): Promise<void> {
       // composants du dernier échange à chaud : le terminal les nomme quand la page répond (échange fait, ou page rechargée)
       let hotNames = ''
       if (server.hmr) server.hmr.onHotResult = (ok) => console.log(t(ok ? 'cli.components-hot-reloaded' : 'cli.components-page-reloaded', { names: hotNames }))
-      // relevé des avertissements du premier build, pris dès la fin de sa compilation (cf. settleWarningLines) : watch() écrit ensuite
-      // ses erreurs, puis rend la main au bilan
-      let aboveInitial  = null as number | null
-      const origCompile = bundler.compile.bind(bundler)
-      bundler.compile = async () => {
-        const stats = await origCompile()
-        lastErrors = stats.errors
-        if (aboveInitial === null) aboveInitial = await settleWarningLines()
-        return stats
-      }
-
       // Sérialise les passes de prérendu déclenchées par le watcher (cf. son commentaire détaillé)
       // — UNE instance pour toute la session `mjs dev`, créée AVANT `watch()` pour couvrir aussi
       // le premier recompile.
@@ -986,6 +994,20 @@ async function run(argv: string[]): Promise<void> {
         // mêmes drapeaux que le bundler, comme `mjs build` (cf. plus haut)
         overrides: { outputDir: args.output, manifestPath: args.manifest, env: envBuild },
       })
+
+      // relevé des avertissements du premier build, pris dès la fin de sa compilation (cf. settleWarningLines) : watch() écrit ensuite
+      // ses erreurs, puis rend la main au bilan
+      let aboveInitial  = null as number | null
+      const origCompile = bundler.compile.bind(bundler)
+      bundler.compile = async () => {
+        // une passe de prérendu lit encore le dossier de sortie et l'état de ce bundler (cf. DevPrerenderScheduler.idle) : la
+        // compilation attend sa fin
+        await devPrerenderScheduler.idle()
+        const stats = await origCompile()
+        lastErrors = stats.errors
+        if (aboveInitial === null) aboveInitial = await settleWarningLines()
+        return stats
+      }
 
       await bundler.watch({
         onRecompile: (changed, stats) => {
@@ -1019,9 +1041,11 @@ async function run(argv: string[]): Promise<void> {
             // passes en vol, cf. createDevPrerenderScheduler) AVANT de notifier le navigateur — un
             // reload signalé avant la fin de l'écriture du fichier prérendu pouvait recharger sur le
             // HTML FIGÉ d'AVANT cette modification. Fire-and-forget au niveau du dev loop lui-même
-            // (onRecompile reste synchrone pour le bundler, la RECOMPILATION suivante n'attend pas) :
-            // seule la notification HMR de CE changement patiente.
-            void devPrerenderScheduler.schedule().finally(() => {
+            // (onRecompile reste synchrone pour le bundler) : la notification HMR de CE changement
+            // patiente, la RECOMPILATION suivante seulement quand la passe lit le dossier de sortie
+            // du veilleur (cf. bundler.compile plus haut). La passe rend sur la compilation de CE tour
+            // (`stats`), sans recompiler le projet quand ses moteurs auraient compilé la même.
+            void devPrerenderScheduler.schedule(stats).finally(() => {
               // Changement 100 % CSS (stats.cssOnly non nul, cf. bundler) :
               // hot-swap sans reload ni perte d'état (µ._hotCss côté page). Tout le
               // reste (JS/template touché, fichier ajouté/supprimé, moindre doute) →

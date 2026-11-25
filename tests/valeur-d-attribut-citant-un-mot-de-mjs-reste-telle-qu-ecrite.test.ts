@@ -1,7 +1,8 @@
 // la valeur d'un attribut qui n'est ni un mot de MJS ni un événement, et qui cite un mot (`title='voir :noUJS="x"'`,
 // `title='<a :confirm="…">'`, `data-x='ancien @vt="cube"'`, `title={"tapez :confirm='oui'"}`), n'est qu'un texte : elle reste telle
 // qu'écrite et la construction passe, entre guillemets comme entre accolades, sur toute balise, dans un <pre> ou un <code> comme
-// ailleurs ; les vrais mots de la même balise restent lus, un refus cite la balise telle qu'écrite
+// ailleurs, et collée sans blanc à la valeur d'avant (`href="/x"title=':permanent ici'`) ; les vrais mots de la même balise restent
+// lus, un refus cite la balise telle qu'écrite
 
 import assert from 'node:assert/strict'
 import { transpile } from '../src/transpiler/index.js'
@@ -54,6 +55,28 @@ const ACCOLADES: Array<[string, string]> = [
   [`<mjs-carte titre={"voir :noUJS='x'"}></mjs-carte>`, `voir :noUJS='x'`]
 ]
 
+// une valeur collée sans blanc à la valeur d'avant (après un guillemet double, un guillemet simple, une accolade), et ce qui doit
+// en rester dans le code : la valeur citée telle qu'écrite, le vrai mot de la balise lu
+const COLLEES: Array<[string, string[]]> = [
+  [`<a href="/x"title=":permanent ici" :permanent>l</a>`, [`title=':permanent ici'`, ` mjs-permanent>`]],
+  [`<a href='/x'title=":noUJS ici" :noUJS>l</a>`, [`title=':noUJS ici'`, ` mjs-no-ujs>`]],
+  [`<a href={"/x"}title=":permanent ici" :permanent>l</a>`, [`title=':permanent ici'`, ` mjs-permanent>`]],
+  [`<a :confirm="Sûr ?"title=":noUJS ici">l</a>`, [`mjs-confirm='Sûr ?'`, `title=':noUJS ici'`]]
+]
+
+// les cas voisins, déjà justes : chevron, JSON, blancs autour du `=` ou dans la valeur, `=` dans la valeur, saut de ligne,
+// accolades, exemple de balise dans un <pre><code> ; ce qui doit en rester dans le code
+const VOISINS: Array<[string, string[]]> = [
+  [`<a href="/x" title="a > b :confirm='x'" :confirm="Sûr ?">l</a>`, [`title='a > b :confirm=&#39;x&#39;'`, `mjs-confirm='Sûr ?'`]],
+  [`<a href="/x" data-x='{"a": ":noUJS", "b": "@vt=cube"}' :noUJS>l</a>`, [`{"a": ":noUJS", "b": "@vt=cube"}`, ` mjs-no-ujs>`]],
+  [`<a href="/x" title = "x :preload='eager'" :preload="hover">l</a>`, [`title='x :preload=&#39;eager&#39;'`, `data-mjs-preload='hover'`]],
+  [`<a href="/x" title=" :noUJS " :noUJS>l</a>`, [`title=' :noUJS '`, ` mjs-no-ujs>`]],
+  [`<a title='x="y" :confirm="z"' href="/" :confirm="Vraiment ?">l</a>`, [`title='x="y" :confirm="z"'`, `mjs-confirm='Vraiment ?'`]],
+  [`<a\n  href="/x"\n  title="ligne 1\n  :noUJS ligne 2"\n  :method="delete"\n  :confirm="Supprimer ?">l</a>`, [`:noUJS ligne 2'`, `mjs-method='delete'`, `mjs-confirm='Supprimer ?'`]],
+  [`<a href="/x" title={"tapez :confirm='oui' } et :noUJS"} data-y={$s + " :preload"} :noUJS>l</a>`, [`"tapez :confirm='oui' } et :noUJS"`, `$.s + " :preload"`, ` mjs-no-ujs>`]],
+  [`<pre><code>&lt;a :confirm="…"&gt; <a href="/k" :confirm="Sûr ?" title=":noUJS">l</a></code></pre>`, [`&lt;a :confirm="…"&gt; <a href='/k' mjs-confirm='Sûr ?' title=':noUJS'>`]]
+]
+
 describe('la valeur d\'un attribut qui cite un mot de MJS reste telle qu\'écrite', function () {
   for (const [attr, reste] of VALEURS) {
     for (const [place, placer] of PLACES) {
@@ -74,6 +97,16 @@ describe('la valeur d\'un attribut qui cite un mot de MJS reste telle qu\'écrit
       assert.ok(r.code!.replaceAll('\\"', '"').includes(reste), r.code)
       assert.ok(!WORD_ATTR.test(r.code!), r.code)
       assert.ok(!PRIVATE.test(r.code!), r.code)
+    })
+  }
+
+  for (const [src, restes] of [...COLLEES, ...VOISINS]) {
+    it(`collée ou voisine : ${src.replaceAll('\n', ' ')}`, async () => {
+      const r = await compile(src)
+      assert.equal(r.err, undefined, r.err)
+      const code = r.code!.replaceAll('\\"', '"')
+      for (const reste of restes) assert.ok(code.includes(reste), `${reste} absent de : ${code.match(/_mjs_cloneTpl\("([^\n]*?)"\)/)?.[1] ?? code}`)
+      assert.ok(!PRIVATE.test(code), code)
     })
   }
 
