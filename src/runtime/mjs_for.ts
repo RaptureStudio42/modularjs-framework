@@ -162,18 +162,23 @@ if (µ.Element) {
   }
   // </fine-grained>
 
-  // les props livrées aux composants d'une ligne, oubliées, ceux des blocs qu'elle porte compris (un {for} imbriqué tient les siens à part) :
-  // la passe qui suit les leur écrit toutes (cf. µ._mjs_prop, mjs_init.ts)
-  function _mjs_forgetProps(ent) {
+  // les props livrées aux composants d'une ligne qui porte un autre élément, oubliées, ceux des blocs qu'elle porte compris (un {for} imbriqué
+  // tient les siens à part) : la passe qui suit les leur écrit de nouveau, même inchangées (cf. µ._mjs_prop, mjs_init.ts). `b` absent (liste
+  // sans `by`) : toutes ; `b` donné (liste à clé rechargée : le bit de la liste, cf. keyedLineMask, generator/attributes/index.ts) : seulement
+  // celles qui lisent l'élément de cette ligne, notées avec ce bit (`_mjs_pm`, cf. _mjsPropMask, mjs_init.ts)
+  function _mjs_forgetProps(ent, b) {
     const refs = ent.__nodes, roots = ent.nodes;
-    for (const k in refs) {
-      const n = refs[k];
-      if (n && n._mjs_pv) n._mjs_pv = null;
-    }
+    for (const k in refs) _mjs_forget(refs[k], b);
     for (let i = 0; i < roots.length; i++) {
       const all = roots[i].getElementsByTagName ? roots[i].getElementsByTagName('*') : [];
-      for (let j = 0; j < all.length; j++) if (all[j]._mjs_pv) all[j]._mjs_pv = null;
+      for (let j = 0; j < all.length; j++) _mjs_forget(all[j], b);
     }
+  }
+  function _mjs_forget(n, b) {
+    const pv = n && n._mjs_pv;
+    if (!pv) return;
+    if (b === void 0) n._mjs_pv = null;
+    else for (const k in n._mjs_pm) if (n._mjs_pm[k] & b) delete pv[k];
   }
 
   // passe des liaisons, dans l'ordre de la liste : chaque ligne reçoit son élément et son index (`ens` : les entrées dans cet ordre, jamais
@@ -187,8 +192,10 @@ if (µ.Element) {
   // suivi (tableau réactif d'origine, store), comme le proxy suivi d'un objet marqué µraw après coup (il rend son objet brut, `µ._mjs_RAW`).
   // `raw` à 2 : liste propre (cf. _mjs_isClean) ou liste marquée avec ses lignes (`µraw(liste, true)`), toute ligne pure qui garde son objet est sautée.
   // un objet vu µraw le reste (rien ne retire cette marque) : sa marque est cherchée une fois, ici même, puis la ligne le note (`_mjs_br`,
-  // un drapeau : l'objet n'y est pas gardé) et ne cherche plus rien tant qu'elle le montre ; un autre élément fait tomber la note
-  function _mjs_updRows(keys, ens, items, isArray, ix, keysArr, raw, updateFn) {
+  // un drapeau : l'objet n'y est pas gardé) et ne cherche plus rien tant qu'elle le montre ; un autre élément fait tomber la note.
+  // `fm` : ce qu'une ligne qui porte un autre élément oublie des props de ses composants (cf. _mjs_forgetProps) — absent pour une liste sans
+  // `by`, le bit de la liste à clé dont une prop lit l'élément, 0 pour une liste à clé dont aucune prop ne le lit (rien d'oublié, rien parcouru)
+  function _mjs_updRows(keys, ens, items, isArray, ix, keysArr, raw, updateFn, fm) {
     µ._mjs_holdPush = 1;
     for (let i = 0; i < keys.length; i++) {
       const ent = ens[i];
@@ -200,10 +207,12 @@ if (µ.Element) {
       const x  = isArray ? (ix ? ix[i] : i) : keysArr[i];
       const p  = ent._mjs_p;
       if (ent._mjs_it !== it) {
-        // la ligne porte désormais un autre élément (une autre valeur d'une liste rangée par la place, sans `by`, ou un autre objet, même à
-        // la même clé : liste rechargée) : ses composants reçoivent toutes leurs props, même inchangées, comme ceux d'une ligne neuve ; la
-        // ligne dont l'objet change sur place, ou qu'un tri déplace, garde son élément et ses composants ce qu'ils ont écrit
-        _mjs_forgetProps(ent);
+        // la ligne porte désormais un autre élément. Une autre valeur d'une liste rangée par la place, sans `by` : ses composants reçoivent
+        // toutes leurs props, même inchangées, comme ceux d'une ligne neuve. Un autre objet à la même clé (liste à clé rechargée, liste écrite
+        // dans le gabarit rejouée) : seulement les props qui lisent l'élément de la ligne, comme Svelte 5 ; les autres (état du parent, index
+        // seul) restent ce que l'enfant a écrit tant que leur valeur ne change pas. La ligne dont l'objet change sur place, ou qu'un tri
+        // déplace, garde son élément et ses composants ce qu'ils ont écrit
+        if (fm !== 0) _mjs_forgetProps(ent, fm);
         ent._mjs_it = it;
         ent._mjs_br = 0;
       }
@@ -413,7 +422,7 @@ if (µ.Element) {
   // de destruction), un seul changement au milieu : lignes échangées ou une ligne déplacée, sinon un bloc neuf à la place d'un bloc ancien
   // (ligne supprimée, ajout en fin, insertion, tout remplacé). Les lignes gardées ne bougent pas. Rend vrai quand la liste est faite,
   // faux pour le chemin général (rien n'a été touché)
-  function _mjs_forShort(el, cacheId, startNode, endNode, parentNode, cache, oldKeys, keys, items, isArray, keysArr, tplFn, updateFn, raw, direct) {
+  function _mjs_forShort(el, cacheId, startNode, endNode, parentNode, cache, oldKeys, keys, items, isArray, keysArr, tplFn, updateFn, raw, direct, fm) {
     const n   = keys.length;
     const on  = oldKeys.length;
     const min = n < on ? n : on;
@@ -495,7 +504,7 @@ if (µ.Element) {
       }
     }
     // </transitions>
-    _mjs_updRows(keys, ens, items, isArray, null, keysArr, raw, updateFn);
+    _mjs_updRows(keys, ens, items, isArray, null, keysArr, raw, updateFn, fm);
     el._mjs_list_order[cacheId] = keys;
     el._mjs_list_cache[cacheId] = c;
     return true;
@@ -519,7 +528,9 @@ if (µ.Element) {
   // HTML+paths). Le runtime n'a plus besoin de cloner/walker.
   // Cache `mjs-childtransition` sur le parentNode : pas de getAttribute
   // à chaque tick (sur update10thRow × 16, économise 16 getAttribute).
-  µ.Element.prototype._mjs_updFor = function(id, col, tplFn, keyFn, updateFn, keyAttr) {
+  // `bit` : celui de la liste à clé dont une prop livrée à un composant lit l'élément (cf. keyedLineMask, generator/attributes/index.ts) ;
+  // absent sinon, et l'appel compilé reste celui d'avant
+  µ.Element.prototype._mjs_updFor = function(id, col, tplFn, keyFn, updateFn, keyAttr, bit) {
     var childMode, e, s, parent;
     s = this._mjs_nodes['s-' + id];
     e = this._mjs_nodes['e-' + id];
@@ -540,7 +551,7 @@ if (µ.Element) {
     // (`null`, même chemin plus bas). La réconciliation, grosse fonction, n'est compilée qu'à sa première ligne : le démarrage
     // d'une page dont la liste arrive plus tard ne paie ni sa compilation ni son code en mémoire
     if (Array.isArray(col) && col.length === 0 && s.nextSibling === e && !this._mjs_list_anchor?.[id]) return;
-    return this._mjs_reconcileList(id, s, e, childMode, col, tplFn, keyFn, updateFn, keyAttr);
+    return this._mjs_reconcileList(id, s, e, childMode, col, tplFn, keyFn, updateFn, keyAttr, bit);
   };
 
   // clé implicite `_mjsId` d'un item-objet de
@@ -568,7 +579,7 @@ if (µ.Element) {
     return key;
   };
 
-  µ.Element.prototype._mjs_reconcileList = function(cacheId, startNode, endNode, childMode, col, tplFn, keyFn, updateFn, keyAttr) {
+  µ.Element.prototype._mjs_reconcileList = function(cacheId, startNode, endNode, childMode, col, tplFn, keyFn, updateFn, keyAttr, bit) {
     var cache, d, dyingTail, entry, i, isArray, items, j, keysArr, l, lastItemNode, lastNode, len, len1, len2, n, newEntries, newKeySet, o, oldKey, oldKeys, parentNode;
     if (!col) {
       // Collection falsy (null/undefined) : au lieu d'un early-return qui
@@ -680,6 +691,9 @@ if (µ.Element) {
     if (this._mjs_rfl) __raw = 0;
     // </refresh>
     const __wait = childMode === 'all' || childMode === 'out' || childMode === 'transition';
+    // ce qu'une ligne rechargée oublie des props de ses composants (cf. _mjs_updRows) : tout sans `by` (une `Map` sans `by` comprise), le
+    // seul bit de la liste avec `by`
+    const __fm = keyAttr || keyFn ? bit | 0 : void 0;
 
     // clé de chaque élément, lue UNE fois par passe : la clé `by` ou celle de la Map, un texte ou un nombre tel quel ; sans clé (ou clé nulle),
     // un objet se suit par son identité (`_mjs_mjsTag` : tatouage non énumérable, repli silencieux sur un objet non extensible ; le
@@ -751,7 +765,7 @@ if (µ.Element) {
 
     // chemins courts (cf. `_mjs_forShort`) : mêmes clés dans tous les modes, un changement de structure en mode direct seulement
     // (aucune sortie animée, aucune ligne mourante)
-    if (!isFreshCreate && keys.length > 0 && oldKeys.length > 0 && cache.size === oldKeys.length && _mjs_forShort(this, cacheId, startNode, endNode, parentNode, cache, oldKeys, keys, items, isArray, keysArr, tplFn, updateFn, __raw, __noHooks && !__wait)) return;
+    if (!isFreshCreate && keys.length > 0 && oldKeys.length > 0 && cache.size === oldKeys.length && _mjs_forShort(this, cacheId, startNode, endNode, parentNode, cache, oldKeys, keys, items, isArray, keysArr, tplFn, updateFn, __raw, __noHooks && !__wait, __fm)) return;
 
     // #2 — Dé-doublonnage défensif des clés AVANT la reconcile. Deux items de
     // même clé (`by id` avec ids dupliqués) font planter la phase d'insertion
@@ -1097,7 +1111,7 @@ if (µ.Element) {
       // Appel des updateFn APRÈS insertion (cohérent avec sémantique). Une entry
       // fraîche dont le tplFn a déjà posé l'état (_mjs_init=1) saute ce passage
       // (et repasse en update normal aux tours suivants)
-      _mjs_updRows(keys, newEntries, items, isArray, __ix, keysArr, __raw, updateFn);
+      _mjs_updRows(keys, newEntries, items, isArray, __ix, keysArr, __raw, updateFn, __fm);
       this._mjs_list_order[cacheId] = keys;
       this._mjs_list_cache[cacheId] = cache;
       return;
@@ -1131,7 +1145,7 @@ if (µ.Element) {
     // updateFn forward sur les entries. Économise ~N iterations + checks.
     // Mesure : sur update10thRow × 1000 rows, ~2-5ms.
     if (allStays) {
-      _mjs_updRows(keys, newEntries, items, isArray, __ix, keysArr, __raw, updateFn);
+      _mjs_updRows(keys, newEntries, items, isArray, __ix, keysArr, __raw, updateFn, __fm);
       this._mjs_list_order[cacheId] = keys;
       this._mjs_list_cache[cacheId] = cache;
       return;
@@ -1233,7 +1247,7 @@ if (µ.Element) {
     // updateFn voit isConnected=true et le sampling fonctionne correctement.
     // Une entry fraîche dont le tplFn a déjà posé l'état (_mjs_init=1, émis
     // seulement pour les composants SANS transitions/@attach) saute ce passage.
-    _mjs_updRows(keys, newEntries, items, isArray, __ix, keysArr, __raw, updateFn);
+    _mjs_updRows(keys, newEntries, items, isArray, __ix, keysArr, __raw, updateFn, __fm);
     this._mjs_list_order[cacheId] = keys;
     return this._mjs_list_cache[cacheId] = cache;
   };

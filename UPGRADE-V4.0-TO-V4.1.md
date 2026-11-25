@@ -156,6 +156,10 @@ Les processus d'un même bus MJS WS (adaptateur Redis ou mémoire) passent ensem
 - Avec Node 22.8 ou plus, toutes les commandes de `mjs` sauf `dev`, `ws` et `server` (`build`, `check`, `serve`…) gardent le code compilé de Node dans `mjs-node-cache-<uid>` du dossier temporaire ; `NODE_DISABLE_COMPILE_CACHE=1` le coupe.
 - `structuredClone` marche dans une page rendue au serveur ou prérendue (moteur `happy-dom`) et dans `createHarness` : une page qui s'en passait par un repli (`JSON.parse(JSON.stringify(…))`) peut le reprendre.
 
+## Depuis la 4.1.4
+
+- Dans une liste à clé (`{for … by …}`), une ligne qui reçoit un autre objet à la même clé (liste rechargée, ou écrite dans le gabarit et refaite à chaque rendu) ne redonne plus à ses composants que les props qui lisent cette ligne : son élément, ou un `{const}` qui le lit. Une prop qui ne la lit pas (`ouvert={$o}`, l'index seul) garde ce que l'enfant a écrit tant que le parent ne change pas sa valeur. Pour qu'un enfant reparte de la valeur du parent à chaque recharge, recréez-le par un bloc `{key}` ou liez la prop dans les deux sens (`!{…}`).
+
 ## Noms internes renommés, pour vos tests et vos sondes
 
 Aucune appli ne doit lire un nom qui commence par `_mjs_` : il peut changer sans préavis. Si vos tests ou vos sondes en lisent quand même un (`µ._mjs_…`, `el._mjs_…`), voici ceux qui changent dans la 4.1. Les autres gardent leur nom (`_shadow`, `µ._mjs_store`, `µ._mjs_txt`, `µ._mjs_ws`, `µ._mjs_dispatch`, `µ._mjs_setComputed`…).

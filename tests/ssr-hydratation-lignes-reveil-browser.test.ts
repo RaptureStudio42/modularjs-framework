@@ -4,6 +4,9 @@
 // page et le premier rendu de la liste) ou plus tard, en développement comme dans le fichier unique de production ; ce qu'il écrit à son
 // réveil remonte vers sa ligne. À chaque déplacement de sa ligne, il se réveille avec la valeur que sa ligne tient alors (jamais le texte que
 // le serveur avait écrit pour la prop liée), et ce qu'il écrit remonte encore. Chromium, Firefox et WebKit.
+// Une ligne à clé reprise puis rechargée (un autre objet à la même clé) ne redonne à son composant que les props qui lisent la ligne
+// (`on={d.on}`) : `ouvert={$o}` reste ce que le composant a écrit, à la première recharge comme à la suivante. Chromium, développement
+// et production.
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readdirSync, readFileSync, existsSync } from 'node:fs'
@@ -17,13 +20,27 @@ const SOURCES: Record<string, string> = {
   // à chaque réveil : note sa ligne et la valeur reçue (avec son type), puis ajoute 1
   'c-compte.mjs': `<script>\n  µawake -> window.__aw.push($lib + '=' + JSON.stringify($n)); $n = $n + 1\n</script>\n<p class="vu">{$n}</p>\n`,
   'p-compte.mjs': `<script>
-  $menu = [{ id: 'a', n: 0 }, { id: 'b', n: 10 }, { id: 'c', n: 20 }]
-  rev  = -> $menu = $menu.slice().reverse()
-  etat = (l)-> l.map((d)-> d.id + ':' + JSON.stringify(d.n)).join(' ')
+  $menu = [{ id: 'a', n: 0, on: true }, { id: 'b', n: 10, on: true }, { id: 'c', n: 20, on: true }]
+  $o    = true
+  rev      = -> $menu = $menu.slice().reverse()
+  recharge = -> $menu = $menu.map((d)-> Object.assign({}, d))
+  etat     = (l)-> l.map((d)-> d.id + ':' + JSON.stringify(d.n)).join(' ')
 </script>
 {for d in $menu by id}<section class="ligne" data-id={d.id}><@c-compte n=!{d.n} lib={d.id}></@c-compte></section>{end}
+<ul class="v">{for d in $menu by id}<li><@c-volet ouvert={$o} on={d.on}></@c-volet></li>{end}</ul>
 <button class="rev" @click={rev()}>rev</button>
+<button class="recharge" @click={recharge()}>r</button>
 <p class="etat">{etat($menu)}</p>
+`,
+  // ce que le composant écrit lui-même : ses deux props fermées
+  'c-volet.mjs': `<script>
+  $ouvert ?= false
+  $on     ?= false
+  fermer = ->
+    $ouvert = false
+    $on     = false
+</script>
+<p class="v">{($ouvert ? 'O' : 'o') + ($on ? 'N' : 'n')}</p><button class="f" @click={fermer()}>f</button>
 `
 }
 
@@ -54,10 +71,11 @@ function construire(): Promise<Construit> {
     const noyau    = fichiers.filter((f) => /^mjs_core-/.test(f))
     const runtime  = fichiers.filter((f) => f.startsWith('mjs_') && !/^mjs_core-/.test(f)).sort()
     const page     = fichiers.filter((f) => f.startsWith('p-'))
-    const enfant   = fichiers.filter((f) => f.startsWith('c-'))
+    const enfant   = fichiers.filter((f) => f.startsWith('c-compte'))
+    const volet    = fichiers.filter((f) => f.startsWith('c-volet'))
     assert.equal(noyau.length, 1, 'le build écrit un cœur')
-    assert.ok(page.length === 1 && enfant.length === 1, `le build écrit la page et l'enfant (${fichiers.join(', ')})`)
-    const coeur = lire(noyau[0]) + '\nglobalThis.µ = µ;\n' + runtime.map(lire).join('\n')
+    assert.ok(page.length === 1 && enfant.length === 1 && volet.length === 1, `le build écrit la page et les enfants (${fichiers.join(', ')})`)
+    const coeur = lire(noyau[0]) + '\nglobalThis.µ = µ;\n' + runtime.map(lire).join('\n') + '\n' + lire(volet[0])
     // production : la page rendue par un serveur construit en production, le client en un seul fichier
     const rendu = await createSSRRenderer({ sourceDir: srcDir, env: 'prod', bundlerOpts: { runtime: ['hydrate'] } } as any)
     let prod = ''
@@ -186,6 +204,47 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) playTogether(descr
         verifier(lu, `ordre inversé ${geste}`)
       }
       assert.deepEqual(erreurs, [], 'aucune erreur ni plantage de composant dans la page')
+    } finally {
+      await ctx.close()
+    }
+  })
+
+  // ligne à clé reprise du serveur puis rechargée : son composant ne reçoit de nouveau que la prop qui lit la ligne
+  if (nom === 'chromium') for (const ordre of ['enfant défini avant la page', 'production, un seul fichier'] as const) it(`${ordre} : la ligne reprise rechargée redonne on={d.on}, garde ouvert={$o}, deux fois de suite`, async function () {
+    if (!present) { this.skip(); return }
+    const c    = await construire()
+    const ctx  = await browser.newContext()
+    const page = await ctx.newPage()
+    const erreurs: string[] = []
+    page.on('pageerror', (e: any) => erreurs.push(String(e.message ?? e).slice(0, 200)))
+    try {
+      await page.addInitScript('window.__name = (f) => f')
+      await page.route('http://reveil.test/**', (route: any) => {
+        const chemin = new URL(route.request().url()).pathname
+        if (!chemin.startsWith('/out/')) return route.fulfill({ contentType: 'text/html', body: documentDe(c, ordre) })
+        const corps = c.fichiers.get(chemin.slice(5))
+        if (!corps) return route.fulfill({ status: 404, body: '' })
+        return route.fulfill({ contentType: chemin.endsWith('.json') ? 'application/json' : 'text/javascript', body: corps })
+      })
+      await page.goto('http://reveil.test/', { waitUntil: 'load' })
+      const sh = `document.querySelector('mjs-p-compte')._shadow`
+      await page.waitForFunction(`window.__aw.length >= 3 && [...${sh}.querySelectorAll('ul.v mjs-c-volet')].filter((x) => x._shadow?.querySelector('p.v')).length === 3`)
+      await page.waitForTimeout(150)
+      const lus    = (): Promise<string> => page.evaluate(`[...${sh}.querySelectorAll('ul.v mjs-c-volet')].map((x) => x._shadow.querySelector('p.v').textContent).join(',')`)
+      const fermer = async () => {
+        await page.evaluate(`${sh}.querySelectorAll('ul.v mjs-c-volet').forEach((x) => x._shadow.querySelector('button.f').click())`)
+        await page.waitForTimeout(100)
+      }
+      assert.equal(await lus(), 'ON,ON,ON')
+      assert.deepEqual(await page.evaluate(`[...${sh}.querySelectorAll('ul.v li, ul.v mjs-c-volet')].filter((n) => n.__srv !== true).length`), 0, 'les lignes et leurs composants sont ceux du serveur')
+      for (const fois of ['première', 'seconde']) {
+        await fermer()
+        assert.equal(await lus(), 'on,on,on')
+        await page.evaluate(`${sh}.querySelector('.recharge').click()`)
+        await page.waitForTimeout(150)
+        assert.equal(await lus(), 'oN,oN,oN', `${fois} recharge : on={d.on} redonné, ouvert={$o} gardé (avant : « ON,ON,ON »)`)
+      }
+      assert.deepEqual(erreurs, [], 'aucune erreur dans la page')
     } finally {
       await ctx.close()
     }

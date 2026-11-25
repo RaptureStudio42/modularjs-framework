@@ -2,6 +2,14 @@
 
 Toutes les évolutions notables de `modularjs-framework` sont consignées ici. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/), versionnage [SemVer](https://semver.org/lang/fr/).
 
+## [4.1.4] — 2026-11-25
+
+Ce qui change pour une application 4.1.3 : [guide de passage, « Depuis la 4.1.4 »](UPGRADE-V4.0-TO-V4.1.md#depuis-la-414).
+
+### Composants
+
+- **Changé — une ligne de liste à clé rechargée ne redonne que les props qui lisent la ligne, comme Svelte 5** : quand un autre objet arrive sous la même clé (liste rechargée, refaite par `map`, ou écrite dans le gabarit comme `{for v in [ { key: $version } ] by key}`, refaite à chaque rendu qui la rejoue), seules les props qui lisent son élément, directement ou par un `{const}`, sont redonnées, même inchangées ; les autres (`ouvert={$o}`, l'index seul) restent ce que l'enfant a écrit tant que le parent ne change pas leur valeur. Dans des listes imbriquées, seule la ligne dont la prop lit l'élément la redonne. Avant, `<@@number value={$n}>` dans une telle liste montrait la frappe et annonçait la valeur du parent. Une liste sans `by` redonne toujours tout à la ligne qui porte une autre valeur ; pour repartir de zéro, un bloc `{key}` recrée l'enfant.
+
 ## [4.1.3] — 2026-11-24
 
 Ce qui change pour une application 4.1.2 : [guide de passage, « Depuis la 4.1.3 »](UPGRADE-V4.0-TO-V4.1.md#depuis-la-413).

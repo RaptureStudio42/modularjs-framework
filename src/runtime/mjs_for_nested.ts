@@ -9,7 +9,8 @@
 // `this._mjs_updList(` pour ces deux formes SEULEMENT (generator/compile.ts) — un `{for}` de racine,
 // dans un `{if}` ou dans un `{key}` compile en `this._mjs_updFor(`.
 if (µ.Element) {
-  µ.Element.prototype._mjs_updList = function(cacheId, startNode, endNode, col, tplFn, keyFn, updateFn, keyAttr) {
+  // `bit` : celui de la liste à clé dont une prop lit l'élément, comme pour `_mjs_updFor`
+  µ.Element.prototype._mjs_updList = function(cacheId, startNode, endNode, col, tplFn, keyFn, updateFn, keyAttr, bit) {
     var childMode, parent;
     // cf. _mjs_updFor : falsy col ⇒ teardown, pas de fantômes.
     if (!(startNode && endNode)) {
@@ -22,6 +23,6 @@ if (µ.Element) {
         : null;
     }
     childMode = parent ? parent._mjs_ctMode : null;
-    return this._mjs_reconcileList(cacheId, startNode, endNode, childMode, col, tplFn, keyFn, updateFn, keyAttr);
+    return this._mjs_reconcileList(cacheId, startNode, endNode, childMode, col, tplFn, keyFn, updateFn, keyAttr, bit);
   };
 }

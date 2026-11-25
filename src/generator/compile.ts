@@ -216,6 +216,12 @@ export interface LoopInfo {
   byEntry?: boolean
   /** Index de la première liaison filtrée par valeur de la ligne, qui range sa clé et sa fonction en champs directs (cf. filterFields, attributes/index.ts) */
   filterFields?: string
+  /** Liste à clé dont une prop livrée à un composant lit l'élément de la ligne (cf. keyedLineMask, attributes/index.ts) : son appel passe son
+   * bit (`1 << depth`) au runtime, et sa ligne rechargée ne redonne que ces props-là ; sans elle, l'appel reste celui d'avant */
+  readByProp?: boolean
+  /** Les `{const}` de la ligne, à toute profondeur de ses blocs, hors `{for}` imbriqué (cf. rowConsts) : hissés en tête du corps, ils se lisent
+   * aussi plus haut que leur déclaration (cf. keyedLineMask, attributes/index.ts) */
+  rowConsts?: { name: string; raw: string }[]
 }
 
 // ============================================================================
@@ -1171,6 +1177,19 @@ function placesFlip(children: Node[], places: Map<Node, number>, start = 0): num
 // L'idempotence de `_mjs_updFor` (clés stables + LIS) garantit qu'aucun travail
 // inutile n'est fait sur les ticks où la collection est inchangée.
 // ============================================================================
+// les `{const}` d'une ligne de `{for}`, à toute profondeur de ses blocs, hors `{for}` imbriqué (sa ligne a les siens), dans l'ordre : hissés en
+// tête du corps (cf. compileConst), ils se lisent aussi plus haut dans la ligne que leur déclaration
+function rowConsts(nodes: Node[], out: { name: string; raw: string }[] = []): { name: string; raw: string }[] {
+  for (const n of nodes) {
+    if (n.type === 'const') out.push({ name: (n.name ?? '').toString().trim(), raw: (n.expr ?? '').toString() })
+    else if (n.type !== 'for') {
+      rowConsts(n.children, out)
+      for (const b of n.branches) rowConsts(b.children, out)
+    }
+  }
+  return out
+}
+
 export function compileFor(node: Node, ctx: Ctx): string {
   state.counter += 1
   const id = `for${state.counter}`
@@ -1237,6 +1256,7 @@ export function compileFor(node: Node, ctx: Ctx): string {
   // seules à lever `hasDestroyHooks`) relevées dans CETTE ligne, à toute profondeur ; le drapeau du composant les reprend ensuite
   const dhComponent = state.hasDestroyHooks
   state.hasDestroyHooks = false
+  loopInfo.rowConsts = rowConsts(node.children)
   const bodyRaw = node.children.map((c) => walk(c, loopCtx)).join('')
   const sensitiveLine = state.hasDestroyHooks
   state.hasDestroyHooks = dhComponent || sensitiveLine
@@ -1411,6 +1431,9 @@ export function compileFor(node: Node, ctx: Ctx): string {
   // (`_mjs_updFn`) — toujours le cas d'une ligne de liste imbriquée, cf. `keepUpdFn`
   // hors imbrication, chaque entrée garde sa closure (`keepUpdFn`) : cette seconde copie ne serait jamais appelée
   const updateFn = keepUpdFn ? 'null' : `(__nodes, ${node.item}, ${indexVar}) => { const ${internalIndex} = ${indexVar}; ${localUpdates} }`
+  // liste à clé dont une prop lit l'élément de la ligne, à toute profondeur de son corps (noté pendant sa compilation, cf. LoopInfo.readByProp) :
+  // son bit, dernier argument de son appel
+  const lineBit  = loopInfo.readByProp ? `, ${1 << loopInfo.depth}` : ''
 
   if (ctx.type === 'root') {
     // gardé par ses variables quand on les connaît toutes ; sans aucune variable connue (itérable
@@ -1421,7 +1444,7 @@ export function compileFor(node: Node, ctx: Ctx): string {
     // (cf. `untrackedIdentifiers`) ; la liste reste alors rejouée à chaque passe de structure
     const guard = root && forVars.size > 0 && untrackedIdentifiers(jsIterable, `(${node.item || '_item'}, ${indexVar}) => { const ${internalIndex} = ${indexVar}; ${localUpdates} }`).length === 0 ? `if(this._mjs_chg([${[...forVars].map((v) => `'${v}'`).join(',')}])) ` : ''
     // une ligne recréée qui porte un repère `<@element>` reprend la dernière balise demandée (µ._mjs_dynRe, cf. `compileIf`)
-    const call = `this._mjs_updFor('${id}', ${jsIterable}, ${tplFn}, ${keyFnLit}, ${updateFn}, ${keyAttrLit});`
+    const call = `this._mjs_updFor('${id}', ${jsIterable}, ${tplFn}, ${keyFnLit}, ${updateFn}, ${keyAttrLit}${lineBit});`
     ctx.updates.push(`{ const _mjsThis = this; ${guard}${/\smjs-el=/.test(tplFn) ? `{ ${call} µ._mjs_dynRe(this); }` : call} }`)
     return `<script type='mjs/marker' mjs-t='s-${id}'></script><script type='mjs/marker' mjs-t='e-${id}'></script>`
   }
@@ -1459,7 +1482,7 @@ export function compileFor(node: Node, ctx: Ctx): string {
     // l'effet suit leur nom (cf. keptValues)
     const kept   = keptValues({ ctx, compiler: state }, `${jsIterable} ${tplFn} ${updateFn}`)
     const reread = kept.map((e) => `${e.name} = _mjsThis._mjs_awaitStates.get('${e.id}').${e.field}; `).join('')
-    const redo   = `this._mjs_updList('${id}', _mjs_forStart, _mjs_forEnd, ${jsIterable}, ${tplFn}, ${keyFnLit}, ${updateFn}, ${keyAttrLit});`
+    const redo   = `this._mjs_updList('${id}', _mjs_forStart, _mjs_forEnd, ${jsIterable}, ${tplFn}, ${keyFnLit}, ${updateFn}, ${keyAttrLit}${lineBit});`
     ctx.updates.push(`{ const _mjsThis = this; const _mjs_forStart = __nodes['s-${id}']; const _mjs_forEnd = __nodes['e-${id}']; if(_mjs_forStart && _mjs_forEnd) { const _mjs_redo = () => { if(${ifShown}_mjs_forStart.parentNode && _mjs_forEnd.parentNode) ${reread ? `{ ${reread}${redo} }` : redo.slice(0, -1)}; }; (this._mjs_awaitFors ??= {})['${id}'] = _mjs_redo; _mjs_redo(); (this._mjs_awaitFresh ??= {})['${id}'] = ${readValues}; queueMicrotask(() => { this._mjs_awaitFresh['${id}'] = null; }); } }`)
     const tracked = [...trackedVars, ...kept.map((e) => e.key!)]
     // une ligne qui lit un texte traduit suit aussi la langue : l'effet rappelle la liste à chaque rendu complet
@@ -1529,7 +1552,7 @@ export function compileFor(node: Node, ctx: Ctx): string {
   // la boucle PARENTE est en scope. Un item parent nommé `startNode` était shadowé
   // par l'ancre interne → itérable/clé/keyFn lisaient le MARQUEUR DOM (corruption
   // silencieuse). Cf. reserved-names-collision.test.ts ({for}+{for}).
-  ctx.updates.push(`{ const _mjsThis = this; const _mjs_forStart = __nodes['s-${wrapperLid}']; const _mjs_forEnd = __nodes['e-${wrapperLid}']; if(_mjs_forStart && _mjs_forEnd) { this._mjs_updList(${uniqueCacheId}, _mjs_forStart, _mjs_forEnd, ${jsIterable}, ${tplFn}, ${keyFnLit}, ${updateFn}, ${keyAttrLit}); } }`)
+  ctx.updates.push(`{ const _mjsThis = this; const _mjs_forStart = __nodes['s-${wrapperLid}']; const _mjs_forEnd = __nodes['e-${wrapperLid}']; if(_mjs_forStart && _mjs_forEnd) { this._mjs_updList(${uniqueCacheId}, _mjs_forStart, _mjs_forEnd, ${jsIterable}, ${tplFn}, ${keyFnLit}, ${updateFn}, ${keyAttrLit}${lineBit}); } }`)
 
   // Wrapper start/end markers : ces 2 placeholders matchent les ids
   // `s-${wrapperLid}` et `e-${wrapperLid}` dans le __paths du contexte parent

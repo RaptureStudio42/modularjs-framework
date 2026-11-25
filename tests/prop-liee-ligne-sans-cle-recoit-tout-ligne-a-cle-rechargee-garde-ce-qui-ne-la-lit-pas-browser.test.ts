@@ -1,8 +1,9 @@
-// une ligne de `{for}` qui porte désormais un autre élément reçoit toutes ses props, même inchangées, comme une ligne neuve : la ligne d'une
-// liste de valeurs simples sans `by` qui montre une autre valeur, composants d'un `{for}` imbriqué compris, et la ligne d'une liste `by id`
-// rechargée (un autre objet à la même clé). Défauts garantis absents : le volet fermé par l'élément d'avant restait fermé sur la ligne
-// qui montrait désormais un autre élément (composant d'un `{for}` imbriqué), ou sur la ligne rechargée.
-// Restent : la ligne qu'un tri déplace, ou dont l'objet change sur place, garde ce que son composant a écrit lui-même.
+// la ligne d'une liste de valeurs simples sans `by` qui montre une autre valeur reçoit toutes ses props, même inchangées, comme une ligne
+// neuve, composants d'un `{for}` imbriqué compris : aucune ne garde l'état que son composant tenait de l'élément d'avant. La ligne d'une
+// liste `by id` rechargée (un autre objet à la même clé) ne redonne que les props qui lisent la ligne : `ouvert={$o}`, qui ne la lit pas,
+// reste ce que le composant a écrit lui-même tant que `$o` ne change pas. La ligne qu'un tri déplace, ou dont l'objet change sur place,
+// garde aussi ce que son composant a écrit. Défauts garantis absents : le volet fermé par l'élément d'avant restait fermé sur la ligne
+// qui montrait désormais une autre valeur ; la ligne à clé rechargée rouvrait le volet que son composant avait fermé.
 // Chromium réel, développement
 
 import assert from 'node:assert/strict'
@@ -51,7 +52,7 @@ async function construire(): Promise<string> {
   return [...files].sort((a, b) => rang(a) - rang(b) || a.localeCompare(b)).map((f) => stripEsm(readFileSync(join(outDir, f), 'utf-8'))).join('\n') + '\nglobalThis.µ = µ;\n' + libellesDuManifeste(join(root, 'bundle.js'))
 }
 
-describe('prop liée : la ligne qui porte un autre élément reçoit toutes ses props (chromium réel)', function () {
+describe('prop liée : la ligne sans clé qui montre une autre valeur reçoit tout, la ligne à clé rechargée garde ce qui ne la lit pas (chromium réel)', function () {
   this.timeout(120000)
   let present = false
   let browser: any
@@ -103,10 +104,10 @@ describe('prop liée : la ligne qui porte un autre élément reçoit toutes ses 
     assert.equal(await lus('valeurs'), 'oui,oui,oui', 'aucune ligne ne garde le volet fermé par l\'élément d\'avant (avant : « non,oui,oui »)')
   })
 
-  it('liste `by id` rechargée (autres objets, mêmes clés) : chaque ligne reprend la valeur du parent, comme une ligne neuve', async function () {
+  it('liste `by id` rechargée (autres objets, mêmes clés) : `ouvert={$o}` ne lit pas la ligne, le volet fermé par son composant le reste', async function () {
     await fermer('cle', 0)
     await clic('button.recharger')
-    assert.equal(await lus('cle'), 'oui,oui', 'la ligne rechargée ne garde pas le volet fermé (avant : « non,oui »)')
+    assert.equal(await lus('cle'), 'non,oui', 'la ligne rechargée garde le volet fermé (avant : « oui,oui »)')
   })
 
   it('liste `by id` triée, ou dont l\'objet change sur place : le composant garde ce qu\'il a écrit lui-même', async function () {

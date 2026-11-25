@@ -431,16 +431,51 @@ const COMPONENT_GLOBAL_ATTR = /^(?:id|class|title|role|hidden|tabindex|lang|dir|
  * cœur, jamais sur la balise, et ne lit les props déclarées que sur un composant du projet. `received` : en développement, les drapeaux de la livraison notée (cf. shippingFlags), la
  * valeur calculée une fois et notée avant de partir ; `null` en production, où rien n'est noté. `toggles` : les jetons des bascules `@class{…}`
  * de la balise, que la première écriture de sa classe garde (cf. writeEnd) */
-function componentLogic(attrName: string, prop: string, pendProp: string, jsVar: string, received: string | null, toggles = ''): string {
-  if (COMPONENT_DOM_ATTR.test(attrName)) return `const __mjsV = ${jsVar}; if (_mjs_node._set) { µ._mjs_prop(_mjs_node, '${attrName}', __mjsV); } else { µ._mjs_pend(_mjs_node, '${attrName}', __mjsV); } µ._mjs_updAttrNode(_mjs_node, '${attrName}', __mjsV${safeAttrFlag(attrName)});`
+function componentLogic(attrName: string, prop: string, pendProp: string, jsVar: string, received: string | null, toggles = '', mask = 0): string {
+  // prop qui lit la ligne d'une liste à clé : le masque des boucles lues, dernier argument (cf. keyedLineMask) ; aucun sinon, code d'avant
+  const m  = mask ? `, ${mask}` : ''
+  const pm = mask ? `, 0, ${mask}` : ''
+  if (COMPONENT_DOM_ATTR.test(attrName)) return `const __mjsV = ${jsVar}; if (_mjs_node._set) { µ._mjs_prop(_mjs_node, '${attrName}', __mjsV${m}); } else { µ._mjs_pend(_mjs_node, '${attrName}', __mjsV${pm}); } µ._mjs_updAttrNode(_mjs_node, '${attrName}', __mjsV${safeAttrFlag(attrName)});`
   const note = received === null ? '' : `µ._mjs_oneWay?.(_mjs_node, '${prop}', this, __mjsV${received}); `
   if (!COMPONENT_GLOBAL_ATTR.test(attrName)) {
-    if (received === null) return `if (_mjs_node._set) { µ._mjs_prop(_mjs_node, '${prop}', ${jsVar}); } else { µ._mjs_pend(_mjs_node, ${pendProp}, ${jsVar}); }`
-    return `const __mjsV = ${jsVar}; ${note}if (_mjs_node._set) { µ._mjs_prop(_mjs_node, '${prop}', __mjsV); } else { µ._mjs_pend(_mjs_node, ${pendProp}, __mjsV); }`
+    if (received === null) return `if (_mjs_node._set) { µ._mjs_prop(_mjs_node, '${prop}', ${jsVar}${m}); } else { µ._mjs_pend(_mjs_node, ${pendProp}, ${jsVar}${pm}); }`
+    return `const __mjsV = ${jsVar}; ${note}if (_mjs_node._set) { µ._mjs_prop(_mjs_node, '${prop}', __mjsV${m}); } else { µ._mjs_pend(_mjs_node, ${pendProp}, __mjsV${pm}); }`
   }
   const name = attrName.toLowerCase()
   const end  = writeEnd({ name: name, toggles: name === 'class' ? toggles : '' })
-  return `const __mjsV = ${jsVar}; ${note}if (_mjs_node._set) { µ._mjs_prop(_mjs_node, '${prop}', __mjsV); } else { µ._mjs_pend(_mjs_node, ${pendProp}, __mjsV); } µ._mjs_attrGlob(_mjs_node, '${name}', __mjsV, '${prop}'${end});`
+  return `const __mjsV = ${jsVar}; ${note}if (_mjs_node._set) { µ._mjs_prop(_mjs_node, '${prop}', __mjsV${m}); } else { µ._mjs_pend(_mjs_node, ${pendProp}, __mjsV${pm}); } µ._mjs_attrGlob(_mjs_node, '${name}', __mjsV, '${prop}'${end});`
+}
+
+/** Les boucles à clé (`by`) dont la valeur `expr` d'une prop livrée à un composant lit l'élément de la ligne, un bit par boucle (`1 << depth`) :
+ * sa variable, l'un des noms d'une boucle déstructurée, ou un `{const}` qui en lit un (lui-même, ou par un autre `{const}`). L'index seul n'en
+ * est pas une lecture (comparé à sa valeur, comme Svelte 5), ni l'état du parent, ni un `{const}` qui ne lit aucun élément. Une ligne rechargée
+ * de ces boucles (un autre objet à la même clé) ne redonne que les props notées avec son bit (µ._mjs_prop, mjs_init.ts ; _mjs_forgetProps,
+ * mjs_for.ts) : chaque boucle lue le note (`readByProp`), et son appel passe ce bit au runtime. Lecture sur le texte, chaînes, commentaires et
+ * regex masqués, le code des interpolations lu (maskNonCode) : un nom en trop (clé d'objet, paramètre homonyme) ne fait que redonner la
+ * prop. 0 hors de toute boucle à clé : code émis inchangé */
+function keyedLineMask(env: AttrCtx, expr: string): number {
+  if (!env.ctx.loops?.some((l: LoopInfo) => l.key != null)) return 0
+  const scope: EntryScope[] = env.ctx.scope ?? env.ctx.loops.map((loop: LoopInfo) => ({ kind: 'for' as const, loop }))
+  const masks = new Map<string, number>()
+  const read  = (text: string): number => {
+    let m = 0
+    for (const w of maskNonCode(text, 'civet').replace(/\.\.\./g, ' ').matchAll(/(?<![\w$µ.])[A-Za-z_$µ][\w$µ]*/g)) m |= masks.get(w[0]) ?? 0
+    return m
+  }
+  for (const e of scope) {
+    if (e.kind === 'for') {
+      const bit = e.loop.key != null ? 1 << e.loop.depth : 0
+      for (const w of e.loop.item.matchAll(/[A-Za-z_$µ][\w$µ]*/g)) masks.set(w[0], bit)
+      masks.set(e.loop.index, 0)
+    }
+    else masks.set(e.name, e.kind === 'const' ? read(e.raw) : 0)
+  }
+  // un `{const}` de la ligne lu plus haut que sa déclaration (hissé en tête du corps, cf. rowConsts, compile.ts) : compté de même, dans
+  // l'ordre des déclarations
+  for (const e of scope) if (e.kind === 'for') for (const k of e.loop.rowConsts ?? []) if (!masks.has(k.name)) masks.set(k.name, read(k.raw))
+  const mask = read(expr)
+  for (const e of scope) if (e.kind === 'for' && e.loop.key != null && mask & 1 << e.loop.depth) e.loop.readByProp = true
+  return mask
 }
 
 function propName(name: string): string {
@@ -696,7 +731,7 @@ function dynamic(env: AttrCtx): AttrResult {
   } else if (env.ctx.type === 'for') {
     if (isWc) {
       // la valeur reste aussi une prop de l'état du composant ; data-*, aria-* et les attributs globaux se posent en plus sur sa balise (cf. componentLogic)
-      const updateLogic = componentLogic(attrName, prop, pendProp, jsVar, received, toggleTokens(env.node))
+      const updateLogic = componentLogic(attrName, prop, pendProp, jsVar, received, toggleTokens(env.node), keyedLineMask(env, env.attr.expr ?? ''))
       env.ctx.updates.push(`{ const _mjs_n${env.lid} = __nodes['${env.lid}']; if(_mjs_n${env.lid}) { let _mjs_node = _mjs_n${env.lid}; ${updateLogic} } }`)
     } else {
       // Filtered dispatch pour les attributs dynamiques génériques
@@ -801,7 +836,7 @@ function dynamic(env: AttrCtx): AttrResult {
       // sans ça, une prop dynamique de composant (`<mjs-card item={d}>`) en
       // branche `{await}` ne posait RIEN — `item` disparaissait en silence.
       // la valeur reste aussi une prop de l'état du composant ; data-*, aria-* et les attributs globaux se posent en plus sur sa balise (cf. componentLogic)
-      const updateLogic = componentLogic(attrName, prop, pendProp, jsVar, received, toggleTokens(env.node))
+      const updateLogic = componentLogic(attrName, prop, pendProp, jsVar, received, toggleTokens(env.node), keyedLineMask(env, env.attr.expr ?? ''))
       env.ctx.updates.push(`{ const _mjs_node = __nodes['${id}']; if(_mjs_node) { ${updateLogic} } }`)
       // la prop suit ses variables : effet de la racine, comme à la racine (la pose ci-dessus la vaut à la construction de la branche)
       trackInBranch(env, id, jsVar, updateLogic, vars, true)
